@@ -1008,6 +1008,46 @@ struct IPadRootLayoutSelectionTests {
         #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "unknown", forward: true) == nil)
     }
 
+    @Test("pending close tombstones are excluded from pane navigation")
+    func pendingCloseTombstonesAreExcludedFromNavigation() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: .split(
+                direction: .horizontal,
+                ratio: 0.5,
+                left: leaf("B"),
+                right: leaf("C")
+            )
+        )
+
+        #expect(PaneLayoutNavigation.nextInOrder(
+            in: layout,
+            from: "B",
+            forward: false,
+            excluding: ["A"]
+        ) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(
+            in: layout,
+            of: "B",
+            direction: .left,
+            excluding: ["A"]
+        ) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(
+            in: layout,
+            of: "B",
+            direction: .right,
+            excluding: ["C"]
+        ) == nil)
+        #expect(PaneLayoutNavigation.nextInOrder(
+            in: layout,
+            from: "A",
+            forward: true,
+            excluding: ["A"]
+        ) == nil)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

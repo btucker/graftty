@@ -1770,6 +1770,7 @@ struct GrafttyApp: App {
                         stats: stats?.toWire(),
                         attentionText: wt.attention?.text,
                         attentionSource: wt.attention?.source,
+                        attentionTimestamp: wt.attention?.timestamp,
                         layout: (wt.state == .running ? wt.splitTree.root : nil)
                             .map {
                                 paneLayoutNode(
@@ -2374,7 +2375,8 @@ struct GrafttyApp: App {
                         let result = Self.startWorktree(
                             path: worktreeID,
                             appState: appStateBinding,
-                            terminalManager: terminalManager
+                            terminalManager: terminalManager,
+                            startSurfacesInBackground: true
                         )
                         let targetIsVisible =
                             !NSApp.isHidden
@@ -3981,7 +3983,8 @@ struct GrafttyApp: App {
     static func startWorktree(
         path: String,
         appState: Binding<AppState>,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        startSurfacesInBackground: Bool = false
     ) -> WorktreeStartResult {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
@@ -4012,6 +4015,15 @@ struct GrafttyApp: App {
                         .worktrees[wtIdx].paneSessions,
                     worktreePath: path
                 )
+                if startSurfacesInBackground,
+                   !terminalManager.startSurfacesForBackgroundLaunch(
+                       in: splitTree
+                   ) {
+                    NSLog(
+                        "[Graftty] failed to start one or more background panes for %@",
+                        path
+                    )
+                }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state =
                     .running
                 return .started
@@ -4237,6 +4249,14 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
+        let targetPath = targetWt.path
+        if let paneSession = sessionTarget.paneSessions[terminalID] {
+            terminalManager.recordPaneSession(
+                paneSession,
+                for: terminalID,
+                worktreePath: targetPath
+            )
+        }
 
         // Follow the pane with the UI ONLY when the reassigned pane was the
         // user's active typing target — i.e. the focused pane of the
@@ -4245,7 +4265,6 @@ struct GrafttyApp: App {
         // user's view whenever ANY background pane `cd`'d across a
         // worktree boundary — Andy's 3–6 concurrent Claude-session setup
         // made that immediately pathological. `PWD-2.3` (revised).
-        let targetPath = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path
         let follow = PWDReassignmentPolicy.shouldFollowToDestination(
             selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
             sourceWorktreePath: sourceWt.path,
@@ -5167,7 +5186,8 @@ private func paneLayoutNode(
             isBusy: AgentLivenessMerge.isPaneBusy(
                 sessionName: sessionName,
                 liveness: liveness),
-            attentionSource: paneAttention[id]?.source
+            attentionSource: paneAttention[id]?.source,
+            attentionTimestamp: paneAttention[id]?.timestamp
         )
     case let .split(s):
         return .split(

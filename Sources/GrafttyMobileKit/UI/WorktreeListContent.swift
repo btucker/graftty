@@ -21,11 +21,18 @@ public struct WorktreeListContent: View {
         let action: WorktreePickerSwipeAction
     }
 
-    private struct PendingForceDelete: Identifiable, Equatable {
+    private struct DeleteRequestContext {
+        let hostID: UUID
+        let baseURL: URL
+        let remoteConnectionProvider: RemoteConnectionProvider?
+    }
+
+    private struct PendingForceDelete: Identifiable {
         let id = UUID()
         let worktreePath: String
         let stderr: String
         let shortStatus: String
+        let requestContext: DeleteRequestContext
     }
 
     private struct OpeningWorktreeKey: Hashable {
@@ -168,15 +175,28 @@ public struct WorktreeListContent: View {
         .confirmationDialog(
             "Could not delete worktree",
             isPresented: Binding(
-                get: { pendingForceDelete != nil },
+                get: {
+                    pendingForceDelete.map {
+                        Self.forceDeleteMatchesHost(
+                            capturedHostID: $0.requestContext.hostID,
+                            currentHostID: host.id
+                        )
+                    } ?? false
+                },
                 set: { if !$0 { pendingForceDelete = nil } }
             ),
             titleVisibility: .visible,
             presenting: pendingForceDelete
         ) { pending in
             Button("Force Delete", role: .destructive) {
-                let path = pending.worktreePath
-                Task { await performForceDelete(worktreePath: path) }
+                guard Self.forceDeleteMatchesHost(
+                    capturedHostID: pending.requestContext.hostID,
+                    currentHostID: host.id
+                ) else {
+                    pendingForceDelete = nil
+                    return
+                }
+                Task { await performForceDelete(pending) }
             }
             Button("Cancel", role: .cancel) { }
         } message: { pending in
@@ -237,6 +257,8 @@ public struct WorktreeListContent: View {
         }
         .onChange(of: host.id) { _, _ in
             selectionIntentGeneration &+= 1
+            pendingDelete = nil
+            pendingForceDelete = nil
         }
         .task(id: RemotePollingKey(
             hostID: host.id,
@@ -290,9 +312,19 @@ public struct WorktreeListContent: View {
 
     static func requiresManagementOpen(
         _ worktree: WorktreePanes,
+        includesRemoteWorktrees: Bool,
         providerAvailable: Bool
     ) -> Bool {
-        worktree.state == .closed && providerAvailable
+        worktree.state == .closed
+            && includesRemoteWorktrees
+            && providerAvailable
+    }
+
+    static func forceDeleteMatchesHost(
+        capturedHostID: UUID,
+        currentHostID: UUID
+    ) -> Bool {
+        capturedHostID == currentHostID
     }
 
     static func shouldApplySelectionIntent(
@@ -338,6 +370,7 @@ public struct WorktreeListContent: View {
         }
         guard Self.requiresManagementOpen(
             worktree,
+            includesRemoteWorktrees: includeRemoteWorktrees,
             providerAvailable: provider != nil
         ) else {
             if selectionIsCurrent() {
@@ -422,22 +455,28 @@ public struct WorktreeListContent: View {
     /// forceable failure surface the Force Delete confirmation, on
     /// any other failure surface a transient error toast.
     private func performDelete(worktree: WorktreePanes, force: Bool) async {
+        let requestContext = DeleteRequestContext(
+            hostID: host.id,
+            baseURL: host.baseURL,
+            remoteConnectionProvider: remoteConnectionProvider
+        )
         do {
             if worktree.path.hasPrefix("relay-worktree-") {
                 let response = try await RelayedWorktreeManagementClient.send(
                     .delete(worktreeID: worktree.path, force: force),
-                    using: remoteConnectionProvider
+                    using: requestContext.remoteConnectionProvider
                 )
                 guard case .deleted = response else {
                     handleRemoteDeleteResponse(
                         response,
-                        worktreePath: worktree.path
+                        worktreePath: worktree.path,
+                        requestContext: requestContext
                     )
                     return
                 }
             } else {
                 _ = try await DeleteWorktreeClient.delete(
-                    baseURL: host.baseURL,
+                    baseURL: requestContext.baseURL,
                     body: DeleteWorktreeClient.Request(
                         worktreePath: worktree.path,
                         force: force
@@ -449,7 +488,8 @@ public struct WorktreeListContent: View {
             pendingForceDelete = PendingForceDelete(
                 worktreePath: worktree.path,
                 stderr: stderr,
-                shortStatus: status
+                shortStatus: status,
+                requestContext: requestContext
             )
         } catch let error as DeleteWorktreeClient.DeleteError {
             surfaceDeleteError(error)
@@ -460,25 +500,26 @@ public struct WorktreeListContent: View {
 
     /// User confirmed Force Delete on a 409 forceable response —
     /// re-issue with `force: true`.
-    private func performForceDelete(worktreePath: String) async {
+    private func performForceDelete(_ pending: PendingForceDelete) async {
         do {
-            if worktreePath.hasPrefix("relay-worktree-") {
+            if pending.worktreePath.hasPrefix("relay-worktree-") {
                 let response = try await RelayedWorktreeManagementClient.send(
-                    .delete(worktreeID: worktreePath, force: true),
-                    using: remoteConnectionProvider
+                    .delete(worktreeID: pending.worktreePath, force: true),
+                    using: pending.requestContext.remoteConnectionProvider
                 )
                 guard case .deleted = response else {
                     handleRemoteDeleteResponse(
                         response,
-                        worktreePath: worktreePath
+                        worktreePath: pending.worktreePath,
+                        requestContext: pending.requestContext
                     )
                     return
                 }
             } else {
                 _ = try await DeleteWorktreeClient.delete(
-                    baseURL: host.baseURL,
+                    baseURL: pending.requestContext.baseURL,
                     body: DeleteWorktreeClient.Request(
-                        worktreePath: worktreePath,
+                        worktreePath: pending.worktreePath,
                         force: true
                     )
                 )
@@ -506,14 +547,16 @@ public struct WorktreeListContent: View {
 
     private func handleRemoteDeleteResponse(
         _ response: WorktreeManagementResponse,
-        worktreePath: String
+        worktreePath: String,
+        requestContext: DeleteRequestContext
     ) {
         if case let .error(_, message, forceAllowed, shortStatus) = response {
             if forceAllowed {
                 pendingForceDelete = PendingForceDelete(
                     worktreePath: worktreePath,
                     stderr: message,
-                    shortStatus: shortStatus ?? ""
+                    shortStatus: shortStatus ?? "",
+                    requestContext: requestContext
                 )
             } else {
                 showErrorToast(message)

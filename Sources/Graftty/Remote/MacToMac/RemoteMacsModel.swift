@@ -54,6 +54,7 @@ final class RemoteMacsModel: ObservableObject {
         let paneID: String?
         let text: String
         let kind: RemoteNotificationEvent.Kind
+        let attentionTimestamp: Date?
     }
 
     init(
@@ -752,7 +753,8 @@ final class RemoteMacsModel: ObservableObject {
                     worktree: worktree,
                     paneID: nil,
                     text: text,
-                    kind: kind
+                    kind: kind,
+                    attentionTimestamp: worktree.attentionTimestamp
                 ))
             }
             for leaf in worktree.layout?.leaves ?? [] {
@@ -772,7 +774,8 @@ final class RemoteMacsModel: ObservableObject {
                     worktree: worktree,
                     paneID: leaf.sessionName,
                     text: text,
-                    kind: kind
+                    kind: kind,
+                    attentionTimestamp: leaf.attentionTimestamp
                 ))
             }
         }
@@ -785,13 +788,15 @@ final class RemoteMacsModel: ObservableObject {
         worktree: WorktreePanes,
         paneID: String?,
         text: String,
-        kind: RemoteNotificationEvent.Kind
+        kind: RemoteNotificationEvent.Kind,
+        attentionTimestamp: Date?
     ) -> (RemoteAttentionKey, RemoteNotificationEvent) {
         let key = RemoteAttentionKey(
             worktreeID: worktree.path,
             paneID: paneID,
             text: text,
-            kind: kind
+            kind: kind,
+            attentionTimestamp: attentionTimestamp
         )
         let worktreeName = worktree.displayName.isEmpty
             ? worktree.displayBranch
@@ -811,7 +816,7 @@ final class RemoteMacsModel: ObservableObject {
             paneID: paneID,
             title: title,
             body: body,
-            timestamp: Date()
+            timestamp: attentionTimestamp ?? Date()
         ))
     }
 

@@ -119,6 +119,7 @@ final class RemoteWorktreeRelayRouter {
                     stats: worktree.stats,
                     attentionText: worktree.attentionText,
                     attentionSource: worktree.attentionSource,
+                    attentionTimestamp: worktree.attentionTimestamp,
                     layout: layout,
                     origin: WorktreeOrigin(
                         deviceID: remoteMac.id,
@@ -291,7 +292,14 @@ final class RemoteWorktreeRelayRouter {
         nextPanes: inout [String: RelayedPaneTarget]
     ) -> PaneLayoutNode {
         switch layout {
-        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
+        case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            isBusy,
+            attentionSource,
+            attentionTimestamp
+        ):
             let alias = Self.alias(
                 kind: "pane",
                 identity: identity,
@@ -308,7 +316,8 @@ final class RemoteWorktreeRelayRouter {
                 title: title,
                 attentionText: attentionText,
                 isBusy: isBusy,
-                attentionSource: attentionSource
+                attentionSource: attentionSource,
+                attentionTimestamp: attentionTimestamp
             )
         case let .split(direction, ratio, left, right):
             return .split(

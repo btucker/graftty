@@ -35,17 +35,32 @@ public enum PaneLayoutNavigation {
     public static func spatialNeighbor(
         in root: PaneLayoutNode,
         of sessionName: String,
-        direction: Direction
+        direction: Direction,
+        excluding excludedSessionNames: Set<String> = []
     ) -> String? {
-        root.findSpatialNeighbor(of: sessionName, direction: direction)
+        guard let projectedRoot = root.removingLeaves(
+            named: excludedSessionNames
+        ) else {
+            return nil
+        }
+        return projectedRoot.findSpatialNeighbor(
+            of: sessionName,
+            direction: direction
+        )
     }
 
     public static func nextInOrder(
         in root: PaneLayoutNode,
         from sessionName: String,
-        forward: Bool
+        forward: Bool,
+        excluding excludedSessionNames: Set<String> = []
     ) -> String? {
-        let leaves = root.leaves.map(\.sessionName)
+        guard let projectedRoot = root.removingLeaves(
+            named: excludedSessionNames
+        ) else {
+            return nil
+        }
+        let leaves = projectedRoot.leaves.map(\.sessionName)
         guard leaves.count > 1,
               let index = leaves.firstIndex(of: sessionName) else {
             return nil
@@ -58,9 +73,35 @@ public enum PaneLayoutNavigation {
 }
 
 private extension PaneLayoutNode {
+    func removingLeaves(named sessionNames: Set<String>) -> PaneLayoutNode? {
+        guard !sessionNames.isEmpty else { return self }
+        switch self {
+        case let .leaf(sessionName, _, _, _, _, _):
+            return sessionNames.contains(sessionName) ? nil : self
+        case let .split(direction, ratio, left, right):
+            let projectedLeft = left.removingLeaves(named: sessionNames)
+            let projectedRight = right.removingLeaves(named: sessionNames)
+            switch (projectedLeft, projectedRight) {
+            case let (left?, right?):
+                return .split(
+                    direction: direction,
+                    ratio: ratio,
+                    left: left,
+                    right: right
+                )
+            case let (left?, nil):
+                return left
+            case let (nil, right?):
+                return right
+            case (nil, nil):
+                return nil
+            }
+        }
+    }
+
     func containsLeaf(sessionName: String) -> Bool {
         switch self {
-        case let .leaf(name, _, _, _, _):
+        case let .leaf(name, _, _, _, _, _):
             return name == sessionName
         case let .split(_, _, left, right):
             return left.containsLeaf(sessionName: sessionName)
@@ -103,7 +144,7 @@ private extension PaneLayoutNode {
 
     func nearEdgeLeaf(movingFrom direction: PaneLayoutNavigation.Direction) -> String {
         switch self {
-        case let .leaf(sessionName, _, _, _, _):
+        case let .leaf(sessionName, _, _, _, _, _):
             return sessionName
         case let .split(splitAxis, _, left, right):
             guard splitAxis == direction.requiredSplitAxis else {

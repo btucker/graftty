@@ -12,6 +12,8 @@ struct WorktreePanesTests {
     notifications retain agent-stop versus user-notify semantics.
     """)
     func fullPayloadRoundTrips() throws {
+        let worktreeAttentionTimestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let paneAttentionTimestamp = Date(timeIntervalSince1970: 1_700_000_001)
         let original = WorktreePanes(
             path: "/repo/.worktrees/feat",
             displayName: "feat",
@@ -34,11 +36,19 @@ struct WorktreePanesTests {
             ),
             attentionText: "tests failed",
             attentionSource: .agentStop,
+            attentionTimestamp: worktreeAttentionTimestamp,
             layout: .split(
                 direction: .horizontal,
                 ratio: 0.5,
                 left: .leaf(sessionName: "L", title: "left", attentionText: nil, isBusy: false, attentionSource: nil),
-                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken", isBusy: false, attentionSource: nil)
+                right: .leaf(
+                    sessionName: "R",
+                    title: "right",
+                    attentionText: "build broken",
+                    isBusy: false,
+                    attentionSource: .userNotify,
+                    attentionTimestamp: paneAttentionTimestamp
+                )
             )
         )
         let data = try JSONEncoder().encode(original)
@@ -71,6 +81,7 @@ struct WorktreePanesTests {
         #expect(decoded.stats == nil)
         #expect(decoded.attentionText == nil)
         #expect(decoded.attentionSource == nil)
+        #expect(decoded.attentionTimestamp == nil)
         #expect(decoded.layout == nil)
     }
 
@@ -88,10 +99,18 @@ struct WorktreePanesTests {
         {"kind":"leaf","sessionName":"s","title":"t"}
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(sessionName, title, attentionText, _, _) = decoded {
+        if case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            _,
+            _,
+            attentionTimestamp
+        ) = decoded {
             #expect(sessionName == "s")
             #expect(title == "t")
             #expect(attentionText == nil)
+            #expect(attentionTimestamp == nil)
         } else {
             Issue.record("expected leaf, got split")
         }
@@ -117,7 +136,7 @@ struct WorktreePanesTests {
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
-        if case let .leaf(_, _, _, isBusy, _) = decoded {
+        if case let .leaf(_, _, _, isBusy, _, _) = decoded {
             #expect(isBusy == true)
         } else {
             Issue.record("expected leaf")
@@ -128,7 +147,7 @@ struct WorktreePanesTests {
     func legacyLeafWithoutIsBusyDecodesAsFalse() throws {
         let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(_, _, _, isBusy, _) = decoded {
+        if case let .leaf(_, _, _, isBusy, _, _) = decoded {
             #expect(isBusy == false)
         } else {
             Issue.record("expected leaf")
@@ -143,7 +162,7 @@ struct WorktreePanesTests {
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
-        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+        if case let .leaf(_, _, _, _, attentionSource, _) = decoded {
             #expect(attentionSource == .agentStop)
         } else {
             Issue.record("expected leaf")
@@ -154,8 +173,9 @@ struct WorktreePanesTests {
     func legacyLeafWithoutAttentionSourceDecodesAsNil() throws {
         let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+        if case let .leaf(_, _, _, _, attentionSource, attentionTimestamp) = decoded {
             #expect(attentionSource == nil)
+            #expect(attentionTimestamp == nil)
         } else {
             Issue.record("expected leaf")
         }

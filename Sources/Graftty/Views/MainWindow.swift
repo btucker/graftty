@@ -16,7 +16,7 @@ enum RemotePaneLayoutProjection {
         slotForSession: (String) -> PaneSlotID
     ) -> SplitTree.Node {
         switch layout {
-        case .leaf(let sessionName, _, _, _, _):
+        case .leaf(let sessionName, _, _, _, _, _):
             return .leaf(slotForSession(sessionName))
         case let .split(direction, ratio, left, right):
             return .split(.init(

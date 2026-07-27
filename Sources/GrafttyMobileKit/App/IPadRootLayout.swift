@@ -446,7 +446,8 @@ public struct IPadRootLayout: View {
             return PaneLayoutNavigation.spatialNeighbor(
                 in: layout,
                 of: pane,
-                direction: Self.paneLayoutDirection(for: direction)
+                direction: Self.paneLayoutDirection(for: direction),
+                excluding: selectedMobileRemovedSessionNames
             ) != nil
         case let .focusPaneByOrder(forward):
             guard let layout = selectedWorktreeLayout,
@@ -456,7 +457,8 @@ public struct IPadRootLayout: View {
             return PaneLayoutNavigation.nextInOrder(
                 in: layout,
                 from: pane,
-                forward: forward
+                forward: forward,
+                excluding: selectedMobileRemovedSessionNames
             ) != nil
         case .unsupported:
             return false
@@ -469,7 +471,8 @@ public struct IPadRootLayout: View {
               let next = PaneLayoutNavigation.spatialNeighbor(
                 in: layout,
                 of: pane,
-                direction: direction
+                direction: direction,
+                excluding: selectedMobileRemovedSessionNames
               ) else {
             return
         }
@@ -484,7 +487,8 @@ public struct IPadRootLayout: View {
               let next = PaneLayoutNavigation.nextInOrder(
                 in: layout,
                 from: pane,
-                forward: forward
+                forward: forward,
+                excluding: selectedMobileRemovedSessionNames
               ) else {
             return
         }
@@ -833,6 +837,10 @@ public struct IPadRootLayout: View {
             hostID: appState.selectedHostId,
             worktreePath: appState.selectedWorktreePath
         )]
+    }
+
+    private var selectedMobileRemovedSessionNames: Set<String> {
+        selectedMobileCloseProjection?.removedSessionNames ?? []
     }
 
     private func pendingMobileFocusIsCurrent(

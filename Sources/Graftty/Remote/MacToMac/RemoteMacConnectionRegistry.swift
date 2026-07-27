@@ -104,7 +104,8 @@ final class RemoteMacConnectionRegistry {
     ) -> any RemoteMacHostConnection
     typealias PaneEnvironmentBuilder = @Sendable (
         RemoteMacPaneEnvironmentHost?,
-        @escaping @Sendable ([WorktreePanes]) async -> Void
+        @escaping @Sendable ([WorktreePanes]) async -> Void,
+        @escaping @Sendable (String) async -> Void
     ) async -> RemoteMacPaneEnvironment
     typealias PaneSnapshotHandler = @MainActor @Sendable (RemoteMacIdentity, [WorktreePanes]) -> Void
     typealias ConnectionStateHandler = @MainActor @Sendable (
@@ -152,8 +153,12 @@ final class RemoteMacConnectionRegistry {
                 )
             )
         }
-        self.paneEnvironmentBuilder = { remoteHost, onSnapshot in
-            await RemoteMacPaneEnvironment.build(remoteHost: remoteHost, onSnapshot: onSnapshot)
+        self.paneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
+            await RemoteMacPaneEnvironment.build(
+                remoteHost: remoteHost,
+                onSnapshot: onSnapshot,
+                onClosed: onClosed
+            )
         }
         self.onPaneSnapshot = { _, _ in }
         self.onConnectionStateChange = { _, _ in }
@@ -325,13 +330,23 @@ final class RemoteMacConnectionRegistry {
             try ensureCurrentAttempt(attemptID, identity: identity)
             try await connection.applyAnswerSDP(answer.sdp)
             try ensureCurrentAttempt(attemptID, identity: identity)
-            let environment = await paneEnvironmentBuilder(connection) { [weak self] snapshot in
-                await self?.publishPaneSnapshot(
-                    snapshot,
-                    identity: identity,
-                    entryID: attemptID
-                )
-            }
+            let environment = await paneEnvironmentBuilder(
+                connection,
+                { [weak self] snapshot in
+                    await self?.publishPaneSnapshot(
+                        snapshot,
+                        identity: identity,
+                        entryID: attemptID
+                    )
+                },
+                { [weak self] reason in
+                    await self?.handlePaneChannelClose(
+                        reason: reason,
+                        identity: identity,
+                        entryID: attemptID
+                    )
+                }
+            )
             paneEnvironment = environment
             try ensureCurrentAttempt(attemptID, identity: identity)
             guard !environment.isEmpty else {
@@ -399,6 +414,18 @@ final class RemoteMacConnectionRegistry {
         }
         guard matchedCurrentConnection else { return }
         onConnectionStateChange(identity, state)
+    }
+
+    private func handlePaneChannelClose(
+        reason: String,
+        identity: RemoteMacIdentity,
+        entryID: UUID
+    ) {
+        handleTerminalState(
+            .failed(reason: "panes-state channel closed: \(reason)"),
+            identity: identity,
+            entryID: entryID
+        )
     }
 
     private func publishPaneSnapshot(
@@ -522,6 +549,10 @@ private final class NegotiatingPanesStateDriver:
     PanesStateCallbacksConfigurable,
     @unchecked Sendable
 {
+    private enum NegotiationError: Error {
+        case channelClosedDuringOpen(String)
+    }
+
     private let connection: RemoteHostConnection
     private let lock = NSLock()
     private var onSnapshot: PanesStateChannelClient.OnSnapshot
@@ -569,7 +600,7 @@ private final class NegotiatingPanesStateDriver:
                 throw CancellationError()
             }
             try await v2.open()
-            await activate(v2, token: token)
+            try activate(v2, token: token)
         } catch {
             let shouldStop = lock.withLock {
                 openingClient = nil
@@ -594,7 +625,7 @@ private final class NegotiatingPanesStateDriver:
                     throw CancellationError()
                 }
                 try await legacy.open()
-                await activate(legacy, token: token)
+                try activate(legacy, token: token)
             } catch {
                 lock.withLock {
                     openingClient = nil
@@ -655,16 +686,20 @@ private final class NegotiatingPanesStateDriver:
     private func activate(
         _ client: PanesStateChannelClient,
         token: UUID
-    ) async {
-        let activation = lock.withLock {
+    ) throws {
+        let closeReason: String? = lock.withLock {
             openingClient = nil
             openingToken = nil
+            if let reason = closeDuringOpen.removeValue(forKey: token) {
+                return reason
+            }
             activeToken = token
             activeClient = client
-            return (closeDuringOpen.removeValue(forKey: token), onClosed)
+            return nil
         }
-        if let reason = activation.0 {
-            await activation.1(reason)
+        if let closeReason {
+            client.close()
+            throw NegotiationError.channelClosedDuringOpen(closeReason)
         }
     }
 
@@ -690,6 +725,8 @@ private final class NegotiatingPanesStateDriver:
         case .openFailed(let underlying):
             return isSubsystemRejection(underlying)
         case .channelClosed:
+            return false
+        case .timedOut:
             return false
         }
     }

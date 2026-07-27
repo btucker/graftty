@@ -18,6 +18,8 @@ struct RemoteWorktreeRelayRouterTests {
         let remote = try makeRemoteMac()
         let identity = RemoteMacIdentity(remote)
         let router = RemoteWorktreeRelayRouter()
+        let worktreeAttentionTimestamp = Date(timeIntervalSince1970: 1_000)
+        let paneAttentionTimestamp = Date(timeIntervalSince1970: 2_000)
         let directLayout = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.37,
@@ -43,7 +45,8 @@ struct RemoteWorktreeRelayRouterTests {
                     title: "agent",
                     attentionText: "Claude needs input",
                     isBusy: false,
-                    attentionSource: .agentStop
+                    attentionSource: .agentStop,
+                    attentionTimestamp: paneAttentionTimestamp
                 )
             )
         )
@@ -53,6 +56,7 @@ struct RemoteWorktreeRelayRouterTests {
             layout: directLayout,
             attentionText: "Claude needs input",
             attentionSource: .agentStop,
+            attentionTimestamp: worktreeAttentionTimestamp,
             origin: WorktreeOrigin(
                 deviceID: remote.id,
                 deviceLabel: remote.label,
@@ -83,7 +87,9 @@ struct RemoteWorktreeRelayRouterTests {
         #expect(row.route?.repositoryID == row.repositoryID)
         #expect(row.origin?.relayDepth == 1)
         #expect(row.attentionSource == .agentStop)
+        #expect(row.attentionTimestamp == worktreeAttentionTimestamp)
         #expect(row.layout?.leaves.map(\.title) == ["editor", "tests", "agent"])
+        #expect(row.layout?.leaves.last?.attentionTimestamp == paneAttentionTimestamp)
 
         guard case let .split(direction, ratio, _, right)? = row.layout else {
             Issue.record("expected the outer split to be preserved")
@@ -398,6 +404,7 @@ struct RemoteWorktreeRelayRouterTests {
         layout: PaneLayoutNode?,
         attentionText: String? = nil,
         attentionSource: AttentionSource? = nil,
+        attentionTimestamp: Date? = nil,
         origin: WorktreeOrigin?
     ) -> WorktreePanes {
         WorktreePanes(
@@ -412,6 +419,7 @@ struct RemoteWorktreeRelayRouterTests {
             stats: nil,
             attentionText: attentionText,
             attentionSource: attentionSource,
+            attentionTimestamp: attentionTimestamp,
             layout: layout,
             origin: origin
         )

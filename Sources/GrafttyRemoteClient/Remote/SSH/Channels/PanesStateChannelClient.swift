@@ -23,6 +23,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         case openFailed(any Error)
         case channelClosed
         case subsystemRejected
+        case timedOut
     }
 
     public typealias OnSnapshot = @Sendable ([WorktreePanes]) async -> Void
@@ -32,6 +33,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     private let parentHandler: NIOSSHHandler
     private let subsystemName: String
     private let requestReply: Bool
+    private let subsystemReplyTimeout: TimeAmount
 
     private let lock = NIOLock()
     /// Callbacks are mutable so the construction site can build the
@@ -42,8 +44,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
     private var childChannel: Channel?
-    private var subsystemReply:
-        CheckedContinuation<Void, Error>?
+    private var subsystemReplyWaiter: SSHSubsystemReplyWaiter?
     private var closed = false
     private var drainTask: Task<Void, Never>?
 
@@ -62,6 +63,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         parentHandler: NIOSSHHandler,
         subsystemName: String = SSHChannelTypeNames.panesState,
         requestReply: Bool = false,
+        subsystemReplyTimeout: TimeAmount = .seconds(30),
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed
     ) {
@@ -69,6 +71,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         self.parentHandler = parentHandler
         self.subsystemName = subsystemName
         self.requestReply = requestReply
+        self.subsystemReplyTimeout = subsystemReplyTimeout
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
         var cont: AsyncStream<Data>.Continuation!
@@ -122,7 +125,19 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                     return child.eventLoop.makeFailedFuture(error)
                 }
             }
-            lock.withLock { self.childChannel = child }
+            let replyWaiter = requestReply
+                ? SSHSubsystemReplyWaiter()
+                : nil
+            let acceptedChild = lock.withLock {
+                guard !closed else { return false }
+                childChannel = child
+                subsystemReplyWaiter = replyWaiter
+                return true
+            }
+            guard acceptedChild else {
+                child.close(promise: nil)
+                throw CancellationError()
+            }
             // Register the close handler IMMEDIATELY — before the subsystem
             // request — so that a partial-open failure still propagates
             // `onClosed` to the store. Otherwise the store's
@@ -156,24 +171,26 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 subsystem: subsystemName,
                 wantReply: requestReply
             )
-            if requestReply {
-                try await withCheckedThrowingContinuation { continuation in
-                    let alreadyPending = lock.withLock {
-                        guard subsystemReply == nil else { return true }
-                        subsystemReply = continuation
-                        return false
-                    }
-                    guard !alreadyPending else {
-                        continuation.resume(
-                            throwing: ClientError.channelClosed
+            if let replyWaiter {
+                try await replyWaiter.wait(
+                    scheduleTimeout: { callback in
+                        let scheduled = child.eventLoop.scheduleTask(
+                            in: self.subsystemReplyTimeout,
+                            callback
                         )
-                        return
+                        return { scheduled.cancel() }
+                    },
+                    timeoutError: ClientError.timedOut,
+                    onAbort: {
+                        child.close(promise: nil)
+                    },
+                    start: { [weak replyWaiter] in
+                        child.triggerUserOutboundEvent(subsystem).whenFailure {
+                            error in
+                            replyWaiter?.finish(.failure(error))
+                        }
                     }
-                    child.triggerUserOutboundEvent(subsystem).whenFailure {
-                        [weak self] error in
-                        self?.finishSubsystemReply(.failure(error))
-                    }
-                }
+                )
             } else {
                 try await child.triggerUserOutboundEvent(subsystem).get()
             }
@@ -184,7 +201,10 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             // already-registered closeFuture handler) will also fire and
             // finish the continuation, but we belt-and-suspenders it here
             // so a synchronous error path still cleans up.
-            let child = lock.withLock { childChannel }
+            let child = lock.withLock {
+                closed = true
+                return childChannel
+            }
             child?.close(promise: nil)
             throw ClientError.openFailed(error)
         }
@@ -194,7 +214,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public func close() {
         let child = lock.withLock { () -> Channel? in
             closed = true
-            return childChannel
+            let child = childChannel
+            childChannel = nil
+            return child
         }
         inboundContinuation.finish()
         finishSubsystemReply(.failure(ClientError.channelClosed))
@@ -216,7 +238,11 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     }
 
     private func handleChildClose() {
-        let onClosed = lock.withLock { self.onClosed }
+        let onClosed = lock.withLock {
+            closed = true
+            childChannel = nil
+            return self.onClosed
+        }
         // Finish the inbound stream so the drain task exits cleanly.
         inboundContinuation.finish()
         finishSubsystemReply(.failure(ClientError.channelClosed))
@@ -224,12 +250,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     }
 
     private func finishSubsystemReply(_ result: Result<Void, Error>) {
-        let continuation = lock.withLock {
-            let continuation = subsystemReply
-            subsystemReply = nil
-            return continuation
-        }
-        continuation?.resume(with: result)
+        let waiter = lock.withLock { subsystemReplyWaiter }
+        waiter?.finish(result)
     }
 }
 

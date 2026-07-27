@@ -11,12 +11,16 @@ struct GrafttyAppPaneLifecycleTests {
     relayed client opens one, the owning Mac shall start the worktree \
     without changing the owner's selected worktree.
     """)
-    func remoteOpenStartsClosedWorktree() {
-        let worktree = WorktreeEntry(
+    func remoteOpenStartsClosedWorktree() throws {
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        var worktree = WorktreeEntry(
             path: "/repo/feature",
             branch: "feature",
             state: .closed
         )
+        worktree.splitTree = SplitTree(root: .leaf(pane))
+        worktree.paneSessions[pane] = session
         var state = AppState(
             repos: [
                 RepoEntry(
@@ -32,21 +36,80 @@ struct GrafttyAppPaneLifecycleTests {
             set: { state = $0 }
         )
         let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: pane,
+            app: fakeApp(),
+            worktreePath: worktree.path,
+            socketPath: "/tmp/graftty-open-test.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+        manager.insertSurfaceForTesting(handle, for: pane)
 
         let result = GrafttyApp.startWorktree(
             path: worktree.path,
             appState: binding,
-            terminalManager: manager
+            terminalManager: manager,
+            startSurfacesInBackground: true
         )
 
         let opened = state.repos[0].worktrees[0]
-        let pane = opened.splitTree.allLeaves.first
         #expect(result == .started)
         #expect(opened.state == .running)
-        #expect(pane != nil)
-        #expect(pane.flatMap { opened.paneSessions[$0] } != nil)
-        #expect(pane.map(manager.isFirstPane) == true)
+        #expect(opened.splitTree.containsLeaf(pane))
+        #expect(opened.paneSessions[pane] == session)
+        #expect(manager.isFirstPane(pane))
+        #expect(backend.startCount == 1)
         #expect(state.selectedWorktreePath == "/repo/other")
+    }
+
+    @Test("local worktree open keeps zmx start deferred until layout")
+    func localOpenKeepsSurfaceStartDeferred() throws {
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        var worktree = WorktreeEntry(
+            path: "/repo/local",
+            branch: "local",
+            state: .closed
+        )
+        worktree.splitTree = SplitTree(root: .leaf(pane))
+        worktree.paneSessions[pane] = session
+        var state = AppState(
+            repos: [
+                RepoEntry(
+                    path: "/repo",
+                    displayName: "repo",
+                    worktrees: [worktree]
+                ),
+            ]
+        )
+        let binding = Binding<AppState>(
+            get: { state },
+            set: { state = $0 }
+        )
+        let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: pane,
+            app: fakeApp(),
+            worktreePath: worktree.path,
+            socketPath: "/tmp/graftty-open-test.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+        manager.insertSurfaceForTesting(handle, for: pane)
+
+        #expect(GrafttyApp.startWorktree(
+            path: worktree.path,
+            appState: binding,
+            terminalManager: manager
+        ) == .started)
+        #expect(backend.startCount == 0)
     }
 
     @Test("remote open is idempotent and refuses unavailable worktrees")
@@ -164,6 +227,11 @@ struct GrafttyAppPaneLifecycleTests {
             set: { state = $0 }
         )
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.recordPaneSession(
+            session,
+            for: slot,
+            worktreePath: source.path
+        )
 
         GrafttyApp.reassignPaneByPWD(
             appState: binding,
@@ -177,6 +245,11 @@ struct GrafttyAppPaneLifecycleTests {
         #expect(movedSource.paneSessions[slot] == nil)
         #expect(movedTarget.paneSessions[slot] == session)
         #expect(movedTarget.splitTree.containsLeaf(slot))
+        #expect(
+            manager.worktreePath(
+                forSessionName: ZmxLauncher.sessionName(for: session)
+            ) == target.path
+        )
     }
 
     @Test func defaultBranchStatusRequiresBehindDefaultCheckout() {

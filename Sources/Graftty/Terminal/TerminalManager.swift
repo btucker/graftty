@@ -784,6 +784,25 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID] = handle
     }
 
+    /// Start host-managed backends for a worktree that became running without
+    /// being selected in the local window. Ordinarily each backend starts
+    /// after its AppKit view's first settled layout; an authenticated remote
+    /// open deliberately leaves the owner's selection alone, so those views
+    /// may never mount.
+    @discardableResult
+    func startSurfacesForBackgroundLaunch(
+        in splitTree: SplitTree
+    ) -> Bool {
+        var allStarted = true
+        for terminalID in splitTree.allLeaves {
+            guard let handle = surfaces[terminalID] else { continue }
+            if !handle.startForBackgroundLaunch() {
+                allStarted = false
+            }
+        }
+        return allStarted
+    }
+
     /// Drop and return the cached grid size for a pane, if any. Peek-then-
     /// consume rather than consume-then-spawn so a failable `SurfaceHandle`
     /// init can roll back and leave the cache available for the next retry.

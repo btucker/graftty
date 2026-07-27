@@ -88,15 +88,23 @@ struct WorktreeListContentTests {
 
         #expect(WorktreeListContent.requiresManagementOpen(
             worktree(state: .closed),
+            includesRemoteWorktrees: true,
             providerAvailable: true
         ))
         #expect(!WorktreeListContent.requiresManagementOpen(
             worktree(state: .running),
+            includesRemoteWorktrees: true,
             providerAvailable: true
         ))
         #expect(!WorktreeListContent.requiresManagementOpen(
             worktree(state: .closed),
+            includesRemoteWorktrees: true,
             providerAvailable: false
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            includesRemoteWorktrees: false,
+            providerAvailable: true
         ))
         #expect(WorktreeListContent.shouldApplySelectionIntent(
             capturedGeneration: 4,
@@ -105,6 +113,20 @@ struct WorktreeListContentTests {
         #expect(!WorktreeListContent.shouldApplySelectionIntent(
             capturedGeneration: 4,
             currentGeneration: 5
+        ))
+    }
+
+    @Test("force-delete confirmation cannot cross host boundaries")
+    func forceDeleteConfirmationIsHostScoped() {
+        let originalHostID = UUID()
+
+        #expect(WorktreeListContent.forceDeleteMatchesHost(
+            capturedHostID: originalHostID,
+            currentHostID: originalHostID
+        ))
+        #expect(!WorktreeListContent.forceDeleteMatchesHost(
+            capturedHostID: originalHostID,
+            currentHostID: UUID()
         ))
     }
 }

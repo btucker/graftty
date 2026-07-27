@@ -149,6 +149,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// older hosts; consumers conservatively treat a missing source as a
     /// user notification.
     public let attentionSource: AttentionSource?
+    /// Timestamp of the active attention occurrence. New hosts include this
+    /// so a repeated notification with identical text is still observable;
+    /// nil preserves compatibility with snapshots from older hosts.
+    public let attentionTimestamp: Date?
     /// nil when the worktree has no panes currently running. Always
     /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
     public let layout: PaneLayoutNode?
@@ -170,6 +174,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         stats: WorktreeWireStats?,
         attentionText: String?,
         attentionSource: AttentionSource? = nil,
+        attentionTimestamp: Date? = nil,
         layout: PaneLayoutNode?,
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil
@@ -185,6 +190,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.stats = stats
         self.attentionText = attentionText
         self.attentionSource = attentionSource
+        self.attentionTimestamp = attentionTimestamp
         self.layout = layout
         self.origin = origin
         self.route = route
@@ -197,7 +203,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
-             layout, origin, route
+             attentionTimestamp, layout, origin, route
     }
 
     public init(from decoder: Decoder) throws {
@@ -219,6 +225,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
             AttentionSource.self,
             forKey: .attentionSource
         )
+        self.attentionTimestamp = try c.decodeIfPresent(
+            Date.self,
+            forKey: .attentionTimestamp
+        )
         self.layout = try c.decodeIfPresent(PaneLayoutNode.self, forKey: .layout)
         self.origin = try c.decodeIfPresent(WorktreeOrigin.self, forKey: .origin)
         self.route = try c.decodeIfPresent(WorktreeRoute.self, forKey: .route)
@@ -232,7 +242,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 ///
 /// Wire format uses a `"kind"` discriminator so the JSON is stable across
 /// Swift changes to indirect-enum Codable synthesis:
-///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?,"attentionSource":"…"?}`
+///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?,"attentionSource":"…"?,"attentionTimestamp":"…"?}`
 ///           (`isBusy` is omitted from the JSON when false, so idle leaves
 ///           keep their compact shape and legacy decoders are unaffected.
 ///           `attentionSource` is likewise optional — absent when the pane
@@ -241,7 +251,14 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 ///   - split: `{"kind":"split","direction":"horizontal","ratio":0.5,
 ///             "left":{…},"right":{…}}`
 public indirect enum PaneLayoutNode: Sendable, Hashable {
-    case leaf(sessionName: String, title: String, attentionText: String?, isBusy: Bool, attentionSource: AttentionSource?)
+    case leaf(
+        sessionName: String,
+        title: String,
+        attentionText: String?,
+        isBusy: Bool,
+        attentionSource: AttentionSource?,
+        attentionTimestamp: Date? = nil
+    )
     case split(direction: SplitAxis, ratio: Double, left: PaneLayoutNode, right: PaneLayoutNode)
 
     public enum SplitAxis: String, Codable, Sendable, Hashable {
@@ -261,6 +278,9 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
         /// (`.agentStop`) versus other attention sources. nil when the pane
         /// has no attention or the source is unknown.
         public let attentionSource: AttentionSource?
+        /// Timestamp of the active attention occurrence, when supplied by
+        /// the host. Distinguishes repeated notifications with equal text.
+        public let attentionTimestamp: Date?
 
         /// Falls back to the literal `"shell"` when the libghostty
         /// `SET_TITLE` action hasn't fired yet. Centralizing the
@@ -289,10 +309,18 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
 
     private func collectLeaves(into out: inout [Leaf]) {
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
+        case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            isBusy,
+            attentionSource,
+            attentionTimestamp
+        ):
             out.append(Leaf(sessionName: sessionName, title: title,
                             attentionText: attentionText, isBusy: isBusy,
-                            attentionSource: attentionSource))
+                            attentionSource: attentionSource,
+                            attentionTimestamp: attentionTimestamp))
         case let .split(_, _, left, right):
             left.collectLeaves(into: &out)
             right.collectLeaves(into: &out)
@@ -307,7 +335,8 @@ extension PaneLayoutNode: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, sessionName, title, attentionText, isBusy, attentionSource, direction, ratio, left, right
+        case kind, sessionName, title, attentionText, isBusy, attentionSource,
+             attentionTimestamp, direction, ratio, left, right
     }
 
     public init(from decoder: Decoder) throws {
@@ -320,7 +349,8 @@ extension PaneLayoutNode: Codable {
                 title: try c.decode(String.self, forKey: .title),
                 attentionText: try c.decodeIfPresent(String.self, forKey: .attentionText),
                 isBusy: try c.decodeIfPresent(Bool.self, forKey: .isBusy) ?? false,
-                attentionSource: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource)
+                attentionSource: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource),
+                attentionTimestamp: try c.decodeIfPresent(Date.self, forKey: .attentionTimestamp)
             )
         case .split:
             self = .split(
@@ -335,13 +365,21 @@ extension PaneLayoutNode: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
+        case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            isBusy,
+            attentionSource,
+            attentionTimestamp
+        ):
             try c.encode(Kind.leaf, forKey: .kind)
             try c.encode(sessionName, forKey: .sessionName)
             try c.encode(title, forKey: .title)
             try c.encodeIfPresent(attentionText, forKey: .attentionText)
             if isBusy { try c.encode(true, forKey: .isBusy) }
             try c.encodeIfPresent(attentionSource, forKey: .attentionSource)
+            try c.encodeIfPresent(attentionTimestamp, forKey: .attentionTimestamp)
         case let .split(direction, ratio, left, right):
             try c.encode(Kind.split, forKey: .kind)
             try c.encode(direction, forKey: .direction)

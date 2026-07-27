@@ -4,6 +4,67 @@ import NIOConcurrencyHelpers
 import NIOCore
 import NIOSSH
 
+struct WorktreeManagementRequestLifecycle: Sendable {
+    enum BeginResult: Equatable, Sendable {
+        case accepted(UInt64)
+        case busy
+        case closed
+    }
+
+    private enum State: Sendable {
+        case ready
+        case pending(UInt64)
+        case closed
+    }
+
+    private var state: State = .ready
+    private var nextRequestID: UInt64 = 0
+
+    var isClosed: Bool {
+        if case .closed = state { return true }
+        return false
+    }
+
+    func isPending(_ requestID: UInt64) -> Bool {
+        if case .pending(let pendingID) = state {
+            return pendingID == requestID
+        }
+        return false
+    }
+
+    mutating func begin() -> BeginResult {
+        switch state {
+        case .ready:
+            nextRequestID &+= 1
+            state = .pending(nextRequestID)
+            return .accepted(nextRequestID)
+        case .pending:
+            return .busy
+        case .closed:
+            return .closed
+        }
+    }
+
+    mutating func completeCurrent() -> Bool {
+        guard case .pending = state else { return false }
+        state = .ready
+        return true
+    }
+
+    mutating func poison(_ requestID: UInt64) -> Bool {
+        guard case .pending(let pendingID) = state,
+              pendingID == requestID else {
+            return false
+        }
+        state = .closed
+        return true
+    }
+
+    mutating func close() {
+        state = .closed
+    }
+}
+
 /// Client for the authenticated worktree-management subsystem.
 public final class WorktreeManagementChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
@@ -16,15 +77,31 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
 
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
+    private let subsystemReplyTimeout: TimeAmount
+    private let responseTimeout: TimeAmount
     private let lock = NIOLock()
     private var childChannel: Channel?
-    private var subsystemReply: CheckedContinuation<Void, Error>?
-    private var pending: CheckedContinuation<WorktreeManagementResponse, Error>?
+    private var subsystemReplyWaiter: SSHSubsystemReplyWaiter?
+    private struct PendingRequest {
+        let id: UInt64
+        let continuation:
+            CheckedContinuation<WorktreeManagementResponse, Error>
+    }
+    private var pending: PendingRequest?
+    private var requestLifecycle =
+        WorktreeManagementRequestLifecycle()
     private var deadline: Scheduled<Void>?
 
-    public init(parentChannel: Channel, parentHandler: NIOSSHHandler) {
+    public init(
+        parentChannel: Channel,
+        parentHandler: NIOSSHHandler,
+        subsystemReplyTimeout: TimeAmount = .seconds(30),
+        responseTimeout: TimeAmount = .seconds(30)
+    ) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
+        self.subsystemReplyTimeout = subsystemReplyTimeout
+        self.responseTimeout = responseTimeout
     }
 
     public func open() async throws {
@@ -55,34 +132,49 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
                     return child.eventLoop.makeFailedFuture(error)
                 }
             }
-            lock.withLock { childChannel = child }
+            let replyWaiter = SSHSubsystemReplyWaiter()
+            let acceptedChild = lock.withLock {
+                guard !requestLifecycle.isClosed else { return false }
+                childChannel = child
+                subsystemReplyWaiter = replyWaiter
+                return true
+            }
+            guard acceptedChild else {
+                child.close(promise: nil)
+                throw CancellationError()
+            }
             child.closeFuture.whenComplete { [weak self] _ in
-                self?.finishSubsystemReply(
-                    .failure(ClientError.channelClosed)
-                )
-                self?.failPending(ClientError.channelClosed)
+                self?.handleChildClose()
             }
             let request = SSHChannelRequestEvent.SubsystemRequest(
                 subsystem: SSHChannelTypeNames.worktreeManagement,
                 wantReply: true
             )
-            try await withCheckedThrowingContinuation { continuation in
-                let alreadyPending = lock.withLock {
-                    guard subsystemReply == nil else { return true }
-                    subsystemReply = continuation
-                    return false
+            try await replyWaiter.wait(
+                scheduleTimeout: { callback in
+                    let scheduled = child.eventLoop.scheduleTask(
+                        in: self.subsystemReplyTimeout,
+                        callback
+                    )
+                    return { scheduled.cancel() }
+                },
+                timeoutError: ClientError.timedOut,
+                onAbort: {
+                    child.close(promise: nil)
+                },
+                start: { [weak replyWaiter] in
+                    child.triggerUserOutboundEvent(request).whenFailure {
+                        error in
+                        replyWaiter?.finish(.failure(error))
+                    }
                 }
-                guard !alreadyPending else {
-                    continuation.resume(throwing: ClientError.channelClosed)
-                    return
-                }
-                child.triggerUserOutboundEvent(request).whenFailure {
-                    [weak self] error in
-                    self?.finishSubsystemReply(.failure(error))
-                }
-            }
+            )
         } catch {
-            lock.withLock { childChannel }?.close(promise: nil)
+            let child = lock.withLock {
+                requestLifecycle.close()
+                return childChannel
+            }
+            child?.close(promise: nil)
             throw ClientError.openFailed(error)
         }
     }
@@ -90,34 +182,78 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
     public func send(
         _ request: WorktreeManagementRequest
     ) async throws -> WorktreeManagementResponse {
-        guard let child = lock.withLock({ childChannel }) else {
+        guard let child = lock.withLock({
+            requestLifecycle.isClosed ? nil : childChannel
+        }) else {
             throw ClientError.channelClosed
         }
         let body = try JSONEncoder().encode(request)
         let buffer = child.allocator.buffer(bytes: body)
         let loop = child.eventLoop
         return try await withCheckedThrowingContinuation { continuation in
-            let busy = lock.withLock {
-                if pending != nil { return true }
-                pending = continuation
-                return false
+            let registration = lock.withLock {
+                guard childChannel != nil else {
+                    return WorktreeManagementRequestLifecycle
+                        .BeginResult.closed
+                }
+                let result = requestLifecycle.begin()
+                guard case .accepted(let requestID) = result else {
+                    return result
+                }
+                pending = PendingRequest(
+                    id: requestID,
+                    continuation: continuation
+                )
+                return result
             }
-            if busy {
-                continuation.resume(throwing: ClientError.busy)
+            guard case .accepted(let requestID) = registration else {
+                switch registration {
+                case .busy:
+                    continuation.resume(throwing: ClientError.busy)
+                case .closed:
+                    continuation.resume(
+                        throwing: ClientError.channelClosed
+                    )
+                case .accepted:
+                    break
+                }
                 return
             }
-            let scheduled = loop.scheduleTask(in: .seconds(30)) { [weak self] () -> Void in
-                self?.failPending(ClientError.timedOut)
+            let scheduled = loop.scheduleTask(in: responseTimeout) {
+                [weak self, weak child] () -> Void in
+                guard let child else { return }
+                self?.timeOutRequest(requestID, child: child)
             }
-            lock.withLock { deadline = scheduled }
+            let isPending = lock.withLock {
+                guard requestLifecycle.isPending(requestID),
+                      pending?.id == requestID else {
+                    return false
+                }
+                deadline = scheduled
+                return true
+            }
+            guard isPending else {
+                scheduled.cancel()
+                return
+            }
             child.writeAndFlush(buffer).whenFailure { [weak self] error in
-                self?.failPending(error)
+                self?.poisonRequest(
+                    requestID,
+                    error: error,
+                    child: child
+                )
             }
         }
     }
 
     public func close() {
-        lock.withLock { childChannel }?.close(promise: nil)
+        let child = lock.withLock {
+            requestLifecycle.close()
+            let child = childChannel
+            childChannel = nil
+            return child
+        }
+        child?.close(promise: nil)
         finishSubsystemReply(.failure(ClientError.channelClosed))
         failPending(ClientError.channelClosed)
     }
@@ -134,19 +270,24 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
         let result = Result {
             try JSONDecoder().decode(WorktreeManagementResponse.self, from: bytes)
         }
-        let continuation = lock.withLock {
-            let continuation = pending
-            pending = nil
-            deadline?.cancel()
-            deadline = nil
-            return continuation
-        }
+        let continuation:
+            CheckedContinuation<WorktreeManagementResponse, Error>? =
+            lock.withLock {
+                guard requestLifecycle.completeCurrent() else {
+                    return nil
+                }
+                let continuation = pending?.continuation
+                pending = nil
+                deadline?.cancel()
+                deadline = nil
+                return continuation
+            }
         continuation?.resume(with: result)
     }
 
     private func failPending(_ error: any Error) {
         let continuation = lock.withLock {
-            let continuation = pending
+            let continuation = pending?.continuation
             pending = nil
             deadline?.cancel()
             deadline = nil
@@ -156,12 +297,49 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
     }
 
     private func finishSubsystemReply(_ result: Result<Void, Error>) {
-        let continuation = lock.withLock {
-            let continuation = subsystemReply
-            subsystemReply = nil
-            return continuation
+        let waiter = lock.withLock { subsystemReplyWaiter }
+        waiter?.finish(result)
+    }
+
+    private func handleChildClose() {
+        lock.withLock {
+            requestLifecycle.close()
+            childChannel = nil
         }
-        continuation?.resume(with: result)
+        finishSubsystemReply(.failure(ClientError.channelClosed))
+        failPending(ClientError.channelClosed)
+    }
+
+    private func timeOutRequest(_ requestID: UInt64, child: Channel) {
+        poisonRequest(
+            requestID,
+            error: ClientError.timedOut,
+            child: child
+        )
+    }
+
+    private func poisonRequest(
+        _ requestID: UInt64,
+        error: any Error,
+        child: Channel
+    ) {
+        let continuation:
+            CheckedContinuation<WorktreeManagementResponse, Error>? =
+            lock.withLock {
+                guard pending?.id == requestID,
+                      requestLifecycle.poison(requestID) else {
+                    return nil
+                }
+                let continuation = pending?.continuation
+                pending = nil
+                deadline?.cancel()
+                deadline = nil
+                childChannel = nil
+                return continuation
+            }
+        guard let continuation else { return }
+        continuation.resume(throwing: error)
+        child.close(promise: nil)
     }
 }
 

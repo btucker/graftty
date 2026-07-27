@@ -114,7 +114,7 @@ struct RemoteMacConnectionRegistryTests {
                 try signalingResponse(url: request.url!, answer: SignalingAnswer(sdp: "v=0\nanswer\n"))
             },
             connectionFactory: { _, _ in connection },
-            paneEnvironmentBuilder: { _, _ in .empty }
+            paneEnvironmentBuilder: { _, _, _ in .empty }
         )
 
         await #expect(throws: RemoteMacConnectionRegistry.ConnectionError.paneEnvironmentUnavailable(RemoteMacIdentity(remote))) {
@@ -203,6 +203,76 @@ struct RemoteMacConnectionRegistryTests {
         }
     }
 
+    @Test("panes-state closure evicts the live entry and publishes failure")
+    func panesStateClosureEvictsLiveEntry() async throws {
+        let closeEmitter = RemoteMacPaneCloseEmitter()
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noffer\n",
+            paneCloseEmitter: closeEmitter
+        )
+        let stateRecorder = RemoteMacConnectionStateRecorder()
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connection }
+        )
+        registry.onConnectionStateChange = { identity, state in
+            stateRecorder.record(identity: identity, state: state)
+        }
+        let remote = try makeRemoteMac()
+        let identity = RemoteMacIdentity(remote)
+        _ = try await registry.connect(to: remote)
+
+        await closeEmitter.emit("relay-ended")
+        for _ in 0..<20 where registry.activeConnectionCount != 0 {
+            await Task.yield()
+        }
+        for _ in 0..<20 {
+            if await connection.closeCount == 1 { break }
+            await Task.yield()
+        }
+
+        #expect(registry.activeConnectionCount == 0)
+        let states = stateRecorder.states
+        #expect(states.count == 1)
+        #expect(states.first?.0 == identity)
+        #expect(
+            states.first?.1 == .failed(
+                reason: "panes-state channel closed: relay-ended"
+            )
+        )
+        #expect(await connection.closeCount == 1)
+    }
+
+    @Test("panes-state closure during setup cannot activate an entry")
+    func panesStateClosureDuringSetupFailsConnection() async throws {
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noffer\n",
+            closePanesDuringDriverCreationReason: "closed-during-open"
+        )
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connection }
+        )
+        let remote = try makeRemoteMac()
+
+        await #expect(throws: (any Error).self) {
+            _ = try await registry.connect(to: remote)
+        }
+
+        #expect(registry.activeConnectionCount == 0)
+        #expect(await connection.closeCount == 1)
+    }
+
     @Test("""
     @spec REMOTE-12.12: If a cached Remote Mac connection is already in a \
     terminal state when connect is requested, the registry shall evict and \
@@ -273,10 +343,11 @@ struct RemoteMacConnectionRegistryTests {
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         },
-        paneEnvironmentBuilder: @escaping RemoteMacConnectionRegistry.PaneEnvironmentBuilder = { remoteHost, onSnapshot in
+        paneEnvironmentBuilder: @escaping RemoteMacConnectionRegistry.PaneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
             await RemoteMacPaneEnvironment.build(
                 remoteHost: remoteHost,
-                onSnapshot: onSnapshot
+                onSnapshot: onSnapshot,
+                onClosed: onClosed
             )
         },
         onPaneSnapshot: @escaping RemoteMacConnectionRegistry.PaneSnapshotHandler = { _, _ in }
@@ -419,10 +490,41 @@ private final class RemoteMacSnapshotRecorder: @unchecked Sendable {
     }
 }
 
+private actor RemoteMacPaneCloseEmitter {
+    private var onClosed: (@Sendable (String) async -> Void)?
+
+    func install(_ onClosed: @escaping @Sendable (String) async -> Void) {
+        self.onClosed = onClosed
+    }
+
+    func emit(_ reason: String) async {
+        await onClosed?(reason)
+    }
+}
+
+private final class RemoteMacConnectionStateRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage:
+        [(RemoteMacIdentity, RemoteHostConnection.State)] = []
+
+    var states: [(RemoteMacIdentity, RemoteHostConnection.State)] {
+        lock.withLock { storage }
+    }
+
+    func record(
+        identity: RemoteMacIdentity,
+        state: RemoteHostConnection.State
+    ) {
+        lock.withLock { storage.append((identity, state)) }
+    }
+}
+
 private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private let offerSDP: String
     private let offerGate: OfferGate?
     private let snapshotEmitter: RemoteMacSnapshotEmitter?
+    private let paneCloseEmitter: RemoteMacPaneCloseEmitter?
+    private let closePanesDuringDriverCreationReason: String?
     private var createOfferCalls = 0
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
@@ -433,11 +535,16 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     init(
         offerSDP: String,
         offerGate: OfferGate? = nil,
-        snapshotEmitter: RemoteMacSnapshotEmitter? = nil
+        snapshotEmitter: RemoteMacSnapshotEmitter? = nil,
+        paneCloseEmitter: RemoteMacPaneCloseEmitter? = nil,
+        closePanesDuringDriverCreationReason: String? = nil
     ) {
         self.offerSDP = offerSDP
         self.offerGate = offerGate
         self.snapshotEmitter = snapshotEmitter
+        self.paneCloseEmitter = paneCloseEmitter
+        self.closePanesDuringDriverCreationReason =
+            closePanesDuringDriverCreationReason
     }
 
     var createOfferCallCount: Int { createOfferCalls }
@@ -479,6 +586,10 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         onClosed: @escaping @Sendable (String) async -> Void
     ) async throws -> any PanesStateChannelDriver {
         await snapshotEmitter?.install(onSnapshot)
+        await paneCloseEmitter?.install(onClosed)
+        if let closePanesDuringDriverCreationReason {
+            await onClosed(closePanesDuringDriverCreationReason)
+        }
         return FakePanesStateDriver()
     }
 

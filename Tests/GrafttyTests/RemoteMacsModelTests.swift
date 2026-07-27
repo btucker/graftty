@@ -743,8 +743,10 @@ struct RemoteMacsModelTests {
         func snapshot(
             worktreeAttention: String? = nil,
             worktreeSource: AttentionSource? = nil,
+            worktreeAttentionTimestamp: Date? = nil,
             paneAttention: String? = nil,
-            source: AttentionSource? = nil
+            source: AttentionSource? = nil,
+            paneAttentionTimestamp: Date? = nil
         ) -> [WorktreePanes] {
             [
                 WorktreePanes(
@@ -759,12 +761,14 @@ struct RemoteMacsModelTests {
                     stats: nil,
                     attentionText: worktreeAttention,
                     attentionSource: worktreeSource,
+                    attentionTimestamp: worktreeAttentionTimestamp,
                     layout: .leaf(
                         sessionName: "agent-pane",
                         title: "agent",
                         attentionText: paneAttention,
                         isBusy: false,
-                        attentionSource: source
+                        attentionSource: source,
+                        attentionTimestamp: paneAttentionTimestamp
                     ),
                     origin: WorktreeOrigin(
                         deviceID: remote.id,
@@ -783,14 +787,32 @@ struct RemoteMacsModelTests {
         #expect(events.isEmpty)
 
         registry.onPaneSnapshot(identity, snapshot())
+        let firstOccurrence = Date(timeIntervalSince1970: 1_700_000_100)
         registry.onPaneSnapshot(
             identity,
-            snapshot(worktreeAttention: "deploy finished")
+            snapshot(
+                worktreeAttention: "deploy finished",
+                worktreeAttentionTimestamp: firstOccurrence
+            )
         )
         #expect(events.count == 1)
         #expect(events[0].kind == .userNotify)
         #expect(events[0].worktreeID == "/repos/app/.worktrees/feature")
         #expect(events[0].paneID == nil)
+        #expect(events[0].timestamp == firstOccurrence)
+
+        // A repeated notification is a new occurrence even when its visible
+        // text/source are unchanged and the original badge is still active.
+        let repeatedOccurrence = firstOccurrence.addingTimeInterval(1)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                worktreeAttentionTimestamp: repeatedOccurrence
+            )
+        )
+        #expect(events.count == 2)
+        #expect(events[1].timestamp == repeatedOccurrence)
 
         registry.onPaneSnapshot(identity, snapshot())
         registry.onPaneSnapshot(
@@ -800,9 +822,9 @@ struct RemoteMacsModelTests {
                 source: .agentStop
             )
         )
-        #expect(events.count == 2)
-        #expect(events[1].kind == .agentStop)
-        #expect(events[1].paneID == "agent-pane")
+        #expect(events.count == 3)
+        #expect(events[2].kind == .agentStop)
+        #expect(events[2].paneID == "agent-pane")
 
         registry.onPaneSnapshot(identity, snapshot())
         registry.onPaneSnapshot(
@@ -812,9 +834,9 @@ struct RemoteMacsModelTests {
                 worktreeSource: .agentStop
             )
         )
-        #expect(events.count == 3)
-        #expect(events[2].kind == .agentStop)
-        #expect(events[2].paneID == nil)
+        #expect(events.count == 4)
+        #expect(events[3].kind == .agentStop)
+        #expect(events[3].paneID == nil)
 
         // Reconnect restoration remains silent even if the badge persists.
         model.disconnect(identity: identity)
@@ -825,7 +847,7 @@ struct RemoteMacsModelTests {
                 worktreeSource: .agentStop
             )
         )
-        #expect(events.count == 3)
+        #expect(events.count == 4)
 
         // Command-finished attention is a visual status marker, not a system
         // notification.
@@ -834,7 +856,7 @@ struct RemoteMacsModelTests {
             identity,
             snapshot(paneAttention: "✓", source: .commandFinished)
         )
-        #expect(events.count == 3)
+        #expect(events.count == 4)
     }
 
     @Test("""
