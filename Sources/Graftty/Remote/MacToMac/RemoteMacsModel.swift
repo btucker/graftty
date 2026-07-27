@@ -36,6 +36,15 @@ final class RemoteMacsModel: ObservableObject {
         }
         registry.onConnectionStateChange = { [weak self] identity, state in
             guard let self else { return }
+            // A host-key mismatch is classified from the typed SSH error in
+            // `connect(to:)`. Its transport also publishes a generic terminal
+            // state, sometimes before and sometimes after that error arrives.
+            // Once classified, no generic callback may erase the actionable
+            // trust state.
+            guard self.connectionStates[identity] != .needsPairing else {
+                self.worktreePanesByRemote[identity] = nil
+                return
+            }
             self.connectAttemptIDs[identity] = nil
             switch state {
             case .failed:
@@ -103,9 +112,14 @@ final class RemoteMacsModel: ObservableObject {
             }
             return entry
         } catch {
-            if connectAttemptIDs[identity] == attemptID {
+            let requiresPairing = Self.requiresPairing(after: error)
+            let attemptIsCurrent = connectAttemptIDs[identity] == attemptID
+            let terminalCallbackFinishedAttempt = requiresPairing
+                && connectAttemptIDs[identity] == nil
+                && connectionStates[identity] == .failed
+            if attemptIsCurrent || terminalCallbackFinishedAttempt {
                 connectAttemptIDs[identity] = nil
-                connectionStates[identity] = .failed
+                connectionStates[identity] = requiresPairing ? .needsPairing : .failed
             }
             throw error
         }
@@ -168,9 +182,9 @@ final class RemoteMacsModel: ObservableObject {
         // connection back to `.discovered`; only note reachability when the
         // remote is otherwise idle.
         switch connectionState(for: identity) {
-        case .connecting, .connected:
+        case .connecting, .connected, .needsPairing:
             break
-        case .offline, .discovered, .failed, .needsPairing:
+        case .offline, .discovered, .failed:
             connectionStates[identity] = .discovered
         }
     }
@@ -215,6 +229,13 @@ final class RemoteMacsModel: ObservableObject {
         components.query = nil
         components.fragment = nil
         return components.url
+    }
+
+    private static func requiresPairing(after error: Error) -> Bool {
+        guard case PinnedHostKeyError.hostKeyMismatch = error else {
+            return false
+        }
+        return true
     }
 
     private func clearDiscoveryCandidates() {

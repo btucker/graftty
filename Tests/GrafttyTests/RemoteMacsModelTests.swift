@@ -250,6 +250,61 @@ struct RemoteMacsModelTests {
         #expect(model.connectionState(for: identity) == .offline)
     }
 
+    @Test("""
+    @spec REMOTE-12.14: If a saved Remote Mac presents a host key that does \
+    not match its pinned fingerprint, the application shall fail closed, \
+    transition the Mac to needs pairing, and preserve that state through \
+    connection failure callbacks and rediscovery rather than treating \
+    reachability as renewed trust.
+    """)
+    func hostKeyMismatchRequiresPairing() async throws {
+        let registryReference = RemoteMacsModelRegistryReference()
+        let expectedFingerprint = try fingerprint(0x22)
+        let offeredFingerprint = try fingerprint(0x33)
+        let registry = RemoteMacConnectionRegistry(factory: { _, identity in
+            // The live transport publishes `.failed` before its typed SSH
+            // mismatch reaches `connect(to:)`; force that ordering here so
+            // the generic callback cannot consume the model's attempt token.
+            registryReference.registry?.onConnectionStateChange(
+                identity,
+                .failed(reason: "SSH host key mismatch")
+            )
+            throw PinnedHostKeyError.hostKeyMismatch(
+                expected: expectedFingerprint,
+                offered: offeredFingerprint
+            )
+        })
+        registryReference.registry = registry
+
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let identity = RemoteMacIdentity(remote)
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+
+        do {
+            _ = try await model.connect(to: remote)
+            Issue.record("Expected the mismatched host key to reject the connection")
+        } catch let error as PinnedHostKeyError {
+            #expect(error == .hostKeyMismatch(
+                expected: expectedFingerprint,
+                offered: offeredFingerprint
+            ))
+        }
+
+        #expect(model.connectionState(for: identity) == .needsPairing)
+
+        registry.onConnectionStateChange(
+            identity,
+            .failed(reason: "late terminal callback")
+        )
+        #expect(model.connectionState(for: identity) == .needsPairing)
+
+        try model.publishDiscoveryCandidate(candidate())
+        #expect(model.connectionState(for: identity) == .needsPairing)
+    }
+
     @Test("live panes snapshots from registry update sidebar projection")
     func livePaneSnapshotsUpdateSidebarProjection() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -370,6 +425,11 @@ struct RemoteMacsModelTests {
         let error = try JSONDecoder.iso8601().decode(PairingErrorResponse.self, from: offerResponse.body)
         #expect(error.code == .hostBusy)
     }
+}
+
+@MainActor
+private final class RemoteMacsModelRegistryReference {
+    var registry: RemoteMacConnectionRegistry?
 }
 
 private final class FakeDiscoveryBrowser: RemoteMacDiscoveryBrowsing {

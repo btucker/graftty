@@ -1934,6 +1934,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.13** When an obsolete Remote Mac pane subscription emits after disconnect or replacement, the registry shall discard that snapshot instead of overwriting the current sidebar projection.
 
+**REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
