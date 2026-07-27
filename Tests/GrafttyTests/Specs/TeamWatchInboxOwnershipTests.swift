@@ -161,7 +161,15 @@ struct TeamWatchInboxOwnershipTests {
         defer { try? writer.close() }
         try pipe.fileHandleForReading.close()
 
-        #expect(!TeamWatchInbox.writeToStderr("watch-inbox timeout\n", handle: writer))
+        #expect(!TeamWatchInbox.writeToStderr(
+            "watch-inbox timeout\n",
+            fileDescriptor: writer.fileDescriptor
+        ))
+    }
+
+    @Test("Invalid stderr descriptor does not crash.")
+    func invalidStderrDescriptorDoesNotCrash() {
+        #expect(!TeamWatchInbox.writeToStderr("message\n", fileDescriptor: -1))
     }
 
     @Test("Resolved watcher output still reaches an open stderr pipe.")
@@ -170,7 +178,10 @@ struct TeamWatchInboxOwnershipTests {
         let writer = pipe.fileHandleForWriting
         let message = "worktree message from main:\nhello\n"
 
-        #expect(TeamWatchInbox.writeToStderr(message, handle: writer))
+        #expect(TeamWatchInbox.writeToStderr(
+            message,
+            fileDescriptor: writer.fileDescriptor
+        ))
         try writer.close()
 
         let received = pipe.fileHandleForReading.readDataToEndOfFile()

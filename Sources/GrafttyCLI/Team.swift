@@ -749,17 +749,17 @@ struct TeamWatchInbox: ParsableCommand {
     @discardableResult
     static func writeToStderr(
         _ text: String,
-        handle: FileHandle = .standardError
+        fileDescriptor: Int32 = STDERR_FILENO
     ) -> Bool {
         guard !text.isEmpty else { return true }
 
         // A long-lived asyncRewake watcher may outlive the hook process that
         // owns its stderr pipe. Disable SIGPIPE for this descriptor, then use
-        // Foundation's throwing API so EPIPE/EBADF becomes a discarded Swift
-        // error instead of an uncatchable NSFileHandleOperationException.
-        _ = Darwin.fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+        // the POSIX writer so EPIPE/EBADF becomes a discarded Swift error
+        // instead of an uncatchable NSFileHandleOperationException.
+        _ = Darwin.fcntl(fileDescriptor, F_SETNOSIGPIPE, 1)
         do {
-            try handle.write(contentsOf: Data(text.utf8))
+            try SocketIO.writeAll(fd: fileDescriptor, string: text)
             return true
         } catch {
             return false
