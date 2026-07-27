@@ -118,6 +118,7 @@ final class RemoteWorktreeRelayRouter {
                     prBadge: worktree.prBadge,
                     stats: worktree.stats,
                     attentionText: worktree.attentionText,
+                    attentionSource: worktree.attentionSource,
                     layout: layout,
                     origin: WorktreeOrigin(
                         deviceID: remoteMac.id,
@@ -260,6 +261,29 @@ final class RemoteWorktreeRelayRouter {
         return (worktreeAlias, paneAlias)
     }
 
+    func registerCreatedPane(
+        identity: RemoteMacIdentity,
+        worktreePath: String,
+        sessionName: String
+    ) -> String {
+        let alias = Self.alias(
+            kind: "pane",
+            identity: identity,
+            value: sessionName
+        )
+        let target = RelayedPaneTarget(
+            identity: identity,
+            worktreePath: worktreePath,
+            sessionName: sessionName
+        )
+        panesByAlias[alias] = target
+        pendingPanesByAlias[alias] = PendingRoute(
+            target: target,
+            expiresAt: now().addingTimeInterval(pendingRouteLifetime)
+        )
+        return alias
+    }
+
     private func promoteLayout(
         _ layout: PaneLayoutNode,
         identity: RemoteMacIdentity,
@@ -344,7 +368,10 @@ private extension Data {
 
 /// Adapts a downstream SSH terminal client to the host agent's byte-stream
 /// interface so an authenticated one-hop client can attach through this Mac.
-final class RelayedTerminalByteStream: GrafttyKit.TerminalByteStream, @unchecked Sendable {
+final class RelayedTerminalByteStream:
+    GrafttyKit.TerminalByteStream,
+    GrafttyKit.TerminalSizeReporting,
+    @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
 
     private let client: any WebSocketClient & Sendable
@@ -353,9 +380,25 @@ final class RelayedTerminalByteStream: GrafttyKit.TerminalByteStream, @unchecked
     private var receiveTask: Task<Void, Never>?
     private var closed = false
     private var claimedControl = false
+    private var ownershipSnapshot: DisplayOwnershipSnapshot?
+    private var latestPTYSize: (cols: UInt16, rows: UInt16)?
+    private var ptySizeHandler: ((_ cols: UInt16, _ rows: UInt16) -> Void)?
     private var cols = 80
     private var rows = 24
     private let displayClientID = DisplayClientID(UUID().uuidString)
+
+    var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? {
+        get { lock.withLock { ptySizeHandler } }
+        set {
+            let currentSize = lock.withLock {
+                ptySizeHandler = newValue
+                return latestPTYSize
+            }
+            if let newValue, let currentSize {
+                newValue(currentSize.cols, currentSize.rows)
+            }
+        }
+    }
 
     init(client: any WebSocketClient & Sendable) {
         self.client = client
@@ -377,7 +420,9 @@ final class RelayedTerminalByteStream: GrafttyKit.TerminalByteStream, @unchecked
                     switch try await client.receive() {
                     case .binary(let data) where !data.isEmpty:
                         self.continuation.yield(data)
-                    case .binary, .text:
+                    case .text(let text):
+                        self.handleTextFrame(text)
+                    case .binary:
                         break
                     }
                 } catch {
@@ -416,25 +461,90 @@ final class RelayedTerminalByteStream: GrafttyKit.TerminalByteStream, @unchecked
             self.rows = rows
             return (
                 isOpen: !closed,
-                shouldClaim: claimControlIfNeededLocked()
+                ownerEpoch: isOwnerLocked
+                    ? ownershipSnapshot?.epoch
+                    : nil,
+                authoritativeSize: latestPTYSize,
+                sizeHandler: ptySizeHandler
             )
         }
         guard state.isOpen else { return }
-        if state.shouldClaim {
-            await client.takeControl(
-                clientID: displayClientID,
-                kind: .mac,
-                cols: cols,
-                rows: rows
-            )
+        if client.supportsWebControlTextFrames {
+            if let ownerEpoch = state.ownerEpoch {
+                await client.ownerResize(
+                    clientID: displayClientID,
+                    epoch: ownerEpoch,
+                    cols: cols,
+                    rows: rows
+                )
+            } else if let size = state.authoritativeSize {
+                // The outer session accepted the follower's window-change
+                // before this adapter could reject it. Reassert the actual
+                // downstream owner's grid even when it has not changed.
+                state.sizeHandler?(size.cols, size.rows)
+            }
+        } else {
+            await client.resize(cols: cols, rows: rows)
         }
-        await client.resize(cols: cols, rows: rows)
+    }
+
+    private var isOwnerLocked: Bool {
+        ownershipSnapshot?.ownerClientID == displayClientID
+            && ownershipSnapshot?.ownerKind == .mac
+    }
+
+    private func handleTextFrame(_ text: String) {
+        guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8))
+        else { return }
+        switch envelope {
+        case .ownership(let snapshot):
+            handleOwnershipSnapshot(snapshot)
+        case .grid(let cols, let rows):
+            reportPTYSize(cols: cols, rows: rows)
+        case .resize, .hello, .takeControl, .ownerResize:
+            break
+        }
+    }
+
+    private func handleOwnershipSnapshot(
+        _ snapshot: DisplayOwnershipSnapshot
+    ) {
+        let callback: ((_ cols: UInt16, _ rows: UInt16) -> Void)? =
+            lock.withLock {
+            if let previous = ownershipSnapshot,
+               (snapshot.epoch < previous.epoch
+                    || (snapshot.epoch == previous.epoch
+                        && snapshot.revision < previous.revision)) {
+                return nil
+            }
+            ownershipSnapshot = snapshot
+            claimedControl = snapshot.ownerClientID == displayClientID
+                && snapshot.ownerKind == .mac
+            let size = (snapshot.grid.cols, snapshot.grid.rows)
+            let changed = latestPTYSize?.cols != size.0
+                || latestPTYSize?.rows != size.1
+            latestPTYSize = size
+            return changed ? ptySizeHandler : nil
+        }
+        callback?(snapshot.grid.cols, snapshot.grid.rows)
+    }
+
+    private func reportPTYSize(cols: UInt16, rows: UInt16) {
+        let callback: ((_ cols: UInt16, _ rows: UInt16) -> Void)? =
+            lock.withLock {
+            let changed = latestPTYSize?.cols != cols
+                || latestPTYSize?.rows != rows
+            latestPTYSize = (cols, rows)
+            return changed ? ptySizeHandler : nil
+        }
+        callback?(cols, rows)
     }
 
     func close() async {
         let task = lock.withLock { () -> Task<Void, Never>? in
             guard !closed else { return nil }
             closed = true
+            ptySizeHandler = nil
             let task = receiveTask
             receiveTask = nil
             return task

@@ -382,7 +382,10 @@ struct RemoteMacsSection: View {
                     baseRef: worktree.stats?.baseRef,
                     prBadge: worktree.prBadge,
                     attentionStyle: worktree.attentionText.map {
-                        AttentionCapsuleStyle.from(text: $0, source: .userNotify)
+                        AttentionCapsuleStyle.from(
+                            text: $0,
+                            source: worktree.attentionSource
+                        )
                     }
                 )
             }

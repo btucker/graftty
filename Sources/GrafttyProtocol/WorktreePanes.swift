@@ -145,6 +145,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// Rendered as a red capsule next to the branch label. nil when
     /// there is no active worktree-scoped ping.
     public let attentionText: String?
+    /// Source of worktree-scoped attention. Optional for compatibility with
+    /// older hosts; consumers conservatively treat a missing source as a
+    /// user notification.
+    public let attentionSource: AttentionSource?
     /// nil when the worktree has no panes currently running. Always
     /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
     public let layout: PaneLayoutNode?
@@ -165,6 +169,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         prBadge: PRBadge?,
         stats: WorktreeWireStats?,
         attentionText: String?,
+        attentionSource: AttentionSource? = nil,
         layout: PaneLayoutNode?,
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil
@@ -179,6 +184,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.prBadge = prBadge
         self.stats = stats
         self.attentionText = attentionText
+        self.attentionSource = attentionSource
         self.layout = layout
         self.origin = origin
         self.route = route
@@ -190,7 +196,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// safe defaults rather than failing the decode.
     private enum CodingKeys: String, CodingKey {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
-             isMainCheckout, prBadge, stats, attentionText, layout, origin, route
+             isMainCheckout, prBadge, stats, attentionText, attentionSource,
+             layout, origin, route
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,6 +215,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.prBadge = try c.decodeIfPresent(PRBadge.self, forKey: .prBadge)
         self.stats = try c.decodeIfPresent(WorktreeWireStats.self, forKey: .stats)
         self.attentionText = try c.decodeIfPresent(String.self, forKey: .attentionText)
+        self.attentionSource = try c.decodeIfPresent(
+            AttentionSource.self,
+            forKey: .attentionSource
+        )
         self.layout = try c.decodeIfPresent(PaneLayoutNode.self, forKey: .layout)
         self.origin = try c.decodeIfPresent(WorktreeOrigin.self, forKey: .origin)
         self.route = try c.decodeIfPresent(WorktreeRoute.self, forKey: .route)

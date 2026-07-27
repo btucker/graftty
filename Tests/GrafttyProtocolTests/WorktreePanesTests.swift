@@ -6,7 +6,11 @@ import Testing
 @Suite("WorktreePanes wire payload")
 struct WorktreePanesTests {
 
-    @Test
+    @Test("""
+    @spec REMOTE-13.21: Remote worktree snapshots shall preserve the source \
+    of worktree-scoped attention so direct and relayed rows and macOS \
+    notifications retain agent-stop versus user-notify semantics.
+    """)
     func fullPayloadRoundTrips() throws {
         let original = WorktreePanes(
             path: "/repo/.worktrees/feat",
@@ -29,6 +33,7 @@ struct WorktreePanesTests {
                 baseRef: "origin/main"
             ),
             attentionText: "tests failed",
+            attentionSource: .agentStop,
             layout: .split(
                 direction: .horizontal,
                 ratio: 0.5,
@@ -65,6 +70,7 @@ struct WorktreePanesTests {
         #expect(decoded.prBadge == nil)
         #expect(decoded.stats == nil)
         #expect(decoded.attentionText == nil)
+        #expect(decoded.attentionSource == nil)
         #expect(decoded.layout == nil)
     }
 

@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
 
 /// @spec IPAD-1.1
@@ -20,7 +21,57 @@ public struct IPadRootLayout: View {
     @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var worktreeListRefreshToken: Int = 0
+    @State private var explicitSelectionGeneration: UInt64 = 0
+    @State private var pendingMobileSplits: [PendingMobileSplit] = []
+    @State private var pendingMobileMutationOrder: [UUID] = []
+    @State private var mobileMutationInFlight: UUID?
+    @State private var pendingMobileCloses: [PendingMobileClose] = []
+    @State private var pendingMobileCreatedFocus: PendingMobileCreatedFocus?
+    @State private var pendingMobileCloseProjections:
+        [MobileWorktreeKey: PendingMobileCloseProjection] = [:]
     @State private var keybindingSet = MobileGhosttyKeybindingSet.loading
+
+    private struct PendingMobileSplit {
+        let id: UUID
+        var target: String
+        let direction: PaneControlRequest.SplitDirection
+        let client: PaneControlClient
+        let hostID: UUID?
+        let worktreePath: String?
+        let selectionGeneration: UInt64
+        var existingSessionNames: Set<String>
+        var existingSessionOrder: [String]
+        var legacySucceeded = false
+    }
+
+    private struct PendingMobileClose {
+        let id: UUID
+        var target: String
+        let client: PaneControlClient
+        var closeProjection: PaneCloseProjection
+        let selectionGeneration: UInt64
+        let hostID: UUID?
+        let worktreePath: String?
+    }
+
+    private struct PendingMobileCreatedFocus {
+        let sessionName: String?
+        let hostID: UUID?
+        let worktreePath: String?
+        let selectionGeneration: UInt64
+        let projectedSessionOrder: [String]
+        let removedSessionName: String?
+    }
+
+    private struct MobileWorktreeKey: Hashable {
+        let hostID: UUID?
+        let worktreePath: String?
+    }
+
+    private struct PendingMobileCloseProjection {
+        var removedSessionNames: Set<String>
+        var projectedSessionOrder: [String]
+    }
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -60,7 +111,15 @@ public struct IPadRootLayout: View {
                             ),
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { leaf in selectPane(leaf) },
-                            onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) },
+                            onListChanged: { list in
+                                Self.onWorktreeListChanged(
+                                    appState: appState,
+                                    list: list
+                                )
+                                reconcileMobileCloseProjections(in: list)
+                                resolveLegacyMobileSplit(in: list)
+                                applyPendingMobileCreatedFocus(in: list)
+                            },
                             externalRefreshToken: worktreeListRefreshToken
                         )
                     } else {
@@ -136,6 +195,14 @@ public struct IPadRootLayout: View {
             Task {
                 await paneEnvironment.close()
             }
+        }
+        .onChange(of: appState.selectedHostId) { _, _ in
+            explicitSelectionGeneration &+= 1
+            pendingMobileSplits.removeAll()
+            pendingMobileCloses.removeAll()
+            pendingMobileMutationOrder.removeAll()
+            mobileMutationInFlight = nil
+            pendingMobileCreatedFocus = nil
         }
     }
 
@@ -215,6 +282,58 @@ public struct IPadRootLayout: View {
         return [.right, .down, .left, .up]
     }
 
+    static func shouldApplySplitCreatedFocus(
+        capturedHostID: UUID?,
+        capturedWorktreePath: String?,
+        capturedSelectionGeneration: UInt64,
+        currentHostID: UUID?,
+        currentWorktreePath: String?,
+        currentSelectionGeneration: UInt64
+    ) -> Bool {
+        capturedHostID == currentHostID
+            && capturedWorktreePath == currentWorktreePath
+            && capturedSelectionGeneration == currentSelectionGeneration
+    }
+
+    static func rebasedSplitTarget(
+        _ target: String,
+        completedTarget: String,
+        createdSessionName: String
+    ) -> String {
+        target == completedTarget ? createdSessionName : target
+    }
+
+    static func resolvedCreatedFocus(
+        sessionName: String,
+        worktreePath: String?,
+        in worktrees: [WorktreePanes]
+    ) -> String? {
+        guard let worktree = worktrees.first(where: {
+            $0.path == worktreePath
+        }),
+        worktree.layout?.leaves.contains(where: {
+            $0.sessionName == sessionName
+        }) == true else {
+            return nil
+        }
+        return sessionName
+    }
+
+    static func legacyCreatedSessionName(
+        existingSessionNames: Set<String>,
+        worktreePath: String?,
+        in worktrees: [WorktreePanes]
+    ) -> String? {
+        guard let worktree = worktrees.first(where: {
+            $0.path == worktreePath
+        }) else {
+            return nil
+        }
+        return worktree.layout?.leaves.lazy.map(\.sessionName).first {
+            !existingSessionNames.contains($0)
+        }
+    }
+
     public static func commandKind(for action: GhosttyAction) -> GhosttyCommandKind? {
         guard let entry = GhosttyCommandRegistry[action],
               entry.isSupportedOniPad,
@@ -231,11 +350,15 @@ public struct IPadRootLayout: View {
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
+        explicitSelectionGeneration &+= 1
         Self.applyWorktreeSelection(appState: appState, worktree: wt)
+        applySelectedMobileCloseProjection()
     }
 
     private func selectPane(_ leaf: PaneLayoutNode.Leaf) {
+        explicitSelectionGeneration &+= 1
         Self.applyPaneSelection(appState: appState, leaf: leaf)
+        applySelectedMobileCloseProjection()
     }
 
     private func selectWorktree(path: String) {
@@ -280,13 +403,27 @@ public struct IPadRootLayout: View {
         return appState.latestWorktrees.first { $0.path == path }?.layout
     }
 
+    private func applySelectedMobileCloseProjection() {
+        guard let closeProjection = selectedMobileCloseProjection else {
+            return
+        }
+        if appState.focusedPaneId.flatMap({
+            closeProjection.projectedSessionOrder.contains($0) ? $0 : nil
+        }) == nil {
+            appState.focusedPaneId =
+                closeProjection.projectedSessionOrder.first
+        }
+    }
+
     private func performGhosttyCommand(_ action: GhosttyAction) {
         guard let kind = Self.commandKind(for: action) else { return }
         switch kind {
         case let .split(direction):
-            Task { await splitFocusedPane(Self.paneControlSplitDirection(for: direction)) }
+            queueSplitFocusedPane(
+                Self.paneControlSplitDirection(for: direction)
+            )
         case .closePane:
-            Task { await closeFocusedPane() }
+            queueCloseFocusedPane()
         case let .focusPane(direction):
             focusPane(Self.paneLayoutDirection(for: direction))
         case let .focusPaneByOrder(forward):
@@ -337,6 +474,7 @@ public struct IPadRootLayout: View {
             return
         }
         appState.focusedPaneId = next
+        explicitSelectionGeneration &+= 1
         appState.requestActiveTerminal()
     }
 
@@ -351,38 +489,552 @@ public struct IPadRootLayout: View {
             return
         }
         appState.focusedPaneId = next
+        explicitSelectionGeneration &+= 1
         appState.requestActiveTerminal()
     }
 
-    private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
-        guard let target = appState.focusedPaneId,
+    private func queueSplitFocusedPane(
+        _ direction: PaneControlRequest.SplitDirection
+    ) {
+        guard let target = effectiveMobilePaneControlTarget,
               let client = paneEnvironment.paneControlClient else {
             return
         }
-        do {
-            let response = try await client.split(target: target, direction: direction)
-            if response == .ok {
-                worktreeListRefreshToken &+= 1
-            }
-        } catch {
-            // Conflict and transport errors stay silent for v1; the next
-            // panes_state snapshot remains authoritative.
+        let sessionOrder = effectiveMobileSessionOrder
+        let id = UUID()
+        pendingMobileSplits.append(PendingMobileSplit(
+            id: id,
+            target: target,
+            direction: direction,
+            client: client,
+            hostID: appState.selectedHostId,
+            worktreePath: appState.selectedWorktreePath,
+            selectionGeneration: explicitSelectionGeneration,
+            existingSessionNames: Set(sessionOrder),
+            existingSessionOrder: sessionOrder
+        ))
+        pendingMobileMutationOrder.append(id)
+        dispatchNextMobileMutation()
+    }
+
+    private func dispatchNextMobileMutation() {
+        guard mobileMutationInFlight == nil,
+              let id = pendingMobileMutationOrder.first else {
+            return
+        }
+        if let pending = pendingMobileSplits.first(where: { $0.id == id }) {
+            dispatchMobileSplit(pending)
+        } else if let pending = pendingMobileCloses.first(where: {
+            $0.id == id
+        }) {
+            dispatchMobileClose(pending)
+        } else {
+            pendingMobileMutationOrder.removeFirst()
+            dispatchNextMobileMutation()
         }
     }
 
-    private func closeFocusedPane() async {
-        guard let target = appState.focusedPaneId,
+    private func dispatchMobileSplit(_ pending: PendingMobileSplit) {
+        mobileMutationInFlight = pending.id
+        Task { @MainActor in
+            let response: PaneControlResponse?
+            do {
+                response = try await pending.client.split(
+                    target: pending.target,
+                    direction: pending.direction
+                )
+            } catch {
+                response = nil
+            }
+            guard let index = pendingMobileSplits.firstIndex(
+                where: { $0.id == pending.id }
+            ) else {
+                if mobileMutationInFlight == pending.id {
+                    mobileMutationInFlight = nil
+                    dispatchNextMobileMutation()
+                }
+                return
+            }
+            switch response {
+            case .splitCreated(let sessionName):
+                let completed = pendingMobileSplits.remove(at: index)
+                pendingMobileMutationOrder.removeAll { $0 == pending.id }
+                mobileMutationInFlight = nil
+                completeMobileSplit(
+                    completed,
+                    createdSessionName: sessionName,
+                    worktrees: appState.latestWorktrees
+                )
+                worktreeListRefreshToken &+= 1
+                dispatchNextMobileMutation()
+            case .ok:
+                // Released hosts cannot return the created session. Keep
+                // this split as the sole in-flight mutation until a panes
+                // snapshot identifies its new leaf.
+                pendingMobileSplits[index].legacySucceeded = true
+                worktreeListRefreshToken &+= 1
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(10))
+                    guard mobileMutationInFlight == pending.id,
+                          pendingMobileSplits.contains(where: {
+                              $0.id == pending.id && $0.legacySucceeded
+                          }) else {
+                        return
+                    }
+                    // A host switch, failed polling connection, or a peer
+                    // that never publishes the mutation must not block all
+                    // later pane controls forever. Only this worktree's
+                    // batch is unsafe to rebase; commands for another
+                    // worktree on the same host remain valid.
+                    let doomedIDs = Set(
+                        pendingMobileSplits.filter {
+                            $0.hostID == pending.hostID
+                                && $0.worktreePath == pending.worktreePath
+                        }.map(\.id)
+                        + pendingMobileCloses.filter {
+                            $0.hostID == pending.hostID
+                                && $0.worktreePath == pending.worktreePath
+                        }.map(\.id)
+                    )
+                    pendingMobileSplits.removeAll {
+                        doomedIDs.contains($0.id)
+                    }
+                    pendingMobileCloses.removeAll {
+                        doomedIDs.contains($0.id)
+                    }
+                    pendingMobileMutationOrder.removeAll {
+                        doomedIDs.contains($0)
+                    }
+                    if pendingMobileCreatedFocus?.hostID == pending.hostID,
+                       pendingMobileCreatedFocus?.worktreePath
+                        == pending.worktreePath {
+                        pendingMobileCreatedFocus = nil
+                    }
+                    mobileMutationInFlight = nil
+                    dispatchNextMobileMutation()
+                }
+            case .error, nil:
+                pendingMobileSplits.remove(at: index)
+                pendingMobileMutationOrder.removeAll { $0 == pending.id }
+                mobileMutationInFlight = nil
+                dispatchNextMobileMutation()
+            }
+        }
+    }
+
+    private func resolveLegacyMobileSplit(in worktrees: [WorktreePanes]) {
+        guard let inFlightID = mobileMutationInFlight,
+              let index = pendingMobileSplits.firstIndex(where: {
+                  $0.id == inFlightID && $0.legacySucceeded
+              }),
+              pendingMobileSplits[index].hostID == appState.selectedHostId,
+              let worktree = worktrees.first(where: {
+                  $0.path == pendingMobileSplits[index].worktreePath
+              }),
+              (pendingMobileCloseProjections[MobileWorktreeKey(
+                  hostID: pendingMobileSplits[index].hostID,
+                  worktreePath: pendingMobileSplits[index].worktreePath
+              )]?.removedSessionNames.isDisjoint(
+                  with: Set(
+                      worktree.layout?.leaves.map(\.sessionName) ?? []
+                  )
+              ) ?? true),
+              let createdSessionName = Self.legacyCreatedSessionName(
+                existingSessionNames:
+                    pendingMobileSplits[index].existingSessionNames,
+                worktreePath: pendingMobileSplits[index].worktreePath,
+                in: worktrees
+              ) else {
+            return
+        }
+        let completed = pendingMobileSplits.remove(at: index)
+        pendingMobileMutationOrder.removeAll { $0 == inFlightID }
+        mobileMutationInFlight = nil
+        completeMobileSplit(
+            completed,
+            createdSessionName: createdSessionName,
+            worktrees: worktrees
+        )
+        dispatchNextMobileMutation()
+    }
+
+    private func completeMobileSplit(
+        _ completed: PendingMobileSplit,
+        createdSessionName: String,
+        worktrees: [WorktreePanes]
+    ) {
+        for index in pendingMobileSplits.indices
+        where pendingMobileSplits[index].hostID == completed.hostID
+            && pendingMobileSplits[index].worktreePath
+                == completed.worktreePath {
+            if pendingMobileSplits[index].selectionGeneration
+                == completed.selectionGeneration {
+                pendingMobileSplits[index].target = Self.rebasedSplitTarget(
+                    pendingMobileSplits[index].target,
+                    completedTarget: completed.target,
+                    createdSessionName: createdSessionName
+                )
+            }
+            pendingMobileSplits[index].existingSessionNames.insert(
+                createdSessionName
+            )
+            pendingMobileSplits[index].existingSessionOrder =
+                PaneCloseProjection.sessionOrder(
+                    pendingMobileSplits[index].existingSessionOrder,
+                    afterSplitting: completed.target,
+                    created: createdSessionName,
+                    direction: completed.direction
+                )
+        }
+        for index in pendingMobileCloses.indices
+        where pendingMobileCloses[index].hostID == completed.hostID
+            && pendingMobileCloses[index].worktreePath
+                == completed.worktreePath {
+            pendingMobileCloses[index].closeProjection.projectSplit(
+                from: completed.target,
+                to: createdSessionName,
+                direction: completed.direction,
+                inheritsFocus:
+                    pendingMobileCloses[index].selectionGeneration
+                        == completed.selectionGeneration
+            )
+            pendingMobileCloses[index].target =
+                pendingMobileCloses[index].closeProjection.target
+        }
+        let projectedSessionOrder = PaneCloseProjection.sessionOrder(
+            completed.existingSessionOrder,
+            afterSplitting: completed.target,
+            created: createdSessionName,
+            direction: completed.direction
+        )
+        let completedWorktreeKey = MobileWorktreeKey(
+            hostID: completed.hostID,
+            worktreePath: completed.worktreePath
+        )
+        if var closeProjection =
+            pendingMobileCloseProjections[completedWorktreeKey] {
+            closeProjection.projectedSessionOrder =
+                PaneCloseProjection.sessionOrder(
+                    closeProjection.projectedSessionOrder,
+                    afterSplitting: completed.target,
+                    created: createdSessionName,
+                    direction: completed.direction
+                ).filter {
+                    !closeProjection.removedSessionNames.contains($0)
+                }
+            pendingMobileCloseProjections[completedWorktreeKey] =
+                closeProjection
+        }
+        if Self.shouldApplySplitCreatedFocus(
+            capturedHostID: completed.hostID,
+            capturedWorktreePath: completed.worktreePath,
+            capturedSelectionGeneration: completed.selectionGeneration,
+            currentHostID: appState.selectedHostId,
+            currentWorktreePath: appState.selectedWorktreePath,
+            currentSelectionGeneration: explicitSelectionGeneration
+        ) {
+            pendingMobileCreatedFocus = PendingMobileCreatedFocus(
+                sessionName: createdSessionName,
+                hostID: completed.hostID,
+                worktreePath: completed.worktreePath,
+                selectionGeneration: completed.selectionGeneration,
+                projectedSessionOrder: projectedSessionOrder,
+                removedSessionName: nil
+            )
+            applyPendingMobileCreatedFocus(in: worktrees)
+        }
+    }
+
+    private func applyPendingMobileCreatedFocus(
+        in worktrees: [WorktreePanes]
+    ) {
+        guard let pending = pendingMobileCreatedFocus else { return }
+        guard Self.shouldApplySplitCreatedFocus(
+            capturedHostID: pending.hostID,
+            capturedWorktreePath: pending.worktreePath,
+            capturedSelectionGeneration: pending.selectionGeneration,
+            currentHostID: appState.selectedHostId,
+            currentWorktreePath: appState.selectedWorktreePath,
+            currentSelectionGeneration: explicitSelectionGeneration
+        ) else {
+            pendingMobileCreatedFocus = nil
+            return
+        }
+        guard let worktree = worktrees.first(where: {
+            $0.path == pending.worktreePath
+        }) else {
+            return
+        }
+        let sessionNames = worktree.layout?.leaves.map(\.sessionName) ?? []
+        if let removedSessionName = pending.removedSessionName,
+           sessionNames.contains(removedSessionName) {
+            // A replacement can already exist in a stale snapshot. Keep
+            // the projected focus/order until the closed pane is actually
+            // absent so a repeated close cannot select that dead pane.
+            return
+        }
+        let resolvedSessionName: String?
+        if let sessionName = pending.sessionName,
+           sessionNames.contains(sessionName) {
+            resolvedSessionName = sessionName
+        } else if pending.removedSessionName != nil {
+            // A concurrent host-side close can remove the projected
+            // replacement too. Once the original removal is authoritative,
+            // fall back to the first live pane instead of retaining a
+            // speculative target forever.
+            resolvedSessionName = sessionNames.first
+        } else {
+            return
+        }
+        appState.focusedPaneId = resolvedSessionName
+        pendingMobileCreatedFocus = nil
+        if resolvedSessionName != nil {
+            appState.requestActiveTerminal()
+        }
+    }
+
+    private var effectiveMobilePaneControlTarget: String? {
+        if let closeProjection = selectedMobileCloseProjection {
+            if let pending = pendingMobileCreatedFocus,
+               pendingMobileFocusIsCurrent(pending),
+               let sessionName = pending.sessionName,
+               closeProjection.projectedSessionOrder.contains(sessionName) {
+                return sessionName
+            }
+            if let focusedPaneID = appState.focusedPaneId,
+               closeProjection.projectedSessionOrder.contains(
+                   focusedPaneID
+               ) {
+                return focusedPaneID
+            }
+            return closeProjection.projectedSessionOrder.first
+        }
+        if let pending = pendingMobileCreatedFocus,
+           pendingMobileFocusIsCurrent(pending) {
+            return pending.sessionName
+        }
+        return appState.focusedPaneId
+    }
+
+    private var effectiveMobileSessionOrder: [String] {
+        if let closeProjection = selectedMobileCloseProjection {
+            return closeProjection.projectedSessionOrder
+        }
+        if let pending = pendingMobileCreatedFocus,
+           pendingMobileFocusIsCurrent(pending) {
+            return pending.projectedSessionOrder
+        }
+        return selectedWorktreeLayout?.leaves.map(\.sessionName) ?? []
+    }
+
+    private var selectedMobileCloseProjection:
+        PendingMobileCloseProjection? {
+        pendingMobileCloseProjections[MobileWorktreeKey(
+            hostID: appState.selectedHostId,
+            worktreePath: appState.selectedWorktreePath
+        )]
+    }
+
+    private func pendingMobileFocusIsCurrent(
+        _ pending: PendingMobileCreatedFocus
+    ) -> Bool {
+        Self.shouldApplySplitCreatedFocus(
+            capturedHostID: pending.hostID,
+            capturedWorktreePath: pending.worktreePath,
+            capturedSelectionGeneration: pending.selectionGeneration,
+            currentHostID: appState.selectedHostId,
+            currentWorktreePath: appState.selectedWorktreePath,
+            currentSelectionGeneration: explicitSelectionGeneration
+        )
+    }
+
+    private func reconcileMobileCloseProjections(
+        in worktrees: [WorktreePanes]
+    ) {
+        let hostID = appState.selectedHostId
+        let matchingKeys = pendingMobileCloseProjections.keys.filter {
+            $0.hostID == hostID
+        }
+        for key in matchingKeys {
+            guard let projection = pendingMobileCloseProjections[key] else {
+                continue
+            }
+            let sessionNames = Set(
+                worktrees.first(where: {
+                    $0.path == key.worktreePath
+                })?.layout?.leaves.map(\.sessionName) ?? []
+            )
+            if projection.removedSessionNames.isDisjoint(
+                with: sessionNames
+            ) {
+                pendingMobileCloseProjections[key] = nil
+                continue
+            }
+            guard key.worktreePath == appState.selectedWorktreePath else {
+                continue
+            }
+            if appState.focusedPaneId.flatMap({
+                projection.projectedSessionOrder.contains($0) ? $0 : nil
+            }) == nil {
+                appState.focusedPaneId =
+                    projection.projectedSessionOrder.first
+            }
+        }
+    }
+
+    private func queueCloseFocusedPane() {
+        guard let target = effectiveMobilePaneControlTarget,
               let client = paneEnvironment.paneControlClient else {
             return
         }
-        do {
-            let response = try await client.close(target: target)
-            if response == .ok {
+        let id = UUID()
+        let closeProjection = PaneCloseProjection(
+            target: target,
+            sessionOrder: effectiveMobileSessionOrder
+        )
+        pendingMobileCloses.append(PendingMobileClose(
+            id: id,
+            target: target,
+            client: client,
+            closeProjection: closeProjection,
+            selectionGeneration: explicitSelectionGeneration,
+            hostID: appState.selectedHostId,
+            worktreePath: appState.selectedWorktreePath
+        ))
+        pendingMobileMutationOrder.append(id)
+        dispatchNextMobileMutation()
+    }
+
+    private func dispatchMobileClose(_ pending: PendingMobileClose) {
+        mobileMutationInFlight = pending.id
+        Task { @MainActor in
+            let response: PaneControlResponse?
+            do {
+                response = try await pending.client.close(
+                    target: pending.target
+                )
+            } catch {
+                response = nil
+            }
+            guard let index = pendingMobileCloses.firstIndex(where: {
+                $0.id == pending.id
+            }) else {
+                if mobileMutationInFlight == pending.id {
+                    mobileMutationInFlight = nil
+                    dispatchNextMobileMutation()
+                }
+                return
+            }
+            pendingMobileCloses.remove(at: index)
+            pendingMobileMutationOrder.removeAll { $0 == pending.id }
+            mobileMutationInFlight = nil
+            if response?.isSuccess == true {
+                let replacement = pending.closeProjection.replacementTarget
+                let worktreeKey = MobileWorktreeKey(
+                    hostID: pending.hostID,
+                    worktreePath: pending.worktreePath
+                )
+                var closeProjection = pendingMobileCloseProjections[
+                    worktreeKey
+                ] ?? PendingMobileCloseProjection(
+                    removedSessionNames: [],
+                    projectedSessionOrder:
+                        pending.closeProjection.sessionOrder
+                )
+                closeProjection.removedSessionNames.insert(pending.target)
+                closeProjection.projectedSessionOrder =
+                    pending.closeProjection.sessionOrder.filter {
+                        !closeProjection.removedSessionNames.contains($0)
+                    }
+                pendingMobileCloseProjections[worktreeKey] = closeProjection
+                if pending.hostID == appState.selectedHostId,
+                   pending.worktreePath == appState.selectedWorktreePath {
+                    let currentGeneration = explicitSelectionGeneration
+                    let currentTarget = effectiveMobilePaneControlTarget
+                    let projectedSessionOrder =
+                        closeProjection.projectedSessionOrder
+                    let projectedTarget: String?
+                    if currentTarget == pending.target {
+                        projectedTarget = projectedSessionOrder.first
+                    } else if let currentTarget,
+                              projectedSessionOrder.contains(currentTarget) {
+                        projectedTarget = currentTarget
+                    } else {
+                        projectedTarget = nil
+                    }
+                    pendingMobileCreatedFocus = PendingMobileCreatedFocus(
+                        sessionName: projectedTarget,
+                        hostID: pending.hostID,
+                        worktreePath: pending.worktreePath,
+                        selectionGeneration: currentGeneration,
+                        projectedSessionOrder: projectedSessionOrder,
+                        removedSessionName: pending.target
+                    )
+                    // Match local focus immediately, including disabling
+                    // controls when the final pane closed. The token stays
+                    // alive until polling proves the closed pane is absent.
+                    appState.focusedPaneId = projectedTarget
+                    applyPendingMobileCreatedFocus(
+                        in: appState.latestWorktrees
+                    )
+                }
+                if let replacement {
+                    for index in pendingMobileSplits.indices
+                    where pendingMobileSplits[index].hostID
+                        == pending.hostID
+                        && pendingMobileSplits[index].worktreePath
+                            == pending.worktreePath {
+                        pendingMobileSplits[index].target =
+                            Self.rebasedSplitTarget(
+                                pendingMobileSplits[index].target,
+                                completedTarget: pending.target,
+                                createdSessionName: replacement
+                            )
+                        pendingMobileSplits[index].existingSessionOrder
+                            .removeAll { $0 == pending.target }
+                    }
+                }
+                for index in pendingMobileCloses.indices
+                where pendingMobileCloses[index].hostID == pending.hostID
+                    && pendingMobileCloses[index].worktreePath
+                        == pending.worktreePath {
+                    pendingMobileCloses[index].closeProjection
+                        .projectClose(
+                            from: pending.target,
+                            to: replacement,
+                            inheritsFocus: true
+                        )
+                    pendingMobileCloses[index].target =
+                        pendingMobileCloses[index].closeProjection.target
+                }
+                if replacement == nil {
+                    let doomedIDs = Set(
+                        pendingMobileSplits.filter {
+                            $0.hostID == pending.hostID
+                                && $0.worktreePath
+                                    == pending.worktreePath
+                                && $0.target == pending.target
+                        }.map(\.id)
+                        + pendingMobileCloses.filter {
+                            $0.hostID == pending.hostID
+                                && $0.worktreePath
+                                    == pending.worktreePath
+                                && $0.target == pending.target
+                        }.map(\.id)
+                    )
+                    pendingMobileSplits.removeAll {
+                        doomedIDs.contains($0.id)
+                    }
+                    pendingMobileCloses.removeAll {
+                        doomedIDs.contains($0.id)
+                    }
+                    pendingMobileMutationOrder.removeAll {
+                        doomedIDs.contains($0)
+                    }
+                }
                 worktreeListRefreshToken &+= 1
             }
-        } catch {
-            // Conflict and transport errors stay silent for v1; the next
-            // panes_state snapshot remains authoritative.
+            dispatchNextMobileMutation()
         }
     }
 

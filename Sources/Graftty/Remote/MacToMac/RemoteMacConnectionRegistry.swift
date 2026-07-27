@@ -55,6 +55,20 @@ final class RemoteMacConnectionRegistry {
                 return try await client.close(target: target)
             case let .swap(source, target):
                 return try await client.swap(source: source, target: target)
+            case .equalize(let target):
+                return try await client.equalize(target: target)
+            case let .resize(
+                target,
+                direction,
+                amount,
+                viewportExtent
+            ):
+                return try await client.resize(
+                    target: target,
+                    direction: direction,
+                    amount: amount,
+                    viewportExtent: viewportExtent
+                )
             }
         }
 

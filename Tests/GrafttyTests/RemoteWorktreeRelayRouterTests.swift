@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import GrafttyRemoteClient
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -50,6 +51,8 @@ struct RemoteWorktreeRelayRouterTests {
             path: "/repos/one/.worktrees/feature",
             repositoryID: "/repos/one",
             layout: directLayout,
+            attentionText: "Claude needs input",
+            attentionSource: .agentStop,
             origin: WorktreeOrigin(
                 deviceID: remote.id,
                 deviceLabel: remote.label,
@@ -79,6 +82,7 @@ struct RemoteWorktreeRelayRouterTests {
         #expect(row.route?.worktreeID == row.path)
         #expect(row.route?.repositoryID == row.repositoryID)
         #expect(row.origin?.relayDepth == 1)
+        #expect(row.attentionSource == .agentStop)
         #expect(row.layout?.leaves.map(\.title) == ["editor", "tests", "agent"])
 
         guard case let .split(direction, ratio, _, right)? = row.layout else {
@@ -254,6 +258,67 @@ struct RemoteWorktreeRelayRouterTests {
     }
 
     @Test("""
+    @spec REMOTE-13.19: While GrafttyMobile views a relayed terminal, opening \
+    or resizing the follower shall not steal downstream display ownership; \
+    input shall claim ownership when needed, ownership loss shall permit a \
+    later reclaim, and the downstream owner's authoritative grid shall be \
+    reported back through the outer session.
+    """)
+    func relayedTerminalMirrorsOwnershipAndAuthoritativeGrid() async throws {
+        let client = RelayWebSocketClient()
+        let stream = RelayedTerminalByteStream(client: client)
+        let sizes = LockedRelaySizes()
+        stream.onPTYSize = { sizes.append(cols: $0, rows: $1) }
+
+        try await waitUntil { client.helloClientID() != nil }
+        let owningMac = DisplayClientID("owning-mac")
+        client.deliver(.text(try ownershipFrame(
+            owner: owningMac,
+            cols: 200,
+            rows: 50,
+            epoch: 1
+        )))
+        try await waitUntil { sizes.values().count == 1 }
+
+        // A follower window-change is rejected downstream and the outer
+        // session is immediately corrected back to the owner's grid.
+        await stream.resize(cols: 80, rows: 24)
+        try await waitUntil { sizes.values().count == 2 }
+        #expect(sizes.values() == [
+            RelaySize(cols: 200, rows: 50),
+            RelaySize(cols: 200, rows: 50),
+        ])
+        #expect(client.takeControls().isEmpty)
+
+        try await stream.send(Data("first".utf8))
+        try await waitUntil { client.takeControls().count == 1 }
+        let relayID = try #require(client.takeControls().first?.clientID)
+        client.deliver(.text(try ownershipFrame(
+            owner: relayID,
+            cols: 80,
+            rows: 24,
+            epoch: 2
+        )))
+        try await waitUntil { sizes.values().count == 3 }
+
+        await stream.resize(cols: 100, rows: 30)
+        try await waitUntil { client.ownerResizes().count == 1 }
+        #expect(client.ownerResizes().first?.epoch == 2)
+
+        client.deliver(.text(try ownershipFrame(
+            owner: owningMac,
+            cols: 200,
+            rows: 50,
+            epoch: 3
+        )))
+        try await waitUntil { sizes.values().count == 4 }
+        try await stream.send(Data("second".utf8))
+        try await waitUntil { client.takeControls().count == 2 }
+
+        await stream.close()
+    }
+
+    @Test("""
     @spec REMOTE-13.4: When a user selects a Remote Mac worktree, the \
     application shall project the entire remote split tree with the original \
     axes and ratios, rather than opening only the selected pane.
@@ -331,6 +396,8 @@ struct RemoteWorktreeRelayRouterTests {
         path: String,
         repositoryID: String,
         layout: PaneLayoutNode?,
+        attentionText: String? = nil,
+        attentionSource: AttentionSource? = nil,
         origin: WorktreeOrigin?
     ) -> WorktreePanes {
         WorktreePanes(
@@ -343,9 +410,165 @@ struct RemoteWorktreeRelayRouterTests {
             isMainCheckout: false,
             prBadge: nil,
             stats: nil,
-            attentionText: nil,
+            attentionText: attentionText,
+            attentionSource: attentionSource,
             layout: layout,
             origin: origin
         )
     }
 }
+
+private struct RelaySize: Equatable {
+    let cols: UInt16
+    let rows: UInt16
+}
+
+private final class LockedRelaySizes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [RelaySize] = []
+
+    func append(cols: UInt16, rows: UInt16) {
+        lock.withLock {
+            storage.append(RelaySize(cols: cols, rows: rows))
+        }
+    }
+
+    func values() -> [RelaySize] {
+        lock.withLock { storage }
+    }
+}
+
+private struct RelayTakeControl {
+    let clientID: DisplayClientID
+}
+
+private struct RelayOwnerResize {
+    let epoch: UInt64
+}
+
+private final class RelayWebSocketClient:
+    WebSocketClient,
+    @unchecked Sendable {
+    let supportsWebControlTextFrames = true
+    private let lock = NSLock()
+    private var frames: [WebSocketFrame] = []
+    private var receiveWaiters:
+        [CheckedContinuation<WebSocketFrame, Error>] = []
+    private var helloID: DisplayClientID?
+    private var recordedTakeControls: [RelayTakeControl] = []
+    private var recordedOwnerResizes: [RelayOwnerResize] = []
+
+    func send(_ frame: WebSocketFrame) async throws {}
+
+    func receive() async throws -> WebSocketFrame {
+        try await withCheckedThrowingContinuation { continuation in
+            let frame = lock.withLock { () -> WebSocketFrame? in
+                guard frames.isEmpty else { return frames.removeFirst() }
+                receiveWaiters.append(continuation)
+                return nil
+            }
+            if let frame {
+                continuation.resume(returning: frame)
+            }
+        }
+    }
+
+    func close() {
+        let waiters = lock.withLock {
+            let waiters = receiveWaiters
+            receiveWaiters.removeAll()
+            return waiters
+        }
+        waiters.forEach { $0.resume(throwing: CancellationError()) }
+    }
+
+    func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock { helloID = clientID }
+    }
+
+    func takeControl(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock {
+            recordedTakeControls.append(
+                RelayTakeControl(clientID: clientID)
+            )
+        }
+    }
+
+    func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock {
+            recordedOwnerResizes.append(RelayOwnerResize(epoch: epoch))
+        }
+    }
+
+    func deliver(_ frame: WebSocketFrame) {
+        let waiter = lock.withLock {
+            guard !receiveWaiters.isEmpty else {
+                frames.append(frame)
+                return Optional<
+                    CheckedContinuation<WebSocketFrame, Error>
+                >.none
+            }
+            return receiveWaiters.removeFirst()
+        }
+        waiter?.resume(returning: frame)
+    }
+
+    func helloClientID() -> DisplayClientID? {
+        lock.withLock { helloID }
+    }
+
+    func takeControls() -> [RelayTakeControl] {
+        lock.withLock { recordedTakeControls }
+    }
+
+    func ownerResizes() -> [RelayOwnerResize] {
+        lock.withLock { recordedOwnerResizes }
+    }
+}
+
+private func ownershipFrame(
+    owner: DisplayClientID,
+    cols: UInt16,
+    rows: UInt16,
+    epoch: UInt64
+) throws -> String {
+    WebControlEnvelope.ownership(
+        try DisplayOwnershipSnapshot(
+            sessionName: "session",
+            ownerClientID: owner,
+            ownerKind: .mac,
+            grid: DisplayGrid(cols: cols, rows: rows),
+            epoch: epoch,
+            revision: epoch
+        )
+    ).encoded()
+}
+
+private func waitUntil(
+    _ condition: @escaping @Sendable () -> Bool
+) async throws {
+    for _ in 0..<200 {
+        if condition() { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    throw RelayWaitTimeout()
+}
+
+private struct RelayWaitTimeout: Error {}

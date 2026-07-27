@@ -64,5 +64,48 @@ struct WorktreeListContentTests {
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)
     }
+
+    @Test("""
+    @spec REMOTE-13.18: When GrafttyMobile selects a closed local or relayed \
+    worktree over an authenticated management connection, the application \
+    shall open the worktree before navigating to its running pane layout.
+    """)
+    func closedWorktreesRequireManagementOpen() {
+        func worktree(state: WorktreeWireState) -> WorktreePanes {
+            WorktreePanes(
+                path: "worktree",
+                displayName: "worktree",
+                repoDisplayName: "repo",
+                displayBranch: "feature",
+                state: state,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            )
+        }
+
+        #expect(WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            providerAvailable: true
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .running),
+            providerAvailable: true
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            providerAvailable: false
+        ))
+        #expect(WorktreeListContent.shouldApplySelectionIntent(
+            capturedGeneration: 4,
+            currentGeneration: 4
+        ))
+        #expect(!WorktreeListContent.shouldApplySelectionIntent(
+            capturedGeneration: 4,
+            currentGeneration: 5
+        ))
+    }
 }
 #endif

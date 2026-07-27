@@ -575,6 +575,13 @@ final class AppServices {
     }
 }
 
+enum WorktreeStartResult: Equatable {
+    case started
+    case alreadyRunning
+    case notFound
+    case unavailable
+}
+
 @main
 struct GrafttyApp: App {
     // Keep this in menu order: the first host action for a chord wins.
@@ -662,7 +669,8 @@ struct GrafttyApp: App {
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
-        _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
+        let terminalManager = TerminalManager(socketPath: socketPath)
+        _terminalManager = StateObject(wrappedValue: terminalManager)
         let pairingAdmission = HostPairingAdmission()
         let appServices = AppServices(
             socketPath: socketPath,
@@ -730,17 +738,27 @@ struct GrafttyApp: App {
             appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
-                streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
+                streamFactory: {
+                    [registry = appServices.remoteAttachmentRegistry,
+                     terminalManager] sessionName in
                     if sessionName.hasPrefix("relay-pane-") {
                         return try await remoteMacsModel.openRelayedTerminal(
                             alias: sessionName
                         )
                     }
+                    let workingDirectoryPath = await MainActor.run {
+                        terminalManager.worktreePath(
+                            forSessionName: sessionName
+                        )
+                    }
+                    let workingDirectory = workingDirectoryPath.map {
+                        URL(fileURLWithPath: $0, isDirectory: true)
+                    }
                     let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil
+                        workingDirectory: workingDirectory
                     ))
                     engine.attachmentRegistry = registry
                     try engine.start()
@@ -1119,6 +1137,12 @@ struct GrafttyApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .split(direction),
+                    for: terminalID
+                ) {
+                    return
+                }
                 _ = Self.splitPane(
                     appState: appState,
                     terminalManager: tm,
@@ -1174,24 +1198,52 @@ struct GrafttyApp: App {
             }
         }
 
-        // Shell-exit (or libghostty-initiated close) → remove the pane from
-        // the tree and free the surface. Same logic Cmd+W uses, but keyed
-        // on an arbitrary terminalID rather than the currently-focused one.
+        // A user-issued close action targets the pane that emitted it.
         terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(.close, for: terminalID) {
+                    return
+                }
                 switch paneCloseAction() {
                 case .closePane:
                     Self.closePane(
                         appState: appState,
                         terminalManager: tm,
-                        targetID: terminalID
+                        targetID: terminalID,
+                        userInitiated: true
                     )
                 }
             }
         }
 
+        // A surface can also disappear because its shell exited or, for a
+        // host-managed proxy, its transport dropped. Keep that distinct from
+        // user close so a network failure cannot kill the owning Mac's pane.
+        terminalManager.onSurfaceClosed = {
+            [appState = $appState, tm = terminalManager] terminalID in
+            MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .surfaceClosed,
+                    for: terminalID
+                ) {
+                    return
+                }
+                Self.closePane(
+                    appState: appState,
+                    terminalManager: tm,
+                    targetID: terminalID
+                )
+            }
+        }
+
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .focus(direction),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.navigatePane(
                     appState: appState,
                     terminalManager: tm,
@@ -1203,6 +1255,12 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .focusOrder(forward: forward),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.navigatePaneInTreeOrder(
                     appState: appState,
                     terminalManager: tm,
@@ -1212,14 +1270,26 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onToggleZoom = { [appState = $appState] terminalID in
+        terminalManager.onToggleZoom = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .toggleZoom,
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
-        terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
+        terminalManager.onResizeSplit = { [appState = $appState, tm = terminalManager] terminalID, direction, amount in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .resize(direction: direction, amount: amount),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.resizeSplit(
                     appState: appState,
                     target: terminalID,
@@ -1229,8 +1299,14 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
+        terminalManager.onEqualizeSplits = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .equalize,
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.equalizeSplits(appState: appState, around: terminalID)
             }
         }
@@ -1693,6 +1769,7 @@ struct GrafttyApp: App {
                         prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
                         stats: stats?.toWire(),
                         attentionText: wt.attention?.text,
+                        attentionSource: wt.attention?.source,
                         layout: (wt.state == .running ? wt.splitTree.root : nil)
                             .map {
                                 paneLayoutNode(
@@ -1963,18 +2040,52 @@ struct GrafttyApp: App {
                             split = .up
                         }
                         let slot = PaneSlotID(id: paneID)
-                        guard Self.splitPane(
+                        let targetWorktreePath =
+                            appStateBinding.wrappedValue.repos.lazy
+                            .flatMap(\.worktrees)
+                            .first(where: {
+                                $0.splitTree.containsLeaf(slot)
+                            })?.path
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && terminalManager.view(for: slot)?
+                                .window?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath.flatMap {
+                                    appStateBinding.wrappedValue
+                                        .worktree(forPath: $0)
+                                }?.splitTree.containsLeaf(slot) == true
+                        guard let newID = Self.splitPane(
                             appState: appStateBinding,
                             terminalManager: terminalManager,
                             targetID: slot,
-                            split: split
-                        ) != nil else {
+                            split: split,
+                            activateNewPane: false,
+                            preserveZoom: true
+                        ) else {
                             return .error(
                                 code: "conflict",
                                 message: "split rejected (target not in a running worktree, or surface creation failed)"
                             )
                         }
-                        return .ok
+                        if !targetIsVisible {
+                            terminalManager.setVisible(false, for: newID)
+                        }
+                        if let targetWorktreePath {
+                            terminalManager.surfaceBudget.noteCreated(
+                                worktreePath: targetWorktreePath,
+                                splitTreesByPath: appStateBinding.wrappedValue
+                                    .runningSplitTreesByPath()
+                            )
+                        }
+                        guard let sessionName = terminalManager
+                            .zmxSessionName(for: newID) else {
+                            return .error(
+                                code: "conflict",
+                                message: "split succeeded without a pane session"
+                            )
+                        }
+                        return .splitCreated(sessionName: sessionName)
                     case .close(let target):
                         guard let paneID = terminalManager.paneID(forSessionName: target) else {
                             return .error(
@@ -1983,11 +2094,21 @@ struct GrafttyApp: App {
                             )
                         }
                         let slot = PaneSlotID(id: paneID)
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && terminalManager.view(for: slot)?
+                                .window?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath.flatMap {
+                                    appStateBinding.wrappedValue
+                                        .worktree(forPath: $0)
+                                }?.splitTree.containsLeaf(slot) == true
                         Self.closePane(
                             appState: appStateBinding,
                             terminalManager: terminalManager,
                             targetID: slot,
-                            userInitiated: true
+                            userInitiated: true,
+                            activateReplacement: targetIsVisible
                         )
                         return .ok
                     case .swap:
@@ -2000,6 +2121,78 @@ struct GrafttyApp: App {
                             code: "unsupported",
                             message: "swap is not implemented on this host yet"
                         )
+                    case .equalize(let target):
+                        guard let paneID = terminalManager.paneID(
+                            forSessionName: target
+                        ) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        Self.equalizeSplits(
+                            appState: appStateBinding,
+                            around: PaneSlotID(id: paneID),
+                            preserveZoom: true
+                        )
+                        return .ok
+                    case let .resize(
+                        target,
+                        direction,
+                        amount,
+                        viewportExtent
+                    ):
+                        guard let paneID = terminalManager.paneID(
+                            forSessionName: target
+                        ) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        let resizeDirection: ResizeDirection
+                        switch direction {
+                        case .right:
+                            resizeDirection = .right
+                        case .down:
+                            resizeDirection = .down
+                        case .left:
+                            resizeDirection = .left
+                        case .up:
+                            resizeDirection = .up
+                        }
+                        let viewerBounds = viewportExtent.map { extent in
+                            switch direction {
+                            case .left, .right:
+                                return CGRect(
+                                    x: 0,
+                                    y: 0,
+                                    width: CGFloat(extent),
+                                    height: 1
+                                )
+                            case .up, .down:
+                                return CGRect(
+                                    x: 0,
+                                    y: 0,
+                                    width: 1,
+                                    height: CGFloat(extent)
+                                )
+                            }
+                        }
+                        guard Self.resizeSplit(
+                            appState: appStateBinding,
+                            target: PaneSlotID(id: paneID),
+                            direction: resizeDirection,
+                            pixels: amount,
+                            ancestorBounds: viewerBounds,
+                            preserveZoom: true
+                        ) else {
+                            return .error(
+                                code: "no-matching-split",
+                                message: "no split in that direction can be resized"
+                            )
+                        }
+                        return .ok
                     }
                 }
             }
@@ -2174,6 +2367,64 @@ struct GrafttyApp: App {
                             forceAllowed: false,
                             shortStatus: nil
                         )
+                    }
+
+                case .open(let worktreeID):
+                    return await MainActor.run {
+                        let result = Self.startWorktree(
+                            path: worktreeID,
+                            appState: appStateBinding,
+                            terminalManager: terminalManager
+                        )
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && NSApp.mainWindow?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath == worktreeID
+                        if result == .started || result == .alreadyRunning {
+                            let splitTrees = appStateBinding.wrappedValue
+                                .runningSplitTreesByPath()
+                            if targetIsVisible {
+                                terminalManager.surfaceBudget.noteSelected(
+                                    worktreePath: worktreeID,
+                                    splitTreesByPath: splitTrees
+                                )
+                            } else {
+                                terminalManager.surfaceBudget.noteCreated(
+                                    worktreePath: worktreeID,
+                                    splitTreesByPath: splitTrees
+                                )
+                            }
+                        }
+                        if result == .started,
+                           !targetIsVisible,
+                           let worktree = appStateBinding.wrappedValue
+                               .worktree(forPath: worktreeID) {
+                            for terminalID in worktree.splitTree.allLeaves {
+                                terminalManager.setVisible(
+                                    false,
+                                    for: terminalID
+                                )
+                            }
+                        }
+                        switch result {
+                        case .started, .alreadyRunning:
+                            return .ok
+                        case .notFound:
+                            return .error(
+                                code: "not-found",
+                                message: "unknown worktree",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        case .unavailable:
+                            return .error(
+                                code: "unavailable",
+                                message: "worktree cannot be opened in its current state",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        }
                     }
 
                 case let .delete(worktreeID, force):
@@ -2766,6 +3017,13 @@ struct GrafttyApp: App {
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
                     appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
+                    terminalManager.recordPaneSessions(
+                        for: appState.repos[repoIdx].worktrees[wtIdx]
+                            .splitTree,
+                        paneSessions: appState.repos[repoIdx]
+                            .worktrees[wtIdx].paneSessions,
+                        worktreePath: wt.path
+                    )
                     // Mark every restored leaf as rehydrated *before*
                     // surface creation so the first-PWD event (which
                     // triggers onShellReady) finds wasRehydrated == true
@@ -3717,10 +3975,53 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Shared split implementation used by both the menu shortcuts and the
-    /// right-click context menu. Finds the worktree that currently owns the
-    /// target terminal, inserts a new leaf adjacent to it, spawns a surface,
-    /// and moves focus to the new pane.
+    /// Shared closed-to-running transition used by local sidebar selection
+    /// and authenticated remote-open requests.
+    @MainActor
+    static func startWorktree(
+        path: String,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> WorktreeStartResult {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+            where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
+                == path {
+                let state = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].state
+                guard state != .running else { return .alreadyRunning }
+                guard state == .closed else { return .unavailable }
+
+                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .splitTree.root == nil {
+                    let id = PaneSlotID()
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .splitTree = SplitTree(root: .leaf(id))
+                }
+
+                let splitTree = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].splitTree
+                for leafID in splitTree.allLeaves {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .ensurePaneSession(for: leafID)
+                    terminalManager.markFirstPane(leafID)
+                }
+                _ = terminalManager.createSurfaces(
+                    for: splitTree,
+                    paneSessions: appState.wrappedValue.repos[repoIdx]
+                        .worktrees[wtIdx].paneSessions,
+                    worktreePath: path
+                )
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state =
+                    .running
+                return .started
+            }
+        }
+        return .notFound
+    }
+
+    /// Shared split implementation used by local commands and authenticated
+    /// pane-control requests. Remote callers can suppress host focus changes.
     @MainActor
     @discardableResult
     fileprivate static func splitPane(
@@ -3728,7 +4029,9 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager,
         targetID: PaneSlotID,
         split: PaneSplit,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        activateNewPane: Bool = true,
+        preserveZoom: Bool = false
     ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
@@ -3737,12 +4040,15 @@ struct GrafttyApp: App {
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
                 let newID = PaneSlotID()
-                let newTree: SplitTree
+                var newTree: SplitTree
                 switch split {
                 case .right, .down:
                     newTree = wt.splitTree.inserting(newID, at: targetID, direction: direction)
                 case .left, .up:
                     newTree = wt.splitTree.insertingBefore(newID, at: targetID, direction: direction)
+                }
+                if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                    newTree = newTree.withZoom(zoomed)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -3761,10 +4067,14 @@ struct GrafttyApp: App {
                 ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)
+                    terminalManager.discardPaneSessionMetadata(for: newID)
                     return nil
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newID
-                terminalManager.setFocus(newID)
+                if activateNewPane {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .focusedPaneSlotID = newID
+                    terminalManager.setFocus(newID)
+                }
                 return newID
             }
         }
@@ -4033,28 +4343,40 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: PaneSlotID) {
+    fileprivate static func equalizeSplits(
+        appState: Binding<AppState>,
+        around terminalID: PaneSlotID,
+        preserveZoom: Bool = false
+    ) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.equalizing()
+            if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                copy.splitTree = copy.splitTree.withZoom(zoomed)
+            }
             return copy
         }
     }
 
     @MainActor
+    @discardableResult
     fileprivate static func resizeSplit(
         appState: Binding<AppState>,
         target: PaneSlotID,
         direction: ResizeDirection,
-        pixels: UInt16
-    ) {
+        pixels: UInt16,
+        ancestorBounds: CGRect? = nil,
+        preserveZoom: Bool = false
+    ) -> Bool {
         // MVP: use the key window's content-area bounds as a proxy for the
         // ancestor split bounds. Accurate for single-split layouts; for nested
         // splits the delta will be slightly off. A follow-up can capture
         // per-split bounds via SwiftUI preference keys.
         // TODO: plumb per-split GeometryReader bounds for multi-level accuracy.
-        let bounds = NSApp.keyWindow?.contentView?.bounds
+        let bounds = ancestorBounds
+            ?? NSApp.keyWindow?.contentView?.bounds
             ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        var didResize = false
         mutateWorktreeContaining(appState: appState, leaf: target) { wt in
             var copy = wt
             do {
@@ -4064,11 +4386,16 @@ struct GrafttyApp: App {
                     pixels: pixels,
                     ancestorBounds: bounds
                 )
+                if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                    copy.splitTree = copy.splitTree.withZoom(zoomed)
+                }
+                didResize = true
             } catch {
                 // No matching orientation ancestor — silent no-op, matches Ghostty.
             }
             return copy
         }
+        return didResize
     }
 
     /// Find the worktree that owns `leaf` and apply `transform` to it.
@@ -4107,7 +4434,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         targetID: PaneSlotID,
-        userInitiated: Bool = false
+        userInitiated: Bool = false,
+        activateReplacement: Bool = true
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
@@ -4157,7 +4485,9 @@ struct GrafttyApp: App {
                     // Only push focus to libghostty if it actually
                     // changed — otherwise we're re-raising the same
                     // surface for no reason.
-                    if let newFocus, newFocus != previousFocus {
+                    if activateReplacement,
+                       let newFocus,
+                       newFocus != previousFocus {
                         terminalManager.setFocus(newFocus)
                     }
                 }
@@ -4216,37 +4546,59 @@ struct GrafttyApp: App {
     }
 
     private func handleSplit(_ split: PaneSplit) {
+        if routeFocusedHostManagedPaneCommand(.split(split)) { return }
         guard let id = focusedPaneSlotID else { return }
         _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
     }
 
     private func handleNavigate(_ dir: NavigationDirection) {
+        if routeFocusedHostManagedPaneCommand(.focus(dir)) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
     }
 
     private func handleNavigateTreeOrder(forward: Bool) {
+        if routeFocusedHostManagedPaneCommand(
+            .focusOrder(forward: forward)
+        ) {
+            return
+        }
         guard let id = focusedPaneSlotID else { return }
         Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
     }
 
     private func handleToggleZoom() {
+        if routeFocusedHostManagedPaneCommand(.toggleZoom) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.toggleZoom(appState: $appState, on: id)
     }
 
     private func handleEqualizeSplits() {
+        if routeFocusedHostManagedPaneCommand(.equalize) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.equalizeSplits(appState: $appState, around: id)
     }
 
     private func handleClosePane() {
+        if routeFocusedHostManagedPaneCommand(.close) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.closePane(
             appState: $appState,
             terminalManager: terminalManager,
             targetID: id,
             userInitiated: true
+        )
+    }
+
+    private func routeFocusedHostManagedPaneCommand(
+        _ command: HostManagedPaneCommand
+    ) -> Bool {
+        guard let terminalID = terminalManager.focusedTerminalID else {
+            return false
+        }
+        return terminalManager.routeHostManagedPaneCommand(
+            command,
+            for: terminalID
         )
     }
 
@@ -4499,7 +4851,8 @@ struct GrafttyApp: App {
 private extension PaneControlRequest {
     var primaryTarget: String? {
         switch self {
-        case .split(let target, _), .close(let target):
+        case .split(let target, _), .close(let target),
+             .equalize(let target), .resize(let target, _, _, _):
             return target
         case .swap(let source, _):
             return source
@@ -4515,7 +4868,8 @@ private extension WorktreeManagementRequest {
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID):
             return repositoryID.hasPrefix("relay-repository-")
-        case .delete(let worktreeID, _),
+        case .open(let worktreeID),
+             .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _):
             return worktreeID.hasPrefix("relay-worktree-")
         }

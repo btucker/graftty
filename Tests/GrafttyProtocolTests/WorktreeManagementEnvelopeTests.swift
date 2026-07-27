@@ -7,7 +7,7 @@ struct WorktreeManagementEnvelopeTests {
     @Test("""
     @spec REMOTE-13.3: When a paired Mac or GrafttyMobile client manages a \
     remote worktree, the application shall round-trip repository, create, \
-    pull, delete, and acknowledgement requests over the authenticated \
+    pull, open, delete, and acknowledgement requests over the authenticated \
     worktree-management channel using opaque resource identifiers.
     """)
     func everyRequestRoundTrips() throws {
@@ -26,6 +26,7 @@ struct WorktreeManagementEnvelopeTests {
                 existingSource: .automatic
             ),
             .pullDefaultBranch(repositoryID: "repo-token"),
+            .open(worktreeID: "worktree-token"),
             .delete(worktreeID: "worktree-token", force: true),
             .acknowledge(
                 worktreeID: "worktree-token",

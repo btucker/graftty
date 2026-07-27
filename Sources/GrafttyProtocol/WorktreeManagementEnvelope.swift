@@ -82,6 +82,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case listRepositories
     case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?)
     case pullDefaultBranch(repositoryID: String)
+    case open(worktreeID: String)
     case delete(worktreeID: String, force: Bool)
     case acknowledge(worktreeID: String, paneID: String?)
 }
@@ -106,6 +107,9 @@ extension WorktreeManagementRequest: Codable {
         case .pullDefaultBranch(let repositoryID):
             try c.encode("pull_default_branch", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
+        case .open(let worktreeID):
+            try c.encode("open", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
         case let .delete(worktreeID, force):
             try c.encode("delete", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -135,6 +139,10 @@ extension WorktreeManagementRequest: Codable {
         case "pull_default_branch":
             self = .pullDefaultBranch(
                 repositoryID: try c.decode(String.self, forKey: .repositoryID)
+            )
+        case "open":
+            self = .open(
+                worktreeID: try c.decode(String.self, forKey: .worktreeID)
             )
         case "delete":
             self = .delete(

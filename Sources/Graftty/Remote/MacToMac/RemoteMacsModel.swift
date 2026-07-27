@@ -33,8 +33,15 @@ final class RemoteMacsModel: ObservableObject {
         let id: UUID
         let task: Task<RemoteMacConnectionRegistry.Entry, Error>
     }
+    private struct PaneControlOperation {
+        let id: UUID
+        let task: Task<PaneControlResponse, Never>
+    }
     private var connectAttemptIDs: [RemoteMacIdentity: UUID] = [:]
     private var connectAttempts: [RemoteMacIdentity: ConnectAttempt] = [:]
+    private var paneControlOperations:
+        [RemoteMacIdentity: PaneControlOperation] = [:]
+    private var paneControlEpochs: [RemoteMacIdentity: UInt64] = [:]
     private var candidatesByIdentity: [RemoteMacIdentity: GrafttyBonjourCandidate] = [:]
     private var discoveryBrowser: RemoteMacDiscoveryBrowsing?
     private var discoveryLeaseCount = 0
@@ -69,6 +76,7 @@ final class RemoteMacsModel: ObservableObject {
             // Once classified, no generic callback may erase the actionable
             // trust state.
             guard self.connectionStates[identity] != .needsPairing else {
+                self.invalidatePaneControlQueue(for: identity)
                 self.worktreePanesByRemote[identity] = nil
                 self.repositoriesByRemote[identity] = nil
                 self.resetNotificationSnapshot(for: identity)
@@ -83,6 +91,7 @@ final class RemoteMacsModel: ObservableObject {
             case .idle, .connecting, .connected:
                 return
             }
+            self.invalidatePaneControlQueue(for: identity)
             self.worktreePanesByRemote[identity] = nil
             self.repositoriesByRemote[identity] = nil
             self.resetNotificationSnapshot(for: identity)
@@ -186,6 +195,7 @@ final class RemoteMacsModel: ObservableObject {
     func disconnect(identity: RemoteMacIdentity) {
         connectAttemptIDs[identity] = nil
         connectAttempts.removeValue(forKey: identity)?.task.cancel()
+        invalidatePaneControlQueue(for: identity)
         connectionRegistry.disconnect(identity: identity)
         connectionStates[identity] = .offline
         worktreePanesByRemote[identity] = nil
@@ -212,15 +222,38 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
+    func sendPaneControl(
+        on remoteMac: RemoteMac,
+        request: PaneControlRequest
+    ) async -> PaneControlResponse {
+        await queuePaneControl(on: remoteMac, request: request).value
+    }
+
+    /// Enqueue synchronously on the main actor before any connection await.
+    /// UI callers use the returned task so back-to-back pane commands retain
+    /// the order in which their actions were dispatched.
+    func queuePaneControl(
+        on remoteMac: RemoteMac,
+        request: PaneControlRequest
+    ) -> Task<PaneControlResponse, Never> {
+        enqueuePaneControl(
+            identity: RemoteMacIdentity(remoteMac),
+            request: request,
+            connecting: remoteMac
+        )
+    }
+
     func sendRelayedPaneControl(
         _ request: PaneControlRequest
     ) async -> PaneControlResponse? {
         let translated: PaneControlRequest
         let identity: RemoteMacIdentity
+        var splitWorktreePath: String?
         switch request {
         case let .split(target, direction):
             guard let route = relayRouter.resolvePane(target) else { return nil }
             identity = route.identity
+            splitWorktreePath = route.worktreePath
             translated = .split(target: route.sessionName, direction: direction)
         case .close(let target):
             guard let route = relayRouter.resolvePane(target) else { return nil }
@@ -238,18 +271,128 @@ final class RemoteMacsModel: ObservableObject {
                 source: sourceRoute.sessionName,
                 target: targetRoute.sessionName
             )
-        }
-        do {
-            return try await connectionRegistry.sendPaneControl(
-                identity: identity,
-                request: translated
+        case .equalize(let target):
+            guard let route = relayRouter.resolvePane(target) else { return nil }
+            identity = route.identity
+            translated = .equalize(target: route.sessionName)
+        case let .resize(target, direction, amount, viewportExtent):
+            guard let route = relayRouter.resolvePane(target) else { return nil }
+            identity = route.identity
+            translated = .resize(
+                target: route.sessionName,
+                direction: direction,
+                amount: amount,
+                viewportExtent: viewportExtent
             )
-        } catch {
-            return .error(
-                code: "downstream-unavailable",
-                message: String(describing: error)
-            )
         }
+        let response = await enqueuePaneControl(
+            identity: identity,
+            request: translated,
+            connecting: nil
+        ).value
+        guard case .splitCreated(let sessionName) = response,
+              let splitWorktreePath else {
+            return response
+        }
+        return .splitCreated(sessionName: relayRouter.registerCreatedPane(
+            identity: identity,
+            worktreePath: splitWorktreePath,
+            sessionName: sessionName
+        ))
+    }
+
+    private func enqueuePaneControl(
+        identity: RemoteMacIdentity,
+        request: PaneControlRequest,
+        connecting remoteMac: RemoteMac?
+    ) -> Task<PaneControlResponse, Never> {
+        let preceding = paneControlOperations[identity]?.task
+        let operationID = UUID()
+        let epoch = paneControlEpochs[identity, default: 0]
+        let registry = connectionRegistry
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return PaneControlResponse.error(
+                    code: "cancelled",
+                    message: "pane command was cancelled"
+                )
+            }
+            defer {
+                if self.paneControlOperations[identity]?.id == operationID {
+                    self.paneControlOperations[identity] = nil
+                }
+            }
+            if let preceding {
+                _ = await preceding.value
+            }
+            guard !Task.isCancelled,
+                  self.paneControlEpochs[identity, default: 0] == epoch else {
+                return PaneControlResponse.error(
+                    code: "cancelled",
+                    message: "pane command was cancelled"
+                )
+            }
+            if let remoteMac {
+                do {
+                    _ = try await self.connect(to: remoteMac)
+                } catch {
+                    guard !Task.isCancelled,
+                          self.paneControlEpochs[identity, default: 0]
+                            == epoch else {
+                        return .error(
+                            code: "cancelled",
+                            message: "pane command was cancelled"
+                        )
+                    }
+                    return .error(
+                        code: "downstream-unavailable",
+                        message: String(describing: error)
+                    )
+                }
+                guard !Task.isCancelled,
+                      self.paneControlEpochs[identity, default: 0] == epoch else {
+                    return PaneControlResponse.error(
+                        code: "cancelled",
+                        message: "pane command was cancelled"
+                    )
+                }
+            }
+            do {
+                let response = try await registry.sendPaneControl(
+                    identity: identity,
+                    request: request
+                )
+                guard self.paneControlEpochs[identity, default: 0] == epoch else {
+                    return .error(
+                        code: "cancelled",
+                        message: "pane command was cancelled"
+                    )
+                }
+                return response
+            } catch {
+                guard !Task.isCancelled,
+                      self.paneControlEpochs[identity, default: 0] == epoch else {
+                    return .error(
+                        code: "cancelled",
+                        message: "pane command was cancelled"
+                    )
+                }
+                return .error(
+                    code: "downstream-unavailable",
+                    message: String(describing: error)
+                )
+            }
+        }
+        paneControlOperations[identity] = PaneControlOperation(
+            id: operationID,
+            task: task
+        )
+        return task
+    }
+
+    private func invalidatePaneControlQueue(for identity: RemoteMacIdentity) {
+        paneControlEpochs[identity, default: 0] &+= 1
+        paneControlOperations.removeValue(forKey: identity)?.task.cancel()
     }
 
     func sendWorktreeManagement(
@@ -328,6 +471,21 @@ final class RemoteMacsModel: ObservableObject {
             removeCachedWorktree(path: worktreePath, from: identity)
         }
         return response
+    }
+
+    func openWorktree(
+        on remoteMac: RemoteMac,
+        worktreePath: String
+    ) async -> WorktreeManagementResponse {
+        do {
+            _ = try await connect(to: remoteMac)
+            return try await sendWorktreeManagement(
+                identity: RemoteMacIdentity(remoteMac),
+                request: .open(worktreeID: worktreePath)
+            )
+        } catch {
+            return Self.downstreamManagementError(error)
+        }
     }
 
     func pullDefaultBranch(
@@ -417,6 +575,15 @@ final class RemoteMacsModel: ObservableObject {
             return await forwardManagement(
                 identity: route.identity,
                 request: .pullDefaultBranch(repositoryID: route.repositoryID)
+            )
+
+        case .open(let worktreeID):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else {
+                return nil
+            }
+            return await forwardManagement(
+                identity: route.identity,
+                request: .open(worktreeID: route.path)
             )
 
         case let .delete(worktreeID, force):
@@ -570,13 +737,22 @@ final class RemoteMacsModel: ObservableObject {
                 relayDepth: 0
             )
             if let text = worktree.attentionText {
+                let kind: RemoteNotificationEvent.Kind
+                switch worktree.attentionSource {
+                case .agentStop:
+                    kind = .agentStop
+                case .userNotify, .none:
+                    kind = .userNotify
+                case .commandFinished:
+                    continue
+                }
                 events.append(makeAttentionEvent(
                     remoteMac: remoteMac,
                     origin: origin,
                     worktree: worktree,
                     paneID: nil,
                     text: text,
-                    kind: .userNotify
+                    kind: kind
                 ))
             }
             for leaf in worktree.layout?.leaves ?? [] {

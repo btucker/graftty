@@ -24,6 +24,16 @@ enum NavigationDirection {
     }
 }
 
+enum HostManagedPaneCommand {
+    case split(PaneSplit)
+    case close
+    case surfaceClosed
+    case focus(NavigationDirection)
+    case focusOrder(forward: Bool)
+    case toggleZoom
+    case resize(direction: ResizeDirection, amount: UInt16)
+    case equalize
+}
 
 /// Compound key identifying "this terminal's most recent position inside
 /// this worktree." Used by `TerminalManager` to remember where a pane was
@@ -50,6 +60,10 @@ final class TerminalManager: ObservableObject {
     private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
+    private var paneWorktreePaths: [PaneSlotID: String] = [:]
+    private var hostManagedPaneCommandHandlers:
+        [PaneSlotID: (HostManagedPaneCommand) -> Void] = [:]
+    private(set) var focusedTerminalID: PaneSlotID?
 
     /// Caps the number of worktrees with live surfaces (MEM-1.1).
     /// Lazy so it can capture `self` in the eviction callback after `init`.
@@ -232,11 +246,15 @@ final class TerminalManager: ObservableObject {
     /// menu-open time so the sampled state is fresh.
     var currentPaneMoveContext: ((PaneSlotID) -> PaneMoveMenuContext?)?
 
-    /// Called when libghostty asks the host to close a surface (shell exited,
-    /// or user-initiated request-close that's been confirmed). The host
-    /// removes the pane from the split tree and calls `destroySurface`.
-    /// Without this wired, the surface lingers and the pane appears hung.
+    /// Called when a surface emits a user close action. The host removes the
+    /// pane from its split tree and calls `destroySurface`.
     var onCloseRequest: ((PaneSlotID) -> Void)?
+
+    /// Called when libghostty reports that a surface itself has closed.
+    /// This is distinct from a user-issued close action: a host-managed
+    /// remote surface can close because its transport dropped, which must
+    /// never close the owning Mac's pane.
+    var onSurfaceClosed: ((PaneSlotID) -> Void)?
 
     /// Called on shell-integration "command finished" events (requires
     /// ghostty shell integration to be sourced, which our env injection
@@ -484,6 +502,11 @@ final class TerminalManager: ObservableObject {
         worktreePath: String,
         extraInitialInput: String? = nil
     ) -> [PaneSlotID: SurfaceHandle] {
+        recordPaneSessions(
+            for: splitTree,
+            paneSessions: paneSessions,
+            worktreePath: worktreePath
+        )
         guard let app = ghosttyApp?.app else { return [:] }
 
         var zmxSessionSnapshot: ZmxSessionSnapshot?
@@ -502,7 +525,6 @@ final class TerminalManager: ObservableObject {
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
             guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
-            recordPaneSession(paneSessionID, for: terminalID)
             clearRehydratedIfDaemonGone(
                 terminalID,
                 paneSessionID: paneSessionID,
@@ -536,7 +558,6 @@ final class TerminalManager: ObservableObject {
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 explicitInitialInputSurfaces.remove(terminalID)
-                forgetPaneSession(for: terminalID)
                 continue
             }
             pendingInitialInput = nil
@@ -556,13 +577,18 @@ final class TerminalManager: ObservableObject {
         extraInitialInput: String? = nil,
         hostManagedBackend: SurfaceHandleZmxBackend? = nil
     ) -> SurfaceHandle? {
+        recordPaneSession(
+            paneSessionID,
+            for: terminalID,
+            worktreePath: worktreePath
+        )
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
             return existing
         }
 
-        guard hostManagedBackend != nil || canAllocatePTY(for: terminalID) else { return nil }
-        recordPaneSession(paneSessionID, for: terminalID)
+        guard hostManagedBackend != nil || canAllocatePTY(for: terminalID)
+        else { return nil }
         clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
         let isDirectHostManagedSurface = hostManagedBackend != nil
@@ -598,7 +624,6 @@ final class TerminalManager: ObservableObject {
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             explicitInitialInputSurfaces.remove(terminalID)
-            forgetPaneSession(for: terminalID)
             return nil
         }
         didCreateSurface(for: terminalID)
@@ -736,6 +761,17 @@ final class TerminalManager: ObservableObject {
         paneSlotIDsBySessionName[sessionName]?.id
     }
 
+    /// The owning worktree captured when the session mapping was recorded.
+    /// Remote attach can arrive before the local Ghostty surface completes
+    /// its own zmx spawn, so it must use this path when it wins daemon
+    /// creation.
+    func worktreePath(forSessionName sessionName: String) -> String? {
+        guard let slot = paneSlotIDsBySessionName[sessionName] else {
+            return nil
+        }
+        return paneWorktreePaths[slot]
+    }
+
     /// Test seam: read the captured grid size for a pane.
     func evictedGridSize(for terminalID: PaneSlotID) -> GridSize? {
         evictedGridSizes[terminalID]
@@ -812,6 +848,7 @@ final class TerminalManager: ObservableObject {
 
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: PaneSlotID) {
+        focusedTerminalID = terminalID
         for (id, handle) in surfaces {
             if id == terminalID {
                 // Route through the single visibility chokepoint so the
@@ -845,6 +882,33 @@ final class TerminalManager: ObservableObject {
         forgetSurfaceRuntimeState(for: terminalID)
         killZmxSession(for: terminalID)
         forgetTrackingState(for: terminalID)
+        hostManagedPaneCommandHandlers[terminalID] = nil
+        if focusedTerminalID == terminalID {
+            focusedTerminalID = nil
+        }
+    }
+
+    func registerHostManagedPaneCommandHandler(
+        for terminalID: PaneSlotID,
+        handler: @escaping (HostManagedPaneCommand) -> Void
+    ) {
+        hostManagedPaneCommandHandlers[terminalID] = handler
+    }
+
+    func unregisterHostManagedPaneCommandHandler(for terminalID: PaneSlotID) {
+        hostManagedPaneCommandHandlers[terminalID] = nil
+    }
+
+    @discardableResult
+    func routeHostManagedPaneCommand(
+        _ command: HostManagedPaneCommand,
+        for terminalID: PaneSlotID
+    ) -> Bool {
+        guard let handler = hostManagedPaneCommandHandlers[terminalID] else {
+            return false
+        }
+        handler(command)
+        return true
     }
 
     /// Soft destroy. Releases the libghostty surface (freeing scrollback
@@ -958,10 +1022,38 @@ final class TerminalManager: ObservableObject {
         }
     }
 
-    func recordPaneSession(_ paneSessionID: PaneSessionID, for terminalID: PaneSlotID) {
+    func recordPaneSession(
+        _ paneSessionID: PaneSessionID,
+        for terminalID: PaneSlotID,
+        worktreePath: String? = nil
+    ) {
         forgetPaneSession(for: terminalID)
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
+        paneWorktreePaths[terminalID] = worktreePath
+    }
+
+    func recordPaneSessions(
+        for splitTree: SplitTree,
+        paneSessions: [PaneSlotID: PaneSessionID],
+        worktreePath: String
+    ) {
+        for terminalID in splitTree.allLeaves {
+            guard let session = paneSessions[terminalID] else { continue }
+            recordPaneSession(
+                session,
+                for: terminalID,
+                worktreePath: worktreePath
+            )
+        }
+    }
+
+    /// Drop metadata for a pane whose owning AppState mutation was rolled
+    /// back before the pane became authoritative. Ordinary failable surface
+    /// creation retains metadata so remote attach can still target restored
+    /// panes; callers use this only when the pane itself was discarded.
+    func discardPaneSessionMetadata(for terminalID: PaneSlotID) {
+        forgetTrackingState(for: terminalID)
     }
 
     func zmxSessionName(for terminalID: PaneSlotID) -> String? {
@@ -984,8 +1076,12 @@ final class TerminalManager: ObservableObject {
     }
 
     private func forgetPaneSession(for terminalID: PaneSlotID) {
-        guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID) else { return }
-        paneSlotIDsBySessionName.removeValue(forKey: ZmxLauncher.sessionName(for: sessionID))
+        paneWorktreePaths.removeValue(forKey: terminalID)
+        guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID)
+        else { return }
+        paneSlotIDsBySessionName.removeValue(
+            forKey: ZmxLauncher.sessionName(for: sessionID)
+        )
     }
 
     private static func makeMacDisplayClientID() -> DisplayClientID {

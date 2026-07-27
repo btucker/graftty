@@ -1946,7 +1946,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
 
-**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip repository, create, pull, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
 
 **REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
 
@@ -1965,6 +1965,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.11** When a Remote Mac reconnects with user-notify or agent-stop attention that was not present in its final connected snapshot, the application shall deliver one summary notification for all newly observed items, keep unchanged attention silent, and target the first affected worktree or pane when the summary is activated.
 
 **REMOTE-13.12** When several panes in one remote layout request a connection concurrently, they shall share the same connection attempt rather than cancelling earlier pane opens.
+
+**REMOTE-13.13** When a user selects a closed remote worktree or a relayed client opens one, the owning Mac shall start the worktree without changing the owner's selected worktree.
+
+**REMOTE-13.14** While a Mac displays a remote worktree, pane control requests shall be serialized per owning Mac so repeated split resize and layout commands cannot overlap the single-request channel, and a disconnect shall invalidate every command queued for the old connection.
+
+**REMOTE-13.15** While a remote worktree is selected, the application shall route split, close, focus, zoom, resize, and equalize commands through that worktree's host-managed pane command handler.
+
+**REMOTE-13.16** When a remote client wins the race to create a pane's zmx daemon, the host shall start that daemon in the pane's owning worktree directory.
+
+**REMOTE-13.17** When a remote terminal transport closes unexpectedly, its host-managed adapter shall report the closure exactly once so the viewer can recreate the proxy without closing the owner's pane.
+
+**REMOTE-13.18** When GrafttyMobile selects a closed local or relayed worktree over an authenticated management connection, the application shall open the worktree before navigating to its running pane layout.
+
+**REMOTE-13.19** While GrafttyMobile views a relayed terminal, opening or resizing the follower shall not steal downstream display ownership; input shall claim ownership when needed, ownership loss shall permit a later reclaim, and the downstream owner's authoritative grid shall be reported back through the outer session.
+
+**REMOTE-13.20** When multiple Mobile split commands complete, the newest created pane shall receive focus unless the user explicitly changed host, worktree, or pane selection while those commands were in flight.
+
+**REMOTE-13.21** Remote worktree snapshots shall preserve the source of worktree-scoped attention so direct and relayed rows and macOS notifications retain agent-stop versus user-notify semantics.
+
+**REMOTE-13.22** A successful remote split shall return the exact created pane session through direct and relayed pane-control responses so rapid split focus never depends on coalesced snapshot leaf order.
+
+**REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
 
 ## URL — Worktree URL Handler
 

@@ -12,6 +12,8 @@ public struct WorktreeListContent: View {
     @State private var pendingForceDelete: PendingForceDelete?
     @State private var errorToast: String?
     @State private var errorToastTask: Task<Void, Never>?
+    @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
+    @State private var selectionIntentGeneration: UInt64 = 0
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -24,6 +26,11 @@ public struct WorktreeListContent: View {
         let worktreePath: String
         let stderr: String
         let shortStatus: String
+    }
+
+    private struct OpeningWorktreeKey: Hashable {
+        let hostID: UUID
+        let path: String
     }
 
     public let host: Host
@@ -101,9 +108,20 @@ public struct WorktreeListContent: View {
                                     worktree: wt,
                                     theme: theme,
                                     isActive: wt.path == selectedWorktreePath,
+                                    isOpening: openingWorktrees.contains(
+                                        OpeningWorktreeKey(
+                                            hostID: host.id,
+                                            path: wt.path
+                                        )
+                                    ),
                                     focusedPaneId: focusedPaneId,
-                                    onSelect: { onSelect(wt) },
-                                    onSelectPane: onSelectPane
+                                    onSelect: {
+                                        beginSelectingWorktree(wt)
+                                    },
+                                    onSelectPane: { leaf in
+                                        selectionIntentGeneration &+= 1
+                                        onSelectPane(leaf)
+                                    }
                                 )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if let action = WorktreePickerGrouping.swipeAction(for: wt) {
@@ -211,6 +229,15 @@ public struct WorktreeListContent: View {
             guard externalRefreshToken != 0 else { return }
             await refresh()
         }
+        .onChange(of: selectedWorktreePath) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
+        .onChange(of: focusedPaneId) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
+        .onChange(of: host.id) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
         .task(id: RemotePollingKey(
             hostID: host.id,
             enabled: includeRemoteWorktrees
@@ -258,6 +285,119 @@ public struct WorktreeListContent: View {
             state = .error("The server sent a response this version can't read.")
         } catch {
             state = .error("Couldn't reach the server.")
+        }
+    }
+
+    static func requiresManagementOpen(
+        _ worktree: WorktreePanes,
+        providerAvailable: Bool
+    ) -> Bool {
+        worktree.state == .closed && providerAvailable
+    }
+
+    static func shouldApplySelectionIntent(
+        capturedGeneration: UInt64,
+        currentGeneration: UInt64
+    ) -> Bool {
+        capturedGeneration == currentGeneration
+    }
+
+    private func beginSelectingWorktree(_ worktree: WorktreePanes) {
+        selectionIntentGeneration &+= 1
+        let generation = selectionIntentGeneration
+        let selectionHost = host
+        let provider = remoteConnectionProvider
+        let shouldIncludeRemoteWorktrees = includeRemoteWorktrees
+        Task {
+            await selectWorktree(
+                worktree,
+                generation: generation,
+                selectionHost: selectionHost,
+                provider: provider,
+                includeRemoteWorktrees: shouldIncludeRemoteWorktrees
+            )
+        }
+    }
+
+    /// Closed worktrees shared over the authenticated management channel
+    /// have no pane layout yet. Start the owning Mac's worktree, then poll
+    /// until the authoritative running layout arrives before navigating.
+    private func selectWorktree(
+        _ worktree: WorktreePanes,
+        generation: UInt64,
+        selectionHost: Host,
+        provider: RemoteConnectionProvider?,
+        includeRemoteWorktrees: Bool
+    ) async {
+        func selectionIsCurrent() -> Bool {
+            selectionHost.id == host.id
+                && Self.shouldApplySelectionIntent(
+                    capturedGeneration: generation,
+                    currentGeneration: selectionIntentGeneration
+                )
+        }
+        guard Self.requiresManagementOpen(
+            worktree,
+            providerAvailable: provider != nil
+        ) else {
+            if selectionIsCurrent() {
+                onSelect(worktree)
+            }
+            return
+        }
+        let openingKey = OpeningWorktreeKey(
+            hostID: selectionHost.id,
+            path: worktree.path
+        )
+        guard !openingWorktrees.contains(openingKey) else { return }
+        openingWorktrees.insert(openingKey)
+        defer { openingWorktrees.remove(openingKey) }
+
+        do {
+            let response = try await RelayedWorktreeManagementClient.send(
+                .open(worktreeID: worktree.path),
+                using: provider
+            )
+            guard selectionIsCurrent() else { return }
+            guard response == .ok else {
+                if case let .error(_, message, _, _) = response {
+                    showErrorToast(message)
+                } else {
+                    showErrorToast(
+                        "The remote Mac returned an unexpected response."
+                    )
+                }
+                return
+            }
+
+            for attempt in 0..<12 {
+                let list = try await WorktreePanesFetcher.fetch(
+                    baseURL: selectionHost.baseURL,
+                    includeRemoteWorktrees: includeRemoteWorktrees
+                )
+                guard !Task.isCancelled, selectionIsCurrent() else { return }
+                state = .loaded(list)
+                onListChanged(list)
+                if let opened = list.first(where: {
+                    $0.path == worktree.path
+                        && $0.state == .running
+                        && $0.layout != nil
+                }) {
+                    if selectionIsCurrent() {
+                        onSelect(opened)
+                    }
+                    return
+                }
+                guard attempt < 11 else { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            showErrorToast("The worktree started, but its panes are not ready.")
+        } catch is CancellationError {
+            return
+        } catch {
+            if selectionIsCurrent() {
+                showErrorToast("Couldn't reach the remote Mac.")
+            }
         }
     }
 
@@ -411,6 +551,7 @@ private struct WorktreeBlock: View {
     /// highlight on the whole block and the active brightness bucket
     /// for pane rows beneath it.
     let isActive: Bool
+    let isOpening: Bool
     /// Session name of the focused pane within `appState`. Each pane
     /// row tests `leaf.sessionName == focusedPaneId` to decide whether
     /// to use the brightest focused bucket from `theme.paneTitle(…)`.
@@ -465,12 +606,23 @@ private struct WorktreeBlock: View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
+            WorktreeRowContent(
+                worktree: worktree,
+                theme: theme,
+                isActive: isActive,
+                isOpening: isOpening
+            )
         } else {
             Button(action: onSelect) {
-                WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
+                WorktreeRowContent(
+                    worktree: worktree,
+                    theme: theme,
+                    isActive: isActive,
+                    isOpening: isOpening
+                )
             }
             .buttonStyle(.plain)
+            .disabled(isOpening)
         }
     }
 
@@ -492,13 +644,13 @@ private struct WorktreeBlock: View {
             ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
                 let effective = leaf.attentionText
                     ?? (index == 0 ? worktree.attentionText : nil)
-                // Use the leaf's own source for the icon decision; an
-                // inherited worktree-scoped ping carries no wire source
-                // here, so it renders as text.
                 let style: AttentionCapsuleStyle? = effective.map {
                     AttentionCapsuleStyle.from(
                         text: $0,
-                        source: leaf.attentionText != nil ? leaf.attentionSource : nil)
+                        source: leaf.attentionText != nil
+                            ? leaf.attentionSource
+                            : worktree.attentionSource
+                    )
                 }
                 let isFocused = leaf.sessionName == focusedPaneId
                 if layout.isLeaf {
@@ -545,6 +697,7 @@ private struct WorktreeRowContent: View {
     /// (isActive: …)` so the selected row reads brighter than its
     /// siblings (IPAD-1.16).
     let isActive: Bool
+    let isOpening: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -579,7 +732,7 @@ private struct WorktreeRowContent: View {
 
     @ViewBuilder
     private var typeIcon: some View {
-        if worktree.state.isInFlight {
+        if worktree.state.isInFlight || isOpening {
             ProgressView()
                 .controlSize(.mini)
                 .frame(width: 14)

@@ -62,11 +62,24 @@ struct MainWindow: View {
     @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
     @State private var openingRemoteTerminals:
         [RemoteTerminalKey: PaneSlotID] = [:]
+    @State private var scheduledRemoteTerminalRetries: Set<RemoteTerminalKey> =
+        []
     @State private var remoteTerminalSplitTree = SplitTree(root: nil)
     @State private var appIsVisible = true
     @State private var pendingRemoteNotificationActivation:
         RemoteNotificationEvent?
     @State private var pendingRemoteFocusTarget: RemoteWorktreeKey?
+    @State private var pendingRemoteSplitFocus: [PendingRemoteSplitFocus] = []
+    @State private var pendingRemoteSplitFocusResults:
+        [PendingRemoteSplitFocusResult] = []
+    @State private var pendingRemoteCloseProjections:
+        [RemoteWorktreeKey: PendingRemoteCloseProjection] = [:]
+    @State private var pendingRemotePaneControls:
+        [PendingRemotePaneControl] = []
+    @State private var pendingRemoteMutationOrder: [UUID] = []
+    @State private var remoteMutationInFlight: UUID?
+    @State private var remotePaneIntentGeneration: UInt64 = 0
+    @State private var openingRemoteWorktrees: Set<RemoteWorktreeKey> = []
 
     private struct RemoteAddWorktreeRequest: Identifiable {
         let id = UUID()
@@ -155,6 +168,7 @@ struct MainWindow: View {
                             focusedPaneSlotID: focusedRemoteTerminalID,
                             theme: terminalManager.theme,
                             onFocusTerminal: { terminalID in
+                                suppressPendingRemoteSplitFocus()
                                 if let sessionName = remoteSessionName(
                                     for: terminalID
                                 ) {
@@ -184,6 +198,16 @@ struct MainWindow: View {
                             }
                         )
                         .padding(.leading, 6)
+                    } else if let identity = selectedRemoteIdentity,
+                              let worktreePath = selectedRemoteWorktreePath,
+                              openingRemoteWorktrees.contains(
+                                RemoteWorktreeKey(
+                                    identity: identity,
+                                    worktreePath: worktreePath
+                                )
+                              ) {
+                        ProgressView("Starting remote worktree…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         ContentUnavailableView(
                             selectedRemoteMac.label,
@@ -597,6 +621,7 @@ struct MainWindow: View {
         )
         RemoteMacSidebarSelectionReducer.selectLocalWorktree(path, state: &selection)
         pendingRemoteFocusTarget = nil
+        suppressPendingRemoteSplitFocus()
         setRemoteSurfacesVisible(false)
         destroyAllRemoteSurfaces()
         selectedRemoteIdentity = selection.selectedRemoteIdentity
@@ -645,33 +670,11 @@ struct MainWindow: View {
                 }
 
                 if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
-
-                    if appState.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil {
-                        let id = PaneSlotID()
-                        appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
-                    }
-
-                    let splitTree = appState.repos[repoIdx].worktrees[wtIdx].splitTree
-                    for leafID in splitTree.allLeaves {
-                        appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSession(for: leafID)
-                    }
-                    // Mark every leaf as a first-pane candidate *before*
-                    // createSurfaces — the first PWD event could arrive
-                    // immediately after the surface spawns, and
-                    // maybeRunDefaultCommand queries isFirstPane at that
-                    // time. In the common case there's exactly one leaf
-                    // (fresh open); marking all of them keeps this robust
-                    // against future layouts that seed multiple leaves.
-                    for leafID in splitTree.allLeaves {
-                        terminalManager.markFirstPane(leafID)
-                    }
-                    _ = terminalManager.createSurfaces(
-                        for: splitTree,
-                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
-                        worktreePath: path
+                    _ = GrafttyApp.startWorktree(
+                        path: path,
+                        appState: $appState,
+                        terminalManager: terminalManager
                     )
-
-                    appState.repos[repoIdx].worktrees[wtIdx].state = .running
                 } else if appState.repos[repoIdx].worktrees[wtIdx].state == .running {
                     let splitTree = appState.repos[repoIdx].worktrees[wtIdx].splitTree
                     let missingSurface = splitTree.allLeaves.contains { terminalManager.handle(for: $0) == nil }
@@ -744,6 +747,7 @@ struct MainWindow: View {
         let identity = RemoteMacIdentity(remoteMac)
         RemoteMacSidebarSelectionReducer.selectRemote(identity, state: &selection)
         pendingRemoteFocusTarget = nil
+        suppressPendingRemoteSplitFocus()
         appState.selectedWorktreePath = selection.selectedWorktreePath
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
@@ -769,6 +773,12 @@ struct MainWindow: View {
     }
 
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) {
+        let identity = RemoteMacIdentity(remoteMac)
+        if remoteMacsModel.worktreePanesByRemote[identity]?.first(where: {
+            $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
+        })?.state.isInFlight == true {
+            return
+        }
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
@@ -781,7 +791,11 @@ struct MainWindow: View {
             selectedRemoteWorktreePath: selectedRemoteWorktreePath,
             selectedRemotePaneSessionName: selectedRemotePaneSessionName
         )
-        let identity = RemoteMacIdentity(remoteMac)
+        let target = RemoteWorktreeKey(
+            identity: identity,
+            worktreePath: worktreePath
+        )
+        suppressPendingRemoteSplitFocus()
         RemoteMacSidebarSelectionReducer.selectRemoteWorktree(
             identity,
             worktreePath: worktreePath,
@@ -791,10 +805,7 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
-        pendingRemoteFocusTarget = RemoteWorktreeKey(
-            identity: identity,
-            worktreePath: worktreePath
-        )
+        pendingRemoteFocusTarget = target
         if let previousIdentity,
            let previousWorktreePath,
            previousIdentity != identity
@@ -805,6 +816,28 @@ struct MainWindow: View {
             )
         }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
+        if selectedRemoteWorktreeSnapshot?.state == .closed,
+           !openingRemoteWorktrees.contains(target) {
+            openingRemoteWorktrees.insert(target)
+            Task { @MainActor in
+                let response = await remoteMacsModel.openWorktree(
+                    on: remoteMac,
+                    worktreePath: worktreePath
+                )
+                if let message = response.errorMessage {
+                    openingRemoteWorktrees.remove(target)
+                    if pendingRemoteFocusTarget == target {
+                        pendingRemoteFocusTarget = nil
+                    }
+                    presentRemoteWorktreeError(message)
+                } else if response != .ok {
+                    openingRemoteWorktrees.remove(target)
+                    presentRemoteWorktreeError(
+                        "The remote Mac returned an unexpected response."
+                    )
+                }
+            }
+        }
         Task {
             await remoteMacsModel.acknowledge(
                 on: remoteMac,
@@ -904,6 +937,11 @@ struct MainWindow: View {
             selectedRemotePaneSessionName: selectedRemotePaneSessionName
         )
         let identity = RemoteMacIdentity(remoteMac)
+        let target = RemoteWorktreeKey(
+            identity: identity,
+            worktreePath: worktreePath
+        )
+        suppressPendingRemoteSplitFocus()
         RemoteMacSidebarSelectionReducer.selectRemotePane(
             identity,
             worktreePath: worktreePath,
@@ -914,10 +952,7 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
-        pendingRemoteFocusTarget = RemoteWorktreeKey(
-            identity: identity,
-            worktreePath: worktreePath
-        )
+        pendingRemoteFocusTarget = target
         if let previousIdentity,
            let previousWorktreePath,
            previousIdentity != identity
@@ -1041,9 +1076,62 @@ struct MainWindow: View {
         var worktreePath: String
     }
 
+    private struct PendingRemoteSplitFocus {
+        var id: UUID
+        var target: RemoteWorktreeKey
+        var sourceSessionName: String
+        var direction: PaneControlRequest.SplitDirection
+        var existingSessionNames: Set<String>
+        var existingSessionOrder: [String]
+        var previousZoomedSessionName: String?
+        var focusGeneration: UInt64
+        var isDispatched = false
+        var shouldFocus = true
+        var legacySucceeded = false
+    }
+
+    private struct PendingRemoteSplitFocusResult {
+        var target: RemoteWorktreeKey
+        var existingSessionNames: Set<String>
+        var expectedSessionName: String?
+        var focusGeneration: UInt64
+        var projectedSessionOrder: [String]
+        var removedSessionName: String?
+    }
+
+    private struct PendingRemoteCloseProjection {
+        var removedSessionNames: Set<String>
+        var projectedSessionOrder: [String]
+    }
+
+    private struct PendingRemotePaneControl {
+        let id: UUID
+        var request: PaneControlRequest
+        let remoteMac: RemoteMac
+        let target: RemoteWorktreeKey
+        let restoreSnapshotOnError: Bool
+        let clearViewerZoomOnSuccess: Bool
+        var restoreViewerZoomOnError: String?
+        var closeProjection: PaneCloseProjection?
+        let focusGeneration: UInt64
+    }
+
     private func reconcileRemoteSelection(
         worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
     ) {
+        reconcileRemoteCloseProjections(
+            worktreePanesByRemote: worktreePanesByRemote
+        )
+        resolveLegacyRemoteSplits(
+            worktreePanesByRemote: worktreePanesByRemote
+        )
+        openingRemoteWorktrees = openingRemoteWorktrees.filter { target in
+            worktreePanesByRemote[target.identity]?.contains {
+                $0.path == target.worktreePath
+                    && ($0.origin?.relayDepth ?? 0) == 0
+                    && $0.state == .closed
+            } == true
+        }
         let currentIdentities = Set(worktreePanesByRemote.keys)
         let staleIdentities = Set(remoteTerminalSlots.keys.map(\.identity))
             .subtracting(currentIdentities)
@@ -1071,6 +1159,7 @@ struct MainWindow: View {
 
         if selection.selectedRemoteWorktreePath == nil {
             pendingRemoteFocusTarget = nil
+            suppressPendingRemoteSplitFocus()
             if let previousIdentity, let previousWorktreePath {
                 destroyRemoteSurfaces(
                     identity: previousIdentity,
@@ -1101,6 +1190,34 @@ struct MainWindow: View {
         }
     }
 
+    private func reconcileRemoteCloseProjections(
+        worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
+    ) {
+        let savedIdentities = Set(
+            remoteMacsModel.savedRemoteMacs.map(RemoteMacIdentity.init)
+        )
+        for target in Array(pendingRemoteCloseProjections.keys) {
+            guard savedIdentities.contains(target.identity) else {
+                pendingRemoteCloseProjections[target] = nil
+                continue
+            }
+            guard let worktrees = worktreePanesByRemote[target.identity] else {
+                // An offline saved Mac has no authoritative snapshot yet.
+                continue
+            }
+            let sessionNames = Set(
+                worktrees.first(where: {
+                    $0.path == target.worktreePath
+                        && ($0.origin?.relayDepth ?? 0) == 0
+                })?.layout?.leaves.map(\.sessionName) ?? []
+            )
+            if pendingRemoteCloseProjections[target]?
+                .removedSessionNames.isDisjoint(with: sessionNames) == true {
+                pendingRemoteCloseProjections[target] = nil
+            }
+        }
+    }
+
     private func synchronizeRemoteWorktree(
         remoteMac: RemoteMac,
         worktreePath: String,
@@ -1115,18 +1232,51 @@ struct MainWindow: View {
         guard let worktree = remoteMacsModel.worktreePanesByRemote[identity]?
             .first(where: {
                 $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
-            }),
-              let layout = worktree.layout else {
+            }) else {
+            pendingRemoteSplitFocusResults.removeAll {
+                $0.target == focusTarget && $0.removedSessionName != nil
+            }
+            pendingRemoteCloseProjections[focusTarget] = nil
+            if selectedRemoteIdentity == identity,
+               selectedRemoteWorktreePath == worktreePath {
+                selectedRemotePaneSessionName = nil
+            }
+            destroyRemoteSurfaces(identity: identity, worktreePath: worktreePath)
+            remoteTerminalSplitTree = SplitTree(root: nil)
+            return
+        }
+        guard let layout = worktree.layout else {
+            pendingRemoteSplitFocusResults.removeAll {
+                $0.target == focusTarget && $0.removedSessionName != nil
+            }
+            pendingRemoteCloseProjections[focusTarget] = nil
+            if selectedRemoteIdentity == identity,
+               selectedRemoteWorktreePath == worktreePath {
+                selectedRemotePaneSessionName = nil
+            }
             destroyRemoteSurfaces(identity: identity, worktreePath: worktreePath)
             remoteTerminalSplitTree = SplitTree(root: nil)
             return
         }
 
         let sessionNames = Set(layout.leaves.map(\.sessionName))
+        if let closeProjection = pendingRemoteCloseProjections[focusTarget],
+           closeProjection.removedSessionNames.isDisjoint(
+               with: sessionNames
+           ) {
+            // Every confirmed removal is now authoritative. Focus results
+            // can reconcile below; the topology tombstone has done its job.
+            pendingRemoteCloseProjections[focusTarget] = nil
+        }
+        let removedSessionNames =
+            pendingRemoteCloseProjections[focusTarget]?
+            .removedSessionNames.intersection(sessionNames) ?? []
+        let visibleSessionNames =
+            sessionNames.subtracting(removedSessionNames)
         let staleKeys = remoteTerminalSlots.keys.filter {
             $0.identity == identity
                 && $0.worktreePath == worktreePath
-                && !sessionNames.contains($0.sessionName)
+                && !visibleSessionNames.contains($0.sessionName)
         }
         for key in staleKeys {
             if let terminalID = remoteTerminalSlots.removeValue(forKey: key) {
@@ -1134,7 +1284,10 @@ struct MainWindow: View {
             }
         }
 
-        remoteTerminalSplitTree = SplitTree(
+        let zoomedSessionName = remoteTerminalSplitTree.zoomed.flatMap {
+            remoteSessionName(for: $0)
+        }
+        var projectedTree = SplitTree(
             root: RemotePaneLayoutProjection.node(from: layout) {
                 remoteTerminalSlot(
                     identity: identity,
@@ -1143,14 +1296,87 @@ struct MainWindow: View {
                 )
             }
         )
+        for removedSessionName in removedSessionNames {
+            let removedKey = RemoteTerminalKey(
+                identity: identity,
+                worktreePath: worktreePath,
+                sessionName: removedSessionName
+            )
+            if let removedID = remoteTerminalSlots.removeValue(
+                forKey: removedKey
+            ) {
+                projectedTree = projectedTree.removing(removedID)
+                terminalManager.destroySurface(terminalID: removedID)
+            }
+        }
+        if let zoomedSessionName,
+           visibleSessionNames.contains(zoomedSessionName),
+           let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
+            identity: identity,
+            worktreePath: worktreePath,
+            sessionName: zoomedSessionName
+           )] {
+            projectedTree = projectedTree.withZoom(zoomedID)
+        }
+        remoteTerminalSplitTree = projectedTree
+        var newestSplitSessionName: String?
+        while let pendingIndex = pendingRemoteSplitFocusResults.firstIndex(
+            where: { $0.target == focusTarget }
+        ) {
+            let pending = pendingRemoteSplitFocusResults[pendingIndex]
+            if let removedSessionName = pending.removedSessionName {
+                guard !sessionNames.contains(removedSessionName) else {
+                    break
+                }
+                pendingRemoteSplitFocusResults.remove(at: pendingIndex)
+                newestSplitSessionName =
+                    pending.expectedSessionName.flatMap {
+                        visibleSessionNames.contains($0) ? $0 : nil
+                    }
+                    ?? layout.leaves.lazy.map(\.sessionName).first {
+                        visibleSessionNames.contains($0)
+                    }
+                continue
+            }
+            let newSessionName: String?
+            if let expectedSessionName = pending.expectedSessionName {
+                newSessionName = sessionNames.contains(expectedSessionName)
+                    ? expectedSessionName
+                    : nil
+            } else {
+                // Compatibility fallback for older hosts that only return
+                // `.ok`. Current hosts return the exact created session.
+                newSessionName = layout.leaves.lazy.map(\.sessionName)
+                    .first(where: {
+                        !pending.existingSessionNames.contains($0)
+                    })
+            }
+            guard let newSessionName else { break }
+            pendingRemoteSplitFocusResults.remove(at: pendingIndex)
+            for index in pendingRemoteSplitFocusResults.indices
+            where pendingRemoteSplitFocusResults[index].target == focusTarget {
+                pendingRemoteSplitFocusResults[index]
+                    .existingSessionNames.insert(
+                        newSessionName
+                    )
+            }
+            newestSplitSessionName = newSessionName
+        }
+        if let newestSplitSessionName {
+            selectedRemotePaneSessionName = newestSplitSessionName
+            pendingRemoteFocusTarget = focusTarget
+        }
         let focusedSession = preferredSessionName.flatMap {
-            sessionNames.contains($0) ? $0 : nil
+            visibleSessionNames.contains($0) ? $0 : nil
         } ?? selectedRemotePaneSessionName.flatMap {
-            sessionNames.contains($0) ? $0 : nil
-        } ?? layout.leaves.first?.sessionName
+            visibleSessionNames.contains($0) ? $0 : nil
+        } ?? layout.leaves.lazy.map(\.sessionName).first {
+            visibleSessionNames.contains($0)
+        }
         selectedRemotePaneSessionName = focusedSession
 
-        for leaf in layout.leaves {
+        for leaf in layout.leaves
+        where visibleSessionNames.contains(leaf.sessionName) {
             let key = RemoteTerminalKey(
                 identity: identity,
                 worktreePath: worktreePath,
@@ -1178,13 +1404,29 @@ struct MainWindow: View {
                         client.close()
                         return
                     }
-                    let backend = RemoteTerminalSurfaceBackend(client: client)
-                    _ = terminalManager.createSurface(
+                    let backend = RemoteTerminalSurfaceBackend(
+                        client: client,
+                        onUnexpectedClose: {
+                            Task { @MainActor in
+                                handleRemoteSurfaceClosed(
+                                    source: key,
+                                    terminalID: terminalID
+                                )
+                            }
+                        }
+                    )
+                    guard terminalManager.createSurface(
                         terminalID: terminalID,
                         paneSessionID: PaneSessionID(id: terminalID.id),
                         worktreePath: worktreePath,
                         hostManagedBackend: backend
-                    )
+                    ) != nil else {
+                        scheduleRemoteTerminalRetry(
+                            source: key,
+                            remoteMac: remoteMac
+                        )
+                        return
+                    }
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
                     terminalManager.setVisible(
@@ -1205,6 +1447,10 @@ struct MainWindow: View {
                         leaf.sessionName,
                         remoteMac.label,
                         String(describing: error)
+                    )
+                    scheduleRemoteTerminalRetry(
+                        source: key,
+                        remoteMac: remoteMac
                     )
                 }
             }
@@ -1238,6 +1484,15 @@ struct MainWindow: View {
         }
         let terminalID = PaneSlotID()
         remoteTerminalSlots[key] = terminalID
+        terminalManager.registerHostManagedPaneCommandHandler(
+            for: terminalID
+        ) {
+            handleRemotePaneCommand(
+                $0,
+                source: key,
+                sourceTerminalID: terminalID
+            )
+        }
         return terminalID
     }
 
@@ -1258,6 +1513,947 @@ struct MainWindow: View {
         remoteTerminalSlots.first(where: { $0.value == terminalID })?.key.sessionName
     }
 
+    private func handleRemotePaneCommand(
+        _ command: HostManagedPaneCommand,
+        source: RemoteTerminalKey,
+        sourceTerminalID: PaneSlotID
+    ) {
+        guard remoteTerminalSlots[source] == sourceTerminalID else {
+            if case .surfaceClosed = command {
+                terminalManager.destroySurface(
+                    terminalID: sourceTerminalID
+                )
+            }
+            return
+        }
+        if case .surfaceClosed = command {
+            handleRemoteSurfaceClosed(
+                source: source,
+                terminalID: sourceTerminalID
+            )
+            return
+        }
+        guard selectedRemoteIdentity == source.identity,
+              selectedRemoteWorktreePath == source.worktreePath,
+              let remoteMac = selectedRemoteMac else { return }
+        let target = RemoteWorktreeKey(
+            identity: source.identity,
+            worktreePath: source.worktreePath
+        )
+        let inheritedFocusResults = pendingRemoteSplitFocusResults.filter {
+            $0.target == target
+                && $0.focusGeneration == remotePaneIntentGeneration
+        }
+        let closeProjection = pendingRemoteCloseProjections[target]
+        if closeProjection?.projectedSessionOrder.isEmpty == true {
+            // The final pane has closed successfully, but polling has not
+            // yet published the empty layout. Ignore commands emitted by
+            // the stale surface during that response-to-snapshot gap.
+            return
+        }
+        let effectiveSessionName =
+            inheritedFocusResults.last?.expectedSessionName
+            ?? closeProjection.flatMap {
+                $0.projectedSessionOrder.contains(source.sessionName)
+                    ? source.sessionName
+                    : $0.projectedSessionOrder.first
+            }
+            ?? source.sessionName
+        let projectedSessionOrder =
+            inheritedFocusResults.last?.projectedSessionOrder
+            ?? closeProjection?.projectedSessionOrder
+            ?? remoteTerminalSplitTree.allLeaves.compactMap {
+                remoteSessionName(for: $0)
+            }
+        let projectedSessionNames = Set(projectedSessionOrder)
+
+        switch command {
+        case .split(let split):
+            let direction: PaneControlRequest.SplitDirection
+            switch split {
+            case .right:
+                direction = .right
+            case .down:
+                direction = .down
+            case .left:
+                direction = .left
+            case .up:
+                direction = .up
+            }
+            let pending = PendingRemoteSplitFocus(
+                id: UUID(),
+                target: target,
+                sourceSessionName: effectiveSessionName,
+                direction: direction,
+                existingSessionNames: projectedSessionNames,
+                existingSessionOrder: projectedSessionOrder,
+                previousZoomedSessionName: nil,
+                focusGeneration: remotePaneIntentGeneration
+            )
+            pendingRemoteSplitFocus.append(pending)
+            pendingRemoteMutationOrder.append(pending.id)
+            dispatchNextRemoteMutation()
+
+        case .close:
+            sendRemotePaneControl(
+                .close(target: effectiveSessionName),
+                on: remoteMac,
+                target: target,
+                projectedSessionOrder: projectedSessionOrder
+            )
+
+        case .surfaceClosed:
+            return
+
+        case .focus(let direction):
+            guard let sourceID = remoteTerminalSlots[source],
+                  let nextID = remoteTerminalSplitTree.spatialNeighbor(
+                    of: sourceID,
+                    direction: direction.asSpatial
+                  ),
+                  let sessionName = remoteSessionName(for: nextID) else {
+                return
+            }
+            if remoteTerminalSplitTree.zoomed != nil {
+                remoteTerminalSplitTree =
+                    terminalManager.splitPreserveZoomOnNavigation
+                    ? remoteTerminalSplitTree.withZoom(nextID)
+                    : remoteTerminalSplitTree.withZoom(nil)
+            }
+            selectRemotePaneSession(
+                sessionName,
+                terminalID: nextID,
+                remoteMac: remoteMac,
+                target: target
+            )
+
+        case .focusOrder(let forward):
+            guard let sourceID = remoteTerminalSlots[source],
+                  let currentIndex = remoteTerminalSplitTree.allLeaves
+                    .firstIndex(of: sourceID),
+                  remoteTerminalSplitTree.allLeaves.count > 1 else {
+                return
+            }
+            let leaves = remoteTerminalSplitTree.allLeaves
+            let nextIndex = forward
+                ? (currentIndex + 1) % leaves.count
+                : (currentIndex - 1 + leaves.count) % leaves.count
+            let nextID = leaves[nextIndex]
+            guard let sessionName = remoteSessionName(for: nextID) else {
+                return
+            }
+            if remoteTerminalSplitTree.zoomed != nil {
+                remoteTerminalSplitTree =
+                    terminalManager.splitPreserveZoomOnNavigation
+                    ? remoteTerminalSplitTree.withZoom(nextID)
+                    : remoteTerminalSplitTree.withZoom(nil)
+            }
+            selectRemotePaneSession(
+                sessionName,
+                terminalID: nextID,
+                remoteMac: remoteMac,
+                target: target
+            )
+
+        case .toggleZoom:
+            guard let sourceID = remoteTerminalSlots[source] else { return }
+            suppressPendingRemoteSplitFocus()
+            remoteTerminalSplitTree = remoteTerminalSplitTree.togglingZoom(
+                at: sourceID
+            )
+
+        case .equalize:
+            sendRemotePaneControl(
+                .equalize(target: effectiveSessionName),
+                on: remoteMac,
+                target: target,
+                restoreSnapshotOnError: true,
+                clearViewerZoomOnSuccess: true
+            )
+
+        case let .resize(direction, amount):
+            let wireDirection: PaneControlRequest.SplitDirection
+            switch direction {
+            case .right:
+                wireDirection = .right
+            case .down:
+                wireDirection = .down
+            case .left:
+                wireDirection = .left
+            case .up:
+                wireDirection = .up
+            }
+            let bounds = NSApp.keyWindow?.contentView?.bounds
+                ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+            let extent: CGFloat
+            switch direction {
+            case .left, .right:
+                extent = bounds.width
+            case .up, .down:
+                extent = bounds.height
+            }
+            sendRemotePaneControl(
+                .resize(
+                    target: effectiveSessionName,
+                    direction: wireDirection,
+                    amount: amount,
+                    viewportExtent: UInt32(
+                        clamping: max(1, Int(extent.rounded()))
+                    )
+                ),
+                on: remoteMac,
+                target: target,
+                restoreSnapshotOnError: true,
+                clearViewerZoomOnSuccess: true
+            )
+        }
+    }
+
+    private func handleRemoteSurfaceClosed(
+        source: RemoteTerminalKey,
+        terminalID: PaneSlotID
+    ) {
+        guard remoteTerminalSlots[source] == terminalID else {
+            terminalManager.destroySurface(terminalID: terminalID)
+            return
+        }
+        let shouldRestoreFocus = focusedRemoteTerminalID == terminalID
+        openingRemoteTerminals[source] = nil
+        remoteTerminalSlots[source] = nil
+        terminalManager.destroySurface(terminalID: terminalID)
+        guard selectedRemoteIdentity == source.identity,
+              selectedRemoteWorktreePath == source.worktreePath,
+              let remoteMac = selectedRemoteMac else {
+            remoteTerminalSplitTree =
+                remoteTerminalSplitTree.removing(terminalID)
+            return
+        }
+        if shouldRestoreFocus {
+            pendingRemoteFocusTarget = RemoteWorktreeKey(
+                identity: source.identity,
+                worktreePath: source.worktreePath
+            )
+        }
+        synchronizeRemoteWorktree(
+            remoteMac: remoteMac,
+            worktreePath: source.worktreePath,
+            focusSelection: shouldRestoreFocus
+        )
+        scheduleRemoteTerminalRetry(source: source, remoteMac: remoteMac)
+    }
+
+    private func scheduleRemoteTerminalRetry(
+        source: RemoteTerminalKey,
+        remoteMac: RemoteMac
+    ) {
+        guard !scheduledRemoteTerminalRetries.contains(source) else { return }
+        scheduledRemoteTerminalRetries.insert(source)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard scheduledRemoteTerminalRetries.contains(source) else {
+                return
+            }
+            scheduledRemoteTerminalRetries.remove(source)
+            guard selectedRemoteIdentity == source.identity,
+                  selectedRemoteWorktreePath == source.worktreePath,
+                  remoteMacsModel.worktreePanesByRemote[source.identity]?
+                    .contains(where: {
+                        $0.path == source.worktreePath
+                            && $0.layout?.leaves.contains(where: {
+                                $0.sessionName == source.sessionName
+                            }) == true
+                    }) == true,
+                  let terminalID = remoteTerminalSlots[source],
+                  terminalManager.view(for: terminalID) == nil else {
+                return
+            }
+            synchronizeRemoteWorktree(
+                remoteMac: remoteMac,
+                worktreePath: source.worktreePath,
+                focusSelection: false
+            )
+        }
+    }
+
+    private func selectRemotePaneSession(
+        _ sessionName: String,
+        terminalID: PaneSlotID,
+        remoteMac: RemoteMac,
+        target: RemoteWorktreeKey
+    ) {
+        suppressPendingRemoteSplitFocus()
+        selectedRemotePaneSessionName = sessionName
+        pendingRemoteFocusTarget = target
+        focusRemotePane(terminalID, target: target)
+        Task {
+            await remoteMacsModel.acknowledge(
+                on: remoteMac,
+                worktreePath: target.worktreePath,
+                paneSessionName: sessionName
+            )
+        }
+    }
+
+    private func sendRemotePaneControl(
+        _ request: PaneControlRequest,
+        on remoteMac: RemoteMac,
+        target: RemoteWorktreeKey,
+        pendingSplitID: UUID? = nil,
+        restoreSnapshotOnError: Bool = false,
+        clearViewerZoomOnSuccess: Bool = false,
+        restoreViewerZoomOnError: String? = nil,
+        projectedSessionOrder: [String]? = nil,
+        deferBehindPendingSplits: Bool = true,
+        viewerEffectGeneration: UInt64? = nil,
+        completion: (@MainActor (PaneControlResponse) -> Void)? = nil
+    ) {
+        if deferBehindPendingSplits,
+           pendingSplitID == nil {
+            let id = UUID()
+            let closeProjection: PaneCloseProjection?
+            if case .close(let closedSessionName) = request {
+                closeProjection = PaneCloseProjection(
+                    target: closedSessionName,
+                    sessionOrder: projectedSessionOrder
+                        ?? remoteTerminalSplitTree.allLeaves.compactMap {
+                            remoteSessionName(for: $0)
+                        }
+                )
+            } else {
+                closeProjection = nil
+            }
+            pendingRemotePaneControls.append(PendingRemotePaneControl(
+                id: id,
+                request: request,
+                remoteMac: remoteMac,
+                target: target,
+                restoreSnapshotOnError: restoreSnapshotOnError,
+                clearViewerZoomOnSuccess: clearViewerZoomOnSuccess,
+                restoreViewerZoomOnError: restoreViewerZoomOnError,
+                closeProjection: closeProjection,
+                focusGeneration: remotePaneIntentGeneration
+            ))
+            pendingRemoteMutationOrder.append(id)
+            dispatchNextRemoteMutation()
+            return
+        }
+        let operation = remoteMacsModel.queuePaneControl(
+            on: remoteMac,
+            request: request
+        )
+        Task { @MainActor in
+            let response = await operation.value
+            defer { completion?(response) }
+            switch response {
+            case .splitCreated(let sessionName):
+                if let pendingSplitID,
+                   let index = pendingRemoteSplitFocus.firstIndex(
+                    where: { $0.id == pendingSplitID }
+                   ) {
+                    let completed = pendingRemoteSplitFocus.remove(at: index)
+                    pendingRemoteMutationOrder.removeAll {
+                        $0 == completed.id
+                    }
+                    if remoteMutationInFlight == completed.id {
+                        remoteMutationInFlight = nil
+                    }
+                    completeRemoteSplit(
+                        completed,
+                        createdSessionName: sessionName
+                    )
+                    if selectedRemoteIdentity == target.identity,
+                       selectedRemoteWorktreePath == target.worktreePath {
+                        synchronizeRemoteWorktree(
+                            remoteMac: remoteMac,
+                            worktreePath: target.worktreePath,
+                            focusSelection: false
+                        )
+                    }
+                    dispatchNextRemoteMutation()
+                }
+                return
+            case .ok:
+                if let pendingSplitID,
+                   let index = pendingRemoteSplitFocus.firstIndex(
+                    where: { $0.id == pendingSplitID }
+                   ) {
+                    // Released hosts return only `.ok`. Keep this mutation
+                    // as the sole dispatched split until its next snapshot
+                    // identifies the new leaf, preventing coalesced layouts
+                    // from reversing rapid split focus.
+                    pendingRemoteSplitFocus[index].legacySucceeded = true
+                    scheduleLegacyRemoteSplitTimeout(
+                        id: pendingSplitID,
+                        target: target
+                    )
+                    resolveLegacyRemoteSplits(
+                        worktreePanesByRemote:
+                            remoteMacsModel.worktreePanesByRemote
+                    )
+                    if selectedRemoteIdentity == target.identity,
+                       selectedRemoteWorktreePath == target.worktreePath {
+                        synchronizeRemoteWorktree(
+                            remoteMac: remoteMac,
+                            worktreePath: target.worktreePath,
+                            focusSelection: false
+                        )
+                    }
+                } else if clearViewerZoomOnSuccess,
+                          viewerEffectGeneration
+                            == remotePaneIntentGeneration,
+                          selectedRemoteIdentity == target.identity,
+                          selectedRemoteWorktreePath
+                            == target.worktreePath {
+                    remoteTerminalSplitTree =
+                        remoteTerminalSplitTree.withZoom(nil)
+                }
+                return
+            case .error(let code, let message):
+                var failedPendingSplit: PendingRemoteSplitFocus?
+                if let pendingSplitID,
+                   let index = pendingRemoteSplitFocus.firstIndex(
+                    where: { $0.id == pendingSplitID }
+                   ) {
+                    failedPendingSplit = pendingRemoteSplitFocus.remove(
+                        at: index
+                    )
+                    pendingRemoteMutationOrder.removeAll {
+                        $0 == pendingSplitID
+                    }
+                    if remoteMutationInFlight == pendingSplitID {
+                        remoteMutationInFlight = nil
+                    }
+                }
+                let abortsSplitBatch = code == "cancelled"
+                    || code == "downstream-unavailable"
+                var transferredRollback = false
+                if !abortsSplitBatch,
+                   let failedPendingSplit,
+                   let rollbackZoom =
+                    failedPendingSplit.previousZoomedSessionName,
+                   let nextMutationID =
+                    pendingRemoteMutationOrder.first,
+                   let nextIndex = pendingRemoteSplitFocus.firstIndex(
+                    where: {
+                        $0.id == nextMutationID
+                            && $0.target == failedPendingSplit.target
+                            && $0.previousZoomedSessionName == nil
+                    }
+                   ) {
+                    pendingRemoteSplitFocus[nextIndex]
+                        .previousZoomedSessionName = rollbackZoom
+                    transferredRollback = true
+                }
+                var rollbackCandidates = failedPendingSplit.map { [$0] } ?? []
+                if abortsSplitBatch {
+                    rollbackCandidates.append(contentsOf:
+                        pendingRemoteSplitFocus.filter { $0.target == target }
+                    )
+                    let abandonedIDs = Set(
+                        pendingRemoteSplitFocus
+                            .filter { $0.target == target }
+                            .map(\.id)
+                        + pendingRemotePaneControls
+                            .filter { $0.target == target }
+                            .map(\.id)
+                    )
+                    pendingRemoteSplitFocus.removeAll { $0.target == target }
+                    pendingRemoteSplitFocusResults.removeAll {
+                        $0.target == target
+                    }
+                    pendingRemotePaneControls.removeAll {
+                        $0.target == target
+                    }
+                    pendingRemoteMutationOrder.removeAll {
+                        abandonedIDs.contains($0)
+                    }
+                    if let inFlight = remoteMutationInFlight,
+                       abandonedIDs.contains(inFlight) {
+                        remoteMutationInFlight = nil
+                    }
+                }
+                if let rollback = rollbackCandidates.first(where: {
+                    $0.shouldFocus && $0.previousZoomedSessionName != nil
+                }),
+                   let previousZoomedSessionName =
+                    rollback.previousZoomedSessionName,
+                   (abortsSplitBatch || !transferredRollback),
+                   remoteTerminalSplitTree.zoomed == nil,
+                   selectedRemoteIdentity == target.identity,
+                   selectedRemoteWorktreePath == target.worktreePath,
+                   let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
+                       identity: target.identity,
+                       worktreePath: target.worktreePath,
+                       sessionName: previousZoomedSessionName
+                   )] {
+                    remoteTerminalSplitTree =
+                        remoteTerminalSplitTree.withZoom(zoomedID)
+                }
+                if restoreSnapshotOnError,
+                   selectedRemoteIdentity == target.identity,
+                   selectedRemoteWorktreePath == target.worktreePath {
+                    synchronizeRemoteWorktree(
+                        remoteMac: remoteMac,
+                        worktreePath: target.worktreePath,
+                        focusSelection: false
+                    )
+                    if viewerEffectGeneration
+                        == remotePaneIntentGeneration,
+                       let restoreViewerZoomOnError,
+                       let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
+                        identity: target.identity,
+                        worktreePath: target.worktreePath,
+                        sessionName: restoreViewerZoomOnError
+                       )] {
+                        remoteTerminalSplitTree =
+                            remoteTerminalSplitTree.withZoom(zoomedID)
+                    }
+                }
+                if code != "no-matching-split" && code != "cancelled" {
+                    presentRemoteWorktreeError(message)
+                }
+                if failedPendingSplit != nil {
+                    dispatchNextRemoteMutation()
+                }
+            }
+        }
+    }
+
+    private func scheduleLegacyRemoteSplitTimeout(
+        id: UUID,
+        target: RemoteWorktreeKey
+    ) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            guard remoteMutationInFlight == id,
+                  pendingRemoteSplitFocus.contains(where: {
+                      $0.id == id && $0.legacySucceeded
+                  }) else {
+                return
+            }
+            let abandonedIDs = Set(
+                pendingRemoteSplitFocus
+                    .filter { $0.target == target }
+                    .map(\.id)
+                + pendingRemotePaneControls
+                    .filter { $0.target == target }
+                    .map(\.id)
+            )
+            pendingRemoteSplitFocus.removeAll { $0.target == target }
+            pendingRemoteSplitFocusResults.removeAll {
+                $0.target == target
+            }
+            pendingRemotePaneControls.removeAll { $0.target == target }
+            pendingRemoteMutationOrder.removeAll {
+                abandonedIDs.contains($0)
+            }
+            remoteMutationInFlight = nil
+            dispatchNextRemoteMutation()
+        }
+    }
+
+    private func dispatchNextRemoteMutation() {
+        guard remoteMutationInFlight == nil,
+              let id = pendingRemoteMutationOrder.first else {
+            return
+        }
+        if let index = pendingRemoteSplitFocus.firstIndex(where: {
+            $0.id == id
+        }) {
+            pendingRemoteSplitFocus[index].isDispatched = true
+            let ownsViewerState =
+                pendingRemoteSplitFocus[index].shouldFocus
+                && pendingRemoteSplitFocus[index].focusGeneration
+                    == remotePaneIntentGeneration
+                && selectedRemoteIdentity
+                    == pendingRemoteSplitFocus[index].target.identity
+                && selectedRemoteWorktreePath
+                    == pendingRemoteSplitFocus[index].target.worktreePath
+            if ownsViewerState {
+                if pendingRemoteSplitFocus[index]
+                    .previousZoomedSessionName == nil {
+                    pendingRemoteSplitFocus[index]
+                        .previousZoomedSessionName =
+                        remoteTerminalSplitTree.zoomed.flatMap {
+                            remoteSessionName(for: $0)
+                        }
+                }
+                remoteTerminalSplitTree =
+                    remoteTerminalSplitTree.withZoom(nil)
+            }
+            let pending = pendingRemoteSplitFocus[index]
+            guard let remoteMac = remoteMacsModel.savedRemoteMacs.first(
+                where: {
+                    RemoteMacIdentity($0) == pending.target.identity
+                }
+            ) else {
+                pendingRemoteSplitFocus.remove(at: index)
+                pendingRemoteMutationOrder.removeFirst()
+                dispatchNextRemoteMutation()
+                return
+            }
+            remoteMutationInFlight = id
+            sendRemotePaneControl(
+                .split(
+                    target: pending.sourceSessionName,
+                    direction: pending.direction
+                ),
+                on: remoteMac,
+                target: pending.target,
+                pendingSplitID: pending.id,
+                deferBehindPendingSplits: false
+            )
+        } else if let index = pendingRemotePaneControls.firstIndex(where: {
+            $0.id == id
+        }) {
+            var pending = pendingRemotePaneControls[index]
+            let ownsViewerState =
+                pending.focusGeneration == remotePaneIntentGeneration
+                && selectedRemoteIdentity == pending.target.identity
+                && selectedRemoteWorktreePath
+                    == pending.target.worktreePath
+            if case .equalize = pending.request, ownsViewerState {
+                pending.restoreViewerZoomOnError =
+                    remoteTerminalSplitTree.zoomed.flatMap {
+                        remoteSessionName(for: $0)
+                    }
+                remoteTerminalSplitTree =
+                    remoteTerminalSplitTree.equalizing()
+                pendingRemotePaneControls[index] = pending
+            }
+            remoteMutationInFlight = id
+            sendRemotePaneControl(
+                pending.request,
+                on: pending.remoteMac,
+                target: pending.target,
+                restoreSnapshotOnError: pending.restoreSnapshotOnError,
+                clearViewerZoomOnSuccess:
+                    pending.clearViewerZoomOnSuccess,
+                restoreViewerZoomOnError:
+                    pending.restoreViewerZoomOnError,
+                deferBehindPendingSplits: false,
+                viewerEffectGeneration: pending.focusGeneration
+            ) { response in
+                completeRemotePaneControl(
+                    pending,
+                    response: response
+                )
+            }
+        } else {
+            pendingRemoteMutationOrder.removeFirst()
+            dispatchNextRemoteMutation()
+        }
+    }
+
+    private func completeRemoteSplit(
+        _ completed: PendingRemoteSplitFocus,
+        createdSessionName: String?
+    ) {
+        for index in pendingRemoteSplitFocus.indices
+        where pendingRemoteSplitFocus[index].target == completed.target {
+            // Any successful split commits the batch's local unzoom.
+            pendingRemoteSplitFocus[index].previousZoomedSessionName = nil
+            if let createdSessionName {
+                pendingRemoteSplitFocus[index].existingSessionNames.insert(
+                    createdSessionName
+                )
+                pendingRemoteSplitFocus[index].existingSessionOrder =
+                    PaneCloseProjection.sessionOrder(
+                        pendingRemoteSplitFocus[index].existingSessionOrder,
+                        afterSplitting: completed.sourceSessionName,
+                        created: createdSessionName,
+                        direction: completed.direction
+                    )
+                // The exact created ID lets rapid commands follow local
+                // focus-after-split semantics without waiting for polling.
+                if pendingRemoteSplitFocus[index].focusGeneration
+                    == completed.focusGeneration,
+                   pendingRemoteSplitFocus[index].sourceSessionName
+                    == completed.sourceSessionName {
+                    pendingRemoteSplitFocus[index].sourceSessionName =
+                        createdSessionName
+                }
+            }
+        }
+        if let createdSessionName {
+            for index in pendingRemotePaneControls.indices
+            where pendingRemotePaneControls[index].target
+                == completed.target {
+                if var projection =
+                    pendingRemotePaneControls[index].closeProjection {
+                    let inheritsFocus =
+                        pendingRemotePaneControls[index].focusGeneration
+                            == completed.focusGeneration
+                    projection.projectSplit(
+                        from: completed.sourceSessionName,
+                        to: createdSessionName,
+                        direction: completed.direction,
+                        inheritsFocus: inheritsFocus
+                    )
+                    pendingRemotePaneControls[index].closeProjection =
+                        projection
+                    pendingRemotePaneControls[index].request = .close(
+                        target: projection.target
+                    )
+                } else if pendingRemotePaneControls[index].focusGeneration
+                    == completed.focusGeneration {
+                    pendingRemotePaneControls[index].request =
+                        pendingRemotePaneControls[index].request
+                        .rebasingTarget(
+                            from: completed.sourceSessionName,
+                            to: createdSessionName
+                        )
+                }
+            }
+            if var closeProjection =
+                pendingRemoteCloseProjections[completed.target] {
+                closeProjection.projectedSessionOrder =
+                    PaneCloseProjection.sessionOrder(
+                        closeProjection.projectedSessionOrder,
+                        afterSplitting: completed.sourceSessionName,
+                        created: createdSessionName,
+                        direction: completed.direction
+                    ).filter {
+                        !closeProjection.removedSessionNames.contains($0)
+                    }
+                pendingRemoteCloseProjections[completed.target] =
+                    closeProjection
+            }
+        }
+        guard completed.shouldFocus else { return }
+        let projectedSessionOrder: [String]
+        if let createdSessionName {
+            projectedSessionOrder = PaneCloseProjection.sessionOrder(
+                completed.existingSessionOrder,
+                afterSplitting: completed.sourceSessionName,
+                created: createdSessionName,
+                direction: completed.direction
+            )
+        } else {
+            projectedSessionOrder = completed.existingSessionOrder
+        }
+        pendingRemoteSplitFocusResults.append(
+            PendingRemoteSplitFocusResult(
+                target: completed.target,
+                existingSessionNames: completed.existingSessionNames,
+                expectedSessionName: createdSessionName,
+                focusGeneration: completed.focusGeneration,
+                projectedSessionOrder: projectedSessionOrder,
+                removedSessionName: nil
+            )
+        )
+    }
+
+    private func resolveLegacyRemoteSplits(
+        worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
+    ) {
+        let candidates = pendingRemoteSplitFocus.filter {
+            $0.isDispatched && $0.legacySucceeded
+        }
+        for candidate in candidates {
+            guard let index = pendingRemoteSplitFocus.firstIndex(
+                where: { $0.id == candidate.id }
+            ),
+            let layout = worktreePanesByRemote[candidate.target.identity]?
+                .first(where: {
+                    $0.path == candidate.target.worktreePath
+                        && ($0.origin?.relayDepth ?? 0) == 0
+                })?.layout,
+            (pendingRemoteCloseProjections[candidate.target]?
+                .removedSessionNames.isDisjoint(
+                    with: Set(layout.leaves.map(\.sessionName))
+                ) ?? true),
+            let newSessionName = layout.leaves.lazy.map(\.sessionName)
+                .first(where: {
+                    !candidate.existingSessionNames.contains($0)
+                }),
+            remoteMacsModel.savedRemoteMacs.contains(where: {
+                RemoteMacIdentity($0) == candidate.target.identity
+            }) else {
+                continue
+            }
+            let completed = pendingRemoteSplitFocus.remove(at: index)
+            pendingRemoteMutationOrder.removeAll {
+                $0 == completed.id
+            }
+            if remoteMutationInFlight == completed.id {
+                remoteMutationInFlight = nil
+            }
+            completeRemoteSplit(
+                completed,
+                createdSessionName: newSessionName
+            )
+            dispatchNextRemoteMutation()
+        }
+    }
+
+    private func completeRemotePaneControl(
+        _ completed: PendingRemotePaneControl,
+        response: PaneControlResponse
+    ) {
+        pendingRemotePaneControls.removeAll { $0.id == completed.id }
+        pendingRemoteMutationOrder.removeAll { $0 == completed.id }
+        if remoteMutationInFlight == completed.id {
+            remoteMutationInFlight = nil
+        }
+        if response.isSuccess,
+           case .close(let closedSessionName) = completed.request,
+           let completedProjection = completed.closeProjection {
+            let replacement = completedProjection.replacementTarget
+            var closeProjection = pendingRemoteCloseProjections[
+                completed.target
+            ] ?? PendingRemoteCloseProjection(
+                removedSessionNames: [],
+                projectedSessionOrder: completedProjection.sessionOrder
+            )
+            closeProjection.removedSessionNames.insert(closedSessionName)
+            closeProjection.projectedSessionOrder =
+                completedProjection.sessionOrder.filter {
+                    !closeProjection.removedSessionNames.contains($0)
+                }
+            pendingRemoteCloseProjections[completed.target] = closeProjection
+            pendingRemoteSplitFocusResults.removeAll {
+                $0.target == completed.target
+                    && $0.focusGeneration == completed.focusGeneration
+            }
+            if selectedRemoteIdentity == completed.target.identity,
+               selectedRemoteWorktreePath
+                == completed.target.worktreePath {
+                let currentGeneration = remotePaneIntentGeneration
+                let currentProjection =
+                    pendingRemoteSplitFocusResults.last(where: {
+                        $0.target == completed.target
+                            && $0.focusGeneration == currentGeneration
+                    })
+                let projectedSessionOrder =
+                    closeProjection.projectedSessionOrder
+                let currentSessionName =
+                    currentProjection?.expectedSessionName
+                    ?? selectedRemotePaneSessionName
+                let projectedSessionName = currentSessionName.flatMap {
+                    $0 != closedSessionName
+                        && projectedSessionOrder.contains($0) ? $0 : nil
+                } ?? projectedSessionOrder.first
+                pendingRemoteSplitFocusResults.removeAll {
+                    $0.target == completed.target
+                        && $0.focusGeneration == currentGeneration
+                }
+                pendingRemoteSplitFocusResults.append(
+                    PendingRemoteSplitFocusResult(
+                        target: completed.target,
+                        existingSessionNames: [],
+                        expectedSessionName: projectedSessionName,
+                        focusGeneration: currentGeneration,
+                        projectedSessionOrder: projectedSessionOrder,
+                        removedSessionName: closedSessionName
+                    )
+                )
+                selectedRemotePaneSessionName = projectedSessionName
+                pendingRemoteFocusTarget = completed.target
+                let closedKey = RemoteTerminalKey(
+                    identity: completed.target.identity,
+                    worktreePath: completed.target.worktreePath,
+                    sessionName: closedSessionName
+                )
+                if let closedID = remoteTerminalSlots[closedKey] {
+                    remoteTerminalSplitTree =
+                        remoteTerminalSplitTree.removing(closedID)
+                    terminalManager.setVisible(false, for: closedID)
+                }
+                if let projectedSessionName,
+                   let replacementID = remoteTerminalSlots[
+                    RemoteTerminalKey(
+                    identity: completed.target.identity,
+                    worktreePath: completed.target.worktreePath,
+                    sessionName: projectedSessionName
+                    )
+                ] {
+                    focusRemotePane(
+                        replacementID,
+                        target: completed.target
+                    )
+                }
+            }
+            for index in pendingRemoteSplitFocus.indices
+            where pendingRemoteSplitFocus[index].target
+                == completed.target {
+                pendingRemoteSplitFocus[index].existingSessionOrder.removeAll {
+                    $0 == closedSessionName
+                }
+                if let replacement,
+                   pendingRemoteSplitFocus[index].sourceSessionName
+                    == closedSessionName {
+                    pendingRemoteSplitFocus[index].sourceSessionName =
+                        replacement
+                }
+            }
+            for index in pendingRemotePaneControls.indices
+            where pendingRemotePaneControls[index].target
+                == completed.target {
+                if var projection =
+                    pendingRemotePaneControls[index].closeProjection {
+                    projection.projectClose(
+                        from: closedSessionName,
+                        to: replacement,
+                        inheritsFocus: true
+                    )
+                    pendingRemotePaneControls[index].closeProjection =
+                        projection
+                    pendingRemotePaneControls[index].request = .close(
+                        target: projection.target
+                    )
+                } else if let replacement {
+                    pendingRemotePaneControls[index].request =
+                        pendingRemotePaneControls[index].request
+                        .rebasingTarget(
+                            from: closedSessionName,
+                            to: replacement
+                        )
+                }
+            }
+            if replacement == nil {
+                let doomedSplitIDs = pendingRemoteSplitFocus
+                    .filter {
+                        $0.target == completed.target
+                            && $0.sourceSessionName
+                                == closedSessionName
+                    }
+                    .map(\.id)
+                let doomedControlIDs = pendingRemotePaneControls
+                    .filter {
+                        $0.target == completed.target
+                            && $0.request.rebasingTarget(
+                                from: closedSessionName,
+                                to: "__closed-pane__"
+                            ) != $0.request
+                    }
+                    .map(\.id)
+                let doomedIDs = Set(
+                    doomedSplitIDs + doomedControlIDs
+                )
+                pendingRemoteSplitFocus.removeAll {
+                    doomedIDs.contains($0.id)
+                }
+                pendingRemotePaneControls.removeAll {
+                    doomedIDs.contains($0.id)
+                }
+                pendingRemoteMutationOrder.removeAll {
+                    doomedIDs.contains($0)
+                }
+            }
+        }
+        dispatchNextRemoteMutation()
+    }
+
+    private func suppressPendingRemoteSplitFocus() {
+        remotePaneIntentGeneration &+= 1
+        for index in pendingRemoteSplitFocus.indices {
+            pendingRemoteSplitFocus[index].shouldFocus = false
+            pendingRemoteSplitFocus[index].previousZoomedSessionName = nil
+        }
+        pendingRemoteSplitFocusResults.removeAll()
+    }
+
     private func setRemoteSurfacesVisible(_ visible: Bool) {
         guard let identity = selectedRemoteIdentity,
               let worktreePath = selectedRemoteWorktreePath else { return }
@@ -1275,6 +2471,7 @@ struct MainWindow: View {
             $0.identity == identity && $0.worktreePath == worktreePath
         }
         for key in keys {
+            scheduledRemoteTerminalRetries.remove(key)
             openingRemoteTerminals[key] = nil
             if let terminalID = remoteTerminalSlots.removeValue(forKey: key) {
                 terminalManager.destroySurface(terminalID: terminalID)
@@ -1300,6 +2497,7 @@ struct MainWindow: View {
         }
         remoteTerminalSlots.removeAll()
         openingRemoteTerminals.removeAll()
+        scheduledRemoteTerminalRetries.removeAll()
         remoteTerminalSplitTree = SplitTree(root: nil)
     }
 

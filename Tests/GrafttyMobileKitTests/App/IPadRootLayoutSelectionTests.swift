@@ -595,6 +595,121 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
+@spec REMOTE-13.20: When multiple Mobile split commands complete, the newest created pane shall receive focus unless the user explicitly changed host, worktree, or pane selection while those commands were in flight.
+""")
+    func splitCreatedFocusUsesExplicitSelectionGeneration() {
+        let host = UUID()
+        #expect(IPadRootLayout.shouldApplySplitCreatedFocus(
+            capturedHostID: host,
+            capturedWorktreePath: "worktree",
+            capturedSelectionGeneration: 7,
+            currentHostID: host,
+            currentWorktreePath: "worktree",
+            currentSelectionGeneration: 7
+        ))
+        #expect(!IPadRootLayout.shouldApplySplitCreatedFocus(
+            capturedHostID: host,
+            capturedWorktreePath: "worktree",
+            capturedSelectionGeneration: 7,
+            currentHostID: host,
+            currentWorktreePath: "worktree",
+            currentSelectionGeneration: 8
+        ))
+        #expect(!IPadRootLayout.shouldApplySplitCreatedFocus(
+            capturedHostID: host,
+            capturedWorktreePath: "worktree",
+            capturedSelectionGeneration: 7,
+            currentHostID: UUID(),
+            currentWorktreePath: "worktree",
+            currentSelectionGeneration: 7
+        ))
+        #expect(IPadRootLayout.rebasedSplitTarget(
+            "pane-a",
+            completedTarget: "pane-a",
+            createdSessionName: "pane-b"
+        ) == "pane-b")
+        #expect(IPadRootLayout.rebasedSplitTarget(
+            "pane-other",
+            completedTarget: "pane-a",
+            createdSessionName: "pane-b"
+        ) == "pane-other")
+
+        func snapshot(sessionName: String) -> WorktreePanes {
+            WorktreePanes(
+                path: "worktree",
+                displayName: "worktree",
+                repoDisplayName: "repo",
+                displayBranch: "feature",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: .leaf(
+                    sessionName: sessionName,
+                    title: "shell",
+                    attentionText: nil,
+                    isBusy: false,
+                    attentionSource: nil
+                )
+            )
+        }
+        #expect(IPadRootLayout.resolvedCreatedFocus(
+            sessionName: "relay-pane-new",
+            worktreePath: "worktree",
+            in: [snapshot(sessionName: "relay-pane-old")]
+        ) == nil)
+        #expect(IPadRootLayout.resolvedCreatedFocus(
+            sessionName: "relay-pane-new",
+            worktreePath: "worktree",
+            in: [snapshot(sessionName: "relay-pane-new")]
+        ) == "relay-pane-new")
+
+        let legacySnapshot = WorktreePanes(
+            path: "worktree",
+            displayName: "worktree",
+            repoDisplayName: "repo",
+            displayBranch: "feature",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: .split(
+                direction: .horizontal,
+                ratio: 0.5,
+                left: .leaf(
+                    sessionName: "relay-pane-old",
+                    title: "shell",
+                    attentionText: nil,
+                    isBusy: false,
+                    attentionSource: nil
+                ),
+                right: .leaf(
+                    sessionName: "relay-pane-new",
+                    title: "shell",
+                    attentionText: nil,
+                    isBusy: false,
+                    attentionSource: nil
+                )
+            )
+        )
+        #expect(IPadRootLayout.legacyCreatedSessionName(
+            existingSessionNames: ["relay-pane-old"],
+            worktreePath: "worktree",
+            in: [legacySnapshot]
+        ) == "relay-pane-new")
+        #expect(IPadRootLayout.legacyCreatedSessionName(
+            existingSessionNames: [
+                "relay-pane-old",
+                "relay-pane-new",
+            ],
+            worktreePath: "worktree",
+            in: [legacySnapshot]
+        ) == nil)
+    }
+
+    @Test("""
 @spec IPAD-9.2: iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
 """)
     func ipad_9_2_commandKindOnlyRoutesSupportedIPadActions() {

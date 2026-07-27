@@ -96,6 +96,49 @@ struct RemoteTerminalSurfaceBackendTests {
         #expect(client.closeCount() == 1)
     }
 
+    @Test("""
+    @spec REMOTE-13.17: When a remote terminal transport closes \
+    unexpectedly, its host-managed adapter shall report the closure exactly \
+    once so the viewer can recreate the proxy without closing the owner's \
+    pane.
+    """)
+    func unexpectedReceiveFailureReportsClosureExactlyOnce() async throws {
+        let client = FakeRemoteTerminalWebSocketClient()
+        let reported = LockedBoolean()
+        let backend = RemoteTerminalSurfaceBackend(
+            client: client,
+            onUnexpectedClose: { reported.setTrue() }
+        )
+        defer {
+            backend.close()
+            backend.surfaceWasFreed()
+        }
+
+        try backend.start(surface: fakeSurface())
+        client.failReceive()
+
+        for _ in 0..<100 where !reported.value {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(reported.value)
+    }
+
+    @Test func explicitCloseDoesNotReportUnexpectedClosure() async throws {
+        let client = FakeRemoteTerminalWebSocketClient()
+        let reported = LockedBoolean()
+        let backend = RemoteTerminalSurfaceBackend(
+            client: client,
+            onUnexpectedClose: { reported.setTrue() }
+        )
+        defer { backend.surfaceWasFreed() }
+
+        try backend.start(surface: fakeSurface())
+        backend.close()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(!reported.value)
+    }
+
     @Test func closeWaitsForClaimedSurfaceWriteBeforeReturning() async throws {
         let client = FakeRemoteTerminalWebSocketClient()
         let blocker = BlockingRemoteSurfaceWrite()
@@ -404,6 +447,7 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
     private var recordedOwnerResizes: [RecordedOwnerResize] = []
     private var recordedCloseCount = 0
     private var receivedFrames: [WebSocketFrame] = []
+    private var receiveFailurePending = false
     private var receiveWaiters: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var sentWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
     private var resizeWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
@@ -427,12 +471,22 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
 
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in
+            var shouldFail = false
             let frame: WebSocketFrame? = lock.withLock {
+                if receiveFailurePending {
+                    receiveFailurePending = false
+                    shouldFail = true
+                    return nil
+                }
                 if !receivedFrames.isEmpty {
                     return receivedFrames.removeFirst()
                 }
                 receiveWaiters.append(continuation)
                 return nil
+            }
+            if shouldFail {
+                continuation.resume(throwing: TestReceiveFailure())
+                return
             }
             if let frame {
                 continuation.resume(returning: frame)
@@ -532,6 +586,21 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
         waiter?.resume(returning: frame)
     }
 
+    func failReceive() {
+        let waiters: [CheckedContinuation<WebSocketFrame, Error>]
+        waiters = lock.withLock {
+            if receiveWaiters.isEmpty {
+                receiveFailurePending = true
+            }
+            let waiters = receiveWaiters
+            receiveWaiters = []
+            return waiters
+        }
+        for waiter in waiters {
+            waiter.resume(throwing: TestReceiveFailure())
+        }
+    }
+
     func waitForSentFrames(count: Int) async throws {
         try await waitFor(count: count, keyPath: \.recordedSentFrames, waiters: \.sentWaiters)
     }
@@ -616,6 +685,8 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
         }
     }
 }
+
+private struct TestReceiveFailure: Error {}
 
 private struct TestTimeout: Error {}
 

@@ -6,6 +6,140 @@ import Testing
 @MainActor
 @Suite("GrafttyApp pane lifecycle")
 struct GrafttyAppPaneLifecycleTests {
+    @Test("""
+    @spec REMOTE-13.13: When a user selects a closed remote worktree or a \
+    relayed client opens one, the owning Mac shall start the worktree \
+    without changing the owner's selected worktree.
+    """)
+    func remoteOpenStartsClosedWorktree() {
+        let worktree = WorktreeEntry(
+            path: "/repo/feature",
+            branch: "feature",
+            state: .closed
+        )
+        var state = AppState(
+            repos: [
+                RepoEntry(
+                    path: "/repo",
+                    displayName: "repo",
+                    worktrees: [worktree]
+                ),
+            ],
+            selectedWorktreePath: "/repo/other"
+        )
+        let binding = Binding<AppState>(
+            get: { state },
+            set: { state = $0 }
+        )
+        let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
+
+        let result = GrafttyApp.startWorktree(
+            path: worktree.path,
+            appState: binding,
+            terminalManager: manager
+        )
+
+        let opened = state.repos[0].worktrees[0]
+        let pane = opened.splitTree.allLeaves.first
+        #expect(result == .started)
+        #expect(opened.state == .running)
+        #expect(pane != nil)
+        #expect(pane.flatMap { opened.paneSessions[$0] } != nil)
+        #expect(pane.map(manager.isFirstPane) == true)
+        #expect(state.selectedWorktreePath == "/repo/other")
+    }
+
+    @Test("remote open is idempotent and refuses unavailable worktrees")
+    func remoteOpenValidatesState() {
+        let running = WorktreeEntry(
+            path: "/repo/running",
+            branch: "running",
+            state: .running
+        )
+        let stale = WorktreeEntry(
+            path: "/repo/stale",
+            branch: "stale",
+            state: .stale
+        )
+        var state = AppState(
+            repos: [
+                RepoEntry(
+                    path: "/repo",
+                    displayName: "repo",
+                    worktrees: [running, stale]
+                ),
+            ]
+        )
+        let binding = Binding<AppState>(
+            get: { state },
+            set: { state = $0 }
+        )
+        let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
+
+        #expect(GrafttyApp.startWorktree(
+            path: running.path,
+            appState: binding,
+            terminalManager: manager
+        ) == .alreadyRunning)
+        #expect(GrafttyApp.startWorktree(
+            path: stale.path,
+            appState: binding,
+            terminalManager: manager
+        ) == .unavailable)
+        #expect(GrafttyApp.startWorktree(
+            path: "/repo/missing",
+            appState: binding,
+            terminalManager: manager
+        ) == .notFound)
+    }
+
+    @Test("""
+    @spec REMOTE-13.15: While a remote worktree is selected, the application \
+    shall route split, close, focus, zoom, resize, and equalize commands \
+    through that worktree's host-managed pane command handler.
+    """)
+    func hostManagedPaneCommandRouting() {
+        let remote = PaneSlotID()
+        let local = PaneSlotID()
+        let manager = TerminalManager(socketPath: "/tmp/graftty-command-test.sock")
+        var received: [HostManagedPaneCommand] = []
+        manager.registerHostManagedPaneCommandHandler(for: remote) {
+            received.append($0)
+        }
+
+        let commands: [HostManagedPaneCommand] = [
+            .split(.left),
+            .close,
+            .focus(.right),
+            .focusOrder(forward: true),
+            .toggleZoom,
+            .resize(direction: .down, amount: 4),
+            .equalize,
+        ]
+        for command in commands {
+            #expect(manager.routeHostManagedPaneCommand(
+                command,
+                for: remote
+            ))
+        }
+        #expect(received.count == commands.count)
+        guard case .split(.left) = received.first else {
+            Issue.record("expected the remote split command")
+            return
+        }
+        #expect(manager.routeHostManagedPaneCommand(
+            .surfaceClosed,
+            for: remote
+        ))
+        guard case .surfaceClosed = received.last else {
+            Issue.record("expected the remote surface-close event")
+            return
+        }
+        #expect(!manager.routeHostManagedPaneCommand(.close, for: local))
+
+        manager.unregisterHostManagedPaneCommandHandler(for: remote)
+        #expect(!manager.routeHostManagedPaneCommand(.close, for: remote))
+    }
 
     @Test func reassignPaneByPWDMovesPaneSessionToTargetWorktree() {
         let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000031")!)
