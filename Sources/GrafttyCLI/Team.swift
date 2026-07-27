@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 import GrafttyKit
 
@@ -711,29 +712,58 @@ struct TeamWatchInbox: ParsableCommand {
         Task.detached { await watcher.runUntilSignal() }
 
         // Block synchronously waiting for the watcher to resolve, then
-        // bridge the outcome back to a real process exit. asyncRewake
-        // declares timeout=86400, so we'll be killed by Claude's harness
-        // long before this hits its own ceiling.
+        // bridge the outcome back to a real process exit. The internal
+        // timeout matches Claude's asyncRewake ceiling and is normal,
+        // silent teardown if this process wins that race.
         let semaphore = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var capturedExit: Int32 = 0
         nonisolated(unsafe) var capturedStderr = ""
         Task.detached {
-            do {
-                let result = try await outcome.wait(timeout: 86_400)
-                capturedExit = result.exitCode
-                capturedStderr = result.stderr
-            } catch {
-                capturedExit = 1
-                capturedStderr = "watch-inbox timeout\n"
-            }
+            let result = await Self.waitForOutcome(outcome, timeout: 86_400)
+            capturedExit = result.exitCode
+            capturedStderr = result.stderr
             semaphore.signal()
         }
         semaphore.wait()
 
-        if !capturedStderr.isEmpty {
-            FileHandle.standardError.write(Data(capturedStderr.utf8))
-        }
+        Self.writeToStderr(capturedStderr)
         Foundation.exit(capturedExit)
+    }
+
+    static func waitForOutcome(
+        _ outcome: WatcherOutcome,
+        timeout: TimeInterval
+    ) async -> WatcherOutcome.Result {
+        do {
+            return try await outcome.wait(timeout: timeout)
+        } catch WatcherOutcome.WaitError.timeout {
+            return WatcherOutcome.Result(exitCode: 0, stderr: "")
+        } catch {
+            return WatcherOutcome.Result(
+                exitCode: 1,
+                stderr: "watch-inbox wait failed: \(error)\n"
+            )
+        }
+    }
+
+    @discardableResult
+    static func writeToStderr(
+        _ text: String,
+        handle: FileHandle = .standardError
+    ) -> Bool {
+        guard !text.isEmpty else { return true }
+
+        // A long-lived asyncRewake watcher may outlive the hook process that
+        // owns its stderr pipe. Disable SIGPIPE for this descriptor, then use
+        // Foundation's throwing API so EPIPE/EBADF becomes a discarded Swift
+        // error instead of an uncatchable NSFileHandleOperationException.
+        _ = Darwin.fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+        do {
+            try handle.write(contentsOf: Data(text.utf8))
+            return true
+        } catch {
+            return false
+        }
     }
 
     static func makeWatcherIfOwner<Watcher>(
