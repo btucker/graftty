@@ -136,6 +136,58 @@ struct TeamWatchInboxOwnershipTests {
         #expect(!constructedWatcher)
     }
 
+    @Test("""
+    @spec TEAM-11.2: When a Claude asyncRewake inbox watcher reaches its \
+    24-hour timeout without a message, the CLI shall exit cleanly without \
+    writing a timeout diagnostic to the hook's stderr pipe.
+    """)
+    func timeoutIsCleanSilentTeardown() async {
+        let result = await TeamWatchInbox.waitForOutcome(
+            WatcherOutcome(),
+            timeout: 0
+        )
+
+        #expect(result == WatcherOutcome.Result(exitCode: 0, stderr: ""))
+    }
+
+    @Test("""
+    @spec TEAM-11.3: If a Claude asyncRewake inbox watcher resolves after \
+    the hook's stderr reader has closed, the CLI shall discard the output \
+    failure rather than terminate from SIGPIPE or an NSFileHandle exception.
+    """)
+    func brokenStderrPipeDoesNotCrash() throws {
+        let pipe = Pipe()
+        let writer = pipe.fileHandleForWriting
+        defer { try? writer.close() }
+        try pipe.fileHandleForReading.close()
+
+        #expect(!TeamWatchInbox.writeToStderr(
+            "watch-inbox timeout\n",
+            fileDescriptor: writer.fileDescriptor
+        ))
+    }
+
+    @Test("Invalid stderr descriptor does not crash.")
+    func invalidStderrDescriptorDoesNotCrash() {
+        #expect(!TeamWatchInbox.writeToStderr("message\n", fileDescriptor: -1))
+    }
+
+    @Test("Resolved watcher output still reaches an open stderr pipe.")
+    func openStderrPipeReceivesOutput() throws {
+        let pipe = Pipe()
+        let writer = pipe.fileHandleForWriting
+        let message = "worktree message from main:\nhello\n"
+
+        #expect(TeamWatchInbox.writeToStderr(
+            message,
+            fileDescriptor: writer.fileDescriptor
+        ))
+        try writer.close()
+
+        let received = pipe.fileHandleForReading.readDataToEndOfFile()
+        #expect(String(decoding: received, as: UTF8.self) == message)
+    }
+
     private func record(
         teamID: String = "/repo",
         worktree: String = "/repo/.worktrees/alice",
