@@ -45,6 +45,19 @@ struct SessionReconnectTests {
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
 
+    /// Waits for an async state transition without assuming a fixed amount of
+    /// scheduler progress. Simulator startup and CryptoKit key construction
+    /// can make the remote-provider path take longer than `quiesce()` on CI.
+    func waitUntil(
+        timeout: TimeInterval = 2.0,
+        _ condition: () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     @Test("""
     @spec IOS-7.4: On WebSocket failure (upgrade failure, read/write error, or close frame not initiated by the app) for a pane whose session name is still listed in `/sessions`, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to sessions" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
     """)
@@ -210,7 +223,10 @@ struct SessionReconnectTests {
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        await waitUntil {
+            provider.invocationCount == 1 &&
+                client.connectionState == .reconnecting(attempt: 1)
+        }
         // First dial: the provider hands back a dead connection whose
         // `openTerminalSession` throws immediately, feeding the same
         // backoff path a plain socket failure would.
@@ -218,7 +234,10 @@ struct SessionReconnectTests {
         #expect(client.connectionState == .reconnecting(attempt: 1))
 
         clock.advance(by: 1.0)
-        await quiesce()
+        await waitUntil {
+            provider.invocationCount == 2 &&
+                client.connectionState == .reconnecting(attempt: 2)
+        }
         // Second dial. Before this fix, the connection resolved for the
         // FIRST dial was captured by value in the factory closure and
         // reused forever — this asserts the provider closure itself,
@@ -228,7 +247,10 @@ struct SessionReconnectTests {
         #expect(client.connectionState == .reconnecting(attempt: 2))
 
         clock.advance(by: 2.0)
-        await quiesce()
+        await waitUntil {
+            provider.invocationCount == 3 &&
+                client.connectionState == .reconnecting(attempt: 3)
+        }
         #expect(provider.invocationCount == 3, "and again on the third dial")
         #expect(client.connectionState == .reconnecting(attempt: 3))
     }

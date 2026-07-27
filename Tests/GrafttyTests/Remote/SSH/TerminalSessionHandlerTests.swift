@@ -693,7 +693,15 @@ final class TerminalSessionHandlerTests: XCTestCase {
         )
         try await fireUserInboundEvent(channel, event)
 
-        try await waitUntil { stream.lastResize != nil }
+        // Taking control itself applies the client's current 80x24 grid.
+        // Wait for the later window-change value rather than merely the
+        // first resize, or a slower runner can observe that legitimate
+        // take-control resize and fail before the async stream fake records
+        // the 132x43 update.
+        try await waitUntil {
+            stream.lastResize?.cols == 132 &&
+                stream.lastResize?.rows == 43
+        }
         XCTAssertEqual(stream.lastResize?.cols, 132)
         XCTAssertEqual(stream.lastResize?.rows, 43)
 
