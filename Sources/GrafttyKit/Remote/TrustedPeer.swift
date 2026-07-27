@@ -28,21 +28,30 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
         case allowed
     }
 
+    public enum WorktreeManagement: String, Codable, Sendable, Equatable {
+        case allowed
+        case disabled
+    }
+
     public var terminalControl: TerminalControl
     public var portTunnel: PortTunnel
     public var screenView: ScreenView
     public var screenControl: ScreenControl
+    public var worktreeManagement: WorktreeManagement
 
     public init(
         terminalControl: TerminalControl,
         portTunnel: PortTunnel,
         screenView: ScreenView,
-        screenControl: ScreenControl
+        screenControl: ScreenControl,
+        worktreeManagement: WorktreeManagement? = nil
     ) {
         self.terminalControl = terminalControl
         self.portTunnel = portTunnel
         self.screenView = screenView
         self.screenControl = screenControl
+        self.worktreeManagement = worktreeManagement
+            ?? (terminalControl == .allowed ? .allowed : .disabled)
     }
 
     /// The default capability set granted immediately after a successful pairing.
@@ -51,8 +60,28 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
             terminalControl: .allowed,
             portTunnel: .askEachTime,
             screenView: .disabled,
-            screenControl: .disabled
+            screenControl: .disabled,
+            worktreeManagement: .allowed
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case terminalControl, portTunnel, screenView, screenControl,
+             worktreeManagement
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        terminalControl = try c.decode(TerminalControl.self, forKey: .terminalControl)
+        portTunnel = try c.decode(PortTunnel.self, forKey: .portTunnel)
+        screenView = try c.decode(ScreenView.self, forKey: .screenView)
+        screenControl = try c.decode(ScreenControl.self, forKey: .screenControl)
+        // Existing paired peers already possess shell-level terminal control,
+        // so preserving management access is the least-surprising migration.
+        worktreeManagement = try c.decodeIfPresent(
+            WorktreeManagement.self,
+            forKey: .worktreeManagement
+        ) ?? (terminalControl == .allowed ? .allowed : .disabled)
     }
 }
 

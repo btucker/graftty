@@ -88,9 +88,9 @@ public struct WorktreeListContent: View {
                 }
             case .loaded(let worktrees):
                 List {
-                    ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
+                    ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                         Section {
-                            ForEach(entries, id: \.path) { wt in
+                            ForEach(group.worktrees, id: \.path) { wt in
                                 WorktreeBlock(
                                     worktree: wt,
                                     theme: theme,
@@ -110,7 +110,7 @@ public struct WorktreeListContent: View {
                                 }
                             }
                         } header: {
-                            Text(repoName)
+                            Text(group.title)
                                 .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                         }
                     }

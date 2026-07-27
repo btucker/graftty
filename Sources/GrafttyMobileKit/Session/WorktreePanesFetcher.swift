@@ -24,6 +24,10 @@ public enum WorktreePanesFetcher {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(
+            RemoteWorktreeFeatures.oneHopRelay,
+            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+        )
         do {
             let (data, response) = try await session.data(for: req)
             guard let http = response as? HTTPURLResponse else { throw FetchError.transport }

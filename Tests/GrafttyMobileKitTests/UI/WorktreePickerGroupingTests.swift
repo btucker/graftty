@@ -7,7 +7,11 @@ import GrafttyProtocol
 @Suite("WorktreePickerGrouping")
 struct WorktreePickerGroupingTests {
 
-    private static func wt(_ repo: String, _ name: String) -> WorktreePanes {
+    private static func wt(
+        _ repo: String,
+        _ name: String,
+        origin: WorktreeOrigin? = nil
+    ) -> WorktreePanes {
         WorktreePanes(
             path: "/p/\(repo)/\(name)",
             displayName: name,
@@ -18,7 +22,8 @@ struct WorktreePickerGroupingTests {
             prBadge: nil,
             stats: nil,
             attentionText: nil,
-            layout: nil
+            layout: nil,
+            origin: origin
         )
     }
 
@@ -37,14 +42,58 @@ struct WorktreePickerGroupingTests {
             Self.wt("alpha", "feat-y"),
         ]
         let groups = WorktreePickerGrouping.grouped(list)
-        #expect(groups.map(\.0) == ["zebra", "alpha", "mango"])
-        #expect(groups[0].1.map(\.displayName) == ["main", "feat-x"])
-        #expect(groups[1].1.map(\.displayName) == ["main", "feat-y"])
-        #expect(groups[2].1.map(\.displayName) == ["main"])
+        #expect(groups.map(\.title) == ["zebra", "alpha", "mango"])
+        #expect(groups[0].worktrees.map(\.displayName) == ["main", "feat-x"])
+        #expect(groups[1].worktrees.map(\.displayName) == ["main", "feat-y"])
+        #expect(groups[2].worktrees.map(\.displayName) == ["main"])
     }
 
     @Test func emptyListReturnsEmpty() {
         #expect(WorktreePickerGrouping.grouped([]).isEmpty)
+    }
+
+    @Test
+    func remoteRowsGroupUnderOwningMacAndRepository() {
+        let origin = WorktreeOrigin(
+            deviceID: RemoteDeviceID(value: "studio"),
+            deviceLabel: "Studio Mac",
+            relayDepth: 1
+        )
+        let groups = WorktreePickerGrouping.grouped([
+            Self.wt("graftty", "local"),
+            Self.wt("graftty", "remote", origin: origin),
+        ])
+
+        #expect(groups.map(\.title) == ["graftty", "Studio Mac · graftty"])
+        #expect(groups[0].worktrees.map(\.displayName) == ["local"])
+        #expect(groups[1].worktrees.map(\.displayName) == ["remote"])
+    }
+
+    @Test
+    func duplicateRemoteLabelsRemainDistinctByDeviceAndRepository() {
+        let one = WorktreeOrigin(
+            deviceID: RemoteDeviceID(value: "one"),
+            deviceLabel: "Studio Mac",
+            relayDepth: 1
+        )
+        let two = WorktreeOrigin(
+            deviceID: RemoteDeviceID(value: "two"),
+            deviceLabel: "Studio Mac",
+            relayDepth: 1
+        )
+        let rows = [
+            Self.wt("graftty", "one", origin: one),
+            Self.wt("graftty", "two", origin: two),
+        ]
+
+        let groups = WorktreePickerGrouping.grouped(rows)
+
+        #expect(groups.count == 2)
+        #expect(groups[0].id != groups[1].id)
+        #expect(groups.map(\.title) == [
+            "Studio Mac · graftty",
+            "Studio Mac · graftty",
+        ])
     }
 }
 #endif

@@ -40,9 +40,13 @@ final class WebServerController: ObservableObject {
     private var sessionsProvider: (@Sendable () async -> [SessionInfo])?
     private var sessionWorktreeProvider: (@Sendable (String) async -> String?)?
     private var worktreePanesProvider: (@Sendable () async -> [WorktreePanes])?
+    private var relayedWorktreePanesProvider:
+        (@Sendable () async -> [WorktreePanes])?
     /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
     /// `sessionsProvider` — both read from `AppState`.
     private var reposProvider: (@Sendable () async -> [WebServer.RepoInfo])?
+    private var relayedReposProvider:
+        (@Sendable () async -> [WebServer.RepoInfo])?
     /// Executes `POST /worktrees` (`WEB-7.2`). Routes into
     /// `AddWorktreeFlow.add` on the main actor. Nil before injection
     /// causes the endpoint to respond `503 service unavailable`.
@@ -140,12 +144,30 @@ final class WebServerController: ObservableObject {
         rebuildIfRunning()
     }
 
+    /// Install the one-hop repository provider. Its rows are only exposed
+    /// to clients that advertise relay support.
+    func setRelayedReposProvider(
+        _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
+    ) {
+        relayedReposProvider = provider
+        rebuildIfRunning()
+    }
+
     /// Install the provider used for `GET /worktrees/panes`. Same
     /// contract as `setSessionsProvider`.
     func setWorktreePanesProvider(
         _ provider: @escaping @Sendable () async -> [WorktreePanes]
     ) {
         worktreePanesProvider = provider
+        rebuildIfRunning()
+    }
+
+    /// Install the one-hop worktree provider. Its rows are only exposed
+    /// to clients that advertise relay support.
+    func setRelayedWorktreePanesProvider(
+        _ provider: @escaping @Sendable () async -> [WorktreePanes]
+    ) {
+        relayedWorktreePanesProvider = provider
         rebuildIfRunning()
     }
 
@@ -424,6 +446,7 @@ final class WebServerController: ObservableObject {
         let sessionsProvider = self.sessionsProvider ?? { [] }
         let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
         let repos = reposProvider ?? { [] }
+        let relayedRepos = relayedReposProvider ?? { [] }
         let creator = worktreeCreator
         let puller = defaultBranchPuller
         let remover = worktreeRemover
@@ -441,12 +464,15 @@ final class WebServerController: ObservableObject {
                 sessionsProvider: sessionsProvider,
                 sessionWorktreeProvider: sessionWorktreeProvider,
                 reposProvider: repos,
+                relayedReposProvider: relayedRepos,
                 worktreeCreator: creator,
                 defaultBranchPuller: puller,
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 ghosttyKeybindingsProvider: ghosttyKeybindingsProvider,
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
+                relayedWorktreePanesProvider:
+                    relayedWorktreePanesProvider ?? { [] },
                 signalingHandler: signalingHandler,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore

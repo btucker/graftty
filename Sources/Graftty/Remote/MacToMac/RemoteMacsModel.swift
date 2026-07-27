@@ -12,27 +12,49 @@ enum RemoteMacPairingSaveResult: Sendable {
 
 @MainActor
 final class RemoteMacsModel: ObservableObject {
+    enum RelayError: Error, Equatable {
+        case unknownPaneAlias(String)
+        case unexpectedManagementResponse
+    }
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
     @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
+    @Published private(set) var repositoriesByRemote:
+        [RemoteMacIdentity: [RemoteRepositoryInfo]] = [:]
+    @Published private(set) var notificationActivation:
+        RemoteNotificationEvent?
 
     private let store: RemoteMacStore
     private let connectionRegistry: RemoteMacConnectionRegistry
+    let relayRouter: RemoteWorktreeRelayRouter
+    var onRemoteNotification: ((RemoteNotificationEvent) -> Void)?
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
     private var connectAttemptIDs: [RemoteMacIdentity: UUID] = [:]
     private var candidatesByIdentity: [RemoteMacIdentity: GrafttyBonjourCandidate] = [:]
     private var discoveryBrowser: RemoteMacDiscoveryBrowsing?
     private var discoveryLeaseCount = 0
+    private var notificationSnapshotsPrimed: Set<RemoteMacIdentity> = []
+    private var activeAttentionByRemote:
+        [RemoteMacIdentity: Set<RemoteAttentionKey>] = [:]
+
+    private struct RemoteAttentionKey: Hashable {
+        let worktreeID: String
+        let paneID: String?
+        let text: String
+        let kind: RemoteNotificationEvent.Kind
+    }
 
     init(
         store: RemoteMacStore? = nil,
-        connectionRegistry: RemoteMacConnectionRegistry? = nil
+        connectionRegistry: RemoteMacConnectionRegistry? = nil,
+        relayRouter: RemoteWorktreeRelayRouter? = nil
     ) {
         self.store = store ?? RemoteMacStore()
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
+        self.relayRouter = relayRouter ?? RemoteWorktreeRelayRouter()
         registry.onPaneSnapshot = { [weak self] identity, snapshot in
-            self?.worktreePanesByRemote[identity] = snapshot
+            self?.applyPaneSnapshot(snapshot, from: identity)
         }
         registry.onConnectionStateChange = { [weak self] identity, state in
             guard let self else { return }
@@ -43,6 +65,9 @@ final class RemoteMacsModel: ObservableObject {
             // trust state.
             guard self.connectionStates[identity] != .needsPairing else {
                 self.worktreePanesByRemote[identity] = nil
+                self.repositoriesByRemote[identity] = nil
+                self.resetNotificationSnapshot(for: identity)
+                self.refreshRelayRoutes()
                 return
             }
             self.connectAttemptIDs[identity] = nil
@@ -55,6 +80,9 @@ final class RemoteMacsModel: ObservableObject {
                 return
             }
             self.worktreePanesByRemote[identity] = nil
+            self.repositoriesByRemote[identity] = nil
+            self.resetNotificationSnapshot(for: identity)
+            self.refreshRelayRoutes()
         }
     }
 
@@ -108,7 +136,7 @@ final class RemoteMacsModel: ObservableObject {
             connectAttemptIDs[identity] = nil
             connectionStates[identity] = .connected
             if let paneSnapshot {
-                worktreePanesByRemote[identity] = paneSnapshot
+                applyPaneSnapshot(paneSnapshot, from: identity)
             }
             return entry
         } catch {
@@ -130,6 +158,17 @@ final class RemoteMacsModel: ObservableObject {
         connectionRegistry.disconnect(identity: identity)
         connectionStates[identity] = .offline
         worktreePanesByRemote[identity] = nil
+        repositoriesByRemote[identity] = nil
+        resetNotificationSnapshot(for: identity)
+        refreshRelayRoutes()
+    }
+
+    func activateRemoteNotification(_ event: RemoteNotificationEvent) {
+        notificationActivation = event
+    }
+
+    func consumeRemoteNotificationActivation() {
+        notificationActivation = nil
     }
 
     func openTerminalSession(
@@ -140,6 +179,470 @@ final class RemoteMacsModel: ObservableObject {
             identity: identity,
             sessionName: sessionName
         )
+    }
+
+    func sendRelayedPaneControl(
+        _ request: PaneControlRequest
+    ) async -> PaneControlResponse? {
+        let translated: PaneControlRequest
+        let identity: RemoteMacIdentity
+        switch request {
+        case let .split(target, direction):
+            guard let route = relayRouter.resolvePane(target) else { return nil }
+            identity = route.identity
+            translated = .split(target: route.sessionName, direction: direction)
+        case .close(let target):
+            guard let route = relayRouter.resolvePane(target) else { return nil }
+            identity = route.identity
+            translated = .close(target: route.sessionName)
+        case let .swap(source, target):
+            guard let sourceRoute = relayRouter.resolvePane(source),
+                  let targetRoute = relayRouter.resolvePane(target),
+                  sourceRoute.identity == targetRoute.identity else {
+                return nil
+            }
+            identity = sourceRoute.identity
+            translated = .swap(
+                source: sourceRoute.sessionName,
+                target: targetRoute.sessionName
+            )
+        }
+        do {
+            return try await connectionRegistry.sendPaneControl(
+                identity: identity,
+                request: translated
+            )
+        } catch {
+            return .error(
+                code: "downstream-unavailable",
+                message: String(describing: error)
+            )
+        }
+    }
+
+    func sendWorktreeManagement(
+        identity: RemoteMacIdentity,
+        request: WorktreeManagementRequest
+    ) async throws -> WorktreeManagementResponse {
+        try await connectionRegistry.sendWorktreeManagement(
+            identity: identity,
+            request: request
+        )
+    }
+
+    func repositories(on remoteMac: RemoteMac) async throws
+        -> [RemoteRepositoryInfo] {
+        _ = try await connect(to: remoteMac)
+        let response = try await sendWorktreeManagement(
+            identity: RemoteMacIdentity(remoteMac),
+            request: .listRepositories
+        )
+        guard case .repositories(let repositories) = response else {
+            throw RelayError.unexpectedManagementResponse
+        }
+        return repositories.filter { ($0.origin?.relayDepth ?? 0) == 0 }
+    }
+
+    @discardableResult
+    func refreshRepositories(on remoteMac: RemoteMac) async throws
+        -> [RemoteRepositoryInfo] {
+        let repositories = try await repositories(on: remoteMac)
+        repositoriesByRemote[RemoteMacIdentity(remoteMac)] = repositories
+        return repositories
+    }
+
+    func createWorktree(
+        on remoteMac: RemoteMac,
+        repositoryID: String,
+        worktreeName: String,
+        branch: BranchSelection
+    ) async -> WorktreeManagementResponse {
+        let existingSource: RemoteRepositoryInfo.Branch.Source?
+        switch branch {
+        case .createNew:
+            existingSource = nil
+        case .useExisting(_, let source):
+            existingSource = source == .local ? .local : .remoteOnly
+        }
+        let response = await forwardManagement(
+            identity: RemoteMacIdentity(remoteMac),
+            request: .create(
+                repositoryID: repositoryID,
+                worktreeName: worktreeName,
+                branchName: branch.branchName,
+                existingSource: existingSource
+            )
+        )
+        _ = try? await refreshRepositories(on: remoteMac)
+        return response
+    }
+
+    func deleteWorktree(
+        on remoteMac: RemoteMac,
+        worktreePath: String,
+        force: Bool
+    ) async -> WorktreeManagementResponse {
+        let identity = RemoteMacIdentity(remoteMac)
+        let response = await forwardManagement(
+            identity: identity,
+            request: .delete(worktreeID: worktreePath, force: force)
+        )
+        if case .deleted = response {
+            removeCachedWorktree(path: worktreePath, from: identity)
+        }
+        return response
+    }
+
+    func pullDefaultBranch(
+        on remoteMac: RemoteMac,
+        repositoryID: String
+    ) async -> WorktreeManagementResponse {
+        let response = await forwardManagement(
+            identity: RemoteMacIdentity(remoteMac),
+            request: .pullDefaultBranch(repositoryID: repositoryID)
+        )
+        _ = try? await refreshRepositories(on: remoteMac)
+        return response
+    }
+
+    func acknowledge(
+        on remoteMac: RemoteMac,
+        worktreePath: String,
+        paneSessionName: String? = nil
+    ) async {
+        _ = await forwardManagement(
+            identity: RemoteMacIdentity(remoteMac),
+            request: .acknowledge(
+                worktreeID: worktreePath,
+                paneID: paneSessionName
+            )
+        )
+    }
+
+    func promotedRepositoriesForRelay() async -> [RemoteRepositoryInfo] {
+        var promoted: [RemoteRepositoryInfo] = []
+        for remoteMac in savedRemoteMacs
+        where connectionState(for: RemoteMacIdentity(remoteMac)) == .connected {
+            do {
+                let repositories = try await repositories(on: remoteMac)
+                promoted += relayRouter.promotedRepositories(
+                    repositories,
+                    from: remoteMac
+                )
+            } catch {
+                continue
+            }
+        }
+        return promoted
+    }
+
+    func sendRelayedWorktreeManagement(
+        _ request: WorktreeManagementRequest
+    ) async -> WorktreeManagementResponse? {
+        switch request {
+        case .listRepositories:
+            return .repositories(await promotedRepositoriesForRelay())
+
+        case let .create(repositoryID, worktreeName, branchName, existingSource):
+            guard let route = relayRouter.resolveRepository(repositoryID) else {
+                return nil
+            }
+            do {
+                let response = try await sendWorktreeManagement(
+                    identity: route.identity,
+                    request: .create(
+                        repositoryID: route.repositoryID,
+                        worktreeName: worktreeName,
+                        branchName: branchName,
+                        existingSource: existingSource
+                    )
+                )
+                guard case let .created(worktreeID, paneID) = response else {
+                    return response
+                }
+                let promoted = relayRouter.registerCreatedWorktree(
+                    identity: route.identity,
+                    path: worktreeID,
+                    paneSessionName: paneID
+                )
+                return .created(
+                    worktreeID: promoted.worktreeID,
+                    paneID: promoted.paneID
+                )
+            } catch {
+                return Self.downstreamManagementError(error)
+            }
+
+        case .pullDefaultBranch(let repositoryID):
+            guard let route = relayRouter.resolveRepository(repositoryID) else {
+                return nil
+            }
+            return await forwardManagement(
+                identity: route.identity,
+                request: .pullDefaultBranch(repositoryID: route.repositoryID)
+            )
+
+        case let .delete(worktreeID, force):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else {
+                return nil
+            }
+            let response = await forwardManagement(
+                identity: route.identity,
+                request: .delete(worktreeID: route.path, force: force)
+            )
+            if case .deleted = response {
+                removeCachedWorktree(
+                    path: route.path,
+                    from: route.identity
+                )
+            }
+            return response
+
+        case let .acknowledge(worktreeID, paneID):
+            guard let worktreeRoute = relayRouter.resolveWorktree(worktreeID)
+            else { return nil }
+            let downstreamPaneID: String?
+            if let paneID {
+                guard let paneRoute = relayRouter.resolvePane(paneID),
+                      paneRoute.identity == worktreeRoute.identity else {
+                    return nil
+                }
+                downstreamPaneID = paneRoute.sessionName
+            } else {
+                downstreamPaneID = nil
+            }
+            return await forwardManagement(
+                identity: worktreeRoute.identity,
+                request: .acknowledge(
+                    worktreeID: worktreeRoute.path,
+                    paneID: downstreamPaneID
+                )
+            )
+        }
+    }
+
+    private func forwardManagement(
+        identity: RemoteMacIdentity,
+        request: WorktreeManagementRequest
+    ) async -> WorktreeManagementResponse {
+        do {
+            return try await sendWorktreeManagement(
+                identity: identity,
+                request: request
+            )
+        } catch {
+            return Self.downstreamManagementError(error)
+        }
+    }
+
+    private static func downstreamManagementError(
+        _ error: Error
+    ) -> WorktreeManagementResponse {
+        .error(
+            code: "downstream-unavailable",
+            message: String(describing: error),
+            forceAllowed: false,
+            shortStatus: nil
+        )
+    }
+
+    func promotedWorktreesForRelay() -> [WorktreePanes] {
+        relayRouter.promotedWorktrees(
+            snapshots: worktreePanesByRemote,
+            remoteMacs: savedRemoteMacs
+        )
+    }
+
+    private func refreshRelayRoutes() {
+        _ = relayRouter.promotedWorktrees(
+            snapshots: worktreePanesByRemote,
+            remoteMacs: savedRemoteMacs
+        )
+    }
+
+    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
+        guard let target = relayRouter.resolvePane(alias),
+              let remoteMac = savedRemoteMacs.first(where: {
+                  RemoteMacIdentity($0) == target.identity
+              }) else {
+            throw RelayError.unknownPaneAlias(alias)
+        }
+        _ = try await connect(to: remoteMac)
+        let client = try await openTerminalSession(
+            identity: target.identity,
+            sessionName: target.sessionName
+        )
+        return RelayedTerminalByteStream(client: client)
+    }
+
+    private func applyPaneSnapshot(
+        _ snapshot: [WorktreePanes],
+        from identity: RemoteMacIdentity
+    ) {
+        worktreePanesByRemote[identity] = snapshot
+        processAttentionTransitions(snapshot, from: identity)
+        refreshRelayRoutes()
+    }
+
+    private func processAttentionTransitions(
+        _ snapshot: [WorktreePanes],
+        from identity: RemoteMacIdentity
+    ) {
+        let current = attentionEvents(in: snapshot, from: identity)
+        let currentKeys = Set(current.map(\.key))
+        guard notificationSnapshotsPrimed.contains(identity) else {
+            let previous = activeAttentionByRemote[identity]
+            notificationSnapshotsPrimed.insert(identity)
+            activeAttentionByRemote[identity] = currentKeys
+            // A first-ever snapshot may be arbitrarily old, so it only seeds
+            // the baseline. On reconnect, compare with the final pre-disconnect
+            // baseline and collapse newly observed offline attention into one
+            // actionable summary.
+            guard let previous else { return }
+            let additions = current.filter { !previous.contains($0.key) }
+            if let summary = makeReconnectSummary(
+                for: additions.map(\.event),
+                from: identity
+            ) {
+                onRemoteNotification?(summary)
+            }
+            return
+        }
+        let previous = activeAttentionByRemote[identity] ?? []
+        activeAttentionByRemote[identity] = currentKeys
+        for item in current where !previous.contains(item.key) {
+            onRemoteNotification?(item.event)
+        }
+    }
+
+    private func attentionEvents(
+        in snapshot: [WorktreePanes],
+        from identity: RemoteMacIdentity
+    ) -> [(key: RemoteAttentionKey, event: RemoteNotificationEvent)] {
+        guard let remoteMac = savedRemoteMacs.first(where: {
+            RemoteMacIdentity($0) == identity
+        }) else { return [] }
+
+        var events: [(RemoteAttentionKey, RemoteNotificationEvent)] = []
+        for worktree in snapshot
+        where (worktree.origin?.relayDepth ?? 0) == 0 {
+            let origin = worktree.origin ?? WorktreeOrigin(
+                deviceID: remoteMac.id,
+                deviceLabel: remoteMac.label,
+                relayDepth: 0
+            )
+            if let text = worktree.attentionText {
+                events.append(makeAttentionEvent(
+                    remoteMac: remoteMac,
+                    origin: origin,
+                    worktree: worktree,
+                    paneID: nil,
+                    text: text,
+                    kind: .userNotify
+                ))
+            }
+            for leaf in worktree.layout?.leaves ?? [] {
+                guard let text = leaf.attentionText else { continue }
+                let kind: RemoteNotificationEvent.Kind
+                switch leaf.attentionSource {
+                case .agentStop:
+                    kind = .agentStop
+                case .userNotify:
+                    kind = .userNotify
+                case .commandFinished, .none:
+                    continue
+                }
+                events.append(makeAttentionEvent(
+                    remoteMac: remoteMac,
+                    origin: origin,
+                    worktree: worktree,
+                    paneID: leaf.sessionName,
+                    text: text,
+                    kind: kind
+                ))
+            }
+        }
+        return events
+    }
+
+    private func makeAttentionEvent(
+        remoteMac: RemoteMac,
+        origin: WorktreeOrigin,
+        worktree: WorktreePanes,
+        paneID: String?,
+        text: String,
+        kind: RemoteNotificationEvent.Kind
+    ) -> (RemoteAttentionKey, RemoteNotificationEvent) {
+        let key = RemoteAttentionKey(
+            worktreeID: worktree.path,
+            paneID: paneID,
+            text: text,
+            kind: kind
+        )
+        let worktreeName = worktree.displayName.isEmpty
+            ? worktree.displayBranch
+            : worktree.displayName
+        let title = kind == .agentStop
+            ? text
+            : "Notification from \(remoteMac.label)"
+        let body = kind == .agentStop
+            ? "\(worktreeName) on \(remoteMac.label) is waiting for you."
+            : "\(worktreeName): \(text)"
+        return (key, RemoteNotificationEvent(
+            id: UUID(),
+            kind: kind,
+            origin: origin,
+            worktreeID: worktree.path,
+            paneID: paneID,
+            title: title,
+            body: body,
+            timestamp: Date()
+        ))
+    }
+
+    private func makeReconnectSummary(
+        for events: [RemoteNotificationEvent],
+        from identity: RemoteMacIdentity
+    ) -> RemoteNotificationEvent? {
+        guard let first = events.first,
+              let remoteMac = savedRemoteMacs.first(where: {
+                  RemoteMacIdentity($0) == identity
+              }) else {
+            return nil
+        }
+        let itemCount = events.count
+        let worktreeCount = Set(events.map(\.worktreeID)).count
+        let itemNoun = itemCount == 1 ? "item" : "items"
+        let worktreeNoun = worktreeCount == 1 ? "worktree" : "worktrees"
+        let verb = itemCount == 1 ? "needs" : "need"
+        return RemoteNotificationEvent(
+            id: UUID(),
+            kind: .reconnectSummary,
+            origin: first.origin,
+            worktreeID: first.worktreeID,
+            paneID: first.paneID,
+            title: "\(remoteMac.label) needs attention",
+            body: """
+            \(itemCount) \(itemNoun) across \(worktreeCount) remote \
+            \(worktreeNoun) \(verb) attention.
+            """,
+            timestamp: Date()
+        )
+    }
+
+    private func resetNotificationSnapshot(for identity: RemoteMacIdentity) {
+        notificationSnapshotsPrimed.remove(identity)
+        // Preserve the final connected snapshot as the reconnect baseline.
+        // Without it, unchanged durable badges would be misreported as newly
+        // accumulated offline attention.
+    }
+
+    private func removeCachedWorktree(
+        path: String,
+        from identity: RemoteMacIdentity
+    ) {
+        worktreePanesByRemote[identity]?.removeAll { $0.path == path }
+        refreshRelayRoutes()
     }
 
     func setDiscoveryBrowser(_ discoveryBrowser: RemoteMacDiscoveryBrowsing?) {

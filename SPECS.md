@@ -1936,6 +1936,30 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
 
+### REMOTE-13.x
+
+**REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.
+
+**REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
+
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip repository, create, pull, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+
+**REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
+
+**REMOTE-13.5** While a Remote Mac is connected, when a remote worktree receives a new user-notify or agent-stop attention transition, the application shall deliver a macOS notification targeting that exact worktree or pane, but shall not replay attention already present in the first snapshot after connection.
+
+**REMOTE-13.6** When an existing paired-device capability record predates worktree-management permission, the application shall inherit management permission from terminal control so upgrades neither silently revoke trusted Macs nor grant management to disabled peers.
+
+**REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
+
+**REMOTE-13.8** While a Remote Mac is connected, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
+
+**REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
+
+**REMOTE-13.10** When GrafttyMobile creates a worktree while the connected Mac exposes repositories from multiple Macs, the Add Worktree sheet shall require an explicit target Mac selection before repository selection and creation.
+
+**REMOTE-13.11** When a Remote Mac reconnects with user-notify or agent-stop attention that was not present in its final connected snapshot, the application shall deliver one summary notification for all newly observed items, keep unchanged attention silent, and target the first affected worktree or pane when the summary is activated.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

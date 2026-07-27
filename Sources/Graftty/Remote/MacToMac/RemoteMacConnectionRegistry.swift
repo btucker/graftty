@@ -42,6 +42,38 @@ final class RemoteMacConnectionRegistry {
             try await connection.openTerminalSession(sessionName: sessionName)
         }
 
+        func sendPaneControl(
+            _ request: PaneControlRequest
+        ) async throws -> PaneControlResponse {
+            guard let client = paneEnvironment.paneControlClient else {
+                throw ConnectionError.paneEnvironmentUnavailable(identity)
+            }
+            switch request {
+            case let .split(target, direction):
+                return try await client.split(target: target, direction: direction)
+            case .close(let target):
+                return try await client.close(target: target)
+            case let .swap(source, target):
+                return try await client.swap(source: source, target: target)
+            }
+        }
+
+        func sendWorktreeManagement(
+            _ request: WorktreeManagementRequest
+        ) async throws -> WorktreeManagementResponse {
+            let driver = try await connection.makeWorktreeManagementDriver()
+            let client = WorktreeManagementClient(driver: driver)
+            try await client.open()
+            do {
+                let response = try await client.send(request)
+                await client.close()
+                return response
+            } catch {
+                await client.close()
+                throw error
+            }
+        }
+
         static func == (lhs: Entry, rhs: Entry) -> Bool {
             lhs.id == rhs.id
                 && lhs.identity == rhs.identity
@@ -71,6 +103,7 @@ final class RemoteMacConnectionRegistry {
         case notConnected(RemoteMacIdentity)
         case paneEnvironmentUnavailable(RemoteMacIdentity)
         case connectionTerminated(RemoteMacIdentity)
+        case worktreeManagementUnavailable
     }
 
     private var entries: [RemoteMacIdentity: Entry] = [:]
@@ -230,6 +263,26 @@ final class RemoteMacConnectionRegistry {
         return try await entry.openTerminalSession(sessionName: sessionName)
     }
 
+    func sendPaneControl(
+        identity: RemoteMacIdentity,
+        request: PaneControlRequest
+    ) async throws -> PaneControlResponse {
+        guard let entry = entries[identity] else {
+            throw ConnectionError.notConnected(identity)
+        }
+        return try await entry.sendPaneControl(request)
+    }
+
+    func sendWorktreeManagement(
+        identity: RemoteMacIdentity,
+        request: WorktreeManagementRequest
+    ) async throws -> WorktreeManagementResponse {
+        guard let entry = entries[identity] else {
+            throw ConnectionError.notConnected(identity)
+        }
+        return try await entry.sendWorktreeManagement(request)
+    }
+
     private func dial(
         remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
@@ -370,6 +423,8 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
     func createOfferSDP() async throws -> String
     func applyAnswerSDP(_ sdp: String) async throws
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
+    func makeWorktreeManagementDriver() async throws
+        -> any WorktreeManagementChannelDriver
     func close() async
 }
 
@@ -380,6 +435,12 @@ extension RemoteMacHostConnection {
 
     func currentState() async -> RemoteHostConnection.State {
         .connected
+    }
+
+    func makeWorktreeManagementDriver() async throws
+        -> any WorktreeManagementChannelDriver {
+        throw RemoteMacConnectionRegistry.ConnectionError
+            .worktreeManagementUnavailable
     }
 }
 
@@ -416,7 +477,8 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     ) async throws -> any PanesStateChannelDriver {
         try await connection.makePanesStateClient(
             onSnapshot: onSnapshot,
-            onClosed: onClosed
+            onClosed: onClosed,
+            originAware: true
         )
     }
 
@@ -426,6 +488,11 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
 
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
         try await connection.openTerminalSession(sessionName: sessionName)
+    }
+
+    func makeWorktreeManagementDriver() async throws
+        -> any WorktreeManagementChannelDriver {
+        try await connection.makeWorktreeManagementClient()
     }
 
     func close() async {

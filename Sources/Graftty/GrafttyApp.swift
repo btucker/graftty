@@ -122,20 +122,45 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
     static let shared = AgentNotificationRouter()
 
     @MainActor var onActivate: ((AgentStopNotificationPayload) -> Void)?
+    @MainActor var onActivateRemote: ((RemoteNotificationEvent) -> Void)?
 
     func install() {
         UNUserNotificationCenter.current().delegate = self
     }
 
     func post(_ notification: AgentStopNotificationContent) {
+        post(
+            title: notification.title,
+            body: notification.body,
+            userInfo: notification.userInfo
+        )
+    }
+
+    func post(_ event: RemoteNotificationEvent) {
+        guard let data = try? JSONEncoder().encode(event) else { return }
+        post(
+            title: event.title,
+            body: event.body,
+            userInfo: [
+                "kind": "remote_attention",
+                "event": data.base64EncodedString(),
+            ]
+        )
+    }
+
+    private func post(
+        title: String,
+        body: String,
+        userInfo: [String: String]
+    ) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             let post = {
                 let content = UNMutableNotificationContent()
-                content.title = notification.title
-                content.body = notification.body
+                content.title = title
+                content.body = body
                 content.sound = .default
-                content.userInfo = notification.userInfo
+                content.userInfo = userInfo
                 let request = UNNotificationRequest(
                     identifier: UUID().uuidString,
                     content: content,
@@ -166,10 +191,32 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
             guard let key = key as? String else { continue }
             userInfo[key] = value
         }
+        if userInfo["kind"] as? String == "remote_attention",
+           let encoded = userInfo["event"] as? String,
+           let data = Data(base64Encoded: encoded),
+           let event = try? JSONDecoder().decode(
+               RemoteNotificationEvent.self,
+               from: data
+           ) {
+            await MainActor.run {
+                self.onActivateRemote?(event)
+            }
+            return
+        }
         guard let payload = try? AgentStopNotification.payload(from: userInfo) else { return }
         await MainActor.run {
             self.onActivate?(payload)
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        notification.request.content.userInfo["kind"] as? String
+            == "remote_attention"
+            ? [.banner, .sound]
+            : []
     }
 }
 
@@ -505,7 +552,7 @@ final class AppServices {
         return "\(hostName).local"
     }
 
-    private static func localRemoteDeviceID() -> RemoteDeviceID {
+    fileprivate static func localRemoteDeviceID() -> RemoteDeviceID {
         let key = "remoteMac.localDeviceID"
         if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
             return RemoteDeviceID(value: value)
@@ -515,7 +562,7 @@ final class AppServices {
         return RemoteDeviceID(value: value)
     }
 
-    private static func localHostDisplayName() -> String {
+    fileprivate static func localHostDisplayName() -> String {
         let localizedName = Host.current().localizedName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let localizedName, !localizedName.isEmpty {
@@ -679,10 +726,16 @@ struct GrafttyApp: App {
         ))
 
         do {
+            let remoteMacsModel = appServices.remoteMacsModel
             appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
+                    if sessionName.hasPrefix("relay-pane-") {
+                        return try await remoteMacsModel.openRelayedTerminal(
+                            alias: sessionName
+                        )
+                    }
                     let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
@@ -1045,6 +1098,14 @@ struct GrafttyApp: App {
                 appState: appState,
                 terminalManager: tm
             )
+        }
+        services.remoteMacsModel.onRemoteNotification = {
+            AgentNotificationRouter.shared.post($0)
+        }
+        AgentNotificationRouter.shared.onActivateRemote = {
+            [remoteMacsModel = services.remoteMacsModel] event in
+            NSApp.activate(ignoringOtherApps: true)
+            remoteMacsModel.activateRemoteNotification(event)
         }
 
         terminalManager.editorPreference = EditorPreference(
@@ -1600,6 +1661,11 @@ struct GrafttyApp: App {
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
+        let localWorktreeOrigin = WorktreeOrigin(
+            deviceID: AppServices.localRemoteDeviceID(),
+            deviceLabel: AppServices.localHostDisplayName(),
+            relayDepth: 0
+        )
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1620,6 +1686,7 @@ struct GrafttyApp: App {
                         path: wt.path,
                         displayName: labels[wt.id] ?? "",
                         repoDisplayName: repo.displayName,
+                        repositoryID: repo.path,
                         displayBranch: wt.displayBranch,
                         state: WorktreeWireState(wt.state),
                         isMainCheckout: wt.path == repo.path,
@@ -1635,7 +1702,8 @@ struct GrafttyApp: App {
                                     paneAttention: wt.paneAttention,
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
-                            }
+                            },
+                        origin: localWorktreeOrigin
                     ))
                 }
             }
@@ -1643,6 +1711,9 @@ struct GrafttyApp: App {
         }
         webController.setWorktreePanesProvider {
             await MainActor.run { buildWorktreePanesSnapshot() }
+        }
+        webController.setRelayedWorktreePanesProvider {
+            await services.remoteMacsModel.promotedWorktreesForRelay()
         }
 
         let statsStore = services.statsStore
@@ -1659,10 +1730,29 @@ struct GrafttyApp: App {
                         defaultBranchStatus: defaultBranchStatus(
                             for: repo,
                             stats: statsStore.stats[repo.path]
-                        )
+                        ),
+                        origin: localWorktreeOrigin
                     )
                 }
             }
+        }
+        webController.setRelayedReposProvider {
+            await services.remoteMacsModel
+                .promotedRepositoriesForRelay()
+                .map { repository in
+                    WebServer.RepoInfo(
+                        path: repository.id,
+                        displayName: repository.displayName,
+                        defaultBranchStatus: repository.defaultBranchStatus.map {
+                            .init(
+                                branchName: $0.branchName,
+                                remoteRef: $0.remoteRef,
+                                behindCount: $0.behindCount
+                            )
+                        },
+                        origin: repository.origin
+                    )
+                }
         }
 
         // WEB-7.2: drive `POST /worktrees` into the shared
@@ -1674,6 +1764,24 @@ struct GrafttyApp: App {
         let worktreeMonitor = services.worktreeMonitor
         let dispatcherForWeb = services.teamEventDispatcher
         webController.setDefaultBranchPuller { req in
+            if req.repoPath.hasPrefix("relay-repository-") {
+                guard let response = await services.remoteMacsModel
+                    .sendRelayedWorktreeManagement(
+                        .pullDefaultBranch(repositoryID: req.repoPath)
+                    ) else {
+                    return .invalid("remote repository is offline")
+                }
+                switch response {
+                case .ok:
+                    return .success(.init(ok: true))
+                case .error(_, let message, _, _):
+                    return .gitFailed(message)
+                default:
+                    return .internalFailure(
+                        "remote Mac returned an unexpected response"
+                    )
+                }
+            }
             let pullTarget = await MainActor.run {
                 guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
                     return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
@@ -1706,6 +1814,35 @@ struct GrafttyApp: App {
             return .success(WebServer.PullDefaultBranchResponse(ok: true))
         }
         webController.setWorktreeCreator { req in
+            if req.repoPath.hasPrefix("relay-repository-") {
+                let source: RemoteRepositoryInfo.Branch.Source? = req.existing
+                    ? .local
+                    : nil
+                guard let response = await services.remoteMacsModel
+                    .sendRelayedWorktreeManagement(
+                        .create(
+                            repositoryID: req.repoPath,
+                            worktreeName: req.worktreeName,
+                            branchName: req.branchName,
+                            existingSource: source
+                        )
+                    ) else {
+                    return .invalid("remote repository is offline")
+                }
+                switch response {
+                case let .created(worktreeID, paneID):
+                    return .success(.init(
+                        sessionName: paneID,
+                        worktreePath: worktreeID
+                    ))
+                case .error(_, let message, _, _):
+                    return .gitFailed(message)
+                default:
+                    return .internalFailure(
+                        "remote Mac returned an unexpected response"
+                    )
+                }
+            }
             let branch: BranchSelection
             if req.existing {
                 branch = .useExisting(name: req.branchName, source: .local)
@@ -1748,6 +1885,33 @@ struct GrafttyApp: App {
         // surface teardown lands on the main actor, same as the native
         // sidebar's "Delete Worktree" path.
         webController.setWorktreeRemover { req in
+            if req.worktreePath.hasPrefix("relay-worktree-") {
+                guard let response = await services.remoteMacsModel
+                    .sendRelayedWorktreeManagement(
+                        .delete(
+                            worktreeID: req.worktreePath,
+                            force: req.force
+                        )
+                    ) else {
+                    return .notFound("remote worktree is offline")
+                }
+                switch response {
+                case .deleted(let dismissed):
+                    return .success(.init(dismissed: dismissed))
+                case let .error(_, message, forceAllowed, shortStatus):
+                    if forceAllowed {
+                        return .gitFailedForceable(
+                            stderr: message,
+                            shortStatus: shortStatus ?? ""
+                        )
+                    }
+                    return .gitFailedFinal(message)
+                default:
+                    return .internalFailure(
+                        "remote Mac returned an unexpected response"
+                    )
+                }
+            }
             let result = await DeleteWorktreeFlow.delete(
                 worktreePath: req.worktreePath,
                 force: req.force,
@@ -1816,8 +1980,42 @@ struct GrafttyApp: App {
                 }
             }
 
+            let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
+                onChange in
+                let snapshot: @MainActor () -> [WorktreePanes] = {
+                    buildWorktreePanesSnapshot()
+                        + services.remoteMacsModel.promotedWorktreesForRelay()
+                }
+                let initial = await MainActor.run { snapshot() }
+                await onChange(initial)
+
+                let task = Task {
+                    var last = initial
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(1))
+                        if Task.isCancelled { return }
+                        let next = await MainActor.run { snapshot() }
+                        if next != last {
+                            last = next
+                            await onChange(next)
+                        }
+                    }
+                }
+                return PanesStateChannelHandler.Cancellable {
+                    task.cancel()
+                }
+            }
+
             let paneControlMutator: PaneControlChannelHandler.Mutator = { request in
-                await MainActor.run { () -> PaneControlResponse in
+                if let target = request.primaryTarget,
+                   target.hasPrefix("relay-pane-") {
+                    return await services.remoteMacsModel.sendRelayedPaneControl(request)
+                        ?? .error(
+                            code: "not-found",
+                            message: "unknown or disconnected relayed pane"
+                        )
+                }
+                return await MainActor.run { () -> PaneControlResponse in
                     switch request {
                     case .split(let target, let direction):
                         guard let paneID = terminalManager.paneID(forSessionName: target) else {
@@ -1879,6 +2077,231 @@ struct GrafttyApp: App {
                 }
             }
 
+            let localRepositorySnapshot: @MainActor () -> [RemoteRepositoryInfo] = {
+                appStateBinding.wrappedValue.repos.map { repo in
+                    let snapshot = panesRemoteBranchStore.branchesByRepo[repo.path]
+                        ?? RemoteBranchSnapshot()
+                    var mounted: [String: String] = [:]
+                    for worktree in repo.worktrees
+                    where worktree.state.hasOnDiskWorktree {
+                        mounted[worktree.branch] = worktree.path
+                    }
+                    let pullRequests = services.prStatusStore.prsByRepoBranch[
+                        repo.path
+                    ] ?? [:]
+                    let branches = BranchPickerViewModel.entries(
+                        branchSnapshot: snapshot,
+                        mountedBranchToPath: mounted,
+                        prsByBranch: pullRequests,
+                        filterText: ""
+                    ).map { branch in
+                        RemoteRepositoryInfo.Branch(
+                            name: branch.name,
+                            source: branch.source == .local
+                                ? .local
+                                : .remoteOnly,
+                            lastCommitDate: branch.lastCommitDate,
+                            mountedWorktreeID: branch.mountedWorktreePath,
+                            pullRequest: branch.pr.map {
+                                .init(number: $0.number, title: $0.title)
+                            }
+                        )
+                    }
+                    let status = defaultBranchStatus(
+                        for: repo,
+                        stats: statsStore.stats[repo.path]
+                    )
+                    return RemoteRepositoryInfo(
+                        id: repo.path,
+                        displayName: repo.displayName,
+                        origin: localWorktreeOrigin,
+                        defaultBranchStatus: status.map {
+                            .init(
+                                branchName: $0.branchName,
+                                remoteRef: $0.remoteRef,
+                                behindCount: $0.behindCount
+                            )
+                        },
+                        branches: branches
+                    )
+                }
+            }
+
+            let worktreeManagementMutator:
+                WorktreeManagementChannelHandler.Mutator = { request in
+                if request.targetsRelayedResource {
+                    return await services.remoteMacsModel
+                        .sendRelayedWorktreeManagement(request)
+                        ?? .error(
+                            code: "not-found",
+                            message: "unknown or disconnected relayed resource",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                }
+
+                switch request {
+                case .listRepositories:
+                    let local = await MainActor.run {
+                        localRepositorySnapshot()
+                    }
+                    let remote = await services.remoteMacsModel
+                        .promotedRepositoriesForRelay()
+                    return .repositories(local + remote)
+
+                case let .create(
+                    repositoryID,
+                    worktreeName,
+                    branchName,
+                    existingSource
+                ):
+                    let branch: BranchSelection
+                    if let existingSource {
+                        branch = .useExisting(
+                            name: branchName,
+                            source: existingSource == .local
+                                ? .local
+                                : .remoteOnly
+                        )
+                    } else {
+                        branch = .createNew(name: branchName)
+                    }
+                    let result = await AddWorktreeFlow.add(
+                        repoPath: repositoryID,
+                        worktreeName: worktreeName,
+                        branch: branch,
+                        appState: appStateBinding,
+                        worktreeMonitor: worktreeMonitor,
+                        statsStore: statsStore,
+                        terminalManager: terminalManager,
+                        teamEventDispatcher: dispatcherForWeb
+                    )
+                    switch result {
+                    case .success(let outcome):
+                        return .created(
+                            worktreeID: outcome.worktreePath,
+                            paneID: outcome.sessionName
+                        )
+                    case .failure(let error):
+                        return .error(
+                            code: "create-failed",
+                            message: error.userMessage
+                                ?? "could not create worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case .pullDefaultBranch(let repositoryID):
+                    let status = await MainActor.run {
+                        () -> WebServer.RepoInfo.DefaultBranchStatus? in
+                        guard let target = appStateBinding.wrappedValue.repos
+                            .first(where: { $0.path == repositoryID }) else {
+                            return nil
+                        }
+                        return defaultBranchStatus(
+                            for: target,
+                            stats: statsStore.stats[target.path]
+                        )
+                    }
+                    guard let status else {
+                        return .error(
+                            code: "invalid",
+                            message: "default checkout is not behind origin",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+                    do {
+                        try await GitDefaultBranchPull.pull(
+                            repoPath: repositoryID,
+                            branchName: status.branchName
+                        )
+                        return .ok
+                    } catch {
+                        return .error(
+                            code: "pull-failed",
+                            message: String(describing: error),
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case let .delete(worktreeID, force):
+                    let result = await DeleteWorktreeFlow.delete(
+                        worktreePath: worktreeID,
+                        force: force,
+                        appState: appStateBinding,
+                        terminalManager: terminalManager,
+                        statsStore: statsStore,
+                        prStatusStore: services.prStatusStore,
+                        teamEventDispatcher: dispatcherForWeb
+                    )
+                    switch result {
+                    case .success(let outcome):
+                        return .deleted(dismissed: outcome.dismissed)
+                    case .failure(.notFound):
+                        return .error(
+                            code: "not-found",
+                            message: "unknown worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    case .failure(.mainCheckoutRejected):
+                        return .error(
+                            code: "invalid",
+                            message: "cannot delete the main checkout",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    case .failure(.gitFailedForceable(let stderr, let status)):
+                        return .error(
+                            code: "git-failed",
+                            message: stderr,
+                            forceAllowed: true,
+                            shortStatus: status
+                        )
+                    case .failure(.gitFailedFinal(let message)):
+                        return .error(
+                            code: "git-failed",
+                            message: message,
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case let .acknowledge(worktreeID, paneID):
+                    return await MainActor.run {
+                        for repoIndex in appStateBinding.wrappedValue.repos.indices {
+                            for worktreeIndex in appStateBinding.wrappedValue
+                                .repos[repoIndex].worktrees.indices
+                            where appStateBinding.wrappedValue.repos[repoIndex]
+                                .worktrees[worktreeIndex].path == worktreeID {
+                                if let paneID,
+                                   let slot = appStateBinding.wrappedValue
+                                    .repos[repoIndex].worktrees[worktreeIndex]
+                                    .paneSlot(forSessionName: paneID) {
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .paneAttention[slot] = nil
+                                } else {
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .acknowledgeAttention()
+                                }
+                                return .ok
+                            }
+                        }
+                        return .error(
+                            code: "not-found",
+                            message: "unknown worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+                }
+            }
+
             // Await the setters BEFORE registering the signaling handler.
             // Spawning a Task does NOT enqueue onto the actor — only the
             // Task body's `await` does. A simultaneous HTTP offer could
@@ -1889,7 +2312,11 @@ struct GrafttyApp: App {
             let controller = webController
             Task { @MainActor in
                 await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
+                await hostAgent.setPanesStateV2Subscribe(panesStateV2Subscribe)
                 await hostAgent.setPaneControlMutator(paneControlMutator)
+                await hostAgent.setWorktreeManagementMutator(
+                    worktreeManagementMutator
+                )
                 // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
                 // The signalingHandler closure bridges between the HTTP layer's
                 // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
@@ -4109,6 +4536,32 @@ struct GrafttyApp: App {
 
         if alert.runModal() == .alertFirstButtonReturn {
             Pasteboard.copy(command)
+        }
+    }
+}
+
+private extension PaneControlRequest {
+    var primaryTarget: String? {
+        switch self {
+        case .split(let target, _), .close(let target):
+            return target
+        case .swap(let source, _):
+            return source
+        }
+    }
+}
+
+private extension WorktreeManagementRequest {
+    var targetsRelayedResource: Bool {
+        switch self {
+        case .listRepositories:
+            return false
+        case .create(let repositoryID, _, _, _),
+             .pullDefaultBranch(let repositoryID):
+            return repositoryID.hasPrefix("relay-repository-")
+        case .delete(let worktreeID, _),
+             .acknowledge(let worktreeID, _):
+            return worktreeID.hasPrefix("relay-worktree-")
         }
     }
 }

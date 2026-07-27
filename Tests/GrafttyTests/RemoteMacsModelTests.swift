@@ -341,6 +341,276 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
+    @spec REMOTE-13.9: When a Remote Mac connection becomes unavailable, \
+    the application shall remove its cached worktree and repository rows so \
+    offline remote worktrees are not displayed or relayed.
+    """)
+    func offlineRemoteRowsAreRemoved() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        let snapshot = [
+            WorktreePanes(
+                path: "/repos/app",
+                displayName: "main",
+                repoDisplayName: "app",
+                repositoryID: "/repos/app",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            ),
+        ]
+        registry.onPaneSnapshot(identity, snapshot)
+
+        registry.onConnectionStateChange(
+            identity,
+            .closed
+        )
+
+        #expect(model.worktreePanesByRemote[identity] == nil)
+        #expect(model.repositoriesByRemote[identity] == nil)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
+    @Test("""
+    @spec REMOTE-13.5: While a Remote Mac is connected, when a remote \
+    worktree receives a new user-notify or agent-stop attention transition, \
+    the application shall deliver a macOS notification targeting that exact \
+    worktree or pane, but shall not replay attention already present in the \
+    first snapshot after connection.
+    """)
+    func remoteAttentionNotifiesOnlyOnLiveTransitions() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+
+        func snapshot(
+            worktreeAttention: String? = nil,
+            paneAttention: String? = nil,
+            source: AttentionSource? = nil
+        ) -> [WorktreePanes] {
+            [
+                WorktreePanes(
+                    path: "/repos/app/.worktrees/feature",
+                    displayName: "feature",
+                    repoDisplayName: "app",
+                    repositoryID: "/repos/app",
+                    displayBranch: "feature",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: worktreeAttention,
+                    layout: .leaf(
+                        sessionName: "agent-pane",
+                        title: "agent",
+                        attentionText: paneAttention,
+                        isBusy: false,
+                        attentionSource: source
+                    ),
+                    origin: WorktreeOrigin(
+                        deviceID: remote.id,
+                        deviceLabel: remote.label,
+                        relayDepth: 0
+                    )
+                ),
+            ]
+        }
+
+        // First snapshot is durable state restoration, not a new event.
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(worktreeAttention: "old notification")
+        )
+        #expect(events.isEmpty)
+
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(worktreeAttention: "deploy finished")
+        )
+        #expect(events.count == 1)
+        #expect(events[0].kind == .userNotify)
+        #expect(events[0].worktreeID == "/repos/app/.worktrees/feature")
+        #expect(events[0].paneID == nil)
+
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                paneAttention: "Claude needs input",
+                source: .agentStop
+            )
+        )
+        #expect(events.count == 2)
+        #expect(events[1].kind == .agentStop)
+        #expect(events[1].paneID == "agent-pane")
+
+        // Reconnect restoration remains silent even if the badge persists.
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                paneAttention: "Claude needs input",
+                source: .agentStop
+            )
+        )
+        #expect(events.count == 2)
+
+        // Command-finished attention is a visual status marker, not a system
+        // notification.
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(paneAttention: "✓", source: .commandFinished)
+        )
+        #expect(events.count == 2)
+    }
+
+    @Test("""
+    @spec REMOTE-13.11: When a Remote Mac reconnects with user-notify or \
+    agent-stop attention that was not present in its final connected snapshot, \
+    the application shall deliver one summary notification for all newly \
+    observed items, keep unchanged attention silent, and target the first \
+    affected worktree or pane when the summary is activated.
+    """)
+    func reconnectCollapsesNewAttentionIntoOneSummary() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+
+        func snapshot(
+            worktreeAttention: String? = nil,
+            paneAttention: String? = nil
+        ) -> [WorktreePanes] {
+            [
+                WorktreePanes(
+                    path: "/repos/app/.worktrees/feature",
+                    displayName: "feature",
+                    repoDisplayName: "app",
+                    repositoryID: "/repos/app",
+                    displayBranch: "feature",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: worktreeAttention,
+                    layout: .leaf(
+                        sessionName: "agent-pane",
+                        title: "agent",
+                        attentionText: paneAttention,
+                        isBusy: false,
+                        attentionSource: paneAttention == nil
+                            ? nil
+                            : .agentStop
+                    ),
+                    origin: WorktreeOrigin(
+                        deviceID: remote.id,
+                        deviceLabel: remote.label,
+                        relayDepth: 0
+                    )
+                ),
+            ]
+        }
+
+        // Establish an empty connected baseline, then observe two new items in
+        // the first snapshot after reconnect.
+        registry.onPaneSnapshot(identity, snapshot())
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+
+        #expect(events.count == 1)
+        let summary = try #require(events.first)
+        #expect(summary.kind == .reconnectSummary)
+        #expect(summary.title == "Studio Mac needs attention")
+        #expect(summary.body == "2 items across 1 remote worktree need attention.")
+        #expect(summary.worktreeID == "/repos/app/.worktrees/feature")
+        #expect(summary.paneID == nil)
+
+        // Repeated durable state and another reconnect with the same badges do
+        // not replay the summary.
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+        #expect(events.count == 1)
+    }
+
+    @Test("""
     @spec REMOTE-12.4: When Mac-to-Mac pairing succeeds, the application \
     shall persist a saved Remote Mac using the pinned host identity, \
     fingerprint, display name, and signaling base URL.

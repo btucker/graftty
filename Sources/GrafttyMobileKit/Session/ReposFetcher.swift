@@ -1,15 +1,22 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 
 public enum ReposFetcher {
 
     public struct RepoInfo: Codable, Sendable, Equatable {
         public let path: String
         public let displayName: String
+        public let origin: WorktreeOrigin?
 
-        public init(path: String, displayName: String) {
+        public init(
+            path: String,
+            displayName: String,
+            origin: WorktreeOrigin? = nil
+        ) {
             self.path = path
             self.displayName = displayName
+            self.origin = origin
         }
     }
 
@@ -25,6 +32,10 @@ public enum ReposFetcher {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(
+            RemoteWorktreeFeatures.oneHopRelay,
+            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+        )
         return req
     }
 

@@ -29,6 +29,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
 
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
+    private let subsystemName: String
 
     private let lock = NIOLock()
     /// Callbacks are mutable so the construction site can build the
@@ -55,11 +56,13 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public init(
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
+        subsystemName: String = SSHChannelTypeNames.panesState,
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed
     ) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
+        self.subsystemName = subsystemName
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
         var cont: AsyncStream<Data>.Continuation!
@@ -139,7 +142,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             // to accept all subsystem requests for known names and we don't
             // need to sequence on the reply before receiving pushes.
             let subsystem = SSHChannelRequestEvent.SubsystemRequest(
-                subsystem: SSHChannelTypeNames.panesState,
+                subsystem: subsystemName,
                 wantReply: false
             )
             try await child.triggerUserOutboundEvent(subsystem).get()

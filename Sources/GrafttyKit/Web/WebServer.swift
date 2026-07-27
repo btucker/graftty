@@ -49,15 +49,22 @@ public final class WebServer {
         public let path: String
         public let displayName: String
         public let defaultBranchStatus: DefaultBranchStatus?
+        /// Identifies which Mac owns the repository. Nil preserves
+        /// compatibility with older servers. Relayed repositories carry a
+        /// depth-1 origin so Mobile can present an explicit target-Mac
+        /// picker while continuing to round-trip the opaque `path`.
+        public let origin: WorktreeOrigin?
 
         public init(
             path: String,
             displayName: String,
-            defaultBranchStatus: DefaultBranchStatus? = nil
+            defaultBranchStatus: DefaultBranchStatus? = nil,
+            origin: WorktreeOrigin? = nil
         ) {
             self.path = path
             self.displayName = displayName
             self.defaultBranchStatus = defaultBranchStatus
+            self.origin = origin
         }
     }
 
@@ -208,6 +215,9 @@ public final class WebServer {
         /// Source for `GET /repos`. Same fast-snapshot contract as
         /// `sessionsProvider`: read from in-memory AppState, no git.
         public let reposProvider: @Sendable () async -> [RepoInfo]
+        /// Additional depth-one repositories exposed only to clients that
+        /// advertise `remote-worktrees-v1`.
+        public let relayedReposProvider: @Sendable () async -> [RepoInfo]
         /// Executes `POST /worktrees`. Nil (default) means the endpoint
         /// is disabled — it responds `503` rather than `404` so the web
         /// client can tell "server doesn't support this yet" apart from
@@ -241,6 +251,10 @@ public final class WebServer {
         /// faithful pane layout inside each. Default returns an empty
         /// list.
         public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
+        /// Additional depth-one worktrees exposed only to clients that
+        /// advertise `remote-worktrees-v1`.
+        public let relayedWorktreePanesProvider:
+            @Sendable () async -> [WorktreePanes]
         /// Drives `POST /v1/rtc/offer`. Receives the client's
         /// `SignalingOffer` and returns a `SignalingHandlerOutcome`. Nil
         /// disables the endpoint with a 503 response — matching the
@@ -264,12 +278,17 @@ public final class WebServer {
             sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] },
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
+            relayedReposProvider: @escaping @Sendable () async -> [RepoInfo] = {
+                []
+            },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
             defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])? = nil,
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
+            relayedWorktreePanesProvider:
+                @escaping @Sendable () async -> [WorktreePanes] = { [] },
             signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
             remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
             displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore()
@@ -280,12 +299,14 @@ public final class WebServer {
             self.sessionsProvider = sessionsProvider
             self.sessionWorktreeProvider = sessionWorktreeProvider
             self.reposProvider = reposProvider
+            self.relayedReposProvider = relayedReposProvider
             self.worktreeCreator = worktreeCreator
             self.defaultBranchPuller = defaultBranchPuller
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.ghosttyKeybindingsProvider = ghosttyKeybindingsProvider
             self.worktreePanesProvider = worktreePanesProvider
+            self.relayedWorktreePanesProvider = relayedWorktreePanesProvider
             self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
             self.displayOwnershipStore = displayOwnershipStore
@@ -637,13 +658,19 @@ public final class WebServer {
             // WEB-7.1: repo list for the "Add Worktree" picker.
             if path == "/repos" {
                 let provider = config.reposProvider
+                let relayedProvider = config.relayedReposProvider
+                let includeRelayed = Self.requestsRemoteWorktrees(head)
                 let promise = context.eventLoop.makePromise(of: [RepoInfo].self)
                 promise.futureResult.whenComplete { result in
                     let repos = (try? result.get()) ?? []
                     Self.respondEncodable(context: context, items: repos)
                 }
                 Task {
-                    promise.succeed(await provider())
+                    let local = await provider()
+                    let relayed = includeRelayed
+                        ? await relayedProvider()
+                        : []
+                    promise.succeed(local + relayed)
                 }
                 return
             }
@@ -651,12 +678,20 @@ public final class WebServer {
             // mobile client's worktree → pane drilldown.
             if path == "/worktrees/panes" {
                 let provider = config.worktreePanesProvider
+                let relayedProvider = config.relayedWorktreePanesProvider
+                let includeRelayed = Self.requestsRemoteWorktrees(head)
                 let promise = context.eventLoop.makePromise(of: [WorktreePanes].self)
                 promise.futureResult.whenComplete { result in
                     let list = (try? result.get()) ?? []
                     Self.respondEncodable(context: context, items: list)
                 }
-                Task { promise.succeed(await provider()) }
+                Task {
+                    let local = await provider()
+                    let relayed = includeRelayed
+                        ? await relayedProvider()
+                        : []
+                    promise.succeed(local + relayed)
+                }
                 return
             }
             // IOS-4.7: the Mac's resolved Ghostty config, so a remote
@@ -1063,6 +1098,22 @@ public final class WebServer {
             Task {
                 promise.succeed(await handler(offer))
             }
+        }
+
+        private static func requestsRemoteWorktrees(
+            _ head: HTTPRequestHead
+        ) -> Bool {
+            guard let advertised = head.headers.first(
+                name: RemoteWorktreeFeatures.headerName
+            ) else {
+                return false
+            }
+            return advertised
+                .split(separator: ",")
+                .contains { feature in
+                    feature.trimmingCharacters(in: .whitespacesAndNewlines)
+                        == RemoteWorktreeFeatures.oneHopRelay
+                }
         }
 
         /// Encode a concrete array and respond 200 (or 500 on encoding

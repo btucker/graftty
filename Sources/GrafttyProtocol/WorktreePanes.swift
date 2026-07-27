@@ -43,6 +43,11 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
     public let ahead: Int
     public let behind: Int
     public let hasUncommittedChanges: Bool
+    /// Optional line-level detail used by the macOS sidebar gutter. Older
+    /// hosts omit these fields; clients keep rendering the compact
+    /// ahead/behind/dirty summary in that case.
+    public let insertions: Int?
+    public let deletions: Int?
     /// Ref label the divergence was measured against. Used in the
     /// tooltip on macOS; iOS may surface it via accessibility or a
     /// long-press affordance.
@@ -52,16 +57,51 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
         ahead: Int,
         behind: Int,
         hasUncommittedChanges: Bool,
-        baseRef: String?
+        baseRef: String?,
+        insertions: Int? = nil,
+        deletions: Int? = nil
     ) {
         self.ahead = ahead
         self.behind = behind
         self.hasUncommittedChanges = hasUncommittedChanges
         self.baseRef = baseRef
+        self.insertions = insertions
+        self.deletions = deletions
     }
 
     public var isEmpty: Bool {
         ahead == 0 && behind == 0 && !hasUncommittedChanges
+    }
+}
+
+/// Identifies the Mac that owns a worktree in an origin-aware snapshot.
+///
+/// `relayDepth == 0` is always local to the server emitting the snapshot.
+/// A server may promote those rows to depth 1 when sharing a directly
+/// connected Remote Mac, but rows already carrying a non-zero depth must
+/// never be promoted again. That single rule prevents A↔B relay loops.
+public struct WorktreeOrigin: Codable, Sendable, Hashable {
+    public let deviceID: RemoteDeviceID
+    public let deviceLabel: String
+    public let relayDepth: Int
+
+    public init(deviceID: RemoteDeviceID, deviceLabel: String, relayDepth: Int) {
+        self.deviceID = deviceID
+        self.deviceLabel = deviceLabel
+        self.relayDepth = max(0, relayDepth)
+    }
+}
+
+/// Live, opaque route identifiers attached only to relayed rows. They are
+/// lookup keys, not encoded filesystem paths or zmx names: hosts must resolve
+/// them against their current route table and reject unknown values.
+public struct WorktreeRoute: Codable, Sendable, Hashable {
+    public let repositoryID: String
+    public let worktreeID: String
+
+    public init(repositoryID: String, worktreeID: String) {
+        self.repositoryID = repositoryID
+        self.worktreeID = worktreeID
     }
 }
 
@@ -77,18 +117,17 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
 ///      from `RepoEntry` + `WorktreeEntry` + the various stat / PR /
 ///      attention stores; the iPad consumes it directly from the wire.
 ///
-/// **Known gap (today):** the Mac sidebar's `WorktreeRow` does not yet
-/// consume `WorktreePanes` directly — it still takes the richer
-/// `WorktreeStats` for its hover tooltip (`+I -D lines vs. baseRef`)
-/// which carries `insertions` / `deletions` that `WorktreeWireStats`
-/// drops. Once those two fields are added to the wire (a backwards-
-/// compatible expansion since the mobile decoder is decodeIfPresent-
-/// tolerant), the Mac sidebar can switch to consuming `WorktreePanes`
-/// for its row inputs too, single-sourcing the row contract end-to-end.
+/// `WorktreeWireStats` carries the line-level details needed by the macOS
+/// `WorktreeRow`, allowing relayed rows to use the same presentation
+/// component without reconstructing filesystem-backed state locally.
 public struct WorktreePanes: Codable, Sendable, Hashable {
     public let path: String
     public let displayName: String
     public let repoDisplayName: String
+    /// Opaque identity of the owning repository. New hosts populate this
+    /// with their canonical repository token; nil preserves compatibility
+    /// with older snapshots that exposed only `repoDisplayName`.
+    public let repositoryID: String?
     /// Branch name, sanitized of bidirectional-override scalars so
     /// the mobile client can render it directly without re-running
     /// the Trojan-Source defense (`GIT-2.10`).
@@ -109,22 +148,31 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// nil when the worktree has no panes currently running. Always
     /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
     public let layout: PaneLayoutNode?
+    /// nil for legacy snapshots. New origin-aware snapshots identify their
+    /// owning Mac explicitly, including local rows (`relayDepth == 0`).
+    public let origin: WorktreeOrigin?
+    /// Present only for rows relayed through another Mac.
+    public let route: WorktreeRoute?
 
     public init(
         path: String,
         displayName: String,
         repoDisplayName: String,
+        repositoryID: String? = nil,
         displayBranch: String,
         state: WorktreeWireState,
         isMainCheckout: Bool,
         prBadge: PRBadge?,
         stats: WorktreeWireStats?,
         attentionText: String?,
-        layout: PaneLayoutNode?
+        layout: PaneLayoutNode?,
+        origin: WorktreeOrigin? = nil,
+        route: WorktreeRoute? = nil
     ) {
         self.path = path
         self.displayName = displayName
         self.repoDisplayName = repoDisplayName
+        self.repositoryID = repositoryID
         self.displayBranch = displayBranch
         self.state = state
         self.isMainCheckout = isMainCheckout
@@ -132,6 +180,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.stats = stats
         self.attentionText = attentionText
         self.layout = layout
+        self.origin = origin
+        self.route = route
     }
 
     /// Custom decode preserves readability when an older server
@@ -139,8 +189,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// repoDisplayName/layout only): missing fields fall back to
     /// safe defaults rather than failing the decode.
     private enum CodingKeys: String, CodingKey {
-        case path, displayName, repoDisplayName, displayBranch, state,
-             isMainCheckout, prBadge, stats, attentionText, layout
+        case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
+             isMainCheckout, prBadge, stats, attentionText, layout, origin, route
     }
 
     public init(from decoder: Decoder) throws {
@@ -148,6 +198,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.path = try c.decode(String.self, forKey: .path)
         self.displayName = try c.decode(String.self, forKey: .displayName)
         self.repoDisplayName = try c.decode(String.self, forKey: .repoDisplayName)
+        self.repositoryID = try c.decodeIfPresent(
+            String.self,
+            forKey: .repositoryID
+        )
         self.displayBranch = try c.decodeIfPresent(String.self, forKey: .displayBranch) ?? ""
         self.state = try c.decodeIfPresent(WorktreeWireState.self, forKey: .state) ?? .running
         self.isMainCheckout = try c.decodeIfPresent(Bool.self, forKey: .isMainCheckout) ?? false
@@ -155,6 +209,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.stats = try c.decodeIfPresent(WorktreeWireStats.self, forKey: .stats)
         self.attentionText = try c.decodeIfPresent(String.self, forKey: .attentionText)
         self.layout = try c.decodeIfPresent(PaneLayoutNode.self, forKey: .layout)
+        self.origin = try c.decodeIfPresent(WorktreeOrigin.self, forKey: .origin)
+        self.route = try c.decodeIfPresent(WorktreeRoute.self, forKey: .route)
     }
 }
 
