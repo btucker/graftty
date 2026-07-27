@@ -225,18 +225,24 @@ struct SessionReconnectTests {
         client.start()
         await waitUntil {
             provider.invocationCount == 1 &&
-                client.connectionState == .reconnecting(attempt: 1)
+                client.connectionState == .reconnecting(attempt: 1) &&
+                clock.pendingSleepCount(dueWithin: 1.0) == 1
         }
         // First dial: the provider hands back a dead connection whose
         // `openTerminalSession` throws immediately, feeding the same
         // backoff path a plain socket failure would.
         #expect(provider.invocationCount == 1)
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(
+            clock.pendingSleepCount(dueWithin: 1.0) == 1,
+            "the first backoff sleep must be registered before time advances"
+        )
 
         clock.advance(by: 1.0)
         await waitUntil {
             provider.invocationCount == 2 &&
-                client.connectionState == .reconnecting(attempt: 2)
+                client.connectionState == .reconnecting(attempt: 2) &&
+                clock.pendingSleepCount(dueWithin: 2.0) == 1
         }
         // Second dial. Before this fix, the connection resolved for the
         // FIRST dial was captured by value in the factory closure and
@@ -245,6 +251,10 @@ struct SessionReconnectTests {
         // loop calls on every attempt.
         #expect(provider.invocationCount == 2, "the provider must be asked again on the second dial, not just the first")
         #expect(client.connectionState == .reconnecting(attempt: 2))
+        #expect(
+            clock.pendingSleepCount(dueWithin: 2.0) == 1,
+            "the second backoff sleep must be registered before time advances"
+        )
 
         clock.advance(by: 2.0)
         await waitUntil {

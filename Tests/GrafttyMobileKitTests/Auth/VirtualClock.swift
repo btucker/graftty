@@ -48,5 +48,12 @@ final class VirtualClock: Clock, @unchecked Sendable {
     }
 
     var pendingSleepCount: Int { lock.withLock { sleepers.count } }
+
+    func pendingSleepCount(dueWithin duration: TimeInterval) -> Int {
+        lock.withLock {
+            let cutoff = _now.addingTimeInterval(duration)
+            return sleepers.values.count { $0.deadline <= cutoff }
+        }
+    }
 }
 #endif
