@@ -27,6 +27,7 @@ let package = Package(
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
@@ -90,11 +91,26 @@ let package = Package(
             ],
             swiftSettings: strictWarnings
         ),
+        .target(
+            name: "GrafttyRemoteClient",
+            dependencies: [
+                "GrafttyProtocol",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOExtras", package: "swift-nio-extras"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                .product(name: "WebRTC", package: "WebRTC"),
+            ],
+            swiftSettings: strictWarnings
+        ),
         .executableTarget(
             name: "Graftty",
             dependencies: [
                 "GrafttyKit",
                 "GrafttyHostAgent",
+                "GrafttyRemoteClient",
                 "GrafttyProtocol",
                 "GrafttyCommandUI",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
@@ -147,19 +163,30 @@ let package = Package(
         .target(
             name: "GrafttyMobileKit",
             dependencies: [
+                "GrafttyRemoteClient",
                 "GrafttyProtocol",
                 "GrafttyCommandUI",
                 .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOExtras", package: "swift-nio-extras"),
-                .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
-                .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: strictWarnings
         ),
         .testTarget(
             name: "GrafttyMobileKitTests",
             dependencies: ["GrafttyMobileKit"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "GrafttyRemoteClientTests",
+            dependencies: [
+                "GrafttyRemoteClient",
+                "GrafttyProtocol",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                .product(name: "WebRTC", package: "WebRTC"),
+            ],
             swiftSettings: strictWarnings
         ),
         .testTarget(

@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
+import GrafttyRemoteClient
 import Observation
 import UIKit
 

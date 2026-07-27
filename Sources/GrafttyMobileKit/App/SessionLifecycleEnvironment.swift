@@ -1,4 +1,5 @@
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
 import os
 

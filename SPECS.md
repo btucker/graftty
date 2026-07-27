@@ -1876,7 +1876,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-9.x
 
-**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
 
 **REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
 
@@ -1889,6 +1889,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
 
 **REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
+
+**REMOTE-9.8** If an SSH terminal's PTY input consumer stalls until the bounded write queue is full, the host shall close that terminal channel rather than retain input without limit or silently drop terminal bytes.
 
 ### REMOTE-10.x
 
@@ -1903,6 +1905,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.3** When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
 
 **REMOTE-11.4** While a data channel's SSH transport has not yet attached, the application shall buffer inbound data-channel bytes losslessly from the moment the channel is announced and deliver them to the transport in arrival order ahead of live traffic.
+
+### REMOTE-12.x — Mac-to-Mac Remote Access
+
+**REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
+
+**REMOTE-12.2** While any host pairing ceremony is active, the application shall reject attempts to start a second ceremony through another host pairing entry point without replacing the active session.
+
+**REMOTE-12.3** When a discovered Remote Mac service disappears, the application shall remove its transient candidate instead of continuing to present stale reachability.
+
+**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, and signaling base URL.
+
+**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall exchange a WebRTC offer at its last known LAN base URL, apply the answer, and open the remote pane-state/control environment.
+
+**REMOTE-12.6** While connection setup or a live connection already exists for a Remote Mac identity, repeated connect requests shall reuse that one connection rather than dial another transport.
+
+**REMOTE-12.7** While a saved Remote Mac is connected, its latest panes-state snapshot shall project remote worktree and pane rows beneath that Mac in the sidebar.
+
+**REMOTE-12.8** If the user disconnects a Remote Mac while connection setup is suspended, the late setup result shall not overwrite the explicit offline state.
+
+**REMOTE-12.9** When a Remote Mac owns a terminal surface whose live grid differs from the host snapshot, it shall request one owner resize and stop requesting once the host snapshot acknowledges that grid.
+
+**REMOTE-12.10** While unauthenticated LAN pairing and signaling routes are rate limited, one source address exhausting its allowance shall not consume another source address's allowance.
+
+**REMOTE-12.11** While multiple Add Remote Mac sheets use discovery, the application shall keep the shared browser active until the final sheet releases its discovery lease.
+
+**REMOTE-12.12** If a cached Remote Mac connection is already in a terminal state when connect is requested, the registry shall evict and close it before dialing a fresh transport.
+
+**REMOTE-12.13** When an obsolete Remote Mac pane subscription emits after disconnect or replacement, the registry shall discard that snapshot instead of overwriting the current sidebar projection.
+
+**REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
 
 ## URL — Worktree URL Handler
 

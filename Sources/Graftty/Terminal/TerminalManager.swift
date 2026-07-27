@@ -553,22 +553,30 @@ final class TerminalManager: ObservableObject {
         terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         worktreePath: String,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        hostManagedBackend: SurfaceHandleZmxBackend? = nil
     ) -> SurfaceHandle? {
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
             return existing
         }
 
-        guard canAllocatePTY(for: terminalID) else { return nil }
+        guard hostManagedBackend != nil || canAllocatePTY(for: terminalID) else { return nil }
         recordPaneSession(paneSessionID, for: terminalID)
         clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
-        let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
-            for: terminalID,
-            paneSessionID: paneSessionID,
-            worktreePath: worktreePath
-        )
+        let isDirectHostManagedSurface = hostManagedBackend != nil
+        let surfaceWorktreePath = isDirectHostManagedSurface
+            ? FileManager.default.homeDirectoryForCurrentUser.path
+            : worktreePath
+
+        let zmxSpawnConfiguration = !isDirectHostManagedSurface
+            ? resolveZmxSpawnConfiguration(
+                for: terminalID,
+                paneSessionID: paneSessionID,
+                worktreePath: worktreePath
+            )
+            : nil
         let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
         if extraInitialInput != nil {
             explicitInitialInputSurfaces.insert(terminalID)
@@ -578,7 +586,7 @@ final class TerminalManager: ObservableObject {
         guard let handle = SurfaceHandle(
             terminalID: terminalID,
             app: app,
-            worktreePath: worktreePath,
+            worktreePath: surfaceWorktreePath,
             socketPath: socketPath,
             zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,
@@ -586,6 +594,7 @@ final class TerminalManager: ObservableObject {
             remoteAttachmentRegistry: remoteAttachmentRegistry,
             displayOwnershipStore: displayOwnershipStore,
             displayClientID: displayClientID,
+            hostManagedBackend: hostManagedBackend,
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             explicitInitialInputSurfaces.remove(terminalID)

@@ -64,6 +64,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private let ownershipStore: SessionDisplayOwnershipStore
     private let ownershipBroadcaster: DisplayOwnershipBroadcaster
     private let deviceID: RemoteDeviceID
+    private let defaultKind: DisplayClientKind
     private var envSessionName: String?
     private var ptyAccepted = false
     /// Captured from `pty-req`'s cols/rows (REMOTE-9.4) — fed through
@@ -110,20 +111,25 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// (`ptyWriterTask`) awaits `stream.send` sequentially — spawning an
     /// independent `Task` per chunk (the previous shape) provides no
     /// FIFO guarantee between tasks, so a fast burst of keystrokes could
-    /// reach the PTY out of order.
+    /// reach the PTY out of order. The stream is bounded: if a stalled PTY
+    /// cannot keep up, the channel closes instead of retaining attacker-
+    /// controlled input without limit.
     private var ptyWriteContinuation: AsyncStream<Data>.Continuation?
     private var ptyWriterTask: Task<Void, Never>?
+    private static let maxPendingPTYWriteChunks = 256
 
     public init(
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
-        deviceID: RemoteDeviceID
+        deviceID: RemoteDeviceID,
+        defaultKind: DisplayClientKind = .ios
     ) {
         self.streamFactory = streamFactory
         self.ownershipStore = ownershipStore
         self.ownershipBroadcaster = ownershipBroadcaster
         self.deviceID = deviceID
+        self.defaultKind = defaultKind
     }
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -158,7 +164,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 coordinator.handleBinary(payload)
             } else {
                 // Pre-hello: exactly today's behavior, ungated.
-                ptyWriteContinuation?.yield(payload)
+                enqueuePTYWrite(payload, channel: context.channel)
             }
         }
     }
@@ -262,6 +268,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         inboundForwardingTask?.cancel()
         ptyWriteContinuation?.finish()
         ptyWriteContinuation = nil
+        ptyWriterTask?.cancel()
         ptyWriterTask = nil
         let snapshot = stream
         stream = nil
@@ -330,12 +337,35 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// wire order end-to-end (see `ptyWriteContinuation`).
     private func startPTYWriter(stream: TerminalByteStream) {
         var continuation: AsyncStream<Data>.Continuation!
-        let pipe = AsyncStream<Data> { continuation = $0 }
+        let pipe = AsyncStream<Data>(
+            bufferingPolicy: .bufferingOldest(Self.maxPendingPTYWriteChunks)
+        ) { continuation = $0 }
         ptyWriteContinuation = continuation
         ptyWriterTask = Task {
             for await chunk in pipe {
+                guard !Task.isCancelled else { return }
                 try? await stream.send(chunk)
             }
+        }
+    }
+
+    private func enqueuePTYWrite(_ data: Data, channel: Channel) {
+        guard let continuation = ptyWriteContinuation else { return }
+        switch continuation.yield(data) {
+        case .enqueued:
+            return
+        case .dropped:
+            // Terminal input is not safely lossy. Tear down this attachment
+            // rather than silently corrupting a paste/command or retaining
+            // an unbounded backlog behind a stalled zmx process.
+            continuation.finish()
+            ptyWriteContinuation = nil
+            ptyWriterTask?.cancel()
+            channel.close(promise: nil)
+        case .terminated:
+            return
+        @unknown default:
+            channel.close(promise: nil)
         }
     }
 
@@ -362,7 +392,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         let coordinator = TerminalAttachCoordinator(
             sessionName: sessionName,
             clientID: clientID,
-            defaultKind: .ios,
+            defaultKind: defaultKind,
             ownershipStore: ownershipStore,
             broadcaster: ownershipBroadcaster,
             sendText: { [weak self] payload in
@@ -406,7 +436,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 // bytes), which runs on the event loop via channelRead —
                 // yield into the same FIFO pipe as the legacy path so
                 // byte order is preserved across both.
-                self?.ptyWriteContinuation?.yield(data)
+                self?.enqueuePTYWrite(data, channel: channel)
             }
         )
         self.coordinator = coordinator

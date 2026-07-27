@@ -50,6 +50,17 @@
                ReferencedContainer = "container:GrafttyMobile.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "46A32AB2D4468CA8DA2B08BA"
+               BuildableName = "GrafttyRemoteClientTests.xctest"
+               BlueprintName = "GrafttyRemoteClientTests"
+               ReferencedContainer = "container:GrafttyMobile.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

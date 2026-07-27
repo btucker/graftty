@@ -122,6 +122,33 @@ struct SurfaceHandleHostManagedTests {
         #expect(captured.initialInput == "nvim README.md\r")
     }
 
+    @Test func directHostManagedBackendDoesNotRequireZmxSpawnConfiguration() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: nil,
+            extraInitialInput: "remote-start\r",
+            surfaceFactory: harness.factory,
+            hostManagedBackend: backend
+        ))
+
+        #expect(handle.zmxSessionName == nil)
+        let captured = try #require(harness.capturedConfigs.first)
+        #expect(captured.backend == GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED)
+        #expect(captured.initialInput == nil)
+        #expect(backend.startCount == 0)
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.hostManagedLayoutNotifier?()
+        #expect(backend.startCount == 1)
+        #expect(backend.writes == [Data("remote-start\r".utf8)])
+    }
+
     @Test func zmxBackedExtraInitialInputWritesThroughBackendAfterStart() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())

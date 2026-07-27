@@ -12,6 +12,9 @@ struct MainWindow: View {
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
+    @ObservedObject var hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    @ObservedObject var remoteMacsModel: RemoteMacsModel
+    let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -23,6 +26,12 @@ struct MainWindow: View {
     /// SwiftUI scene commands block, which can't reach view-local state)
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
+    @State private var isShowingAddRemoteMacSheet = false
+    @State private var selectedRemoteIdentity: RemoteMacIdentity?
+    @State private var selectedRemoteWorktreePath: String?
+    @State private var selectedRemotePaneSessionName: String?
+    @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
+    @State private var remoteTerminalSplitTree = SplitTree(root: nil)
 
     /// GIT-4.20: resolved-PR "delete worktree?" offers that fired while
     /// no window could host the sheet, kept for retry when one appears.
@@ -41,8 +50,16 @@ struct MainWindow: View {
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
+                remoteMacsModel: remoteMacsModel,
+                selectedRemoteIdentity: selectedRemoteIdentity,
+                selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+                selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
+                onSelectRemoteMac: selectRemoteMac,
+                onSelectRemoteWorktree: selectRemoteWorktree,
+                onSelectRemotePane: selectRemotePane,
+                onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
@@ -77,7 +94,26 @@ struct MainWindow: View {
                     onRefreshPR: refreshPR
                 )
 
-                if let worktree = selectedWorktreeBinding {
+                if let selectedRemoteMac {
+                    if selectedRemotePaneSessionName != nil, remoteTerminalSplitTree.root != nil {
+                        TerminalContentView(
+                            terminalManager: terminalManager,
+                            splitTree: $remoteTerminalSplitTree,
+                            focusedPaneSlotID: remoteTerminalSplitTree.allLeaves.first,
+                            theme: terminalManager.theme,
+                            onFocusTerminal: { terminalID in
+                                terminalManager.setFocus(terminalID)
+                            }
+                        )
+                        .padding(.leading, 6)
+                    } else {
+                        ContentUnavailableView(
+                            selectedRemoteMac.label,
+                            systemImage: "laptopcomputer.and.arrow.down",
+                            description: Text(selectedRemoteMac.lastKnownBaseURL?.absoluteString ?? "Remote Mac selected.")
+                        )
+                    }
+                } else if let worktree = selectedWorktreeBinding {
                     TerminalContentView(
                         terminalManager: terminalManager,
                         splitTree: Binding(
@@ -124,6 +160,34 @@ struct MainWindow: View {
         // lights, context menus, alerts) renders with correct contrast.
         .windowBackgroundTint(theme: terminalManager.theme)
         .installUpdateBadgeAccessory(controller: updaterController)
+        .sheet(item: remotePairingRequestBinding) { request in
+            RemotePairingRequestSheet(
+                request: request,
+                onAccept: {
+                    Task {
+                        // Surface a failed confirm (peer-store write error,
+                        // nonce expired between display and tap). Otherwise
+                        // `refreshPendingRequest` just clears `pendingRequest`
+                        // and the sheet vanishes exactly as if it succeeded.
+                        if case .failure(let error) = await hostPairingCoordinator.confirm() {
+                            presentRemotePairingConfirmFailure(error)
+                        }
+                    }
+                },
+                onDeny: {
+                    Task { await hostPairingCoordinator.deny() }
+                }
+            )
+            .interactiveDismissDisabled(true)
+        }
+        .sheet(isPresented: $isShowingAddRemoteMacSheet) {
+            AddRemoteMacSheet(
+                model: remoteMacsModel,
+                makePairingDriver: makeRemoteMacPairingDriver,
+                onCancel: { isShowingAddRemoteMacSheet = false },
+                onPaired: { isShowingAddRemoteMacSheet = false }
+            )
+        }
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
         // chrome — the NavigationSplitView sidebar toggle in particular —
         // picks the right icon shade. NSWindow.appearance covers AppKit
@@ -163,6 +227,9 @@ struct MainWindow: View {
                 worktreePath: newPath,
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
+        }
+        .onChange(of: remoteMacsModel.worktreePanesByRemote) { _, snapshots in
+            reconcileRemoteSelection(worktreePanesByRemote: snapshots)
         }
         // AGENT-3.4 resume rule runs at the model layer via
         // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
@@ -245,9 +312,35 @@ struct MainWindow: View {
         return appState.repo(forWorktreePath: path)
     }
 
+    private var remotePairingRequestBinding: Binding<PendingRemotePairingRequest?> {
+        Binding(
+            get: { hostPairingCoordinator.pendingRequest },
+            set: { _ in }
+        )
+    }
+
+    /// The pairing consent sheet dismisses on any terminal outcome, so a
+    /// failed Accept (peer-store write failure, or the nonce expiring before
+    /// the user tapped) would otherwise be indistinguishable from success.
+    @MainActor
+    private func presentRemotePairingConfirmFailure(_ error: PairingErrorResponse) {
+        let alert = NSAlert()
+        alert.messageText = "Could not pair remote Mac"
+        alert.informativeText = error.error
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    private var selectedRemoteMac: RemoteMac? {
+        guard let selectedRemoteIdentity else { return nil }
+        return remoteMacsModel.savedRemoteMacs.first {
+            RemoteMacIdentity($0) == selectedRemoteIdentity
+        }
     }
 
     /// Computed command handler surfaced to `GrafttyApp.commands` via
@@ -353,6 +446,16 @@ struct MainWindow: View {
         if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
             return
         }
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        RemoteMacSidebarSelectionReducer.selectLocalWorktree(path, state: &selection)
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
         let previousPath = appState.selectedWorktreePath
         appState.selectedWorktreePath = path
 
@@ -477,6 +580,161 @@ struct MainWindow: View {
         // backoff expires, and the user's only escape hatch is
         // right-click "Refresh now" on the PR button.
         refreshPR()
+    }
+
+    private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        let identity = RemoteMacIdentity(remoteMac)
+        RemoteMacSidebarSelectionReducer.selectRemote(identity, state: &selection)
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+
+        Task { @MainActor in
+            do {
+                _ = try await remoteMacsModel.connect(to: remoteMac)
+            } catch {
+                NSLog("[Graftty] failed to connect remote Mac %@: %@", remoteMac.label, String(describing: error))
+            }
+        }
+    }
+
+    private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) {
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        let identity = RemoteMacIdentity(remoteMac)
+        RemoteMacSidebarSelectionReducer.selectRemoteWorktree(
+            identity,
+            worktreePath: worktreePath,
+            state: &selection
+        )
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+    }
+
+    private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        let identity = RemoteMacIdentity(remoteMac)
+        RemoteMacSidebarSelectionReducer.selectRemotePane(
+            identity,
+            worktreePath: worktreePath,
+            sessionName: sessionName,
+            state: &selection
+        )
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+
+        openRemoteTerminal(
+            remoteMac: remoteMac,
+            worktreePath: worktreePath,
+            sessionName: sessionName
+        )
+    }
+
+    private struct RemoteTerminalKey: Hashable {
+        var identity: RemoteMacIdentity
+        var sessionName: String
+    }
+
+    private func reconcileRemoteSelection(
+        worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
+    ) {
+        let previousIdentity = selectedRemoteIdentity
+        let previousSessionName = selectedRemotePaneSessionName
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        RemoteMacSidebarSelectionReducer.reconcileRemoteSelection(
+            worktreePanesByRemote: worktreePanesByRemote,
+            state: &selection
+        )
+
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+
+        if let previousIdentity,
+           let previousSessionName,
+           selection.selectedRemotePaneSessionName != previousSessionName,
+           let terminalID = remoteTerminalSlots.removeValue(
+            forKey: RemoteTerminalKey(
+                identity: previousIdentity,
+                sessionName: previousSessionName
+            )
+           ) {
+            terminalManager.destroySurface(terminalID: terminalID)
+            remoteTerminalSplitTree = SplitTree(root: nil)
+        }
+    }
+
+    private func openRemoteTerminal(
+        remoteMac: RemoteMac,
+        worktreePath: String,
+        sessionName: String
+    ) {
+        let identity = RemoteMacIdentity(remoteMac)
+        let key = RemoteTerminalKey(identity: identity, sessionName: sessionName)
+        let terminalID: PaneSlotID
+        if let existing = remoteTerminalSlots[key] {
+            terminalID = existing
+        } else {
+            terminalID = PaneSlotID()
+            remoteTerminalSlots[key] = terminalID
+        }
+        remoteTerminalSplitTree = SplitTree(root: .leaf(terminalID))
+
+        guard terminalManager.view(for: terminalID) == nil else {
+            terminalManager.setFocus(terminalID)
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await remoteMacsModel.connect(to: remoteMac)
+                let client = try await remoteMacsModel.openTerminalSession(
+                    identity: identity,
+                    sessionName: sessionName
+                )
+                let backend = RemoteTerminalSurfaceBackend(client: client)
+                _ = terminalManager.createSurface(
+                    terminalID: terminalID,
+                    paneSessionID: PaneSessionID(id: terminalID.id),
+                    worktreePath: worktreePath,
+                    hostManagedBackend: backend
+                )
+                terminalManager.setFocus(terminalID)
+            } catch {
+                NSLog(
+                    "[Graftty] failed to open remote terminal %@ on %@: %@",
+                    sessionName,
+                    remoteMac.label,
+                    String(describing: error)
+                )
+            }
+        }
     }
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {

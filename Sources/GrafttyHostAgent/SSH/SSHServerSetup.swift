@@ -21,13 +21,24 @@ public enum SSHServerSetup {
     public static func makeHandler(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
+        activePeerRegistry: ActiveRemotePeerRegistry? = nil,
+        closeActiveTransport: (@Sendable () async -> Void)? = nil,
+        onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
         allocator: ByteBufferAllocator,
         onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
+        onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
         let config = SSHServerConfiguration(
             hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
-            userAuthDelegate: SSHUserAuthDelegate(store: trustedPeerStore, onAuthenticated: onAuthenticated)
+            userAuthDelegate: SSHUserAuthDelegate(
+                store: trustedPeerStore,
+                activePeerRegistry: activePeerRegistry,
+                closeActiveTransport: closeActiveTransport,
+                onActivePeerRegistered: onActivePeerRegistered,
+                onAuthenticated: onAuthenticated,
+                onAuthenticatedPeer: onAuthenticatedPeer
+            )
         )
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at
         // swift-nio-ssh's bundled defaults (AES-256-GCM + AES-128-GCM)

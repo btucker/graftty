@@ -3,7 +3,7 @@ import WebRTC
 
 /// Lossless inbound tap for an `RTCDataChannel`.
 ///
-/// Mirror of `Sources/GrafttyMobileKit/Remote/SSH/DataChannelInbox.swift`
+/// Mirror of `Sources/GrafttyRemoteClient/Remote/SSH/DataChannelInbox.swift`
 /// (same copy-don't-share precedent as `SSHNIOTransport`).
 ///
 /// An RTCDataChannel only delivers messages to whatever delegate is

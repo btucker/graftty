@@ -1,10 +1,12 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import UserNotifications
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 import WebRTC
 
 func defaultBranchStatus(
@@ -229,7 +231,20 @@ final class AppServices {
     /// worktree operations created during this app process.
     private var agentPromptRecoveryTask: Task<Void, Never>?
 
-    init(socketPath: String) {
+    /// Host-side LAN pairing consent coordinator. `/v1/pairing/*` and the
+    /// presented sheet share this instance; its process-wide admission is
+    /// also shared with the Settings pairing listener.
+    let hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    let remoteMacsModel: RemoteMacsModel
+    let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
+    let remoteMacAccessEnabled: Bool
+    private var lanRemoteAccessServer: LANRemoteAccessServer?
+    private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
+
+    init(
+        socketPath: String,
+        pairingAdmission: HostPairingAdmission
+    ) {
         let recoveryPromptFiles = WorktreeAgentLaunchCommand.recoveryPromptFiles()
         // No worktree-creation operations exist yet, so files older than the
         // recovery window can only be leftovers from a prior app crash.
@@ -264,6 +279,46 @@ final class AppServices {
                 UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
             }
         )
+        self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
+            admission: pairingAdmission
+        )
+        let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
+        self.remoteMacsModel = remoteMacsModel
+        self.remoteMacPairingDriverFactory = {
+            LocalAddRemoteMacPairingDriver(
+                identityStore: ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory),
+                pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory),
+                clientDeviceID: Self.localRemoteDeviceID(),
+                clientKind: .mac,
+                clientDisplayName: Self.localHostDisplayName()
+            )
+        }
+        self.remoteMacAccessEnabled = Self.remoteMacAccessEnabledDefault()
+        do {
+            let localFingerprint = try Self.localHostFingerprint()
+            let browser = GrafttyBonjourBrowser(
+                localDeviceID: Self.localRemoteDeviceID(),
+                localFingerprint: localFingerprint,
+                supportedProtocolVersions: [GrafttyBonjourService.discoveryVersion],
+                onCandidate: { [weak remoteMacsModel] candidate in
+                    Task { @MainActor in
+                        do {
+                            try remoteMacsModel?.publishDiscoveryCandidate(candidate)
+                        } catch {
+                            NSLog("[Graftty] failed to record Bonjour remote Mac candidate: %@", String(describing: error))
+                        }
+                    }
+                },
+                onCandidateRemoved: { [weak remoteMacsModel] identity in
+                    Task { @MainActor in
+                        remoteMacsModel?.removeDiscoveryCandidate(identity: identity)
+                    }
+                }
+            )
+            remoteMacsModel.setDiscoveryBrowser(browser)
+        } catch {
+            NSLog("[Graftty] failed to prepare remote Mac discovery identity: %@", String(describing: error))
+        }
 
         // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
@@ -297,6 +352,179 @@ final class AppServices {
                 WorktreeAgentLaunchCommand.discardRecoveryPromptFiles(recoveryPromptFiles)
             }
         }
+    }
+
+    private static func makeHostPairingCoordinator(
+        admission: HostPairingAdmission
+    ) -> RemoteMacHostPairingCoordinator {
+        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        do {
+            _ = try identityStore.loadOrGenerateAndPersist()
+        } catch {
+            NSLog("[Graftty] failed to prepare host pairing identity: %@", String(describing: error))
+        }
+        let session = HostPairingSession(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            hostDeviceID: localRemoteDeviceID(),
+            hostKind: .mac,
+            hostDisplayName: localHostDisplayName(),
+            pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
+        )
+        return RemoteMacHostPairingCoordinator(
+            server: HostPairingServer(session: session),
+            admission: admission
+        )
+    }
+
+    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) throws {
+        guard remoteMacAccessEnabled else { return }
+        guard lanRemoteAccessServer == nil else { return }
+
+        let endpoint = RemoteAccessEndpoint(
+            host: Self.localLANHostName(),
+            port: 0
+        )
+        let routeHandler = RemoteMacAccessServices.makeLANRouteHandler(
+            lanBaseURLProvider: { endpoint.baseURL() },
+            hostPairingCoordinator: hostPairingCoordinator,
+            acceptSignalingOffer: { offer in
+                guard let hostAgent else {
+                    return .unavailable("WebRTC host agent is unavailable")
+                }
+                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                do {
+                    let answer = try await hostAgent.acceptOffer(rtcOffer)
+                    return .success(SignalingAnswer(sdp: answer.sdp))
+                } catch WebRTCHostAgent.HostError.busy {
+                    return .hostBusy("host is already handling an offer")
+                } catch {
+                    NSLog("[Graftty] LAN WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
+                    return .internalFailure("acceptOffer failed: \(error)")
+                }
+            }
+        )
+        let server = LANRemoteAccessServer(
+            config: .init(port: 0, bindHost: "0.0.0.0"),
+            routeHandler: routeHandler
+        )
+        try server.start()
+        guard let port = server.listeningPort else {
+            server.stop()
+            throw RemoteMacAccessServiceError.listenerPortUnavailable
+        }
+        endpoint.setPort(port)
+
+        let advertiser = GrafttyBonjourAdvertiser(
+            port: port,
+            label: Self.localHostDisplayName(),
+            deviceID: Self.localRemoteDeviceID(),
+            fingerprint: try Self.localHostFingerprint(),
+            protocolVersion: GrafttyBonjourService.discoveryVersion,
+            pairingStatus: .required
+        )
+        do {
+            try advertiser.start()
+        } catch {
+            server.stop()
+            throw error
+        }
+
+        lanRemoteAccessServer = server
+        bonjourAdvertiser = advertiser
+        NSLog("[Graftty] LAN remote access listening on 0.0.0.0:%d", port)
+    }
+
+    func stopRemoteMacAccessServices() {
+        remoteMacsModel.stopDiscovery()
+        bonjourAdvertiser?.stop()
+        bonjourAdvertiser = nil
+        lanRemoteAccessServer?.stop()
+        lanRemoteAccessServer = nil
+    }
+
+    private enum RemoteMacAccessServiceError: Error {
+        case listenerPortUnavailable
+    }
+
+    private final class RemoteAccessEndpoint: @unchecked Sendable {
+        private let lock = NSLock()
+        private let host: String
+        private var port: Int
+
+        init(host: String, port: Int) {
+            self.host = host
+            self.port = port
+        }
+
+        func setPort(_ port: Int) {
+            lock.withLock {
+                self.port = port
+            }
+        }
+
+        func baseURL() -> URL {
+            lock.withLock {
+                var components = URLComponents()
+                components.scheme = "http"
+                components.host = host
+                components.port = port
+                return components.url ?? URL(string: "http://\(host):\(port)")!
+            }
+        }
+    }
+
+    private static func remoteMacAccessEnabledDefault() -> Bool {
+        let key = "remoteMacAccess.enabled"
+        if let value = UserDefaults.standard.object(forKey: key) as? Bool {
+            return value
+        }
+        return true
+    }
+
+    private static func localHostFingerprint() throws -> RemoteIdentityFingerprint {
+        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let hostKey = try identityStore.loadOrGenerateAndPersist()
+        let publicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: hostKey.publicKey.rawRepresentation
+        )
+        return RemoteIdentityFingerprint(of: publicKey)
+    }
+
+    private static func localLANHostName() -> String {
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !hostName.isEmpty else {
+            return "localhost.local"
+        }
+        if hostName.contains(".") {
+            return hostName
+        }
+        return "\(hostName).local"
+    }
+
+    private static func localRemoteDeviceID() -> RemoteDeviceID {
+        let key = "remoteMac.localDeviceID"
+        if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
+            return RemoteDeviceID(value: value)
+        }
+        let value = UUID().uuidString
+        UserDefaults.standard.set(value, forKey: key)
+        return RemoteDeviceID(value: value)
+    }
+
+    private static func localHostDisplayName() -> String {
+        let localizedName = Host.current().localizedName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let localizedName, !localizedName.isEmpty {
+            return localizedName
+        }
+
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return hostName.isEmpty ? "Mac" : hostName
     }
 }
 
@@ -388,7 +616,11 @@ struct GrafttyApp: App {
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
         _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
-        let appServices = AppServices(socketPath: socketPath)
+        let pairingAdmission = HostPairingAdmission()
+        let appServices = AppServices(
+            socketPath: socketPath,
+            pairingAdmission: pairingAdmission
+        )
         services = appServices
 
         // Web access server — reconstruct the same zmx paths that `startup()`
@@ -442,7 +674,8 @@ struct GrafttyApp: App {
                       case let .listening(_, port) = webController.status,
                       let host = webController.serverHostname else { return nil }
                 return URL(string: WebURLComposer.baseURL(host: host, port: port))
-            }
+            },
+            admission: pairingAdmission
         ))
 
         do {
@@ -511,7 +744,10 @@ struct GrafttyApp: App {
                 claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                teamEventDispatcher: services.teamEventDispatcher
+                teamEventDispatcher: services.teamEventDispatcher,
+                hostPairingCoordinator: services.hostPairingCoordinator,
+                remoteMacsModel: services.remoteMacsModel,
+                makeRemoteMacPairingDriver: services.remoteMacPairingDriverFactory
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -729,6 +965,9 @@ struct GrafttyApp: App {
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
+        Task { @MainActor in
+            await services.remoteMacsModel.loadSavedRemotes()
+        }
 
         // TERM-11.5: pane backends consult the registry to decide whether
         // the IOS-12.1 silent gate applies (remote client attached to the
@@ -1662,11 +1901,24 @@ struct GrafttyApp: App {
                     do {
                         let answer = try await hostAgent.acceptOffer(rtcOffer)
                         return .success(SignalingAnswer(sdp: answer.sdp))
+                    } catch WebRTCHostAgent.HostError.busy {
+                        return .unavailable("host is already handling an offer")
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
                         return Self.signalingOutcome(forAcceptOfferFailure: error)
                     }
                 }
+                do {
+                    try services.startRemoteMacAccessServices(hostAgent: hostAgent)
+                } catch {
+                    NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
+                }
+            }
+        } else {
+            do {
+                try services.startRemoteMacAccessServices(hostAgent: nil)
+            } catch {
+                NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
             }
         }
 
@@ -1686,6 +1938,7 @@ struct GrafttyApp: App {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()
                 appServices.statsStore.stop()

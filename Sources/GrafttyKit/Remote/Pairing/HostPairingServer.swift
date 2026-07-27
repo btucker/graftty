@@ -28,7 +28,8 @@ public actor HostPairingServer {
 
     /// Continuations waiting for the next terminal state. A single
     /// confirm/deny/cancel/expiry resumes them all with the same outcome.
-    private var outcomeWaiters: [CheckedContinuation<PairingOutcome, Never>] = []
+    private var outcomeWaiters: [UUID: CheckedContinuation<PairingOutcome, Never>] = [:]
+    private var cancelledOutcomeWaiterIDs: Set<UUID> = []
 
     /// The nonce of the active pairing session, or `nil` when there's no
     /// active session. Used to reject HTTP requests whose nonce doesn't
@@ -64,9 +65,14 @@ public actor HostPairingServer {
     /// User confirmed via the host UI. Wakes any awaiting clients.
     @discardableResult
     public func confirm() throws -> TrustedPeer {
-        let peer = try session.confirm()
-        broadcastIfTerminal()
-        return peer
+        do {
+            let peer = try session.confirm()
+            broadcastIfTerminal()
+            return peer
+        } catch {
+            broadcastIfTerminal()
+            throw error
+        }
     }
 
     /// User denied via the host UI. Wakes any awaiting clients.
@@ -198,8 +204,15 @@ public actor HostPairingServer {
             return .success(PairingOutcomeResponse(outcome: outcome))
         }
 
-        let outcome: PairingOutcome = await withCheckedContinuation { cont in
-            outcomeWaiters.append(cont)
+        let waiterID = UUID()
+        let outcome: PairingOutcome = await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                registerWaiter(id: waiterID, continuation: cont)
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(id: waiterID)
+            }
         }
         return .success(PairingOutcomeResponse(outcome: outcome))
     }
@@ -216,9 +229,28 @@ public actor HostPairingServer {
     private func resumeWaiters(with outcome: PairingOutcome) {
         guard !outcomeWaiters.isEmpty else { return }
         let waiters = outcomeWaiters
-        outcomeWaiters.removeAll()
-        for cont in waiters {
+        outcomeWaiters.removeAll(keepingCapacity: true)
+        for cont in waiters.values {
             cont.resume(returning: outcome)
+        }
+    }
+
+    private func registerWaiter(
+        id: UUID,
+        continuation: CheckedContinuation<PairingOutcome, Never>
+    ) {
+        if cancelledOutcomeWaiterIDs.remove(id) != nil {
+            continuation.resume(returning: .cancelled)
+        } else {
+            outcomeWaiters[id] = continuation
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        if let continuation = outcomeWaiters.removeValue(forKey: id) {
+            continuation.resume(returning: .cancelled)
+        } else {
+            cancelledOutcomeWaiterIDs.insert(id)
         }
     }
 
