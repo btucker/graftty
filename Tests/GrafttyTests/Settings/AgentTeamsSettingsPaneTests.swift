@@ -104,7 +104,10 @@ struct AgentTeamsSettingsPaneTests {
         #expect(defaults.string(forKey: "teamPrompt") == "event")
     }
 
-    @Test func restoreButtonsRemoveOverridesAndRevealRegisteredDefaults() {
+    @Test("""
+    @spec TEAM-1.13: When the user activates "Restore Graftty Default" for either Agent Teams prompt editor, the application shall remove the corresponding persistent `UserDefaults` key so the registered default becomes visible and later built-in updates continue to apply.
+    """)
+    func restoreButtonsRemoveOverridesAndRevealRegisteredDefaults() {
         let suite = "AgentTeamsPaneTests-Restore-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }

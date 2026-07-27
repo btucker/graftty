@@ -62,7 +62,7 @@ struct AgentTeamsSettingsPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Stencil template rendered freshly for each automated event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
                         Text("Clearing the editor disables this prompt. Restore Graftty Default removes your saved override so future built-in updates apply.")
-                        Text("Changes apply when each agent session next starts. Live in-session refresh has been removed.")
+                        Text("Changes apply to automated events written after the change. Already-written inbox events keep their existing rendered prompt.")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
