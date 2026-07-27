@@ -15,22 +15,46 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
 
     private let server: HostPairingServer
     private let beginCoordinator: PairingBeginCoordinator
+    private let admission: HostPairingAdmission
     private let tickInterval: Duration
     private var tickTask: Task<Void, Never>?
+    private var admissionLease: HostPairingAdmission.Lease?
+
+    convenience init(
+        server: HostPairingServer,
+        tickInterval: Duration = .seconds(1)
+    ) {
+        self.init(
+            server: server,
+            tickInterval: tickInterval,
+            admission: HostPairingAdmission()
+        )
+    }
 
     init(
         server: HostPairingServer,
-        tickInterval: Duration = .seconds(1)
+        tickInterval: Duration = .seconds(1),
+        admission: HostPairingAdmission
     ) {
         self.server = server
         self.beginCoordinator = PairingBeginCoordinator(server: server)
         self.tickInterval = tickInterval
+        self.admission = admission
     }
 
     func beginPairing(
         validFor: TimeInterval,
         lanBaseURL: URL
     ) async -> Result<PairingPayload, PairingErrorResponse> {
+        await server.tick()
+        await refreshPendingRequest()
+        guard admissionLease == nil, let lease = admission.acquire() else {
+            return .failure(PairingErrorResponse(
+                code: .pairingBusy,
+                error: "pairing session already active"
+            ))
+        }
+        admissionLease = lease
         let result = await beginCoordinator.startIfIdle(
             validFor: validFor,
             lanBaseURL: lanBaseURL
@@ -38,6 +62,8 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
         await refreshPendingRequest()
         if case .success = result {
             startTicking()
+        } else {
+            releaseAdmission(lease)
         }
         return result
     }
@@ -53,7 +79,9 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
     func handleAwaitOutcome(
         _ request: PairingAwaitOutcomeRequest
     ) async -> Result<PairingOutcomeResponse, PairingErrorResponse> {
-        await server.handleAwaitOutcome(request)
+        let result = await server.handleAwaitOutcome(request)
+        await refreshPendingRequest()
+        return result
     }
 
     func confirm() async -> Result<TrustedPeer, PairingErrorResponse> {
@@ -75,11 +103,19 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
         await refreshPendingRequest()
     }
 
+    func cancel() async {
+        await server.cancel()
+        await refreshPendingRequest()
+    }
+
     private func refreshPendingRequest() async {
         let state = await server.currentState()
         if state.isTerminal {
             tickTask?.cancel()
             tickTask = nil
+            if let lease = admissionLease {
+                releaseAdmission(lease)
+            }
         }
         guard case .pendingConfirmation(
             _,
@@ -119,5 +155,12 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
                 }
             }
         }
+    }
+
+    private func releaseAdmission(_ lease: HostPairingAdmission.Lease) {
+        if admissionLease == lease {
+            admissionLease = nil
+        }
+        admission.release(lease)
     }
 }

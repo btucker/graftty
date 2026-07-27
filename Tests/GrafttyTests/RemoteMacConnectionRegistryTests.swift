@@ -23,7 +23,11 @@ struct RemoteMacConnectionRegistryTests {
         #expect(registry.activeConnectionCount == 0)
     }
 
-    @Test("successful connect posts offer to last known base URL and applies answer")
+    @Test("""
+    @spec REMOTE-12.5: When the user connects to a saved Remote Mac, the \
+    application shall exchange a WebRTC offer at its last known LAN base URL, \
+    apply the answer, and open the remote pane-state/control environment.
+    """)
     func successfulConnectPostsOfferAndAppliesAnswer() async throws {
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         let captured = CapturedSignalingRequest()
@@ -52,7 +56,11 @@ struct RemoteMacConnectionRegistryTests {
         #expect(entry.paneEnvironment.paneControlClient != nil)
     }
 
-    @Test("connect reuses in-flight and active connection for one remote identity")
+    @Test("""
+    @spec REMOTE-12.6: While connection setup or a live connection already \
+    exists for a Remote Mac identity, repeated connect requests shall reuse \
+    that one connection rather than dial another transport.
+    """)
     func connectReusesInflightAndActiveConnection() async throws {
         let gate = OfferGate()
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n", offerGate: gate)
@@ -195,6 +203,71 @@ struct RemoteMacConnectionRegistryTests {
         }
     }
 
+    @Test("""
+    @spec REMOTE-12.12: If a cached Remote Mac connection is already in a \
+    terminal state when connect is requested, the registry shall evict and \
+    close it before dialing a fresh transport.
+    """)
+    func cachedTerminalConnectionIsRedialed() async throws {
+        let first = FakeRemoteMacHostConnection(offerSDP: "v=0\nfirst\n")
+        let second = FakeRemoteMacHostConnection(offerSDP: "v=0\nsecond\n")
+        let sequence = RemoteMacConnectionSequence([first, second])
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in sequence.next() }
+        )
+        let remote = try makeRemoteMac()
+
+        let firstEntry = try await registry.connect(to: remote)
+        await first.setStateWithoutNotification(.closed)
+        let secondEntry = try await registry.connect(to: remote)
+
+        #expect(secondEntry.id != firstEntry.id)
+        #expect(await first.closeCount == 1)
+        #expect(await second.createOfferCallCount == 1)
+    }
+
+    @Test("""
+    @spec REMOTE-12.13: When an obsolete Remote Mac pane subscription emits \
+    after disconnect or replacement, the registry shall discard that snapshot \
+    instead of overwriting the current sidebar projection.
+    """)
+    func stalePaneSnapshotAfterDisconnectIsDiscarded() async throws {
+        let emitter = RemoteMacSnapshotEmitter()
+        let recorder = RemoteMacSnapshotRecorder()
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noffer\n",
+            snapshotEmitter: emitter
+        )
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connection },
+            onPaneSnapshot: { identity, snapshot in
+                recorder.record(identity: identity, snapshot: snapshot)
+            }
+        )
+        let remote = try makeRemoteMac()
+        let identity = RemoteMacIdentity(remote)
+        _ = try await registry.connect(to: remote)
+        let liveSnapshot = [makeWorktreeSnapshot(path: "/live")]
+        await emitter.emit(liveSnapshot)
+
+        registry.disconnect(identity: identity)
+        await emitter.emit([makeWorktreeSnapshot(path: "/stale")])
+
+        #expect(recorder.snapshots == [liveSnapshot])
+    }
+
     private func makeRegistry(
         signalingTransport: @escaping SignalingClient.Transport,
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
@@ -205,7 +278,8 @@ struct RemoteMacConnectionRegistryTests {
                 remoteHost: remoteHost,
                 onSnapshot: onSnapshot
             )
-        }
+        },
+        onPaneSnapshot: @escaping RemoteMacConnectionRegistry.PaneSnapshotHandler = { _, _ in }
     ) -> RemoteMacConnectionRegistry {
         RemoteMacConnectionRegistry(
             identityProvider: {
@@ -214,9 +288,25 @@ struct RemoteMacConnectionRegistryTests {
             clientDeviceID: RemoteDeviceID(value: "client-mac"),
             signalingClient: SignalingClient(transport: signalingTransport),
             connectionFactory: connectionFactory,
-            paneEnvironmentBuilder: paneEnvironmentBuilder
+            paneEnvironmentBuilder: paneEnvironmentBuilder,
+            onPaneSnapshot: onPaneSnapshot
         )
     }
+}
+
+private func makeWorktreeSnapshot(path: String) -> WorktreePanes {
+    WorktreePanes(
+        path: path,
+        displayName: URL(fileURLWithPath: path).lastPathComponent,
+        repoDisplayName: "repo",
+        displayBranch: "main",
+        state: .running,
+        isMainCheckout: true,
+        prBadge: nil,
+        stats: nil,
+        attentionText: nil,
+        layout: nil
+    )
 }
 
 private func signalingResponse(url: URL, answer: SignalingAnswer) throws -> (Data, HTTPURLResponse) {
@@ -291,9 +381,48 @@ private actor OfferGate {
     }
 }
 
+private final class RemoteMacConnectionSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connections: [any RemoteMacHostConnection]
+
+    init(_ connections: [any RemoteMacHostConnection]) {
+        self.connections = connections
+    }
+
+    func next() -> any RemoteMacHostConnection {
+        lock.withLock { connections.removeFirst() }
+    }
+}
+
+private actor RemoteMacSnapshotEmitter {
+    private var onSnapshot: (@Sendable ([WorktreePanes]) async -> Void)?
+
+    func install(_ onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void) {
+        self.onSnapshot = onSnapshot
+    }
+
+    func emit(_ snapshot: [WorktreePanes]) async {
+        await onSnapshot?(snapshot)
+    }
+}
+
+private final class RemoteMacSnapshotRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [[WorktreePanes]] = []
+
+    var snapshots: [[WorktreePanes]] {
+        lock.withLock { storage }
+    }
+
+    func record(identity _: RemoteMacIdentity, snapshot: [WorktreePanes]) {
+        lock.withLock { storage.append(snapshot) }
+    }
+}
+
 private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private let offerSDP: String
     private let offerGate: OfferGate?
+    private let snapshotEmitter: RemoteMacSnapshotEmitter?
     private var createOfferCalls = 0
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
@@ -301,9 +430,14 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private var state: RemoteHostConnection.State = .connected
     private var stateHandler: (@Sendable (RemoteHostConnection.State) -> Void)?
 
-    init(offerSDP: String, offerGate: OfferGate? = nil) {
+    init(
+        offerSDP: String,
+        offerGate: OfferGate? = nil,
+        snapshotEmitter: RemoteMacSnapshotEmitter? = nil
+    ) {
         self.offerSDP = offerSDP
         self.offerGate = offerGate
+        self.snapshotEmitter = snapshotEmitter
     }
 
     var createOfferCallCount: Int { createOfferCalls }
@@ -326,6 +460,10 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         stateHandler?(newState)
     }
 
+    func setStateWithoutNotification(_ newState: RemoteHostConnection.State) {
+        state = newState
+    }
+
     func createOfferSDP() async throws -> String {
         createOfferCalls += 1
         await offerGate?.markStartedAndWaitForRelease()
@@ -340,7 +478,8 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
         onClosed: @escaping @Sendable (String) async -> Void
     ) async throws -> any PanesStateChannelDriver {
-        FakePanesStateDriver()
+        await snapshotEmitter?.install(onSnapshot)
+        return FakePanesStateDriver()
     }
 
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {

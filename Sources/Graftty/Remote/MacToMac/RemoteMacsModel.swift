@@ -19,8 +19,10 @@ final class RemoteMacsModel: ObservableObject {
     private let store: RemoteMacStore
     private let connectionRegistry: RemoteMacConnectionRegistry
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
+    private var connectAttemptIDs: [RemoteMacIdentity: UUID] = [:]
     private var candidatesByIdentity: [RemoteMacIdentity: GrafttyBonjourCandidate] = [:]
     private var discoveryBrowser: RemoteMacDiscoveryBrowsing?
+    private var discoveryLeaseCount = 0
 
     init(
         store: RemoteMacStore? = nil,
@@ -34,6 +36,7 @@ final class RemoteMacsModel: ObservableObject {
         }
         registry.onConnectionStateChange = { [weak self] identity, state in
             guard let self else { return }
+            self.connectAttemptIDs[identity] = nil
             switch state {
             case .failed:
                 self.connectionStates[identity] = .failed
@@ -51,8 +54,25 @@ final class RemoteMacsModel: ObservableObject {
         savedRemoteMacs = store.remoteMacs
         for remoteMac in savedRemoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
-            connectionStates[identity] = connectionStates[identity] ?? .offline
+            if let candidate = candidatesByIdentity[identity] {
+                let refreshed = GrafttyBonjourBrowser.remoteMac(
+                    from: candidate,
+                    existing: remoteMac
+                )
+                do {
+                    try store.add(refreshed)
+                } catch {
+                    NSLog(
+                        "[Graftty] failed to reconcile discovered remote Mac after load: %@",
+                        String(describing: error)
+                    )
+                }
+                connectionStates[identity] = .discovered
+            } else {
+                connectionStates[identity] = connectionStates[identity] ?? .offline
+            }
         }
+        savedRemoteMacs = store.remoteMacs
     }
 
     func connectionState(for identity: RemoteMacIdentity) -> RemoteMacConnectionState {
@@ -62,21 +82,37 @@ final class RemoteMacsModel: ObservableObject {
     @discardableResult
     func connect(to remoteMac: RemoteMac) async throws -> RemoteMacConnectionRegistry.Entry {
         let identity = RemoteMacIdentity(remoteMac)
+        let attemptID = UUID()
+        connectAttemptIDs[identity] = attemptID
         connectionStates[identity] = .connecting
         do {
             let entry = try await connectionRegistry.connect(to: remoteMac)
-            connectionStates[identity] = .connected
+            let paneSnapshot: [WorktreePanes]?
             if let store = entry.paneEnvironment.worktreePanesStore {
-                worktreePanesByRemote[identity] = await store.current
+                paneSnapshot = await store.current
+            } else {
+                paneSnapshot = nil
+            }
+            guard connectAttemptIDs[identity] == attemptID else {
+                throw CancellationError()
+            }
+            connectAttemptIDs[identity] = nil
+            connectionStates[identity] = .connected
+            if let paneSnapshot {
+                worktreePanesByRemote[identity] = paneSnapshot
             }
             return entry
         } catch {
-            connectionStates[identity] = .failed
+            if connectAttemptIDs[identity] == attemptID {
+                connectAttemptIDs[identity] = nil
+                connectionStates[identity] = .failed
+            }
             throw error
         }
     }
 
     func disconnect(identity: RemoteMacIdentity) {
+        connectAttemptIDs[identity] = nil
         connectionRegistry.disconnect(identity: identity)
         connectionStates[identity] = .offline
         worktreePanesByRemote[identity] = nil
@@ -97,11 +133,18 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     func startDiscovery() {
-        discoveryBrowser?.start()
+        discoveryLeaseCount += 1
+        if discoveryLeaseCount == 1 {
+            discoveryBrowser?.start()
+        }
     }
 
     func stopDiscovery() {
+        guard discoveryLeaseCount > 0 else { return }
+        discoveryLeaseCount -= 1
+        guard discoveryLeaseCount == 0 else { return }
         discoveryBrowser?.stop()
+        clearDiscoveryCandidates()
     }
 
     func publishDiscoveryCandidate(_ candidate: GrafttyBonjourCandidate) throws {
@@ -132,6 +175,21 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
+    func removeDiscoveryCandidate(identity: RemoteMacIdentity) {
+        guard candidatesByIdentity.removeValue(forKey: identity) != nil else {
+            return
+        }
+        discoveryCandidates = candidatesByIdentity.values.sorted {
+            if $0.discoveredAt == $1.discoveredAt {
+                return $0.label < $1.label
+            }
+            return $0.discoveredAt > $1.discoveredAt
+        }
+        if connectionState(for: identity) == .discovered {
+            connectionStates[identity] = .offline
+        }
+    }
+
     func recordPairingResult(_ result: RemoteMacPairingSaveResult) throws {
         guard case .paired(let pinnedHost) = result else { return }
 
@@ -157,6 +215,15 @@ final class RemoteMacsModel: ObservableObject {
         components.query = nil
         components.fragment = nil
         return components.url
+    }
+
+    private func clearDiscoveryCandidates() {
+        let removedIdentities = Array(candidatesByIdentity.keys)
+        candidatesByIdentity.removeAll()
+        discoveryCandidates.removeAll()
+        for identity in removedIdentities where connectionState(for: identity) == .discovered {
+            connectionStates[identity] = .offline
+        }
     }
 }
 

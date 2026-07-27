@@ -26,6 +26,7 @@ public enum SSHServerSetup {
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
         allocator: ByteBufferAllocator,
         onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
+        onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
         let config = SSHServerConfiguration(
@@ -35,7 +36,8 @@ public enum SSHServerSetup {
                 activePeerRegistry: activePeerRegistry,
                 closeActiveTransport: closeActiveTransport,
                 onActivePeerRegistered: onActivePeerRegistered,
-                onAuthenticated: onAuthenticated
+                onAuthenticated: onAuthenticated,
+                onAuthenticatedPeer: onAuthenticatedPeer
             )
         )
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at

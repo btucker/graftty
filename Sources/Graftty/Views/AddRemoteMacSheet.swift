@@ -369,6 +369,13 @@ struct AddRemoteMacSheet: View {
                 pairingDriver = nil
             }
         } catch {
+            guard pairingDriver === driver else { return }
+            if Task.isCancelled
+                || (error as? LocalPairingClient.Error) == .cancelled {
+                driver.cancelPairing()
+                pairingDriver = nil
+                return
+            }
             pairingDriver = nil
             controller.phase = .failed(pairingErrorMessage(error))
             errorMessage = pairingErrorMessage(error)
@@ -387,13 +394,20 @@ struct AddRemoteMacSheet: View {
 
         do {
             let pinnedHost = try await driver.confirmPairing()
-            try Task.checkCancellation()
             try model.recordPairingResult(.paired(pinnedHost))
             pairingDriver = nil
+            try Task.checkCancellation()
             onPaired()
         } catch is CancellationError {
             driver.cancelPairing()
         } catch {
+            guard pairingDriver === driver else { return }
+            if Task.isCancelled
+                || (error as? LocalPairingClient.Error) == .cancelled {
+                driver.cancelPairing()
+                pairingDriver = nil
+                return
+            }
             // `awaitOutcomeAndConfirm` has driven the session to a terminal
             // state (denied / expired / cancelled, or confirmed-but-save-
             // failed), so the driver is spent — re-tapping Confirm would

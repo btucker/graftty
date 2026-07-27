@@ -136,9 +136,18 @@ final class RemoteMacConnectionRegistry {
     func connect(to remoteMac: RemoteMac) async throws -> Entry {
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
-            existing.remoteMac = remoteMac
-            entries[identity] = existing
-            return existing
+            let state = await existing.connection.currentState()
+            guard entries[identity]?.id == existing.id else {
+                return try await connect(to: remoteMac)
+            }
+            if state.isTerminal {
+                entries[identity] = nil
+                await close(existing)
+            } else {
+                existing.remoteMac = remoteMac
+                entries[identity] = existing
+                return existing
+            }
         }
 
         if let pending = inFlight[identity] {
@@ -249,8 +258,12 @@ final class RemoteMacConnectionRegistry {
             try ensureCurrentAttempt(attemptID, identity: identity)
             try await connection.applyAnswerSDP(answer.sdp)
             try ensureCurrentAttempt(attemptID, identity: identity)
-            let environment = await paneEnvironmentBuilder(connection) { [onPaneSnapshot] snapshot in
-                await onPaneSnapshot(identity, snapshot)
+            let environment = await paneEnvironmentBuilder(connection) { [weak self] snapshot in
+                await self?.publishPaneSnapshot(
+                    snapshot,
+                    identity: identity,
+                    entryID: attemptID
+                )
             }
             paneEnvironment = environment
             try ensureCurrentAttempt(attemptID, identity: identity)
@@ -319,6 +332,17 @@ final class RemoteMacConnectionRegistry {
         }
         guard matchedCurrentConnection else { return }
         onConnectionStateChange(identity, state)
+    }
+
+    private func publishPaneSnapshot(
+        _ snapshot: [WorktreePanes],
+        identity: RemoteMacIdentity,
+        entryID: UUID
+    ) {
+        let isCurrentAttempt = inFlight[identity]?.id == entryID
+        let isCurrentEntry = entries[identity]?.id == entryID
+        guard isCurrentAttempt || isCurrentEntry else { return }
+        onPaneSnapshot(identity, snapshot)
     }
 
     private func close(_ entry: Entry) async {

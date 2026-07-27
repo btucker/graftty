@@ -164,6 +164,69 @@ struct RemoteMacBonjourTests {
         #expect(browser.candidates.first?.pairingStatus == .pairedOnly)
     }
 
+    @Test("stopping discovery removes published transient candidates")
+    func stoppingDiscoveryRemovesPublishedCandidates() throws {
+        var removed: [RemoteMacIdentity] = []
+        let browser = try GrafttyBonjourBrowser(
+            localDeviceID: localDeviceID,
+            localFingerprint: fingerprint(0x01),
+            supportedProtocolVersions: ["1"],
+            onCandidate: { _ in },
+            onCandidateRemoved: { removed.append($0) }
+        )
+        let service = try GrafttyBonjourBrowser.ResolvedService(
+            name: "Known",
+            hostName: "known.local.",
+            port: 9443,
+            txtRecordData: txt()
+        )
+
+        browser.publishResolvedService(service)
+        let identity = try #require(browser.candidates.first.map(RemoteMacIdentity.init))
+        browser.stop()
+
+        #expect(browser.candidates.isEmpty)
+        #expect(removed == [identity])
+    }
+
+    @Test("""
+    @spec REMOTE-12.3: When a discovered Remote Mac service disappears, the \
+    application shall remove its transient candidate instead of continuing to \
+    present stale reachability.
+    """)
+    func disappearingServiceRemovesPublishedCandidate() throws {
+        var removed: [RemoteMacIdentity] = []
+        let browser = try GrafttyBonjourBrowser(
+            localDeviceID: localDeviceID,
+            localFingerprint: fingerprint(0x01),
+            supportedProtocolVersions: ["1"],
+            onCandidate: { _ in },
+            onCandidateRemoved: { removed.append($0) }
+        )
+        let origin = NetService(
+            domain: "local.",
+            type: GrafttyBonjourService.serviceType,
+            name: "Known"
+        )
+        let resolved = try GrafttyBonjourBrowser.ResolvedService(
+            name: "Known",
+            hostName: "known.local.",
+            port: 9443,
+            txtRecordData: txt()
+        )
+        browser.publishResolvedService(resolved, originatingService: origin)
+        let identity = try #require(browser.candidates.first.map(RemoteMacIdentity.init))
+
+        browser.netServiceBrowser(
+            NetServiceBrowser(),
+            didRemove: origin,
+            moreComing: false
+        )
+
+        #expect(browser.candidates.isEmpty)
+        #expect(removed == [identity])
+    }
+
     @Test("resolved candidates refresh RemoteMac discovery URL")
     func resolvedCandidatesRefreshRemoteMacDiscoveryURL() throws {
         let discoveredAt = Date(timeIntervalSince1970: 1_720_000_000)

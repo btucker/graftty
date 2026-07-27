@@ -46,6 +46,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// shared box at that point always sees the value userauth set before
     /// NIOSSH allowed any channel to open.
     private let deviceIDProvider: @Sendable () -> RemoteDeviceID?
+    /// Authenticated transport kind. The control envelope's kind remains
+    /// caller-controlled and must not decide ownership eligibility.
+    private let displayKindProvider: @Sendable () -> DisplayClientKind
     private var dispatched = false
 
     public init(
@@ -54,7 +57,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
-        deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?
+        deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
+        displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios }
     ) {
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
@@ -62,6 +66,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         self.ownershipStore = ownershipStore
         self.ownershipBroadcaster = ownershipBroadcaster
         self.deviceIDProvider = deviceIDProvider
+        self.displayKindProvider = displayKindProvider
     }
 
     public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -100,7 +105,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                         streamFactory: streamFactory,
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
-                        deviceID: deviceID
+                        deviceID: deviceID,
+                        defaultKind: displayKindProvider()
                     ),
                     position: .after(self)
                 )

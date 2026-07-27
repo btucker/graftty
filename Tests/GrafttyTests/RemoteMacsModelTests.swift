@@ -127,6 +127,60 @@ struct RemoteMacsModelTests {
         #expect(browser.stopCount == 1)
     }
 
+    @Test("""
+    @spec REMOTE-12.11: While multiple Add Remote Mac sheets use discovery, \
+    the application shall keep the shared browser active until the final \
+    sheet releases its discovery lease.
+    """)
+    func discoveryLeasesAreReferenceCounted() throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let model = makeModel(store: store)
+        let browser = FakeDiscoveryBrowser()
+        model.setDiscoveryBrowser(browser)
+
+        model.startDiscovery()
+        model.startDiscovery()
+        model.stopDiscovery()
+
+        #expect(browser.startCount == 1)
+        #expect(browser.stopCount == 0)
+
+        model.stopDiscovery()
+        #expect(browser.stopCount == 1)
+    }
+
+    @Test("ending discovery clears transient candidates")
+    func endingDiscoveryClearsTransientCandidates() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let model = makeModel(store: store)
+        let browser = FakeDiscoveryBrowser()
+        model.setDiscoveryBrowser(browser)
+        model.startDiscovery()
+        try model.publishDiscoveryCandidate(candidate())
+        #expect(model.discoveryCandidates.count == 1)
+
+        model.stopDiscovery()
+
+        #expect(model.discoveryCandidates.isEmpty)
+    }
+
+    @Test("initial load reconciles a candidate that arrived while disk loading was suspended")
+    func initialLoadReconcilesAlreadyDiscoveredCandidate() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let existing = try remoteMac(label: "Old Name")
+        try store.add(existing)
+        let model = makeModel(store: store)
+        let discovered = try candidate()
+
+        try model.publishDiscoveryCandidate(discovered)
+        await model.loadSavedRemotes()
+
+        let identity = RemoteMacIdentity(discovered)
+        #expect(model.connectionState(for: identity) == .discovered)
+        #expect(model.savedRemoteMacs.first?.label == discovered.label)
+        #expect(model.savedRemoteMacs.first?.lastKnownBaseURL == discovered.baseURL)
+    }
+
     @Test("connection registry reuses one entry per remote identity")
     func registryReusesEntryPerIdentity() async throws {
         let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
@@ -164,6 +218,38 @@ struct RemoteMacsModelTests {
         #expect(registry.activeConnectionCount == 2)
     }
 
+    @Test("""
+    @spec REMOTE-12.8: If the user disconnects a Remote Mac while connection \
+    setup is suspended, the late setup result shall not overwrite the explicit \
+    offline state.
+    """)
+    func disconnectWinsOverSuspendedConnectResult() async throws {
+        let gate = RemoteMacsModelConnectGate()
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            await gate.wait()
+            return RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+
+        let connect = Task { try await model.connect(to: remote) }
+        await gate.waitUntilStarted()
+        model.disconnect(identity: identity)
+        await gate.release()
+        _ = try? await connect.value
+
+        #expect(model.connectionState(for: identity) == .offline)
+    }
+
     @Test("live panes snapshots from registry update sidebar projection")
     func livePaneSnapshotsUpdateSidebarProjection() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -199,7 +285,11 @@ struct RemoteMacsModelTests {
         #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == snapshot)
     }
 
-    @Test("pairing success inserts a saved RemoteMac from pinned host")
+    @Test("""
+    @spec REMOTE-12.4: When Mac-to-Mac pairing succeeds, the application \
+    shall persist a saved Remote Mac using the pinned host identity, \
+    fingerprint, display name, and signaling base URL.
+    """)
     func pairingSuccessSavesPinnedHost() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
         let model = makeModel(store: store)
@@ -292,6 +382,32 @@ private final class FakeDiscoveryBrowser: RemoteMacDiscoveryBrowsing {
 
     func stop() {
         stopCount += 1
+    }
+}
+
+private actor RemoteMacsModelConnectGate {
+    private var started = false
+    private var released = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        started = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
     }
 }
 

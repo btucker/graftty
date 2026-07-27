@@ -423,7 +423,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         ownershipSnapshot = snapshot
         if isOwnerLocked {
             let grid = currentGridLocked()
-            ownerResize = (snapshot.epoch, grid.cols, grid.rows)
+            if snapshot.grid.cols != grid.cols || snapshot.grid.rows != grid.rows {
+                ownerResize = (snapshot.epoch, grid.cols, grid.rows)
+            }
             pending = pendingInput
             clearPendingInputLocked()
         } else if let baseEpoch = takeoverBaseEpoch, snapshot.epoch > baseEpoch {
@@ -432,15 +434,18 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         refresh = requestRefresh
         lock.unlock()
 
-        if let ownerResize {
+        if ownerResize != nil || !pending.isEmpty {
             let pendingFrames = pending
+            let resizeRequest = ownerResize
             enqueueOutbound { [displayClientID] client in
-                await client.ownerResize(
-                    clientID: displayClientID,
-                    epoch: ownerResize.epoch,
-                    cols: Int(ownerResize.cols),
-                    rows: Int(ownerResize.rows)
-                )
+                if let resizeRequest {
+                    await client.ownerResize(
+                        clientID: displayClientID,
+                        epoch: resizeRequest.epoch,
+                        cols: Int(resizeRequest.cols),
+                        rows: Int(resizeRequest.rows)
+                    )
+                }
                 for data in pendingFrames {
                     try? await client.send(.binary(data))
                 }

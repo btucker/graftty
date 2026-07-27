@@ -110,7 +110,19 @@ public final class RemoteMacStore {
         guard let data = try? Data(contentsOf: url) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([RemoteMac].self, from: data)) ?? []
+        do {
+            return try decoder.decode([RemoteMac].self, from: data)
+        } catch {
+            // Preserve the unreadable source before returning a recoverable
+            // empty model. A later pairing/save can now create a fresh file
+            // without destroying the only copy of the user's prior entries.
+            let milliseconds = Int(Date().timeIntervalSince1970 * 1_000)
+            let backupURL = url.deletingLastPathComponent().appendingPathComponent(
+                "\(url.lastPathComponent).corrupt.\(milliseconds)"
+            )
+            try? FileManager.default.moveItem(at: url, to: backupURL)
+            return []
+        }
     }
 
     private static func sameIdentity(_ lhs: RemoteMac, _ rhs: RemoteMac) -> Bool {

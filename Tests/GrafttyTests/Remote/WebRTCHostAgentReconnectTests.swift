@@ -5,6 +5,38 @@ import Testing
 import GrafttyKit
 import GrafttyProtocol
 
+private actor ReconnectRegistrationGate {
+    private var isOpen = false
+    private var hasArrived = false
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        hasArrived = true
+        let arrivals = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in arrivals {
+            waiter.resume()
+        }
+        guard !isOpen else { return }
+        await withCheckedContinuation { openWaiters.append($0) }
+    }
+
+    func waitUntilArrived() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let waiters = openWaiters
+        openWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
 /// W4 follow-up bug: `installSSHHandler`'s `sshInstallStarted` guard is a
 /// per-connection one-shot latch — it must flip back to `false` when a
 /// connection tears down, so a RECONNECT's fresh data channel can install
@@ -52,25 +84,17 @@ struct WebRTCHostAgentReconnectTests {
         #expect(await agent.sshInstallStartedForTesting == false)
     }
 
-    /// Regression guard for the adopt-after-close interleaving — not a new
-    /// spec ID. `peerConnection(_:didOpen:)` queues `adoptDataChannel` (and
-    /// its `installSSHHandler`) as Tasks, so `close()` can run between the
-    /// channel announcement and the install: the stale install then latches
-    /// `sshInstallStarted = true` on the already-closed agent (its
-    /// `dataChannel` is nil, so it latches and bails). The close-side reset
-    /// has already run at that point, so only `acceptOffer`'s fresh-lifecycle
-    /// re-arm (`beginConnectionLifecycle`) keeps the NEXT connection's
-    /// install from hitting the stale latch and never attaching SSH.
+    /// Regression guard for the adopt-after-close interleaving. A queued
+    /// install from the closed connection must be rejected at entry rather
+    /// than latching shared state that the next connection inherits.
     @Test
-    func aFreshOfferReArmsTheInstallLatchAfterAStaleInstallLatchedPostClose() async throws {
+    func staleInstallAfterCloseDoesNotLatchSharedState() async throws {
         let agent = Self.makeHostAgent()
 
         await agent.close()
-        // The stale install Task resumes on the closed agent and latches.
         await agent.installSSHHandler()
-        #expect(await agent.sshInstallStartedForTesting == true)
+        #expect(await agent.sshInstallStartedForTesting == false)
 
-        // Mirrors what every accepted offer does first (see `acceptOffer`).
         await agent.beginConnectionLifecycle()
         #expect(await agent.sshInstallStartedForTesting == false)
     }
@@ -130,6 +154,36 @@ struct WebRTCHostAgentReconnectTests {
         // is the current, live connection and was never actually closed.
         #expect(await agent.state == .connected)
         #expect(await agent.sshInstallStartedForTesting == true)
+    }
+
+    @Test
+    func closeDuringRegistrationDoesNotLeaveAPhantomRegistryEntry() async throws {
+        let registry = SSHConnectionRegistry()
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        let deviceID = RemoteDeviceID.generate()
+        try store.add(Self.makePeer(id: deviceID))
+        let agent = Self.makeHostAgent(trustedPeerStore: store, registry: registry)
+        let gate = ReconnectRegistrationGate()
+
+        _ = await registry.register(deviceID: deviceID) {
+            await gate.wait()
+        }
+        await agent.bumpConnectionGenerationForTesting()
+        await agent.setStateForTesting(.connected)
+
+        let registration = Task {
+            await agent.registerAuthenticatedConnection(deviceID: deviceID)
+        }
+        await gate.waitUntilArrived()
+
+        await agent.close()
+        await gate.open()
+        await registration.value
+
+        #expect(
+            await registry.count == 0,
+            "a registration that resumes after its agent closed must remove its own token"
+        )
     }
 
     /// Isolated unit-level companion to the interaction test above: proves

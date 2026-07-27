@@ -231,9 +231,9 @@ final class AppServices {
     /// worktree operations created during this app process.
     private var agentPromptRecoveryTask: Task<Void, Never>?
 
-    /// Host-side LAN pairing consent coordinator. Later remote-Mac startup
-    /// wiring can route `/v1/pairing/*` through this same instance so the
-    /// presented sheet and HTTP long-poll state share one session.
+    /// Host-side LAN pairing consent coordinator. `/v1/pairing/*` and the
+    /// presented sheet share this instance; its process-wide admission is
+    /// also shared with the Settings pairing listener.
     let hostPairingCoordinator: RemoteMacHostPairingCoordinator
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
@@ -241,7 +241,10 @@ final class AppServices {
     private var lanRemoteAccessServer: LANRemoteAccessServer?
     private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
 
-    init(socketPath: String) {
+    init(
+        socketPath: String,
+        pairingAdmission: HostPairingAdmission
+    ) {
         let recoveryPromptFiles = WorktreeAgentLaunchCommand.recoveryPromptFiles()
         // No worktree-creation operations exist yet, so files older than the
         // recovery window can only be leftovers from a prior app crash.
@@ -276,7 +279,9 @@ final class AppServices {
                 UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
             }
         )
-        self.hostPairingCoordinator = Self.makeHostPairingCoordinator()
+        self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
+            admission: pairingAdmission
+        )
         let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
         self.remoteMacsModel = remoteMacsModel
         self.remoteMacPairingDriverFactory = {
@@ -294,16 +299,22 @@ final class AppServices {
             let browser = GrafttyBonjourBrowser(
                 localDeviceID: Self.localRemoteDeviceID(),
                 localFingerprint: localFingerprint,
-                supportedProtocolVersions: [GrafttyBonjourService.discoveryVersion]
-            ) { [weak remoteMacsModel] candidate in
-                Task { @MainActor in
-                    do {
-                        try remoteMacsModel?.publishDiscoveryCandidate(candidate)
-                    } catch {
-                        NSLog("[Graftty] failed to record Bonjour remote Mac candidate: %@", String(describing: error))
+                supportedProtocolVersions: [GrafttyBonjourService.discoveryVersion],
+                onCandidate: { [weak remoteMacsModel] candidate in
+                    Task { @MainActor in
+                        do {
+                            try remoteMacsModel?.publishDiscoveryCandidate(candidate)
+                        } catch {
+                            NSLog("[Graftty] failed to record Bonjour remote Mac candidate: %@", String(describing: error))
+                        }
+                    }
+                },
+                onCandidateRemoved: { [weak remoteMacsModel] identity in
+                    Task { @MainActor in
+                        remoteMacsModel?.removeDiscoveryCandidate(identity: identity)
                     }
                 }
-            }
+            )
             remoteMacsModel.setDiscoveryBrowser(browser)
         } catch {
             NSLog("[Graftty] failed to prepare remote Mac discovery identity: %@", String(describing: error))
@@ -343,7 +354,9 @@ final class AppServices {
         }
     }
 
-    private static func makeHostPairingCoordinator() -> RemoteMacHostPairingCoordinator {
+    private static func makeHostPairingCoordinator(
+        admission: HostPairingAdmission
+    ) -> RemoteMacHostPairingCoordinator {
         let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         do {
@@ -359,7 +372,10 @@ final class AppServices {
             hostDisplayName: localHostDisplayName(),
             pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
         )
-        return RemoteMacHostPairingCoordinator(server: HostPairingServer(session: session))
+        return RemoteMacHostPairingCoordinator(
+            server: HostPairingServer(session: session),
+            admission: admission
+        )
     }
 
     func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) throws {
@@ -600,7 +616,11 @@ struct GrafttyApp: App {
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
         _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
-        let appServices = AppServices(socketPath: socketPath)
+        let pairingAdmission = HostPairingAdmission()
+        let appServices = AppServices(
+            socketPath: socketPath,
+            pairingAdmission: pairingAdmission
+        )
         services = appServices
 
         // Web access server — reconstruct the same zmx paths that `startup()`
@@ -654,7 +674,8 @@ struct GrafttyApp: App {
                       case let .listening(_, port) = webController.status,
                       let host = webController.serverHostname else { return nil }
                 return URL(string: WebURLComposer.baseURL(host: host, port: port))
-            }
+            },
+            admission: pairingAdmission
         ))
 
         do {

@@ -17,6 +17,18 @@ struct GrafttyBonjourCandidate: Equatable, Identifiable {
 }
 
 final class GrafttyBonjourBrowser: NSObject {
+    private struct ServiceKey: Hashable {
+        var name: String
+        var type: String
+        var domain: String
+
+        init(_ service: NetService) {
+            self.name = service.name
+            self.type = service.type
+            self.domain = service.domain
+        }
+    }
+
     struct ResolvedService {
         var name: String
         var hostName: String?
@@ -57,7 +69,10 @@ final class GrafttyBonjourBrowser: NSObject {
     private let localFingerprint: RemoteIdentityFingerprint
     private let supportedProtocolVersions: Set<String>
     private let onCandidate: (GrafttyBonjourCandidate) -> Void
+    private let onCandidateRemoved: (RemoteMacIdentity) -> Void
     private var pendingServices: [ObjectIdentifier: NetService] = [:]
+    private var identityByServiceKey: [ServiceKey: RemoteMacIdentity] = [:]
+    private var serviceKeysByIdentity: [RemoteMacIdentity: Set<ServiceKey>] = [:]
     private(set) var candidates: [GrafttyBonjourCandidate] = []
     private var isBrowsing = false
 
@@ -66,13 +81,15 @@ final class GrafttyBonjourBrowser: NSObject {
         localFingerprint: RemoteIdentityFingerprint,
         supportedProtocolVersions: Set<String>,
         browser: NetServiceBrowser = NetServiceBrowser(),
-        onCandidate: @escaping (GrafttyBonjourCandidate) -> Void
+        onCandidate: @escaping (GrafttyBonjourCandidate) -> Void,
+        onCandidateRemoved: @escaping (RemoteMacIdentity) -> Void = { _ in }
     ) {
         self.localDeviceID = localDeviceID
         self.localFingerprint = localFingerprint
         self.supportedProtocolVersions = supportedProtocolVersions
         self.browser = browser
         self.onCandidate = onCandidate
+        self.onCandidateRemoved = onCandidateRemoved
         super.init()
     }
 
@@ -95,11 +112,38 @@ final class GrafttyBonjourBrowser: NSObject {
             service.delegate = nil
         }
         pendingServices.removeAll()
+        let removedIdentities = Set(candidates.map(RemoteMacIdentity.init))
+        candidates.removeAll()
+        identityByServiceKey.removeAll()
+        serviceKeysByIdentity.removeAll()
+        for identity in removedIdentities {
+            onCandidateRemoved(identity)
+        }
     }
 
     func publishResolvedService(
         _ service: ResolvedService,
         discoveredAt: Date = Date()
+    ) {
+        publishResolvedService(service, discoveredAt: discoveredAt, serviceKey: nil)
+    }
+
+    func publishResolvedService(
+        _ service: ResolvedService,
+        discoveredAt: Date = Date(),
+        originatingService: NetService
+    ) {
+        publishResolvedService(
+            service,
+            discoveredAt: discoveredAt,
+            serviceKey: ServiceKey(originatingService)
+        )
+    }
+
+    private func publishResolvedService(
+        _ service: ResolvedService,
+        discoveredAt: Date,
+        serviceKey: ServiceKey?
     ) {
         guard let candidate = Self.candidate(
             from: service,
@@ -111,6 +155,15 @@ final class GrafttyBonjourBrowser: NSObject {
             return
         }
 
+        let identity = RemoteMacIdentity(candidate)
+        if let serviceKey {
+            if let previousIdentity = identityByServiceKey[serviceKey],
+               previousIdentity != identity {
+                removeServiceKey(serviceKey, from: previousIdentity)
+            }
+            identityByServiceKey[serviceKey] = identity
+            serviceKeysByIdentity[identity, default: []].insert(serviceKey)
+        }
         if let index = candidates.firstIndex(where: { $0.id == candidate.id }) {
             candidates[index] = candidate
         } else {
@@ -174,6 +227,29 @@ final class GrafttyBonjourBrowser: NSObject {
         pendingServices.removeValue(forKey: ObjectIdentifier(service))
     }
 
+    private func removeResolvedService(_ service: NetService) {
+        let key = ServiceKey(service)
+        guard let identity = identityByServiceKey.removeValue(forKey: key) else {
+            return
+        }
+        removeServiceKey(key, from: identity)
+    }
+
+    private func removeServiceKey(
+        _ key: ServiceKey,
+        from identity: RemoteMacIdentity
+    ) {
+        var keys = serviceKeysByIdentity[identity] ?? []
+        keys.remove(key)
+        guard keys.isEmpty else {
+            serviceKeysByIdentity[identity] = keys
+            return
+        }
+        serviceKeysByIdentity[identity] = nil
+        candidates.removeAll { RemoteMacIdentity($0) == identity }
+        onCandidateRemoved(identity)
+    }
+
     private static func baseURL(hostName: String?, port: Int) -> URL? {
         guard let hostName else { return nil }
         let trimmedHost = hostName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
@@ -210,6 +286,7 @@ extension GrafttyBonjourBrowser: NetServiceBrowserDelegate {
         didRemove service: NetService,
         moreComing: Bool
     ) {
+        removeResolvedService(service)
         forget(service)
     }
 
@@ -229,7 +306,7 @@ extension GrafttyBonjourBrowser: NetServiceDelegate {
     func netServiceDidResolveAddress(_ sender: NetService) {
         defer { forget(sender) }
         guard let service = try? ResolvedService(netService: sender) else { return }
-        publishResolvedService(service)
+        publishResolvedService(service, originatingService: sender)
     }
 
     func netService(

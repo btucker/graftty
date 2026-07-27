@@ -161,17 +161,78 @@ struct RemoteTerminalSurfaceBackendTests {
             revision: 2
         )
         client.deliver(.text(WebControlEnvelope.ownership(owner).encoded()))
-        try await client.waitForControlCounts(
-            hello: 1,
-            takeControl: 1,
-            ownerResize: 1
-        )
         try await client.waitForSentFrames(count: 1)
 
         #expect(client.sentFrames() == [.binary(Data("queued".utf8))])
-        #expect(client.ownerResizes().first?.epoch == 2)
-        #expect(client.ownerResizes().first?.cols == 120)
-        #expect(client.ownerResizes().first?.rows == 40)
+        #expect(
+            client.ownerResizes().isEmpty,
+            "an ownership snapshot already carrying the live grid must not start a resize/broadcast loop"
+        )
+    }
+
+    @Test("""
+    @spec REMOTE-12.9: When a Remote Mac owns a terminal surface whose live \
+    grid differs from the host snapshot, it shall request one owner resize and \
+    stop requesting once the host snapshot acknowledges that grid.
+    """)
+    func ownerSnapshotResizesOnlyUntilHostAcknowledgesTheLiveGrid() async throws {
+        let client = FakeRemoteTerminalWebSocketClient(
+            supportsWebControlTextFrames: true
+        )
+        let recorder = RemoteSurfaceRecorder()
+        let backend = RemoteTerminalSurfaceBackend(
+            client: client,
+            requestRefresh: recorder.requestRefresh
+        )
+        defer {
+            backend.close()
+            backend.surfaceWasFreed()
+        }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 132, rows: 43) },
+            requestRefresh: recorder.requestRefresh
+        )
+        try backend.start(surface: fakeSurface())
+        try await client.waitForControlCounts(hello: 1)
+        let hello = try #require(client.hellos().first)
+
+        let staleGrid = try DisplayOwnershipSnapshot(
+            sessionName: "main",
+            ownerClientID: hello.clientID,
+            ownerKind: .mac,
+            grid: DisplayGrid(cols: 120, rows: 40),
+            epoch: 2,
+            revision: 2
+        )
+        client.deliver(.text(WebControlEnvelope.ownership(staleGrid).encoded()))
+        try await client.waitForControlCounts(ownerResize: 1)
+        #expect(client.ownerResizes() == [
+            RecordedOwnerResize(
+                clientID: hello.clientID,
+                epoch: 2,
+                cols: 132,
+                rows: 43
+            ),
+        ])
+
+        let acknowledgedGrid = try DisplayOwnershipSnapshot(
+            sessionName: "main",
+            ownerClientID: hello.clientID,
+            ownerKind: .mac,
+            grid: DisplayGrid(cols: 132, rows: 43),
+            epoch: 2,
+            revision: 3
+        )
+        client.deliver(.text(WebControlEnvelope.ownership(acknowledgedGrid).encoded()))
+
+        for _ in 0..<100 where recorder.refreshCount() < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(recorder.refreshCount() >= 2)
+        #expect(
+            client.ownerResizes().count == 1,
+            "the host acknowledgement must terminate the resize/broadcast exchange"
+        )
     }
 }
 

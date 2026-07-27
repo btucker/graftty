@@ -45,6 +45,7 @@ public final class HostPairingCoordinator: ObservableObject {
     private let trustedPeerStore: TrustedPeerStore
     private let deviceIDStore: HostDeviceIDStore
     private let hostDisplayName: String
+    private let admission: HostPairingAdmission
     // `@MainActor`-isolated (not merely `@Sendable`) so the Mac settings UI
     // can capture `WebServerController` — a `@MainActor`-isolated,
     // non-`Sendable` class — directly. `beginPairing()` runs on this same
@@ -57,6 +58,7 @@ public final class HostPairingCoordinator: ObservableObject {
     private var pairingServer: HostPairingServer?
     private var httpServer: PairingHTTPServer?
     private var tickTask: Task<Void, Never>?
+    private var admissionLease: HostPairingAdmission.Lease?
 
     /// Bumped synchronously at the entry of both `beginPairing()` and
     /// `endPairing()`. `beginPairing()` captures its own generation
@@ -86,18 +88,37 @@ public final class HostPairingCoordinator: ObservableObject {
 
     // MARK: Init
 
-    public init(
+    public convenience init(
         identityStore: HostIdentityStore,
         trustedPeerStore: TrustedPeerStore,
         deviceIDStore: HostDeviceIDStore,
         hostDisplayName: String,
         webBaseURLProvider: @escaping @MainActor @Sendable () -> URL?
     ) {
+        self.init(
+            identityStore: identityStore,
+            trustedPeerStore: trustedPeerStore,
+            deviceIDStore: deviceIDStore,
+            hostDisplayName: hostDisplayName,
+            webBaseURLProvider: webBaseURLProvider,
+            admission: HostPairingAdmission()
+        )
+    }
+
+    init(
+        identityStore: HostIdentityStore,
+        trustedPeerStore: TrustedPeerStore,
+        deviceIDStore: HostDeviceIDStore,
+        hostDisplayName: String,
+        webBaseURLProvider: @escaping @MainActor @Sendable () -> URL?,
+        admission: HostPairingAdmission
+    ) {
         self.identityStore = identityStore
         self.trustedPeerStore = trustedPeerStore
         self.deviceIDStore = deviceIDStore
         self.hostDisplayName = hostDisplayName
         self.webBaseURLProvider = webBaseURLProvider
+        self.admission = admission
     }
 
     // MARK: - UI actions
@@ -116,6 +137,11 @@ public final class HostPairingCoordinator: ObservableObject {
         await endPairing()
         let myGeneration = sessionGeneration
         lastError = nil
+        guard let lease = admission.acquire() else {
+            lastError = "Another pairing session is already active."
+            return
+        }
+        admissionLease = lease
         do {
             let hostDeviceID = try deviceIDStore.loadOrGenerateAndPersist()
             // REMOTE-1.1: the identity key must exist before the session
@@ -154,6 +180,7 @@ public final class HostPairingCoordinator: ObservableObject {
             // listener the caller believes was stopped.
             guard sessionGeneration == myGeneration else {
                 await http.stop()
+                releaseAdmission(lease)
                 return
             }
             do {
@@ -174,6 +201,7 @@ public final class HostPairingCoordinator: ObservableObject {
                 _ = try await server.start(validFor: PairingProtocolDefaults.sessionValidity)
                 guard sessionGeneration == myGeneration else {
                     await http.stop()
+                    releaseAdmission(lease)
                     return
                 }
                 self.pairingServer = server
@@ -185,6 +213,7 @@ public final class HostPairingCoordinator: ObservableObject {
                 throw error
             }
         } catch {
+            releaseAdmission(lease)
             lastError = "\(error)"
         }
     }
@@ -217,6 +246,7 @@ public final class HostPairingCoordinator: ObservableObject {
     /// active. Safe to call when nothing is in progress.
     public func endPairing() async {
         sessionGeneration += 1
+        let lease = admissionLease
         tickTask?.cancel()
         tickTask = nil
         if let server = pairingServer {
@@ -230,6 +260,9 @@ public final class HostPairingCoordinator: ObservableObject {
         }
         pairingServer = nil
         httpServer = nil
+        if let lease {
+            releaseAdmission(lease)
+        }
     }
 
     // MARK: - Tick task
@@ -262,6 +295,13 @@ public final class HostPairingCoordinator: ObservableObject {
 
     private func applyState(_ newState: HostPairingSessionState) {
         state = newState
+    }
+
+    private func releaseAdmission(_ lease: HostPairingAdmission.Lease) {
+        if admissionLease == lease {
+            admissionLease = nil
+        }
+        admission.release(lease)
     }
 
 }

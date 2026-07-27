@@ -249,6 +249,38 @@ struct LANRemoteAccessRouteHandlerTests {
         #expect(secondRTCResponse.status == 429)
     }
 
+    @Test("""
+    @spec REMOTE-12.10: While unauthenticated LAN pairing and signaling \
+    routes are rate limited, one source address exhausting its allowance \
+    shall not consume another source address's allowance.
+    """)
+    func rateLimitingIsPerSource() async {
+        let handler = makeHandler(rateLimit: .init(maxRequests: 1, window: 60))
+
+        let firstA = await handler.handle(
+            method: .POST,
+            path: "/v1/pairing/begin",
+            body: Data(),
+            source: "192.168.1.10"
+        )
+        let secondA = await handler.handle(
+            method: .POST,
+            path: "/v1/pairing/begin",
+            body: Data(),
+            source: "192.168.1.10"
+        )
+        let firstB = await handler.handle(
+            method: .POST,
+            path: "/v1/pairing/begin",
+            body: Data(),
+            source: "192.168.1.11"
+        )
+
+        #expect(firstA.status == 200)
+        #expect(secondA.status == 429)
+        #expect(firstB.status == 200)
+    }
+
     @Test("pairing ceremony rate limiting is bucketed by route")
     func pairingCeremonyRateLimitingIsBucketedByRoute() async throws {
         let handler = makeHandler(rateLimit: .init(maxRequests: 1, window: 60))

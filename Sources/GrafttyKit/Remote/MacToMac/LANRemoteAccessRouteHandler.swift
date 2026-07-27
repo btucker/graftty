@@ -51,6 +51,11 @@ public actor LANRemoteAccessRouteHandler {
         case rtcSignaling
     }
 
+    private struct RateLimitKey: Hashable {
+        var bucket: RateLimitBucket
+        var source: String
+    }
+
     private let lanBaseURLProvider: @Sendable () -> URL
     private let validFor: TimeInterval
     private let rateLimit: LANRemoteAccessRateLimit
@@ -60,7 +65,8 @@ public actor LANRemoteAccessRouteHandler {
     private let handleAwaitOutcome: AwaitOutcomeHandler
     private let handleSignalingOffer: SignalingOfferHandler
 
-    private var recentLimitedRequests: [RateLimitBucket: [Date]] = [:]
+    private var recentLimitedRequests: [RateLimitKey: [Date]] = [:]
+    private static let maxTrackedRateLimitKeys = 1_024
 
     public init(
         lanBaseURLProvider: @escaping @Sendable () -> URL,
@@ -86,7 +92,8 @@ public actor LANRemoteAccessRouteHandler {
         method: LANRemoteAccessMethod,
         path: String,
         body: Data,
-        requestBaseURL: URL? = nil
+        requestBaseURL: URL? = nil,
+        source: String = "unknown"
     ) async -> LANRemoteAccessResponse {
         switch path {
         case "/v1/pairing/begin":
@@ -97,7 +104,7 @@ public actor LANRemoteAccessRouteHandler {
                     message: "method not allowed"
                 )
             }
-            guard permitLimitedRequest(in: .pairingBootstrap) else {
+            guard permitLimitedRequest(in: .pairingBootstrap, source: source) else {
                 return Self.rateLimitedResponse()
             }
             let requestPairingRouteBase = requestBaseURL.map { Self.pairingRouteBase(from: $0) }
@@ -125,7 +132,7 @@ public actor LANRemoteAccessRouteHandler {
                     message: "method not allowed"
                 )
             }
-            guard permitLimitedRequest(in: .pairingIntroduce) else {
+            guard permitLimitedRequest(in: .pairingIntroduce, source: source) else {
                 return Self.rateLimitedResponse()
             }
             let request: PairingIntroduceRequest
@@ -149,7 +156,7 @@ public actor LANRemoteAccessRouteHandler {
                     message: "method not allowed"
                 )
             }
-            guard permitLimitedRequest(in: .pairingAwaitOutcome) else {
+            guard permitLimitedRequest(in: .pairingAwaitOutcome, source: source) else {
                 return Self.rateLimitedResponse()
             }
             let request: PairingAwaitOutcomeRequest
@@ -173,7 +180,7 @@ public actor LANRemoteAccessRouteHandler {
                     message: "method not allowed"
                 )
             }
-            guard permitLimitedRequest(in: .rtcSignaling) else {
+            guard permitLimitedRequest(in: .rtcSignaling, source: source) else {
                 return Self.rateLimitedResponse()
             }
             return await handleRTCOffer(body: body)
@@ -213,22 +220,33 @@ public actor LANRemoteAccessRouteHandler {
         }
     }
 
-    private func permitLimitedRequest(in bucket: RateLimitBucket) -> Bool {
+    private func permitLimitedRequest(
+        in bucket: RateLimitBucket,
+        source: String
+    ) -> Bool {
         guard rateLimit.maxRequests != Int.max else {
             return true
         }
 
         let instant = now()
         let earliestAllowed = instant.addingTimeInterval(-rateLimit.window)
-        var bucketRequests = recentLimitedRequests[bucket] ?? []
+        let key = RateLimitKey(bucket: bucket, source: source)
+        if recentLimitedRequests[key] == nil,
+           recentLimitedRequests.count >= Self.maxTrackedRateLimitKeys,
+           let oldestKey = recentLimitedRequests.min(by: {
+               ($0.value.last ?? .distantPast) < ($1.value.last ?? .distantPast)
+           })?.key {
+            recentLimitedRequests[oldestKey] = nil
+        }
+        var bucketRequests = recentLimitedRequests[key] ?? []
         bucketRequests.removeAll { $0 < earliestAllowed }
 
         guard bucketRequests.count < rateLimit.maxRequests else {
-            recentLimitedRequests[bucket] = bucketRequests
+            recentLimitedRequests[key] = bucketRequests
             return false
         }
         bucketRequests.append(instant)
-        recentLimitedRequests[bucket] = bucketRequests
+        recentLimitedRequests[key] = bucketRequests
         return true
     }
 

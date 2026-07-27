@@ -139,6 +139,37 @@ struct RemoteMacStoreTests {
         #expect(store.remoteMacs.map(\.id).contains(added.id))
     }
 
+    @MainActor
+    @Test("""
+    @spec REMOTE-12.1: If the saved Remote Macs file exists but cannot be \
+    decoded, the application shall move it to a timestamped corruption backup \
+    before allowing a later save to create a fresh file.
+    """)
+    func corruptStoreIsBackedUpBeforeRecoverySave() async throws {
+        let directory = URL.temporaryDirectory
+            .appendingPathComponent("graftty-remote-macs-corrupt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("remote-macs.json")
+        try Data("not-json".utf8).write(to: url)
+
+        let store = RemoteMacStore(storeURL: url)
+        await store.loadIfNeeded()
+
+        #expect(store.remoteMacs.isEmpty)
+        let backupFiles = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("remote-macs.json.corrupt.") }
+        #expect(backupFiles.count == 1)
+
+        try store.add(makeRemoteMac())
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(backupFiles[0]).path
+            )
+        )
+    }
+
     @Test("connection state has stable raw values")
     func connectionStateHasStableRawValues() throws {
         let encoded = try JSONEncoder().encode(RemoteMacConnectionState.connected)

@@ -47,7 +47,11 @@ struct RemoteMacsSidebarTests {
         #expect(row.connectionState == .connected)
     }
 
-    @Test("saved remote projection includes worktree and pane rows from snapshots")
+    @Test("""
+    @spec REMOTE-12.7: While a saved Remote Mac is connected, its latest \
+    panes-state snapshot shall project remote worktree and pane rows beneath \
+    that Mac in the sidebar.
+    """)
     func savedRemoteProjectionIncludesWorktreeAndPaneRows() throws {
         let remote = try makeRemoteMac(label: "Studio Mac")
         let identity = RemoteMacIdentity(remote)

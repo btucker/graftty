@@ -87,6 +87,38 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// @spec REMOTE-9.8: If an SSH terminal's PTY input consumer stalls until the bounded write queue is full, the host shall close that terminal channel rather than retain input without limit or silently drop terminal bytes.
+    func testStalledPTYWriterClosesChannelWhenBoundedQueueFills() async throws {
+        let stream = BlockingSendStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(streamFactory: factory.callable)
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        try await channel.writeInbound(SSHChannelData(
+            type: .channel,
+            data: .byteBuffer(ByteBuffer(bytes: [0]))
+        ))
+        await stream.waitUntilSendBlocked()
+
+        // One chunk is blocked in send(); 256 more fit in the bounded FIFO.
+        // The next chunk must close the channel instead of growing the queue.
+        for byte in 0..<257 {
+            try await channel.writeInbound(SSHChannelData(
+                type: .channel,
+                data: .byteBuffer(ByteBuffer(bytes: [UInt8(truncatingIfNeeded: byte)]))
+            ))
+        }
+
+        try await waitUntil { !channel.isActive }
+        await stream.releaseSend()
+    }
+
     // MARK: - window-change
 
     func testWindowChangeForwardsToStream() async throws {
@@ -192,8 +224,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - REMOTE-9: display ownership on SSH terminals
 
-    /// @spec REMOTE-9.1: When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
-    func testAttachRegistersClientWithIOSKindAndAuthenticatedDeviceIdentity() async throws {
+    /// @spec REMOTE-9.1: When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
+    func testAttachRegistersMacClientWithAuthenticatedKindAndDeviceIdentity() async throws {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
@@ -203,7 +235,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
             streamFactory: factory.callable,
             ownershipStore: store,
             ownershipBroadcaster: broadcaster,
-            deviceID: RemoteDeviceID(value: "device-42")
+            deviceID: RemoteDeviceID(value: "device-42"),
+            defaultKind: .mac
         )
         let channel = try await Self.channel(capture, handler)
 
@@ -212,8 +245,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendShellRequest(channel)
         try await waitUntil { capture.successCount >= 3 }
 
-        // The protocol-reported `kind: .web` must lose to the transport's
-        // own `defaultKind: .ios` — mirrors the web bridge's
+        // The protocol-reported `kind: .web` must lose to the authenticated
+        // peer's transport kind — mirrors the web bridge's
         // `requestDefaultKindWinsOverSpoofedFrameKind` guarantee.
         try await sendControlEnvelope(channel, .hello(
             clientID: DisplayClientID("ipad-1"),
@@ -233,7 +266,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
 
         let snapshot = store.snapshot(sessionName: "alpha")
-        XCTAssertEqual(snapshot.ownerKind, .ios)
+        XCTAssertEqual(snapshot.ownerKind, .mac)
         let ownerID = try XCTUnwrap(snapshot.ownerClientID?.rawValue)
         XCTAssertTrue(
             ownerID.hasPrefix("ssh-device-42-"),
@@ -918,13 +951,15 @@ final class TerminalSessionHandlerTests: XCTestCase {
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         ownershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore(),
         ownershipBroadcaster: DisplayOwnershipBroadcaster = DisplayOwnershipBroadcaster(),
-        deviceID: RemoteDeviceID = RemoteDeviceID(value: "test-device")
+        deviceID: RemoteDeviceID = RemoteDeviceID(value: "test-device"),
+        defaultKind: DisplayClientKind = .ios
     ) -> TerminalSessionHandler {
         TerminalSessionHandler(
             streamFactory: streamFactory,
             ownershipStore: ownershipStore,
             ownershipBroadcaster: ownershipBroadcaster,
-            deviceID: deviceID
+            deviceID: deviceID,
+            defaultKind: defaultKind
         )
     }
 
@@ -1164,6 +1199,67 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
 
     func close() async {
         continuation.finish()
+    }
+}
+
+private actor BlockingSendGate {
+    private var hasArrived = false
+    private var isReleased = false
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        hasArrived = true
+        let arrivals = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in arrivals {
+            waiter.resume()
+        }
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilArrived() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+
+    func release() {
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+private final class BlockingSendStream: TerminalByteStream, @unchecked Sendable {
+    private let continuation: AsyncStream<Data>.Continuation
+    private let gate = BlockingSendGate()
+    let inboundBytes: AsyncStream<Data>
+
+    init() {
+        var cont: AsyncStream<Data>.Continuation!
+        inboundBytes = AsyncStream { cont = $0 }
+        continuation = cont
+    }
+
+    func send(_ bytes: Data) async throws {
+        await gate.wait()
+    }
+
+    func close() async {
+        continuation.finish()
+        await gate.release()
+    }
+
+    func waitUntilSendBlocked() async {
+        await gate.waitUntilArrived()
+    }
+
+    func releaseSend() async {
+        await gate.release()
     }
 }
 

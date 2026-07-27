@@ -177,6 +177,7 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
 
                 let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
                 let requestBaseURL = Self.requestBaseURL(from: head.headers)
+                let requestSource = context.channel.remoteAddress?.ipAddress ?? "unknown"
                 let routeHandler = self.routeHandler
                 let promise = context.eventLoop.makePromise(of: LANRemoteAccessResponse.self)
                 promise.futureResult.whenComplete { result in
@@ -193,7 +194,8 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                         method: method,
                         path: path,
                         body: body,
-                        requestBaseURL: requestBaseURL
+                        requestBaseURL: requestBaseURL,
+                        source: requestSource
                     )
                     guard !Task.isCancelled else { return }
                     promise.succeed(response)
