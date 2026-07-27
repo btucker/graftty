@@ -2824,7 +2824,8 @@ struct GrafttyApp: App {
                 statsStore: statsStore,
                 terminalManager: terminalManager,
                 teamEventDispatcher: teamEventDispatcher,
-                initialCommand: initialCommand
+                initialCommand: initialCommand,
+                terminalStartTiming: .immediately
             )
             switch result {
             case .success:

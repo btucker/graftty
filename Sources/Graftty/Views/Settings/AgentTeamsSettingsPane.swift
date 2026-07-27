@@ -36,10 +36,13 @@ struct AgentTeamsSettingsPane: View {
                         .font(.system(.body, design: .monospaced))
                     AgentVariablesDocs(includesEventScope: false)
                 } header: {
-                    Text("Session prompt")
+                    PromptSectionHeader(title: "Session prompt") {
+                        DefaultPrompts.restoreSessionPrompt()
+                    }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Stencil template rendered once when each Codex or Claude session starts. Appended to the hook-provided team context, so it stays in the agent's context for the whole session. Useful for stable team-level coordination policy that doesn't depend on individual events.")
+                        Text("Clearing the editor disables this optional prompt. Restore Graftty Default removes your saved override so future built-in updates apply.")
                         Text("Changes apply when each agent session next starts. Live in-session refresh has been removed.")
                     }
                     .font(.caption)
@@ -52,10 +55,13 @@ struct AgentTeamsSettingsPane: View {
                         .font(.system(.body, design: .monospaced))
                     AgentVariablesDocs(includesEventScope: true)
                 } header: {
-                    Text("Per-event prompt")
+                    PromptSectionHeader(title: "Per-event prompt") {
+                        DefaultPrompts.restoreEventPrompt()
+                    }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Stencil template rendered freshly for each automated event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
+                        Text("Clearing the editor disables this prompt. Restore Graftty Default removes your saved override so future built-in updates apply.")
                         Text("Changes apply when each agent session next starts. Live in-session refresh has been removed.")
                     }
                     .font(.caption)
@@ -67,6 +73,21 @@ struct AgentTeamsSettingsPane: View {
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
         .frame(minWidth: 540, minHeight: 640)
+    }
+}
+
+private struct PromptSectionHeader: View {
+    let title: String
+    let restore: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Button("Restore Graftty Default", action: restore)
+                .buttonStyle(.link)
+                .controlSize(.small)
+        }
     }
 }
 

@@ -103,6 +103,30 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.markLayoutSettledCount == 1)
     }
 
+    @Test("A commandless background launch starts its shell without mounting the view")
+    func commandlessBackgroundLaunchStartsBeforeLayout() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+
+        #expect(handle.startForBackgroundLaunch())
+        #expect(backend.startCount == 1)
+        #expect(backend.writes.isEmpty)
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.hostManagedLayoutNotifier?()
+        #expect(backend.startCount == 1)
+        #expect(backend.markLayoutSettledCount == 1)
+    }
+
     @Test func directShellFallbackPreservesExtraInitialInput() throws {
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
 

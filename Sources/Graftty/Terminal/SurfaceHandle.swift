@@ -412,10 +412,12 @@ final class SurfaceHandle {
 
     private var pendingZmxStart: PendingZmxStart?
 
-    /// Start a fresh command-bearing zmx surface without waiting for AppKit
-    /// to mount its view. CLI-created worktrees run in the background, so
-    /// their view may never receive the layout callback that normally starts
-    /// zmx. Rehydrated and ordinary panes keep the deferred TERM-11.10 path.
+    /// Start a fresh zmx surface without waiting for AppKit to mount its view.
+    /// CLI-created worktrees run in the background, so their view may never
+    /// receive the layout callback that normally starts zmx. This applies even
+    /// when no explicit command was supplied: `graftty worktree add <name>`
+    /// promises a live shell. Rehydrated and ordinary panes keep the deferred
+    /// TERM-11.10 path.
     @discardableResult
     func startForBackgroundLaunch() -> Bool {
         guard zmxBackend != nil else { return true }
