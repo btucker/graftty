@@ -22,6 +22,15 @@ public enum WorktreePickerGrouping {
     /// sidebar's `appState.repos` ordering — so the mobile picker
     /// looks "the same" as the desktop sidebar.
     public static func grouped(_ list: [WorktreePanes]) -> [Group] {
+        let remoteOrigins = list.compactMap { worktree -> WorktreeOrigin? in
+            guard let origin = worktree.origin, origin.relayDepth > 0 else {
+                return nil
+            }
+            return origin
+        }
+        let ownersByLabel = Dictionary(grouping: remoteOrigins) {
+            $0.deviceLabel
+        }.mapValues { Set($0.map(\.deviceID.value)).count }
         var order: [Group.ID] = []
         var groups: [Group.ID: [WorktreePanes]] = [:]
         var titles: [Group.ID: String] = [:]
@@ -30,7 +39,13 @@ public enum WorktreePickerGrouping {
             let title: String
             if let origin = wt.origin, origin.relayDepth > 0 {
                 ownerID = "remote:\(origin.deviceID.value)"
-                title = "\(origin.deviceLabel) · \(wt.repoDisplayName)"
+                let ownerLabel: String
+                if ownersByLabel[origin.deviceLabel, default: 0] > 1 {
+                    ownerLabel = "\(origin.deviceLabel) (\(shortID(origin.deviceID.value)))"
+                } else {
+                    ownerLabel = origin.deviceLabel
+                }
+                title = "\(ownerLabel) · \(wt.repoDisplayName)"
             } else {
                 ownerID = "local:connected-mac"
                 title = wt.repoDisplayName
@@ -52,6 +67,10 @@ public enum WorktreePickerGrouping {
                 worktrees: groups[$0] ?? []
             )
         }
+    }
+
+    private static func shortID(_ value: String) -> String {
+        String(value.prefix(6))
     }
 }
 

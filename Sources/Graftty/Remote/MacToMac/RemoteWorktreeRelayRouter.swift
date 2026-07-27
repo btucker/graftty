@@ -6,6 +6,7 @@ import GrafttyRemoteClient
 
 struct RelayedPaneTarget: Sendable, Equatable {
     let identity: RemoteMacIdentity
+    let worktreePath: String
     let sessionName: String
 }
 
@@ -23,16 +24,55 @@ struct RelayedRepositoryTarget: Sendable, Equatable {
 /// incoming Mobile terminal/control/management requests.
 @MainActor
 final class RemoteWorktreeRelayRouter {
+    private struct PendingRoute<T> {
+        let target: T
+        let expiresAt: Date
+    }
+
     private var panesByAlias: [String: RelayedPaneTarget] = [:]
     private var worktreesByAlias: [String: RelayedWorktreeTarget] = [:]
     private var repositoriesByAlias: [String: RelayedRepositoryTarget] = [:]
+    private var mountedWorktreesByAlias:
+        [String: RelayedWorktreeTarget] = [:]
+    private var pendingPanesByAlias:
+        [String: PendingRoute<RelayedPaneTarget>] = [:]
+    private var pendingWorktreesByAlias:
+        [String: PendingRoute<RelayedWorktreeTarget>] = [:]
+    private let now: @Sendable () -> Date
+    private let pendingRouteLifetime: TimeInterval
+
+    init(
+        now: @escaping @Sendable () -> Date = { Date() },
+        pendingRouteLifetime: TimeInterval = 60
+    ) {
+        self.now = now
+        self.pendingRouteLifetime = pendingRouteLifetime
+    }
 
     func promotedWorktrees(
         snapshots: [RemoteMacIdentity: [WorktreePanes]],
         remoteMacs: [RemoteMac]
     ) -> [WorktreePanes] {
-        var nextPanes: [String: RelayedPaneTarget] = [:]
-        var nextWorktrees: [String: RelayedWorktreeTarget] = [:]
+        pruneExpiredPendingRoutes()
+        let activeIdentities = Set(snapshots.keys)
+        pendingPanesByAlias = pendingPanesByAlias.filter {
+            activeIdentities.contains($0.value.target.identity)
+        }
+        pendingWorktreesByAlias = pendingWorktreesByAlias.filter {
+            activeIdentities.contains($0.value.target.identity)
+        }
+        repositoriesByAlias = repositoriesByAlias.filter {
+            activeIdentities.contains($0.value.identity)
+        }
+        mountedWorktreesByAlias = mountedWorktreesByAlias.filter {
+            activeIdentities.contains($0.value.identity)
+        }
+        var nextPanes = pendingPanesByAlias.mapValues(\.target)
+        var nextWorktrees = mountedWorktreesByAlias
+        nextWorktrees.merge(
+            pendingWorktreesByAlias.mapValues(\.target),
+            uniquingKeysWith: { _, pending in pending }
+        )
         var promoted: [WorktreePanes] = []
 
         for remoteMac in remoteMacs {
@@ -57,11 +97,13 @@ final class RemoteWorktreeRelayRouter {
                     identity: identity,
                     path: worktree.path
                 )
+                pendingWorktreesByAlias[worktreeAlias] = nil
 
                 let layout = worktree.layout.map {
                     promoteLayout(
                         $0,
                         identity: identity,
+                        worktreePath: worktree.path,
                         nextPanes: &nextPanes
                     )
                 }
@@ -99,6 +141,9 @@ final class RemoteWorktreeRelayRouter {
         panesByAlias.removeAll()
         worktreesByAlias.removeAll()
         repositoriesByAlias.removeAll()
+        mountedWorktreesByAlias.removeAll()
+        pendingPanesByAlias.removeAll()
+        pendingWorktreesByAlias.removeAll()
     }
 
     func resolvePane(_ alias: String) -> RelayedPaneTarget? {
@@ -114,6 +159,19 @@ final class RemoteWorktreeRelayRouter {
         from remoteMac: RemoteMac
     ) -> [RemoteRepositoryInfo] {
         let identity = RemoteMacIdentity(remoteMac)
+        let staleMountedAliases = mountedWorktreesByAlias.compactMap {
+            alias, target in
+            target.identity == identity ? alias : nil
+        }
+        for alias in staleMountedAliases {
+            worktreesByAlias[alias] = nil
+        }
+        repositoriesByAlias = repositoriesByAlias.filter {
+            $0.value.identity != identity
+        }
+        mountedWorktreesByAlias = mountedWorktreesByAlias.filter {
+            $0.value.identity != identity
+        }
         return repositories.compactMap { repository in
             guard repository.origin?.relayDepth ?? 0 == 0 else { return nil }
             let alias = Self.alias(
@@ -125,6 +183,29 @@ final class RemoteWorktreeRelayRouter {
                 identity: identity,
                 repositoryID: repository.id
             )
+            let branches = repository.branches.map { branch in
+                let mountedAlias = branch.mountedWorktreeID.map { path in
+                    let worktreeAlias = Self.alias(
+                        kind: "worktree",
+                        identity: identity,
+                        value: path
+                    )
+                    let target = RelayedWorktreeTarget(
+                        identity: identity,
+                        path: path
+                    )
+                    mountedWorktreesByAlias[worktreeAlias] = target
+                    worktreesByAlias[worktreeAlias] = target
+                    return worktreeAlias
+                }
+                return RemoteRepositoryInfo.Branch(
+                    name: branch.name,
+                    source: branch.source,
+                    lastCommitDate: branch.lastCommitDate,
+                    mountedWorktreeID: mountedAlias,
+                    pullRequest: branch.pullRequest
+                )
+            }
             return RemoteRepositoryInfo(
                 id: alias,
                 displayName: repository.displayName,
@@ -134,7 +215,7 @@ final class RemoteWorktreeRelayRouter {
                     relayDepth: 1
                 ),
                 defaultBranchStatus: repository.defaultBranchStatus,
-                branches: repository.branches
+                branches: branches
             )
         }
     }
@@ -164,7 +245,17 @@ final class RemoteWorktreeRelayRouter {
         )
         panesByAlias[paneAlias] = RelayedPaneTarget(
             identity: identity,
+            worktreePath: path,
             sessionName: paneSessionName
+        )
+        let expiresAt = now().addingTimeInterval(pendingRouteLifetime)
+        pendingWorktreesByAlias[worktreeAlias] = PendingRoute(
+            target: worktreesByAlias[worktreeAlias]!,
+            expiresAt: expiresAt
+        )
+        pendingPanesByAlias[paneAlias] = PendingRoute(
+            target: panesByAlias[paneAlias]!,
+            expiresAt: expiresAt
         )
         return (worktreeAlias, paneAlias)
     }
@@ -172,6 +263,7 @@ final class RemoteWorktreeRelayRouter {
     private func promoteLayout(
         _ layout: PaneLayoutNode,
         identity: RemoteMacIdentity,
+        worktreePath: String,
         nextPanes: inout [String: RelayedPaneTarget]
     ) -> PaneLayoutNode {
         switch layout {
@@ -183,8 +275,10 @@ final class RemoteWorktreeRelayRouter {
             )
             nextPanes[alias] = RelayedPaneTarget(
                 identity: identity,
+                worktreePath: worktreePath,
                 sessionName: sessionName
             )
+            pendingPanesByAlias[alias] = nil
             return .leaf(
                 sessionName: alias,
                 title: title,
@@ -199,14 +293,26 @@ final class RemoteWorktreeRelayRouter {
                 left: promoteLayout(
                     left,
                     identity: identity,
+                    worktreePath: worktreePath,
                     nextPanes: &nextPanes
                 ),
                 right: promoteLayout(
                     right,
                     identity: identity,
+                    worktreePath: worktreePath,
                     nextPanes: &nextPanes
                 )
             )
+        }
+    }
+
+    private func pruneExpiredPendingRoutes() {
+        let cutoff = now()
+        pendingPanesByAlias = pendingPanesByAlias.filter {
+            $0.value.expiresAt > cutoff
+        }
+        pendingWorktreesByAlias = pendingWorktreesByAlias.filter {
+            $0.value.expiresAt > cutoff
         }
     }
 

@@ -102,6 +102,7 @@ struct RemoteWorktreeRelayRouterTests {
             router.resolvePane(paneAliases[0].sessionName)
                 == RelayedPaneTarget(
                     identity: identity,
+                    worktreePath: direct.path,
                     sessionName: "left-pane"
                 )
         )
@@ -141,7 +142,16 @@ struct RemoteWorktreeRelayRouterTests {
             displayName: "one",
             origin: nil,
             defaultBranchStatus: nil,
-            branches: []
+            branches: [
+                .init(
+                    name: "feature",
+                    source: .local,
+                    lastCommitDate: Date(timeIntervalSince1970: 1),
+                    mountedWorktreeID:
+                        "/repos/one/.worktrees/feature",
+                    pullRequest: nil
+                ),
+            ]
         )
         let promotedRepository = try #require(
             router.promotedRepositories(
@@ -159,6 +169,88 @@ struct RemoteWorktreeRelayRouterTests {
                     repositoryID: repository.id
                 )
         )
+        let mountedID = try #require(
+            promotedRepository.branches.first?.mountedWorktreeID
+        )
+        #expect(mountedID.hasPrefix("relay-worktree-"))
+        #expect(!mountedID.contains("/repos/"))
+        #expect(
+            router.resolveWorktree(mountedID)
+                == RelayedWorktreeTarget(
+                    identity: identity,
+                    path: "/repos/one/.worktrees/feature"
+                )
+        )
+    }
+
+    @Test
+    func newlyCreatedAliasesSurviveOneStaleSnapshot() throws {
+        let remote = try makeRemoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let router = RemoteWorktreeRelayRouter()
+        let created = router.registerCreatedWorktree(
+            identity: identity,
+            path: "/repos/one/.worktrees/new-feature",
+            paneSessionName: "new-feature-pane"
+        )
+
+        _ = router.promotedWorktrees(
+            snapshots: [identity: []],
+            remoteMacs: [remote]
+        )
+
+        #expect(
+            router.resolveWorktree(created.worktreeID)?.path
+                == "/repos/one/.worktrees/new-feature"
+        )
+        #expect(
+            router.resolvePane(created.paneID)?.sessionName
+                == "new-feature-pane"
+        )
+    }
+
+    @Test
+    func repositoryRefreshRemovesObsoleteMountedWorktreeRoute() throws {
+        let remote = try makeRemoteMac()
+        let router = RemoteWorktreeRelayRouter()
+        let mountedPath = "/repos/one/.worktrees/feature"
+        let repository = RemoteRepositoryInfo(
+            id: "/repos/one",
+            displayName: "one",
+            origin: nil,
+            defaultBranchStatus: nil,
+            branches: [
+                .init(
+                    name: "feature",
+                    source: .local,
+                    lastCommitDate: Date(timeIntervalSince1970: 1),
+                    mountedWorktreeID: mountedPath,
+                    pullRequest: nil
+                ),
+            ]
+        )
+        let promoted = try #require(
+            router.promotedRepositories([repository], from: remote).first
+        )
+        let mountedAlias = try #require(
+            promoted.branches.first?.mountedWorktreeID
+        )
+        #expect(router.resolveWorktree(mountedAlias)?.path == mountedPath)
+
+        _ = router.promotedRepositories(
+            [
+                RemoteRepositoryInfo(
+                    id: repository.id,
+                    displayName: repository.displayName,
+                    origin: nil,
+                    defaultBranchStatus: nil,
+                    branches: []
+                ),
+            ],
+            from: remote
+        )
+
+        #expect(router.resolveWorktree(mountedAlias) == nil)
     }
 
     @Test("""

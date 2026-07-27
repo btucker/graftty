@@ -10,13 +10,27 @@ struct ReposFetcherTests {
     @Test
     func buildsRequestAgainstBaseURL() throws {
         let base = URL(string: "http://mac.ts.net:8799/")!
-        let request = try ReposFetcher.request(baseURL: base)
+        let request = try ReposFetcher.request(
+            baseURL: base,
+            includeRemoteWorktrees: true
+        )
         #expect(request.url?.absoluteString == "http://mac.ts.net:8799/repos")
         #expect(request.httpMethod == "GET")
         #expect(
             request.value(
                 forHTTPHeaderField: RemoteWorktreeFeatures.headerName
             ) == RemoteWorktreeFeatures.oneHopRelay
+        )
+    }
+
+    @Test
+    func omitsRelayFeatureForUnpairedHosts() throws {
+        let base = URL(string: "http://mac.ts.net:8799/")!
+        let request = try ReposFetcher.request(baseURL: base)
+        #expect(
+            request.value(
+                forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+            ) == nil
         )
     }
 

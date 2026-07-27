@@ -14,7 +14,8 @@ public final class WorktreeManagementChannelHandler: ChannelInboundHandler, @unc
 
     private let mutator: Mutator
     private let lock = NIOLock()
-    private var tasks: [Task<Void, Never>] = []
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var completedBeforeRegistration: Set<UUID> = []
     private var inactive = false
 
     public init(mutator: @escaping Mutator) {
@@ -28,7 +29,9 @@ public final class WorktreeManagementChannelHandler: ChannelInboundHandler, @unc
         let allocator = channel.allocator
         let mutator = self.mutator
 
-        let task = Task {
+        let taskID = UUID()
+        let task = Task { [weak self] in
+            defer { self?.finishTask(taskID) }
             guard !Task.isCancelled else { return }
             let response: WorktreeManagementResponse
             do {
@@ -56,8 +59,10 @@ public final class WorktreeManagementChannelHandler: ChannelInboundHandler, @unc
         lock.withLock {
             if inactive {
                 task.cancel()
+            } else if completedBeforeRegistration.remove(taskID) != nil {
+                return
             } else {
-                tasks.append(task)
+                tasks[taskID] = task
             }
         }
     }
@@ -65,11 +70,20 @@ public final class WorktreeManagementChannelHandler: ChannelInboundHandler, @unc
     public func channelInactive(context: ChannelHandlerContext) {
         let pending = lock.withLock { () -> [Task<Void, Never>] in
             inactive = true
-            let pending = tasks
+            let pending = Array(tasks.values)
             tasks.removeAll()
+            completedBeforeRegistration.removeAll()
             return pending
         }
         pending.forEach { $0.cancel() }
         context.fireChannelInactive()
+    }
+
+    private func finishTask(_ id: UUID) {
+        lock.withLock {
+            if tasks.removeValue(forKey: id) == nil, !inactive {
+                completedBeforeRegistration.insert(id)
+            }
+        }
     }
 }

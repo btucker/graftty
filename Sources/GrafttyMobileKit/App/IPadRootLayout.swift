@@ -52,6 +52,12 @@ public struct IPadRootLayout: View {
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
+                            includeRemoteWorktrees: coordinator.isPaired(host),
+                            remoteConnectionProvider: makeRemoteConnectionProvider(
+                                coordinator: coordinator,
+                                host: host,
+                                sessionName: "worktree-management"
+                            ),
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { leaf in selectPane(leaf) },
                             onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) },

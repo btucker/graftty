@@ -9,6 +9,8 @@ import SwiftUI
 public struct AddWorktreeSheetView: View {
 
     public let host: Host
+    public let includeRemoteWorktrees: Bool
+    public let remoteConnectionProvider: RemoteConnectionProvider?
     public let onCreated: (CreateWorktreeClient.Response) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -33,14 +35,29 @@ public struct AddWorktreeSheetView: View {
 
     public init(
         host: Host,
+        includeRemoteWorktrees: Bool = false,
+        remoteConnectionProvider: RemoteConnectionProvider? = nil,
         onCreated: @escaping (CreateWorktreeClient.Response) -> Void
     ) {
         self.host = host
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.remoteConnectionProvider = remoteConnectionProvider
         self.onCreated = onCreated
     }
 
     public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool) -> Bool {
         canSubmit && !isSubmitting
+    }
+
+    static func initialTargetID(
+        preservedTargetID: String?,
+        targetIDs: [String]
+    ) -> String? {
+        if let preservedTargetID,
+           targetIDs.contains(preservedTargetID) {
+            return preservedTargetID
+        }
+        return targetIDs.count == 1 ? targetIDs[0] : nil
     }
 
     private enum ReposState {
@@ -103,6 +120,7 @@ public struct AddWorktreeSheetView: View {
             if targets.count > 1 {
                 Section("Target Mac") {
                     Picker("Mac", selection: $selectedTargetID) {
+                        Text("Select a Mac").tag(String?.none)
                         ForEach(targets) { target in
                             Text(target.label).tag(Optional(target.id))
                         }
@@ -196,11 +214,18 @@ public struct AddWorktreeSheetView: View {
     private func loadRepos() async {
         reposState = .loading
         do {
-            let repos = try await ReposFetcher.fetch(baseURL: host.baseURL)
+            let repos = try await ReposFetcher.fetch(
+                baseURL: host.baseURL,
+                includeRemoteWorktrees: includeRemoteWorktrees
+            )
             reposState = .loaded(repos)
             let selectedRepo = repos.first { $0.path == selectedRepoPath }
-            selectedTargetID = selectedRepo.map(targetID(for:))
-                ?? targetMacs(in: repos).first?.id
+            let targets = targetMacs(in: repos)
+            let preservedTarget = selectedRepo.map(targetID(for:))
+            selectedTargetID = Self.initialTargetID(
+                preservedTargetID: preservedTarget,
+                targetIDs: targets.map(\.id)
+            )
             if !repos.contains(where: { $0.path == selectedRepoPath }) {
                 selectedRepoPath = repositories(
                     on: selectedTargetID,
@@ -223,12 +248,23 @@ public struct AddWorktreeSheetView: View {
         in repos: [ReposFetcher.RepoInfo]
     ) -> [TargetMac] {
         var seen: Set<String> = []
-        return repos.compactMap { repo in
+        let targets = repos.compactMap { repo -> TargetMac? in
             let id = targetID(for: repo)
             guard seen.insert(id).inserted else { return nil }
             return TargetMac(
                 id: id,
                 label: repo.origin?.deviceLabel ?? host.label
+            )
+        }
+        let counts = Dictionary(grouping: targets, by: \.label)
+            .mapValues(\.count)
+        return targets.map { target in
+            guard counts[target.label, default: 0] > 1 else { return target }
+            let ownerID = target.id.split(separator: ":").last
+                .map { String($0.prefix(6)) } ?? target.id
+            return TargetMac(
+                id: target.id,
+                label: "\(target.label) (\(ownerID))"
             )
         }
     }
@@ -260,7 +296,36 @@ public struct AddWorktreeSheetView: View {
             existing: branchMode == .existing
         )
         do {
-            let response = try await CreateWorktreeClient.create(baseURL: host.baseURL, body: body)
+            let response: CreateWorktreeClient.Response
+            if repoPath.hasPrefix("relay-repository-") {
+                let management = try await RelayedWorktreeManagementClient.send(
+                    .create(
+                        repositoryID: body.repoPath,
+                        worktreeName: body.worktreeName,
+                        branchName: body.branchName,
+                        existingSource: body.existing ? .local : nil
+                    ),
+                    using: remoteConnectionProvider
+                )
+                switch management {
+                case let .created(worktreeID, paneID):
+                    response = CreateWorktreeClient.Response(
+                        sessionName: paneID,
+                        worktreePath: worktreeID
+                    )
+                case let .error(_, message, _, _):
+                    errorMessage = message
+                    return
+                default:
+                    errorMessage = "The remote Mac returned an unexpected response."
+                    return
+                }
+            } else {
+                response = try await CreateWorktreeClient.create(
+                    baseURL: host.baseURL,
+                    body: body
+                )
+            }
             onCreated(response)
             dismiss()
         } catch let err as CreateWorktreeClient.CreateError {

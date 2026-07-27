@@ -1964,6 +1964,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.11** When a Remote Mac reconnects with user-notify or agent-stop attention that was not present in its final connected snapshot, the application shall deliver one summary notification for all newly observed items, keep unchanged attention silent, and target the first affected worktree or pane when the summary is activated.
 
+**REMOTE-13.12** When several panes in one remote layout request a connection concurrently, they shall share the same connection attempt rather than cancelling earlier pane opens.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

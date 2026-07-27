@@ -158,6 +158,7 @@ private extension View {
 /// Helper to give SplitContainerView a @State for the ratio binding.
 private struct SplitRatioContainer<Left: View, Right: View>: View {
     let direction: SplitDirection
+    let sourceRatio: Double
     @State var ratio: Double
     let left: () -> Left
     let right: () -> Right
@@ -171,6 +172,7 @@ private struct SplitRatioContainer<Left: View, Right: View>: View {
         onRatioChange: @escaping (Double) -> Void
     ) {
         self.direction = direction
+        self.sourceRatio = initialRatio
         self._ratio = State(initialValue: initialRatio)
         self.left = left
         self.right = right
@@ -192,5 +194,8 @@ private struct SplitRatioContainer<Left: View, Right: View>: View {
                 onRatioChange(finalRatio)
             }
         )
+        .onChange(of: sourceRatio) { _, newRatio in
+            ratio = newRatio
+        }
     }
 }

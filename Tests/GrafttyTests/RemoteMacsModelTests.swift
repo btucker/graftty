@@ -251,6 +251,45 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
+    @spec REMOTE-13.12: When several panes in one remote layout request a \
+    connection concurrently, they shall share the same connection attempt \
+    rather than cancelling earlier pane opens.
+    """)
+    func concurrentConnectCallersShareOneAttempt() async throws {
+        let gate = RemoteMacsModelConnectGate()
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            await gate.wait()
+            return RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let remote = try remoteMac()
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: try tempStoreURL()),
+            connectionRegistry: registry
+        )
+
+        let first = Task { try await model.connect(to: remote) }
+        await gate.waitUntilStarted()
+        let second = Task { try await model.connect(to: remote) }
+        await gate.release()
+
+        let firstEntry = try await first.value
+        let secondEntry = try await second.value
+        #expect(firstEntry.id == secondEntry.id)
+        #expect(
+            model.connectionState(for: RemoteMacIdentity(remote))
+                == .connected
+        )
+    }
+
+    @Test("""
     @spec REMOTE-12.14: If a saved Remote Mac presents a host key that does \
     not match its pinned fingerprint, the application shall fail closed, \
     transition the Mac to needs pairing, and preserve that state through \

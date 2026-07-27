@@ -22,6 +22,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case openFailed(any Error)
         case channelClosed
+        case subsystemRejected
     }
 
     public typealias OnSnapshot = @Sendable ([WorktreePanes]) async -> Void
@@ -30,6 +31,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
     private let subsystemName: String
+    private let requestReply: Bool
 
     private let lock = NIOLock()
     /// Callbacks are mutable so the construction site can build the
@@ -40,6 +42,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
     private var childChannel: Channel?
+    private var subsystemReply:
+        CheckedContinuation<Void, Error>?
     private var closed = false
     private var drainTask: Task<Void, Never>?
 
@@ -57,12 +61,14 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
         subsystemName: String = SSHChannelTypeNames.panesState,
+        requestReply: Bool = false,
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed
     ) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.subsystemName = subsystemName
+        self.requestReply = requestReply
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
         var cont: AsyncStream<Data>.Continuation!
@@ -85,8 +91,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         }
     }
 
-    /// Opens the SSH child channel. Resolves when the subsystem request has
-    /// been written to the wire (wantReply: false — no server acknowledgement).
+    /// Opens the SSH child channel. When `requestReply` is true, resolves
+    /// only after the peer accepts the subsystem; otherwise resolves once
+    /// the fire-and-forget request has been written.
     public func open() async throws {
         do {
             let child = try await openChildChannel(
@@ -105,6 +112,11 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                     try child.pipeline.syncOperations.addHandler(
                         InboundSnapshotRelay(owner: self)
                     )
+                    if self.requestReply {
+                        try child.pipeline.syncOperations.addHandler(
+                            SubsystemReplyRelay(owner: self)
+                        )
+                    }
                     return child.eventLoop.makeSucceededVoidFuture()
                 } catch {
                     return child.eventLoop.makeFailedFuture(error)
@@ -137,15 +149,34 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 }
             }
             lock.withLock { self.drainTask = drain }
-            // Send the subsystem request that identifies this session as a
-            // panes-state channel. wantReply: false — the server is expected
-            // to accept all subsystem requests for known names and we don't
-            // need to sequence on the reply before receiving pushes.
+            // Mac-to-Mac negotiation sets wantReply so a peer that predates
+            // panes-state-v2 can reject it and the caller can retry V1. The
+            // default remains fire-and-forget for existing Mobile callers.
             let subsystem = SSHChannelRequestEvent.SubsystemRequest(
                 subsystem: subsystemName,
-                wantReply: false
+                wantReply: requestReply
             )
-            try await child.triggerUserOutboundEvent(subsystem).get()
+            if requestReply {
+                try await withCheckedThrowingContinuation { continuation in
+                    let alreadyPending = lock.withLock {
+                        guard subsystemReply == nil else { return true }
+                        subsystemReply = continuation
+                        return false
+                    }
+                    guard !alreadyPending else {
+                        continuation.resume(
+                            throwing: ClientError.channelClosed
+                        )
+                        return
+                    }
+                    child.triggerUserOutboundEvent(subsystem).whenFailure {
+                        [weak self] error in
+                        self?.finishSubsystemReply(.failure(error))
+                    }
+                }
+            } else {
+                try await child.triggerUserOutboundEvent(subsystem).get()
+            }
         } catch {
             // Defense-in-depth: if the open failed after we stashed
             // childChannel, make sure the half-open channel is torn down
@@ -166,6 +197,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             return childChannel
         }
         inboundContinuation.finish()
+        finishSubsystemReply(.failure(ClientError.channelClosed))
         child?.close(promise: nil)
     }
 
@@ -175,11 +207,29 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         inboundContinuation.yield(bytes)
     }
 
+    fileprivate func deliverSubsystemReply(accepted: Bool) {
+        finishSubsystemReply(
+            accepted
+                ? .success(())
+                : .failure(ClientError.subsystemRejected)
+        )
+    }
+
     private func handleChildClose() {
         let onClosed = lock.withLock { self.onClosed }
         // Finish the inbound stream so the drain task exits cleanly.
         inboundContinuation.finish()
+        finishSubsystemReply(.failure(ClientError.channelClosed))
         Task { await onClosed("channel-closed") }
+    }
+
+    private func finishSubsystemReply(_ result: Result<Void, Error>) {
+        let continuation = lock.withLock {
+            let continuation = subsystemReply
+            subsystemReply = nil
+            return continuation
+        }
+        continuation?.resume(with: result)
     }
 }
 
@@ -204,5 +254,30 @@ private final class InboundSnapshotRelay: ChannelInboundHandler, @unchecked Send
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let buf = unwrapInboundIn(data)
         owner.deliverInbound(Data(buf.readableBytesView))
+    }
+}
+
+private final class SubsystemReplyRelay:
+    ChannelInboundHandler,
+    @unchecked Sendable
+{
+    typealias InboundIn = ByteBuffer
+    let owner: PanesStateChannelClient
+
+    init(owner: PanesStateChannelClient) {
+        self.owner = owner
+    }
+
+    func userInboundEventTriggered(
+        context: ChannelHandlerContext,
+        event: Any
+    ) {
+        if event is ChannelSuccessEvent {
+            owner.deliverSubsystemReply(accepted: true)
+        } else if event is ChannelFailureEvent {
+            owner.deliverSubsystemReply(accepted: false)
+        } else {
+            context.fireUserInboundEventTriggered(event)
+        }
     }
 }

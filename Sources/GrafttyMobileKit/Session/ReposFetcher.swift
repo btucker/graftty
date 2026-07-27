@@ -27,15 +27,20 @@ public enum ReposFetcher {
         case transport
     }
 
-    public static func request(baseURL: URL) throws -> URLRequest {
+    public static func request(
+        baseURL: URL,
+        includeRemoteWorktrees: Bool = false
+    ) throws -> URLRequest {
         guard let url = baseURL.appendingAPIPath("repos") else { throw FetchError.transport }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue(
-            RemoteWorktreeFeatures.oneHopRelay,
-            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
-        )
+        if includeRemoteWorktrees {
+            req.setValue(
+                RemoteWorktreeFeatures.oneHopRelay,
+                forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+            )
+        }
         return req
     }
 
@@ -45,9 +50,13 @@ public enum ReposFetcher {
 
     public static func fetch(
         baseURL: URL,
+        includeRemoteWorktrees: Bool = false,
         session: URLSession = .shared
     ) async throws -> [RepoInfo] {
-        let req = try request(baseURL: baseURL)
+        let req = try request(
+            baseURL: baseURL,
+            includeRemoteWorktrees: includeRemoteWorktrees
+        )
         do {
             let (data, response) = try await session.data(for: req)
             guard let http = response as? HTTPURLResponse else { throw FetchError.transport }

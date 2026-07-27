@@ -1764,24 +1764,6 @@ struct GrafttyApp: App {
         let worktreeMonitor = services.worktreeMonitor
         let dispatcherForWeb = services.teamEventDispatcher
         webController.setDefaultBranchPuller { req in
-            if req.repoPath.hasPrefix("relay-repository-") {
-                guard let response = await services.remoteMacsModel
-                    .sendRelayedWorktreeManagement(
-                        .pullDefaultBranch(repositoryID: req.repoPath)
-                    ) else {
-                    return .invalid("remote repository is offline")
-                }
-                switch response {
-                case .ok:
-                    return .success(.init(ok: true))
-                case .error(_, let message, _, _):
-                    return .gitFailed(message)
-                default:
-                    return .internalFailure(
-                        "remote Mac returned an unexpected response"
-                    )
-                }
-            }
             let pullTarget = await MainActor.run {
                 guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
                     return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
@@ -1814,35 +1796,6 @@ struct GrafttyApp: App {
             return .success(WebServer.PullDefaultBranchResponse(ok: true))
         }
         webController.setWorktreeCreator { req in
-            if req.repoPath.hasPrefix("relay-repository-") {
-                let source: RemoteRepositoryInfo.Branch.Source? = req.existing
-                    ? .local
-                    : nil
-                guard let response = await services.remoteMacsModel
-                    .sendRelayedWorktreeManagement(
-                        .create(
-                            repositoryID: req.repoPath,
-                            worktreeName: req.worktreeName,
-                            branchName: req.branchName,
-                            existingSource: source
-                        )
-                    ) else {
-                    return .invalid("remote repository is offline")
-                }
-                switch response {
-                case let .created(worktreeID, paneID):
-                    return .success(.init(
-                        sessionName: paneID,
-                        worktreePath: worktreeID
-                    ))
-                case .error(_, let message, _, _):
-                    return .gitFailed(message)
-                default:
-                    return .internalFailure(
-                        "remote Mac returned an unexpected response"
-                    )
-                }
-            }
             let branch: BranchSelection
             if req.existing {
                 branch = .useExisting(name: req.branchName, source: .local)
@@ -1885,33 +1838,6 @@ struct GrafttyApp: App {
         // surface teardown lands on the main actor, same as the native
         // sidebar's "Delete Worktree" path.
         webController.setWorktreeRemover { req in
-            if req.worktreePath.hasPrefix("relay-worktree-") {
-                guard let response = await services.remoteMacsModel
-                    .sendRelayedWorktreeManagement(
-                        .delete(
-                            worktreeID: req.worktreePath,
-                            force: req.force
-                        )
-                    ) else {
-                    return .notFound("remote worktree is offline")
-                }
-                switch response {
-                case .deleted(let dismissed):
-                    return .success(.init(dismissed: dismissed))
-                case let .error(_, message, forceAllowed, shortStatus):
-                    if forceAllowed {
-                        return .gitFailedForceable(
-                            stderr: message,
-                            shortStatus: shortStatus ?? ""
-                        )
-                    }
-                    return .gitFailedFinal(message)
-                default:
-                    return .internalFailure(
-                        "remote Mac returned an unexpected response"
-                    )
-                }
-            }
             let result = await DeleteWorktreeFlow.delete(
                 worktreePath: req.worktreePath,
                 force: req.force,
@@ -2277,10 +2203,17 @@ struct GrafttyApp: App {
                                 .repos[repoIndex].worktrees.indices
                             where appStateBinding.wrappedValue.repos[repoIndex]
                                 .worktrees[worktreeIndex].path == worktreeID {
-                                if let paneID,
-                                   let slot = appStateBinding.wrappedValue
-                                    .repos[repoIndex].worktrees[worktreeIndex]
-                                    .paneSlot(forSessionName: paneID) {
+                                if let paneID {
+                                    guard let slot = appStateBinding.wrappedValue
+                                        .repos[repoIndex].worktrees[worktreeIndex]
+                                        .paneSlot(forSessionName: paneID) else {
+                                        return .error(
+                                            code: "not-found",
+                                            message: "unknown pane in worktree",
+                                            forceAllowed: false,
+                                            shortStatus: nil
+                                        )
+                                    }
                                     appStateBinding.wrappedValue.repos[repoIndex]
                                         .worktrees[worktreeIndex]
                                         .paneAttention[slot] = nil

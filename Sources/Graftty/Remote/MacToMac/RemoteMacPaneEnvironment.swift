@@ -43,7 +43,7 @@ struct RemoteMacPaneEnvironment: Sendable {
             )
             let panesStore = WorktreePanesStore(driver: panesDriver)
             worktreePanesStore = panesStore
-            if let panesClient = panesDriver as? PanesStateChannelClient {
+            if let panesClient = panesDriver as? PanesStateCallbacksConfigurable {
                 panesClient.setCallbacks(
                     onSnapshot: { [weak panesStore] snapshot in
                         await panesStore?.applySnapshot(snapshot)

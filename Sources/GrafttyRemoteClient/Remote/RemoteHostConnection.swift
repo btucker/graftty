@@ -424,7 +424,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     public func makePanesStateClient(
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
         onClosed: @escaping @Sendable (String) async -> Void,
-        originAware: Bool = false
+        originAware: Bool = false,
+        requestReply: Bool = false
     ) throws -> PanesStateChannelClient {
         guard
             let transport = sshTransport,
@@ -438,6 +439,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             subsystemName: originAware
                 ? SSHChannelTypeNames.panesStateV2
                 : SSHChannelTypeNames.panesState,
+            requestReply: requestReply,
             onSnapshot: onSnapshot,
             onClosed: onClosed
         )

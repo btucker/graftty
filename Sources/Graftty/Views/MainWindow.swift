@@ -60,6 +60,8 @@ struct MainWindow: View {
     @State private var selectedRemoteWorktreePath: String?
     @State private var selectedRemotePaneSessionName: String?
     @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
+    @State private var openingRemoteTerminals:
+        [RemoteTerminalKey: PaneSlotID] = [:]
     @State private var remoteTerminalSplitTree = SplitTree(root: nil)
 
     private struct RemoteAddWorktreeRequest: Identifiable {
@@ -153,8 +155,19 @@ struct MainWindow: View {
                                     for: terminalID
                                 ) {
                                     selectedRemotePaneSessionName = sessionName
+                                    if let worktreePath =
+                                        selectedRemoteWorktreePath {
+                                        Task {
+                                            await remoteMacsModel.acknowledge(
+                                                on: selectedRemoteMac,
+                                                worktreePath: worktreePath,
+                                                paneSessionName: sessionName
+                                            )
+                                        }
+                                    }
                                 }
                                 terminalManager.setFocus(terminalID)
+                                makePaneFirstResponder(terminalID)
                             }
                         )
                         .padding(.leading, 6)
@@ -328,10 +341,16 @@ struct MainWindow: View {
         .onChange(of: remoteMacsModel.worktreePanesByRemote) { _, snapshots in
             reconcileRemoteSelection(worktreePanesByRemote: snapshots)
         }
-        .onChange(of: remoteMacsModel.notificationActivation) { _, event in
+        .onChange(
+            of: remoteMacsModel.notificationActivation,
+            initial: true
+        ) { _, event in
             guard let event else { return }
             activateRemoteNotification(event)
             remoteMacsModel.consumeRemoteNotificationActivation()
+        }
+        .onDisappear {
+            destroyAllRemoteSurfaces()
         }
         // AGENT-3.4 resume rule runs at the model layer via
         // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
@@ -564,6 +583,7 @@ struct MainWindow: View {
         )
         RemoteMacSidebarSelectionReducer.selectLocalWorktree(path, state: &selection)
         setRemoteSurfacesVisible(false)
+        destroyAllRemoteSurfaces()
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
@@ -694,7 +714,12 @@ struct MainWindow: View {
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        let previousIdentity = selectedRemoteIdentity
+        let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
+        if let localPath = appState.selectedWorktreePath {
+            setWorktreeSurfacesVisible(false, worktreePath: localPath)
+        }
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
             selectedRemoteIdentity: selectedRemoteIdentity,
@@ -708,6 +733,12 @@ struct MainWindow: View {
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
         remoteTerminalSplitTree = SplitTree(root: nil)
+        if let previousIdentity, let previousWorktreePath {
+            destroyRemoteSurfaces(
+                identity: previousIdentity,
+                worktreePath: previousWorktreePath
+            )
+        }
 
         Task { @MainActor in
             do {
@@ -722,7 +753,12 @@ struct MainWindow: View {
     }
 
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) {
+        let previousIdentity = selectedRemoteIdentity
+        let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
+        if let localPath = appState.selectedWorktreePath {
+            setWorktreeSurfacesVisible(false, worktreePath: localPath)
+        }
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
             selectedRemoteIdentity: selectedRemoteIdentity,
@@ -739,6 +775,15 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+        if let previousIdentity,
+           let previousWorktreePath,
+           previousIdentity != identity
+            || previousWorktreePath != worktreePath {
+            destroyRemoteSurfaces(
+                identity: previousIdentity,
+                worktreePath: previousWorktreePath
+            )
+        }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
         Task {
             await remoteMacsModel.acknowledge(
@@ -803,6 +848,12 @@ struct MainWindow: View {
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {
+        let previousIdentity = selectedRemoteIdentity
+        let previousWorktreePath = selectedRemoteWorktreePath
+        setRemoteSurfacesVisible(false)
+        if let localPath = appState.selectedWorktreePath {
+            setWorktreeSurfacesVisible(false, worktreePath: localPath)
+        }
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
             selectedRemoteIdentity: selectedRemoteIdentity,
@@ -820,6 +871,15 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+        if let previousIdentity,
+           let previousWorktreePath,
+           previousIdentity != identity
+            || previousWorktreePath != worktreePath {
+            destroyRemoteSurfaces(
+                identity: previousIdentity,
+                worktreePath: previousWorktreePath
+            )
+        }
 
         synchronizeRemoteWorktree(
             remoteMac: remoteMac,
@@ -839,17 +899,34 @@ struct MainWindow: View {
         guard let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: {
             $0.id == event.origin.deviceID
         }) else { return }
-        if let paneID = event.paneID {
-            selectRemotePane(
-                remoteMac,
-                worktreePath: event.worktreeID,
-                sessionName: paneID
-            )
-        } else {
-            selectRemoteWorktree(
-                remoteMac,
-                worktreePath: event.worktreeID
-            )
+        Task { @MainActor in
+            do {
+                _ = try await remoteMacsModel.connect(to: remoteMac)
+                let identity = RemoteMacIdentity(remoteMac)
+                guard let worktree = remoteMacsModel
+                    .worktreePanesByRemote[identity]?
+                    .first(where: { $0.path == event.worktreeID }) else {
+                    selectRemoteMac(remoteMac)
+                    return
+                }
+                if let paneID = event.paneID,
+                   worktree.layout?.leaves.contains(where: {
+                       $0.sessionName == paneID
+                   }) == true {
+                    selectRemotePane(
+                        remoteMac,
+                        worktreePath: event.worktreeID,
+                        sessionName: paneID
+                    )
+                } else {
+                    selectRemoteWorktree(
+                        remoteMac,
+                        worktreePath: event.worktreeID
+                    )
+                }
+            } catch {
+                selectRemoteMac(remoteMac)
+            }
         }
     }
 
@@ -862,6 +939,12 @@ struct MainWindow: View {
     private func reconcileRemoteSelection(
         worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
     ) {
+        let currentIdentities = Set(worktreePanesByRemote.keys)
+        let staleIdentities = Set(remoteTerminalSlots.keys.map(\.identity))
+            .subtracting(currentIdentities)
+        for identity in staleIdentities {
+            destroyRemoteSurfaces(identity: identity)
+        }
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         var selection = RemoteMacSidebarSelectionState(
@@ -949,10 +1032,17 @@ struct MainWindow: View {
                 sessionName: leaf.sessionName
             )
             guard let terminalID = remoteTerminalSlots[key],
-                  terminalManager.view(for: terminalID) == nil else {
+                  terminalManager.view(for: terminalID) == nil,
+                  openingRemoteTerminals[key] == nil else {
                 continue
             }
+            openingRemoteTerminals[key] = terminalID
             Task { @MainActor in
+                defer {
+                    if openingRemoteTerminals[key] == terminalID {
+                        openingRemoteTerminals[key] = nil
+                    }
+                }
                 do {
                     _ = try await remoteMacsModel.connect(to: remoteMac)
                     let client = try await remoteMacsModel.openTerminalSession(
@@ -970,9 +1060,13 @@ struct MainWindow: View {
                         worktreePath: worktreePath,
                         hostManagedBackend: backend
                     )
-                    terminalManager.setVisible(true, for: terminalID)
-                    if selectedRemotePaneSessionName == leaf.sessionName {
+                    let isSelected = selectedRemoteIdentity == identity
+                        && selectedRemoteWorktreePath == worktreePath
+                    terminalManager.setVisible(isSelected, for: terminalID)
+                    if isSelected
+                        && selectedRemotePaneSessionName == leaf.sessionName {
                         terminalManager.setFocus(terminalID)
+                        makePaneFirstResponder(terminalID)
                     }
                 } catch {
                     NSLog(
@@ -985,6 +1079,11 @@ struct MainWindow: View {
             }
         }
         setRemoteSurfacesVisible(true)
+        if let focusedRemoteTerminalID,
+           terminalManager.view(for: focusedRemoteTerminalID) != nil {
+            terminalManager.setFocus(focusedRemoteTerminalID)
+            makePaneFirstResponder(focusedRemoteTerminalID)
+        }
     }
 
     private func remoteTerminalSlot(
@@ -1039,10 +1138,32 @@ struct MainWindow: View {
             $0.identity == identity && $0.worktreePath == worktreePath
         }
         for key in keys {
+            openingRemoteTerminals[key] = nil
             if let terminalID = remoteTerminalSlots.removeValue(forKey: key) {
                 terminalManager.destroySurface(terminalID: terminalID)
             }
         }
+    }
+
+    private func destroyRemoteSurfaces(identity: RemoteMacIdentity) {
+        let worktreePaths = Set(remoteTerminalSlots.keys.compactMap {
+            $0.identity == identity ? $0.worktreePath : nil
+        })
+        for worktreePath in worktreePaths {
+            destroyRemoteSurfaces(
+                identity: identity,
+                worktreePath: worktreePath
+            )
+        }
+    }
+
+    private func destroyAllRemoteSurfaces() {
+        for terminalID in remoteTerminalSlots.values {
+            terminalManager.destroySurface(terminalID: terminalID)
+        }
+        remoteTerminalSlots.removeAll()
+        openingRemoteTerminals.removeAll()
+        remoteTerminalSplitTree = SplitTree(root: nil)
     }
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {
@@ -1053,6 +1174,10 @@ struct MainWindow: View {
     }
 
     private func applyAppVisibility(isVisible: Bool) {
+        if selectedRemoteWorktreePath != nil {
+            setRemoteSurfacesVisible(isVisible)
+            return
+        }
         guard let action = AppVisibilitySurfacePolicy.action(
             selectedWorktreePath: appState.selectedWorktreePath,
             appIsVisible: isVisible

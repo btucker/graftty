@@ -475,10 +475,10 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
         onClosed: @escaping @Sendable (String) async -> Void
     ) async throws -> any PanesStateChannelDriver {
-        try await connection.makePanesStateClient(
+        NegotiatingPanesStateDriver(
+            connection: connection,
             onSnapshot: onSnapshot,
-            onClosed: onClosed,
-            originAware: true
+            onClosed: onClosed
         )
     }
 
@@ -497,5 +497,186 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
 
     func close() async {
         await connection.close()
+    }
+}
+
+/// Prefers the origin-aware V2 snapshot channel, but explicitly negotiates it
+/// so a Mac running an older Graftty can reject the subsystem and continue on
+/// the V1 channel. V1 rows are treated as direct rows by the relay layer.
+private final class NegotiatingPanesStateDriver:
+    PanesStateChannelDriver,
+    PanesStateCallbacksConfigurable,
+    @unchecked Sendable
+{
+    private let connection: RemoteHostConnection
+    private let lock = NSLock()
+    private var onSnapshot: PanesStateChannelClient.OnSnapshot
+    private var onClosed: PanesStateChannelClient.OnClosed
+    private var activeClient: PanesStateChannelClient?
+    private var openingClient: PanesStateChannelClient?
+    private var openingToken: UUID?
+    private var activeToken: UUID?
+    private var closeDuringOpen: [UUID: String] = [:]
+    private var closed = false
+
+    init(
+        connection: RemoteHostConnection,
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed: @escaping PanesStateChannelClient.OnClosed
+    ) {
+        self.connection = connection
+        self.onSnapshot = onSnapshot
+        self.onClosed = onClosed
+    }
+
+    func setCallbacks(
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed: @escaping PanesStateChannelClient.OnClosed
+    ) {
+        lock.withLock {
+            self.onSnapshot = onSnapshot
+            self.onClosed = onClosed
+        }
+    }
+
+    func open() async throws {
+        guard lock.withLock({ !closed }) else {
+            throw CancellationError()
+        }
+        do {
+            let token = UUID()
+            lock.withLock { openingToken = token }
+            let v2 = try await makeClient(
+                originAware: true,
+                token: token
+            )
+            guard prepareToOpen(v2, token: token) else {
+                v2.close()
+                throw CancellationError()
+            }
+            try await v2.open()
+            await activate(v2, token: token)
+        } catch {
+            let shouldStop = lock.withLock {
+                openingClient = nil
+                if let openingToken {
+                    closeDuringOpen[openingToken] = nil
+                }
+                openingToken = nil
+                return closed
+            }
+            guard !shouldStop else { throw CancellationError() }
+            guard Self.isSubsystemRejection(error) else { throw error }
+
+            let token = UUID()
+            lock.withLock { openingToken = token }
+            do {
+                let legacy = try await makeClient(
+                    originAware: false,
+                    token: token
+                )
+                guard prepareToOpen(legacy, token: token) else {
+                    legacy.close()
+                    throw CancellationError()
+                }
+                try await legacy.open()
+                await activate(legacy, token: token)
+            } catch {
+                lock.withLock {
+                    openingClient = nil
+                    openingToken = nil
+                    closeDuringOpen[token] = nil
+                }
+                throw error
+            }
+        }
+    }
+
+    func close() {
+        let clients = lock.withLock {
+            closed = true
+            return [openingClient, activeClient].compactMap { $0 }
+        }
+        clients.forEach { $0.close() }
+    }
+
+    private func makeClient(
+        originAware: Bool,
+        token: UUID
+    ) async throws -> PanesStateChannelClient {
+        try await connection.makePanesStateClient(
+            onSnapshot: { [weak self] snapshot in
+                guard let self else { return }
+                let callback: PanesStateChannelClient.OnSnapshot? =
+                    self.lock.withLock {
+                    guard self.openingToken == token
+                        || self.activeToken == token else {
+                        return nil
+                    }
+                    return self.onSnapshot
+                }
+                guard let callback else { return }
+                await callback(snapshot)
+            },
+            onClosed: { [weak self] reason in
+                guard let self else { return }
+                let callback: PanesStateChannelClient.OnClosed? =
+                    self.lock.withLock {
+                        if self.activeToken == token {
+                            return self.onClosed
+                        }
+                        if self.openingToken == token {
+                            self.closeDuringOpen[token] = reason
+                        }
+                        return nil
+                    }
+                guard let callback else { return }
+                await callback(reason)
+            },
+            originAware: originAware,
+            requestReply: true
+        )
+    }
+
+    private func activate(
+        _ client: PanesStateChannelClient,
+        token: UUID
+    ) async {
+        let activation = lock.withLock {
+            openingClient = nil
+            openingToken = nil
+            activeToken = token
+            activeClient = client
+            return (closeDuringOpen.removeValue(forKey: token), onClosed)
+        }
+        if let reason = activation.0 {
+            await activation.1(reason)
+        }
+    }
+
+    private func prepareToOpen(
+        _ client: PanesStateChannelClient,
+        token: UUID
+    ) -> Bool {
+        lock.withLock {
+            guard !closed, openingToken == token else { return false }
+            openingClient = client
+            return true
+        }
+    }
+
+    private static func isSubsystemRejection(_ error: any Error) -> Bool {
+        guard let clientError =
+            error as? PanesStateChannelClient.ClientError else {
+            return false
+        }
+        switch clientError {
+        case .subsystemRejected:
+            return true
+        case .openFailed(let underlying):
+            return isSubsystemRejection(underlying)
+        case .channelClosed:
+            return false
+        }
     }
 }

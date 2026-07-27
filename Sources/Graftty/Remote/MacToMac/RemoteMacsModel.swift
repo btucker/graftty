@@ -29,7 +29,12 @@ final class RemoteMacsModel: ObservableObject {
     let relayRouter: RemoteWorktreeRelayRouter
     var onRemoteNotification: ((RemoteNotificationEvent) -> Void)?
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
+    private struct ConnectAttempt {
+        let id: UUID
+        let task: Task<RemoteMacConnectionRegistry.Entry, Error>
+    }
     private var connectAttemptIDs: [RemoteMacIdentity: UUID] = [:]
+    private var connectAttempts: [RemoteMacIdentity: ConnectAttempt] = [:]
     private var candidatesByIdentity: [RemoteMacIdentity: GrafttyBonjourCandidate] = [:]
     private var discoveryBrowser: RemoteMacDiscoveryBrowsing?
     private var discoveryLeaseCount = 0
@@ -70,7 +75,6 @@ final class RemoteMacsModel: ObservableObject {
                 self.refreshRelayRoutes()
                 return
             }
-            self.connectAttemptIDs[identity] = nil
             switch state {
             case .failed:
                 self.connectionStates[identity] = .failed
@@ -119,9 +123,29 @@ final class RemoteMacsModel: ObservableObject {
     @discardableResult
     func connect(to remoteMac: RemoteMac) async throws -> RemoteMacConnectionRegistry.Entry {
         let identity = RemoteMacIdentity(remoteMac)
+        if let pending = connectAttempts[identity] {
+            return try await pending.task.value
+        }
         let attemptID = UUID()
         connectAttemptIDs[identity] = attemptID
         connectionStates[identity] = .connecting
+        let task = Task { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+            return try await self.performConnect(
+                to: remoteMac,
+                identity: identity,
+                attemptID: attemptID
+            )
+        }
+        connectAttempts[identity] = ConnectAttempt(id: attemptID, task: task)
+        return try await task.value
+    }
+
+    private func performConnect(
+        to remoteMac: RemoteMac,
+        identity: RemoteMacIdentity,
+        attemptID: UUID
+    ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
             let entry = try await connectionRegistry.connect(to: remoteMac)
             let paneSnapshot: [WorktreePanes]?
@@ -134,6 +158,9 @@ final class RemoteMacsModel: ObservableObject {
                 throw CancellationError()
             }
             connectAttemptIDs[identity] = nil
+            if connectAttempts[identity]?.id == attemptID {
+                connectAttempts[identity] = nil
+            }
             connectionStates[identity] = .connected
             if let paneSnapshot {
                 applyPaneSnapshot(paneSnapshot, from: identity)
@@ -149,12 +176,16 @@ final class RemoteMacsModel: ObservableObject {
                 connectAttemptIDs[identity] = nil
                 connectionStates[identity] = requiresPairing ? .needsPairing : .failed
             }
+            if connectAttempts[identity]?.id == attemptID {
+                connectAttempts[identity] = nil
+            }
             throw error
         }
     }
 
     func disconnect(identity: RemoteMacIdentity) {
         connectAttemptIDs[identity] = nil
+        connectAttempts.removeValue(forKey: identity)?.task.cancel()
         connectionRegistry.disconnect(identity: identity)
         connectionStates[identity] = .offline
         worktreePanesByRemote[identity] = nil
@@ -198,7 +229,8 @@ final class RemoteMacsModel: ObservableObject {
         case let .swap(source, target):
             guard let sourceRoute = relayRouter.resolvePane(source),
                   let targetRoute = relayRouter.resolvePane(target),
-                  sourceRoute.identity == targetRoute.identity else {
+                  sourceRoute.identity == targetRoute.identity,
+                  sourceRoute.worktreePath == targetRoute.worktreePath else {
                 return nil
             }
             identity = sourceRoute.identity
@@ -404,7 +436,8 @@ final class RemoteMacsModel: ObservableObject {
             let downstreamPaneID: String?
             if let paneID {
                 guard let paneRoute = relayRouter.resolvePane(paneID),
-                      paneRoute.identity == worktreeRoute.identity else {
+                      paneRoute.identity == worktreeRoute.identity,
+                      paneRoute.worktreePath == worktreeRoute.path else {
                     return nil
                 }
                 downstreamPaneID = paneRoute.sessionName

@@ -41,6 +41,8 @@ public struct WorktreeListContent: View {
     /// When set, the matching pane row uses the brightest focused
     /// bucket via `theme.paneTitle(isFocusedPane: true, …)`.
     public let focusedPaneId: String?
+    public let includeRemoteWorktrees: Bool
+    public let remoteConnectionProvider: RemoteConnectionProvider?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
@@ -51,6 +53,8 @@ public struct WorktreeListContent: View {
         theme: GhosttyThemeColors? = nil,
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
+        includeRemoteWorktrees: Bool = false,
+        remoteConnectionProvider: RemoteConnectionProvider? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
@@ -60,6 +64,8 @@ public struct WorktreeListContent: View {
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.remoteConnectionProvider = remoteConnectionProvider
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
@@ -189,7 +195,11 @@ public struct WorktreeListContent: View {
             }
         }
         .sheet(isPresented: $isAddSheetPresented) {
-            AddWorktreeSheetView(host: host) { response in
+            AddWorktreeSheetView(
+                host: host,
+                includeRemoteWorktrees: includeRemoteWorktrees,
+                remoteConnectionProvider: remoteConnectionProvider
+            ) { response in
                 Task { await handleCreated(response) }
             }
         }
@@ -201,6 +211,29 @@ public struct WorktreeListContent: View {
             guard externalRefreshToken != 0 else { return }
             await refresh()
         }
+        .task(id: RemotePollingKey(
+            hostID: host.id,
+            enabled: includeRemoteWorktrees
+        )) {
+            guard includeRemoteWorktrees else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                    let list = try await WorktreePanesFetcher.fetch(
+                        baseURL: host.baseURL,
+                        includeRemoteWorktrees: true
+                    )
+                    guard !Task.isCancelled else { return }
+                    state = .loaded(list)
+                    onListChanged(list)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Keep the last usable list. The primary load/refresh
+                    // paths still surface transport errors to the user.
+                }
+            }
+        }
         .onDisappear { errorToastTask?.cancel() }
     }
 
@@ -211,7 +244,10 @@ public struct WorktreeListContent: View {
 
     private func refresh() async {
         do {
-            let list = try await WorktreePanesFetcher.fetch(baseURL: host.baseURL)
+            let list = try await WorktreePanesFetcher.fetch(
+                baseURL: host.baseURL,
+                includeRemoteWorktrees: includeRemoteWorktrees
+            )
             state = .loaded(list)
             onListChanged(list)
         } catch WorktreePanesFetcher.FetchError.forbidden {
@@ -228,10 +264,17 @@ public struct WorktreeListContent: View {
     /// Re-fetch without blanking the existing list so the user isn't
     /// shown a spinner over a list they just saw populated.
     private func handleCreated(_ response: CreateWorktreeClient.Response) async {
-        await refresh()
-        guard case .loaded(let list) = state else { return }
-        if let match = list.first(where: { $0.path == response.worktreePath }) {
-            onSelect(match)
+        for attempt in 0..<5 {
+            await refresh()
+            guard case .loaded(let list) = state else { return }
+            if let match = list.first(where: {
+                $0.path == response.worktreePath
+            }) {
+                onSelect(match)
+                return
+            }
+            guard attempt < 4 else { return }
+            try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
@@ -240,10 +283,27 @@ public struct WorktreeListContent: View {
     /// any other failure surface a transient error toast.
     private func performDelete(worktree: WorktreePanes, force: Bool) async {
         do {
-            _ = try await DeleteWorktreeClient.delete(
-                baseURL: host.baseURL,
-                body: DeleteWorktreeClient.Request(worktreePath: worktree.path, force: force)
-            )
+            if worktree.path.hasPrefix("relay-worktree-") {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .delete(worktreeID: worktree.path, force: force),
+                    using: remoteConnectionProvider
+                )
+                guard case .deleted = response else {
+                    handleRemoteDeleteResponse(
+                        response,
+                        worktreePath: worktree.path
+                    )
+                    return
+                }
+            } else {
+                _ = try await DeleteWorktreeClient.delete(
+                    baseURL: host.baseURL,
+                    body: DeleteWorktreeClient.Request(
+                        worktreePath: worktree.path,
+                        force: force
+                    )
+                )
+            }
             await refresh()
         } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
             pendingForceDelete = PendingForceDelete(
@@ -262,10 +322,27 @@ public struct WorktreeListContent: View {
     /// re-issue with `force: true`.
     private func performForceDelete(worktreePath: String) async {
         do {
-            _ = try await DeleteWorktreeClient.delete(
-                baseURL: host.baseURL,
-                body: DeleteWorktreeClient.Request(worktreePath: worktreePath, force: true)
-            )
+            if worktreePath.hasPrefix("relay-worktree-") {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .delete(worktreeID: worktreePath, force: true),
+                    using: remoteConnectionProvider
+                )
+                guard case .deleted = response else {
+                    handleRemoteDeleteResponse(
+                        response,
+                        worktreePath: worktreePath
+                    )
+                    return
+                }
+            } else {
+                _ = try await DeleteWorktreeClient.delete(
+                    baseURL: host.baseURL,
+                    body: DeleteWorktreeClient.Request(
+                        worktreePath: worktreePath,
+                        force: true
+                    )
+                )
+            }
             await refresh()
         } catch let error as DeleteWorktreeClient.DeleteError {
             surfaceDeleteError(error)
@@ -287,6 +364,25 @@ public struct WorktreeListContent: View {
         }
     }
 
+    private func handleRemoteDeleteResponse(
+        _ response: WorktreeManagementResponse,
+        worktreePath: String
+    ) {
+        if case let .error(_, message, forceAllowed, shortStatus) = response {
+            if forceAllowed {
+                pendingForceDelete = PendingForceDelete(
+                    worktreePath: worktreePath,
+                    stderr: message,
+                    shortStatus: shortStatus ?? ""
+                )
+            } else {
+                showErrorToast(message)
+            }
+        } else {
+            showErrorToast("The remote Mac returned an unexpected response.")
+        }
+    }
+
     private func showErrorToast(_ message: String) {
         errorToastTask?.cancel()
         withAnimation { errorToast = message }
@@ -300,6 +396,11 @@ public struct WorktreeListContent: View {
         }
     }
 
+}
+
+private struct RemotePollingKey: Hashable {
+    let hostID: UUID
+    let enabled: Bool
 }
 
 private struct WorktreeBlock: View {

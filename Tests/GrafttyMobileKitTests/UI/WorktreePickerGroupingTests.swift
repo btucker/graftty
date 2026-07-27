@@ -91,8 +91,8 @@ struct WorktreePickerGroupingTests {
         #expect(groups.count == 2)
         #expect(groups[0].id != groups[1].id)
         #expect(groups.map(\.title) == [
-            "Studio Mac · graftty",
-            "Studio Mac · graftty",
+            "Studio Mac (one) · graftty",
+            "Studio Mac (two) · graftty",
         ])
     }
 }
