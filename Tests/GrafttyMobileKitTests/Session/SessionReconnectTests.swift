@@ -225,7 +225,8 @@ struct SessionReconnectTests {
         client.start()
         await waitUntil {
             provider.invocationCount == 1 &&
-                client.connectionState == .reconnecting(attempt: 1)
+                client.connectionState == .reconnecting(attempt: 1) &&
+                clock.hasPendingSleep(for: 1.0)
         }
         // First dial: the provider hands back a dead connection whose
         // `openTerminalSession` throws immediately, feeding the same
@@ -236,7 +237,8 @@ struct SessionReconnectTests {
         clock.advance(by: 1.0)
         await waitUntil {
             provider.invocationCount == 2 &&
-                client.connectionState == .reconnecting(attempt: 2)
+                client.connectionState == .reconnecting(attempt: 2) &&
+                clock.hasPendingSleep(for: 2.0)
         }
         // Second dial. Before this fix, the connection resolved for the
         // FIRST dial was captured by value in the factory closure and
@@ -249,7 +251,8 @@ struct SessionReconnectTests {
         clock.advance(by: 2.0)
         await waitUntil {
             provider.invocationCount == 3 &&
-                client.connectionState == .reconnecting(attempt: 3)
+                client.connectionState == .reconnecting(attempt: 3) &&
+                clock.hasPendingSleep(for: 4.0)
         }
         #expect(provider.invocationCount == 3, "and again on the third dial")
         #expect(client.connectionState == .reconnecting(attempt: 3))

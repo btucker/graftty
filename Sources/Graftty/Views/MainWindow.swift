@@ -804,7 +804,8 @@ struct MainWindow: View {
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
                 terminalManager: terminalManager,
-                teamEventDispatcher: dispatcher
+                teamEventDispatcher: dispatcher,
+                terminalStartTiming: .afterViewLayout
             )
             switch result {
             case .failure(let err):
