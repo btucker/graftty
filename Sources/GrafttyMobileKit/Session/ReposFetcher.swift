@@ -7,15 +7,18 @@ public enum ReposFetcher {
     public struct RepoInfo: Codable, Sendable, Equatable {
         public let path: String
         public let displayName: String
+        public let branches: [RemoteRepositoryInfo.Branch]?
         public let origin: WorktreeOrigin?
 
         public init(
             path: String,
             displayName: String,
+            branches: [RemoteRepositoryInfo.Branch]? = nil,
             origin: WorktreeOrigin? = nil
         ) {
             self.path = path
             self.displayName = displayName
+            self.branches = branches
             self.origin = origin
         }
     }

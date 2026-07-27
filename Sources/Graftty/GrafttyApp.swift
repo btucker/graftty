@@ -1750,6 +1750,7 @@ struct GrafttyApp: App {
                                 behindCount: $0.behindCount
                             )
                         },
+                        branches: repository.branches,
                         origin: repository.origin
                     )
                 }
@@ -2083,11 +2084,33 @@ struct GrafttyApp: App {
                 ):
                     let branch: BranchSelection
                     if let existingSource {
+                        let resolvedSource:
+                            BranchSelection.ExistingSource?
+                        switch existingSource {
+                        case .local:
+                            resolvedSource = .local
+                        case .remoteOnly:
+                            resolvedSource = .remoteOnly
+                        case .automatic:
+                            resolvedSource = try? await
+                                GitExistingBranchSource.resolve(
+                                    repoPath: repositoryID,
+                                    branchName: branchName
+                                )
+                        }
+                        guard let resolvedSource else {
+                            return .error(
+                                code: "branch-not-found",
+                                message:
+                                    "No local or origin branch named "
+                                    + branchName + " exists.",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        }
                         branch = .useExisting(
                             name: branchName,
-                            source: existingSource == .local
-                                ? .local
-                                : .remoteOnly
+                            source: resolvedSource
                         )
                     } else {
                         branch = .createNew(name: branchName)

@@ -1,4 +1,6 @@
 #if canImport(UIKit)
+import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyMobileKit
 
@@ -38,6 +40,49 @@ struct AddWorktreeSheetViewTests {
                 targetIDs: ["local", "remote"]
             ) == "remote"
         )
+    }
+
+    @Test("Relayed existing branches preserve their advertised source")
+    func relayedExistingBranchPreservesSource() {
+        let branches = [
+            RemoteRepositoryInfo.Branch(
+                name: "local-feature",
+                source: .local,
+                lastCommitDate: Date(timeIntervalSince1970: 1),
+                mountedWorktreeID: nil,
+                pullRequest: nil
+            ),
+            RemoteRepositoryInfo.Branch(
+                name: "remote-feature",
+                source: .remoteOnly,
+                lastCommitDate: Date(timeIntervalSince1970: 2),
+                mountedWorktreeID: nil,
+                pullRequest: nil
+            ),
+        ]
+        let repositories = [
+            ReposFetcher.RepoInfo(
+                path: "relay-repository-token",
+                displayName: "app",
+                branches: branches
+            ),
+        ]
+
+        #expect(AddWorktreeSheetView.existingBranchSource(
+            repositoryID: "relay-repository-token",
+            branchName: "remote-feature",
+            repositories: repositories
+        ) == .remoteOnly)
+        #expect(AddWorktreeSheetView.existingBranchSource(
+            repositoryID: "relay-repository-token",
+            branchName: "local-feature",
+            repositories: repositories
+        ) == .local)
+        #expect(AddWorktreeSheetView.existingBranchSource(
+            repositoryID: "relay-repository-token",
+            branchName: "not-yet-refreshed",
+            repositories: repositories
+        ) == .automatic)
     }
 }
 #endif

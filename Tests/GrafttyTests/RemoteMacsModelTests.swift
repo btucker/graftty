@@ -430,6 +430,50 @@ struct RemoteMacsModelTests {
         #expect(model.promotedWorktreesForRelay().isEmpty)
     }
 
+    @Test("failed setup removes snapshots received during the connection attempt")
+    func failedSetupRemovesEarlySnapshot() async throws {
+        struct SetupFailure: Error {}
+
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let identity = RemoteMacIdentity(remote)
+        let registry = RemoteMacConnectionRegistry(factory: { _, _ in
+            throw SetupFailure()
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+
+        registry.onPaneSnapshot(identity, [
+            WorktreePanes(
+                path: "/repos/app",
+                displayName: "app",
+                repoDisplayName: "app",
+                repositoryID: "/repos/app",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            ),
+        ])
+        #expect(model.worktreePanesByRemote[identity]?.count == 1)
+
+        await #expect(throws: SetupFailure.self) {
+            _ = try await model.connect(to: remote)
+        }
+
+        #expect(model.connectionState(for: identity) == .failed)
+        #expect(model.worktreePanesByRemote[identity] == nil)
+        #expect(model.repositoriesByRemote[identity] == nil)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
     @Test("""
     @spec REMOTE-13.5: While a Remote Mac is connected, when a remote \
     worktree receives a new user-notify or agent-stop attention transition, \

@@ -9,6 +9,7 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case openFailed(any Error)
         case channelClosed
+        case subsystemRejected
         case busy
         case timedOut
     }
@@ -17,6 +18,7 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
     private let parentHandler: NIOSSHHandler
     private let lock = NIOLock()
     private var childChannel: Channel?
+    private var subsystemReply: CheckedContinuation<Void, Error>?
     private var pending: CheckedContinuation<WorktreeManagementResponse, Error>?
     private var deadline: Scheduled<Void>?
 
@@ -45,6 +47,9 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
                     try child.pipeline.syncOperations.addHandler(
                         WorktreeManagementResponseRelay(owner: self)
                     )
+                    try child.pipeline.syncOperations.addHandler(
+                        WorktreeManagementSubsystemReplyRelay(owner: self)
+                    )
                     return child.eventLoop.makeSucceededVoidFuture()
                 } catch {
                     return child.eventLoop.makeFailedFuture(error)
@@ -52,14 +57,30 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
             }
             lock.withLock { childChannel = child }
             child.closeFuture.whenComplete { [weak self] _ in
+                self?.finishSubsystemReply(
+                    .failure(ClientError.channelClosed)
+                )
                 self?.failPending(ClientError.channelClosed)
             }
-            try await child.triggerUserOutboundEvent(
-                SSHChannelRequestEvent.SubsystemRequest(
-                    subsystem: SSHChannelTypeNames.worktreeManagement,
-                    wantReply: true
-                )
-            ).get()
+            let request = SSHChannelRequestEvent.SubsystemRequest(
+                subsystem: SSHChannelTypeNames.worktreeManagement,
+                wantReply: true
+            )
+            try await withCheckedThrowingContinuation { continuation in
+                let alreadyPending = lock.withLock {
+                    guard subsystemReply == nil else { return true }
+                    subsystemReply = continuation
+                    return false
+                }
+                guard !alreadyPending else {
+                    continuation.resume(throwing: ClientError.channelClosed)
+                    return
+                }
+                child.triggerUserOutboundEvent(request).whenFailure {
+                    [weak self] error in
+                    self?.finishSubsystemReply(.failure(error))
+                }
+            }
         } catch {
             lock.withLock { childChannel }?.close(promise: nil)
             throw ClientError.openFailed(error)
@@ -97,7 +118,16 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
 
     public func close() {
         lock.withLock { childChannel }?.close(promise: nil)
+        finishSubsystemReply(.failure(ClientError.channelClosed))
         failPending(ClientError.channelClosed)
+    }
+
+    fileprivate func deliverSubsystemReply(accepted: Bool) {
+        finishSubsystemReply(
+            accepted
+                ? .success(())
+                : .failure(ClientError.subsystemRejected)
+        )
     }
 
     fileprivate func deliver(_ bytes: Data) {
@@ -124,6 +154,15 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
         }
         continuation?.resume(throwing: error)
     }
+
+    private func finishSubsystemReply(_ result: Result<Void, Error>) {
+        let continuation = lock.withLock {
+            let continuation = subsystemReply
+            subsystemReply = nil
+            return continuation
+        }
+        continuation?.resume(with: result)
+    }
 }
 
 private final class WorktreeManagementResponseRelay: ChannelInboundHandler, @unchecked Sendable {
@@ -136,6 +175,31 @@ private final class WorktreeManagementResponseRelay: ChannelInboundHandler, @unc
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         owner.deliver(Data(unwrapInboundIn(data).readableBytesView))
+    }
+}
+
+private final class WorktreeManagementSubsystemReplyRelay:
+    ChannelInboundHandler,
+    @unchecked Sendable
+{
+    typealias InboundIn = ByteBuffer
+    let owner: WorktreeManagementChannelClient
+
+    init(owner: WorktreeManagementChannelClient) {
+        self.owner = owner
+    }
+
+    func userInboundEventTriggered(
+        context: ChannelHandlerContext,
+        event: Any
+    ) {
+        if event is ChannelSuccessEvent {
+            owner.deliverSubsystemReply(accepted: true)
+        } else if event is ChannelFailureEvent {
+            owner.deliverSubsystemReply(accepted: false)
+        } else {
+            context.fireUserInboundEventTriggered(event)
+        }
     }
 }
 

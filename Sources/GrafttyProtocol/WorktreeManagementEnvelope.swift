@@ -20,6 +20,9 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
         public enum Source: String, Codable, Sendable, Hashable {
             case local
             case remoteOnly = "remote_only"
+            /// Resolve the exact local or origin-tracking ref on the owning
+            /// Mac. Used when a free-form client has no fresh branch snapshot.
+            case automatic
         }
 
         public struct PullRequest: Codable, Sendable, Hashable {

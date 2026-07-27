@@ -75,5 +75,30 @@ struct ReposFetcherTests {
         #expect(result.first?.origin?.deviceLabel == "Studio Mac")
         #expect(result.first?.origin?.relayDepth == 1)
     }
+
+    @Test
+    func decodesRelayedBranchSource() throws {
+        let raw = #"""
+        [
+          {
+            "path":"relay-repository-token",
+            "displayName":"graftty",
+            "branches":[
+              {
+                "name":"remote-feature",
+                "source":"remote_only",
+                "lastCommitDate":0,
+                "pullRequest":null
+              }
+            ]
+          }
+        ]
+        """#
+
+        let result = try ReposFetcher.decode(Data(raw.utf8))
+
+        #expect(result.first?.branches?.first?.name == "remote-feature")
+        #expect(result.first?.branches?.first?.source == .remoteOnly)
+    }
 }
 #endif

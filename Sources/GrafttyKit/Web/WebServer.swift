@@ -49,6 +49,10 @@ public final class WebServer {
         public let path: String
         public let displayName: String
         public let defaultBranchStatus: DefaultBranchStatus?
+        /// Branch metadata is optional for compatibility with older clients.
+        /// Relayed Mobile creation uses the source to distinguish a local
+        /// branch from a remote-only tracking branch.
+        public let branches: [RemoteRepositoryInfo.Branch]?
         /// Identifies which Mac owns the repository. Nil preserves
         /// compatibility with older servers. Relayed repositories carry a
         /// depth-1 origin so Mobile can present an explicit target-Mac
@@ -59,11 +63,13 @@ public final class WebServer {
             path: String,
             displayName: String,
             defaultBranchStatus: DefaultBranchStatus? = nil,
+            branches: [RemoteRepositoryInfo.Branch]? = nil,
             origin: WorktreeOrigin? = nil
         ) {
             self.path = path
             self.displayName = displayName
             self.defaultBranchStatus = defaultBranchStatus
+            self.branches = branches
             self.origin = origin
         }
     }

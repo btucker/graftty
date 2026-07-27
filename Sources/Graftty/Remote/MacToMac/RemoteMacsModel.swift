@@ -148,12 +148,6 @@ final class RemoteMacsModel: ObservableObject {
     ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
             let entry = try await connectionRegistry.connect(to: remoteMac)
-            let paneSnapshot: [WorktreePanes]?
-            if let store = entry.paneEnvironment.worktreePanesStore {
-                paneSnapshot = await store.current
-            } else {
-                paneSnapshot = nil
-            }
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }
@@ -162,9 +156,11 @@ final class RemoteMacsModel: ObservableObject {
                 connectAttempts[identity] = nil
             }
             connectionStates[identity] = .connected
-            if let paneSnapshot {
-                applyPaneSnapshot(paneSnapshot, from: identity)
-            }
+            // The panes channel publishes an initial snapshot through
+            // `onPaneSnapshot`. Reading `store.current` here races that first
+            // frame: an empty default can incorrectly prime notification
+            // state, then replay durable attention when the real first frame
+            // arrives.
             return entry
         } catch {
             let requiresPairing = Self.requiresPairing(after: error)
@@ -175,6 +171,10 @@ final class RemoteMacsModel: ObservableObject {
             if attemptIsCurrent || terminalCallbackFinishedAttempt {
                 connectAttemptIDs[identity] = nil
                 connectionStates[identity] = requiresPairing ? .needsPairing : .failed
+                worktreePanesByRemote[identity] = nil
+                repositoriesByRemote[identity] = nil
+                resetNotificationSnapshot(for: identity)
+                refreshRelayRoutes()
             }
             if connectAttempts[identity]?.id == attemptID {
                 connectAttempts[identity] = nil
@@ -294,7 +294,12 @@ final class RemoteMacsModel: ObservableObject {
         case .createNew:
             existingSource = nil
         case .useExisting(_, let source):
-            existingSource = source == .local ? .local : .remoteOnly
+            switch source {
+            case .local:
+                existingSource = .local
+            case .remoteOnly:
+                existingSource = .remoteOnly
+            }
         }
         let response = await forwardManagement(
             identity: RemoteMacIdentity(remoteMac),
@@ -625,6 +630,7 @@ final class RemoteMacsModel: ObservableObject {
             id: UUID(),
             kind: kind,
             origin: origin,
+            originFingerprint: RemoteMacIdentity(remoteMac).fingerprint,
             worktreeID: worktree.path,
             paneID: paneID,
             title: title,
@@ -652,6 +658,7 @@ final class RemoteMacsModel: ObservableObject {
             id: UUID(),
             kind: .reconnectSummary,
             origin: first.origin,
+            originFingerprint: identity.fingerprint,
             worktreeID: first.worktreeID,
             paneID: first.paneID,
             title: "\(remoteMac.label) needs attention",

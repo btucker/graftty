@@ -63,6 +63,10 @@ struct MainWindow: View {
     @State private var openingRemoteTerminals:
         [RemoteTerminalKey: PaneSlotID] = [:]
     @State private var remoteTerminalSplitTree = SplitTree(root: nil)
+    @State private var appIsVisible = true
+    @State private var pendingRemoteNotificationActivation:
+        RemoteNotificationEvent?
+    @State private var pendingRemoteFocusTarget: RemoteWorktreeKey?
 
     private struct RemoteAddWorktreeRequest: Identifiable {
         let id = UUID()
@@ -166,8 +170,17 @@ struct MainWindow: View {
                                         }
                                     }
                                 }
-                                terminalManager.setFocus(terminalID)
-                                makePaneFirstResponder(terminalID)
+                                guard let worktreePath =
+                                    selectedRemoteWorktreePath else { return }
+                                focusRemotePane(
+                                    terminalID,
+                                    target: RemoteWorktreeKey(
+                                        identity: RemoteMacIdentity(
+                                            selectedRemoteMac
+                                        ),
+                                        worktreePath: worktreePath
+                                    )
+                                )
                             }
                         )
                         .padding(.leading, 6)
@@ -340,6 +353,7 @@ struct MainWindow: View {
         }
         .onChange(of: remoteMacsModel.worktreePanesByRemote) { _, snapshots in
             reconcileRemoteSelection(worktreePanesByRemote: snapshots)
+            retryPendingRemoteNotificationActivation()
         }
         .onChange(
             of: remoteMacsModel.notificationActivation,
@@ -582,6 +596,7 @@ struct MainWindow: View {
             selectedRemotePaneSessionName: selectedRemotePaneSessionName
         )
         RemoteMacSidebarSelectionReducer.selectLocalWorktree(path, state: &selection)
+        pendingRemoteFocusTarget = nil
         setRemoteSurfacesVisible(false)
         destroyAllRemoteSurfaces()
         selectedRemoteIdentity = selection.selectedRemoteIdentity
@@ -728,6 +743,7 @@ struct MainWindow: View {
         )
         let identity = RemoteMacIdentity(remoteMac)
         RemoteMacSidebarSelectionReducer.selectRemote(identity, state: &selection)
+        pendingRemoteFocusTarget = nil
         appState.selectedWorktreePath = selection.selectedWorktreePath
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
@@ -775,6 +791,10 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+        pendingRemoteFocusTarget = RemoteWorktreeKey(
+            identity: identity,
+            worktreePath: worktreePath
+        )
         if let previousIdentity,
            let previousWorktreePath,
            previousIdentity != identity
@@ -804,6 +824,29 @@ struct MainWindow: View {
     }
 
     private func deleteRemoteWorktree(
+        _ remoteMac: RemoteMac,
+        worktree: WorktreePanes
+    ) {
+        if worktree.state != .stale {
+            guard let host = NSApp.mainWindow else { return }
+            let config = SheetAlert.Configuration(
+                messageText: "Delete Worktree?",
+                informativeText:
+                    "This will delete the remote worktree but not the branch.",
+                style: .warning,
+                primaryButton: "Delete Worktree",
+                secondaryButton: "Cancel"
+            )
+            SheetAlert.present(config, on: host) { response in
+                guard response == .primary else { return }
+                performDeleteRemoteWorktree(remoteMac, worktree: worktree)
+            }
+            return
+        }
+        performDeleteRemoteWorktree(remoteMac, worktree: worktree)
+    }
+
+    private func performDeleteRemoteWorktree(
         _ remoteMac: RemoteMac,
         worktree: WorktreePanes
     ) {
@@ -871,6 +914,10 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+        pendingRemoteFocusTarget = RemoteWorktreeKey(
+            identity: identity,
+            worktreePath: worktreePath
+        )
         if let previousIdentity,
            let previousWorktreePath,
            previousIdentity != identity
@@ -898,35 +945,88 @@ struct MainWindow: View {
     private func activateRemoteNotification(_ event: RemoteNotificationEvent) {
         guard let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: {
             $0.id == event.origin.deviceID
+                && (event.originFingerprint == nil
+                    || $0.fingerprint == event.originFingerprint)
         }) else { return }
+        pendingRemoteNotificationActivation = event
         Task { @MainActor in
             do {
                 _ = try await remoteMacsModel.connect(to: remoteMac)
-                let identity = RemoteMacIdentity(remoteMac)
-                guard let worktree = remoteMacsModel
-                    .worktreePanesByRemote[identity]?
-                    .first(where: { $0.path == event.worktreeID }) else {
-                    selectRemoteMac(remoteMac)
+                switch activateRemoteNotificationIfAvailable(
+                    event,
+                    remoteMac: remoteMac
+                ) {
+                case .activated, .superseded:
                     return
-                }
-                if let paneID = event.paneID,
-                   worktree.layout?.leaves.contains(where: {
-                       $0.sessionName == paneID
-                   }) == true {
-                    selectRemotePane(
-                        remoteMac,
-                        worktreePath: event.worktreeID,
-                        sessionName: paneID
-                    )
-                } else {
-                    selectRemoteWorktree(
-                        remoteMac,
-                        worktreePath: event.worktreeID
-                    )
+                case .waitingForSnapshot, .targetMissing:
+                    selectRemoteMac(remoteMac)
                 }
             } catch {
-                selectRemoteMac(remoteMac)
+                if pendingRemoteNotificationActivation?.id == event.id {
+                    selectRemoteMac(remoteMac)
+                }
             }
+        }
+    }
+
+    private enum RemoteNotificationActivationResult: Equatable {
+        case activated
+        case waitingForSnapshot
+        case targetMissing
+        case superseded
+    }
+
+    private func activateRemoteNotificationIfAvailable(
+        _ event: RemoteNotificationEvent,
+        remoteMac: RemoteMac
+    ) -> RemoteNotificationActivationResult {
+        guard pendingRemoteNotificationActivation?.id == event.id else {
+            return .superseded
+        }
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktrees = remoteMacsModel.worktreePanesByRemote[identity]
+        else {
+            return .waitingForSnapshot
+        }
+        guard let worktree = worktrees.first(where: {
+            $0.path == event.worktreeID
+        }) else {
+            pendingRemoteNotificationActivation = nil
+            return .targetMissing
+        }
+        pendingRemoteNotificationActivation = nil
+        if let paneID = event.paneID,
+           worktree.layout?.leaves.contains(where: {
+               $0.sessionName == paneID
+           }) == true {
+            selectRemotePane(
+                remoteMac,
+                worktreePath: event.worktreeID,
+                sessionName: paneID
+            )
+        } else {
+            selectRemoteWorktree(
+                remoteMac,
+                worktreePath: event.worktreeID
+            )
+        }
+        return .activated
+    }
+
+    private func retryPendingRemoteNotificationActivation() {
+        guard let event = pendingRemoteNotificationActivation,
+              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: {
+                  $0.id == event.origin.deviceID
+                      && (event.originFingerprint == nil
+                          || $0.fingerprint == event.originFingerprint)
+              }) else {
+            return
+        }
+        if activateRemoteNotificationIfAvailable(
+            event,
+            remoteMac: remoteMac
+        ) == .targetMissing {
+            selectRemoteMac(remoteMac)
         }
     }
 
@@ -934,6 +1034,11 @@ struct MainWindow: View {
         var identity: RemoteMacIdentity
         var worktreePath: String
         var sessionName: String
+    }
+
+    private struct RemoteWorktreeKey: Hashable {
+        var identity: RemoteMacIdentity
+        var worktreePath: String
     }
 
     private func reconcileRemoteSelection(
@@ -947,6 +1052,7 @@ struct MainWindow: View {
         }
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
+        let previousPaneSessionName = selectedRemotePaneSessionName
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
             selectedRemoteIdentity: selectedRemoteIdentity,
@@ -964,6 +1070,7 @@ struct MainWindow: View {
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
 
         if selection.selectedRemoteWorktreePath == nil {
+            pendingRemoteFocusTarget = nil
             if let previousIdentity, let previousWorktreePath {
                 destroyRemoteSurfaces(
                     identity: previousIdentity,
@@ -973,10 +1080,23 @@ struct MainWindow: View {
             remoteTerminalSplitTree = SplitTree(root: nil)
         } else if let remoteMac = selectedRemoteMac,
                   let worktreePath = selection.selectedRemoteWorktreePath {
+            let shouldFocusReplacement = previousIdentity
+                == selection.selectedRemoteIdentity
+                && previousWorktreePath == worktreePath
+                && previousPaneSessionName != nil
+                && selection.selectedRemotePaneSessionName == nil
+            let target = RemoteWorktreeKey(
+                identity: RemoteMacIdentity(remoteMac),
+                worktreePath: worktreePath
+            )
+            if shouldFocusReplacement {
+                pendingRemoteFocusTarget = target
+            }
             synchronizeRemoteWorktree(
                 remoteMac: remoteMac,
                 worktreePath: worktreePath,
-                preferredSessionName: selection.selectedRemotePaneSessionName
+                preferredSessionName: selection.selectedRemotePaneSessionName,
+                focusSelection: false
             )
         }
     }
@@ -984,9 +1104,14 @@ struct MainWindow: View {
     private func synchronizeRemoteWorktree(
         remoteMac: RemoteMac,
         worktreePath: String,
-        preferredSessionName: String? = nil
+        preferredSessionName: String? = nil,
+        focusSelection: Bool = true
     ) {
         let identity = RemoteMacIdentity(remoteMac)
+        let focusTarget = RemoteWorktreeKey(
+            identity: identity,
+            worktreePath: worktreePath
+        )
         guard let worktree = remoteMacsModel.worktreePanesByRemote[identity]?
             .first(where: {
                 $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
@@ -1062,11 +1187,17 @@ struct MainWindow: View {
                     )
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
-                    terminalManager.setVisible(isSelected, for: terminalID)
+                    terminalManager.setVisible(
+                        isSelected && appIsVisible,
+                        for: terminalID
+                    )
+                    let shouldFocus = focusSelection
+                        || pendingRemoteFocusTarget == focusTarget
                     if isSelected
+                        && appIsVisible
+                        && shouldFocus
                         && selectedRemotePaneSessionName == leaf.sessionName {
-                        terminalManager.setFocus(terminalID)
-                        makePaneFirstResponder(terminalID)
+                        focusRemotePane(terminalID, target: focusTarget)
                     }
                 } catch {
                     NSLog(
@@ -1078,11 +1209,17 @@ struct MainWindow: View {
                 }
             }
         }
-        setRemoteSurfacesVisible(true)
-        if let focusedRemoteTerminalID,
+        setRemoteSurfacesVisible(appIsVisible)
+        let shouldFocus = focusSelection
+            || pendingRemoteFocusTarget == focusTarget
+        if appIsVisible,
+           shouldFocus,
+           let focusedRemoteTerminalID,
            terminalManager.view(for: focusedRemoteTerminalID) != nil {
-            terminalManager.setFocus(focusedRemoteTerminalID)
-            makePaneFirstResponder(focusedRemoteTerminalID)
+            focusRemotePane(
+                focusedRemoteTerminalID,
+                target: focusTarget
+            )
         }
     }
 
@@ -1174,8 +1311,18 @@ struct MainWindow: View {
     }
 
     private func applyAppVisibility(isVisible: Bool) {
+        appIsVisible = isVisible
         if selectedRemoteWorktreePath != nil {
             setRemoteSurfacesVisible(isVisible)
+            if isVisible,
+               let remoteMac = selectedRemoteMac,
+               let worktreePath = selectedRemoteWorktreePath {
+                synchronizeRemoteWorktree(
+                    remoteMac: remoteMac,
+                    worktreePath: worktreePath,
+                    focusSelection: false
+                )
+            }
             return
         }
         guard let action = AppVisibilitySurfacePolicy.action(
@@ -1193,13 +1340,43 @@ struct MainWindow: View {
     /// because the view may have just been created by `createSurfaces` and
     /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
     /// `makeFirstResponder` a view that isn't in a window.
-    private func makePaneFirstResponder(_ terminalID: PaneSlotID) {
+    private func makePaneFirstResponder(
+        _ terminalID: PaneSlotID,
+        when shouldFocus: (() -> Bool)? = nil,
+        onFocused: (() -> Void)? = nil
+    ) {
         let tm = terminalManager
         DispatchQueue.main.async {
-            guard let view = tm.view(for: terminalID),
+            guard !NSApp.isHidden,
+                  shouldFocus?() ?? true,
+                  let view = tm.view(for: terminalID),
                   let window = view.window else { return }
             tm.setVisible(true, for: terminalID)
-            window.makeFirstResponder(view)
+            guard window.makeFirstResponder(view) else { return }
+            onFocused?()
+        }
+    }
+
+    private func focusRemotePane(
+        _ terminalID: PaneSlotID,
+        target: RemoteWorktreeKey
+    ) {
+        guard selectedRemoteIdentity == target.identity,
+              selectedRemoteWorktreePath == target.worktreePath,
+              focusedRemoteTerminalID == terminalID else { return }
+        terminalManager.setFocus(terminalID)
+        makePaneFirstResponder(
+            terminalID,
+            when: {
+                selectedRemoteIdentity == target.identity
+                    && selectedRemoteWorktreePath == target.worktreePath
+                    && focusedRemoteTerminalID == terminalID
+            }
+        ) {
+            guard selectedRemoteIdentity == target.identity,
+                  selectedRemoteWorktreePath == target.worktreePath,
+                  pendingRemoteFocusTarget == target else { return }
+            pendingRemoteFocusTarget = nil
         }
     }
 

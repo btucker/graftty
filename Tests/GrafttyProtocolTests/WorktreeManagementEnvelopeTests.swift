@@ -19,6 +19,12 @@ struct WorktreeManagementEnvelopeTests {
                 branchName: "feature/login",
                 existingSource: .remoteOnly
             ),
+            .create(
+                repositoryID: "repo-token",
+                worktreeName: "fresh-snapshot-gap",
+                branchName: "feature/remote",
+                existingSource: .automatic
+            ),
             .pullDefaultBranch(repositoryID: "repo-token"),
             .delete(worktreeID: "worktree-token", force: true),
             .acknowledge(

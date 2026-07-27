@@ -15,6 +15,10 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
     public let id: UUID
     public let kind: Kind
     public let origin: WorktreeOrigin
+    /// Fingerprint of the directly connected Mac that emitted the event.
+    /// Device IDs are user-controlled labels and are not unique across
+    /// rotated/re-paired identities, so activation must use both values.
+    public let originFingerprint: RemoteIdentityFingerprint?
     public let worktreeID: String
     public let paneID: String?
     public let title: String
@@ -25,6 +29,7 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
         id: UUID,
         kind: Kind,
         origin: WorktreeOrigin,
+        originFingerprint: RemoteIdentityFingerprint? = nil,
         worktreeID: String,
         paneID: String?,
         title: String,
@@ -34,6 +39,7 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
         self.id = id
         self.kind = kind
         self.origin = origin
+        self.originFingerprint = originFingerprint
         self.worktreeID = worktreeID
         self.paneID = paneID
         self.title = title

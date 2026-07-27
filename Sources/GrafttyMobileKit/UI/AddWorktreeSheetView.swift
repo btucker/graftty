@@ -60,6 +60,17 @@ public struct AddWorktreeSheetView: View {
         return targetIDs.count == 1 ? targetIDs[0] : nil
     }
 
+    static func existingBranchSource(
+        repositoryID: String,
+        branchName: String,
+        repositories: [ReposFetcher.RepoInfo]
+    ) -> RemoteRepositoryInfo.Branch.Source {
+        repositories.first(where: { $0.path == repositoryID })?
+            .branches?
+            .first(where: { $0.name == branchName })?
+            .source ?? .automatic
+    }
+
     private enum ReposState {
         case loading
         case loaded([ReposFetcher.RepoInfo])
@@ -303,7 +314,12 @@ public struct AddWorktreeSheetView: View {
                         repositoryID: body.repoPath,
                         worktreeName: body.worktreeName,
                         branchName: body.branchName,
-                        existingSource: body.existing ? .local : nil
+                        existingSource: body.existing
+                            ? existingBranchSource(
+                                repositoryID: body.repoPath,
+                                branchName: body.branchName
+                            )
+                            : nil
                     ),
                     using: remoteConnectionProvider
                 )
@@ -333,6 +349,22 @@ public struct AddWorktreeSheetView: View {
         } catch {
             errorMessage = CreateWorktreeClient.CreateError.transport.userMessage
         }
+    }
+
+    private func existingBranchSource(
+        repositoryID: String,
+        branchName: String
+    ) -> RemoteRepositoryInfo.Branch.Source {
+        guard case .loaded(let repositories) = reposState else {
+            return .automatic
+        }
+        // Known branches use their advertised source. A missing or stale
+        // snapshot asks the owning Mac to resolve exact refs.
+        return Self.existingBranchSource(
+            repositoryID: repositoryID,
+            branchName: branchName,
+            repositories: repositories
+        )
     }
 }
 #endif
