@@ -1768,6 +1768,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
 
+**TEAM-11.2** When a Claude asyncRewake inbox watcher reaches its 24-hour timeout without a message, the CLI shall exit cleanly without writing a timeout diagnostic to the hook's stderr pipe.
+
+**TEAM-11.3** If a Claude asyncRewake inbox watcher resolves after the hook's stderr reader has closed, the CLI shall discard the output failure rather than terminate from SIGPIPE or an NSFileHandle exception.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
