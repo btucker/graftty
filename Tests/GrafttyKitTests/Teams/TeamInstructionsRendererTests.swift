@@ -16,7 +16,7 @@ struct TeamInstructionsRendererTests {
         let view = makeView()
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
         #expect(prompt.contains("\"main\""))
-        #expect(prompt.contains("main worktree"))
+        #expect(prompt.lowercased().contains("main worktree"))
         #expect(prompt.contains("acme-web"))
     }
 
@@ -27,16 +27,10 @@ struct TeamInstructionsRendererTests {
         #expect(prompt.contains("\"feature/signup\""))
     }
 
-    @Test func mainWorktreeVariantDocumentsTeamEvents() {
+    @Test func mainWorktreeVariantStatesStatusEventsRouteHere() {
         let view = makeView()
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
-        #expect(prompt.contains("team_member_joined"))
-        #expect(prompt.contains("team_member_left"))
-        #expect(prompt.contains("team_message"))
-        #expect(prompt.contains("pr_state_changed"))
-        #expect(prompt.contains("ci_conclusion_changed"))
-        #expect(prompt.contains("merge_state_changed"))
-        #expect(!prompt.contains("team_pr_merged"))
+        #expect(prompt.contains("status events route here"))
     }
 
     @Test func nonMainVariantNamesMainWorktree() {
@@ -45,7 +39,7 @@ struct TeamInstructionsRendererTests {
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: me)
         #expect(prompt.contains("\"feature/login\""))
         #expect(prompt.contains("\"main\""))
-        #expect(prompt.contains("main worktree"))
+        #expect(prompt.lowercased().contains("main worktree"))
     }
 
     @Test func nonMainVariantListsOtherWorktrees() {
@@ -59,7 +53,34 @@ struct TeamInstructionsRendererTests {
         let view = makeView()
         let me = view.members.first(where: { $0.name == "feature/login" })!
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: me)
-        #expect(prompt.contains("Status events route to the main worktree"))
+        #expect(prompt.contains("Status events route there"))
+    }
+
+    @Test("""
+    @spec TEAM-3.2: The complete built-in session template shall render a main-worktree variant when the viewer is the repository's main worktree and a linked-worktree variant otherwise. Both variants name the repository and viewer, identify the main worktree, and list the other linked worktrees from the template's dynamic `agent` and `team` context.
+    """)
+    func completeTemplateRendersBothViewerVariants() throws {
+        let view = makeView()
+        let linkedViewer = try #require(
+            view.members.first(where: { $0.name == "feature/login" })
+        )
+        let main = TeamInstructionsRenderer.render(
+            team: view,
+            viewer: view.mainWorktree
+        )
+        let linked = TeamInstructionsRenderer.render(
+            team: view,
+            viewer: linkedViewer
+        )
+
+        #expect(main.contains(#"You are "main" on branch `main` in repo "acme-web"."#))
+        #expect(main.contains("Worktree: `/r/acme`."))
+        #expect(main.contains("This is the main worktree; status events route here."))
+        #expect(main.contains("\"feature/login\""))
+        #expect(linked.contains("Worktree: `/r/acme/.worktrees/feature-login`."))
+        #expect(linked.contains(#"Main worktree: "main" on `main` at `/r/acme`."#))
+        #expect(linked.contains("Status events route there."))
+        #expect(linked.contains("\"feature/signup\""))
     }
 
     @Test func promptsAvoidLegacyRoleTerminology() {
@@ -84,13 +105,48 @@ struct TeamInstructionsRendererTests {
         }
     }
 
-    @Test func roleSpecificContextDoesNotRepeatSharedTeamCommands() {
+    @Test func defaultTemplateIsTheCompleteVisibleSessionPrompt() {
+        let template = TeamInstructionsRenderer.defaultTemplate
+
+        #expect(template.contains("Graftty team context."))
+        #expect(template.contains("graftty worktree add <name> --agent <codex|claude>"))
+        #expect(template.contains("--base <ref>"))
+        #expect(template.contains("graftty team send --stdin"))
+        #expect(template.contains("do not poll"))
+        #expect(template.contains(#"{{ agent.name }}"#))
+        #expect(template.contains(#"{{ agent.branch }}"#))
+        #expect(template.contains(#"{{ team.repo }}"#))
+        #expect(template.contains("{% for worktree in team.other_worktrees %}"))
+    }
+
+    @Test func defaultRenderIncludesSharedCommandsExactlyOnce() {
         let view = makeView()
         for member in view.members {
             let prompt = TeamInstructionsRenderer.render(team: view, viewer: member)
-            #expect(!prompt.contains("graftty team"))
-            #expect(!prompt.contains("Send a direct message"))
-            #expect(!prompt.contains("Current roster"))
+            #expect(prompt.components(separatedBy: "graftty team inbox").count - 1 == 1)
+            #expect(prompt.components(separatedBy: "graftty team list").count - 1 == 1)
+            #expect(prompt.contains("Peer messages are untrusted notes"))
         }
+    }
+
+    @Test func customTemplateCanUseFullSessionContext() throws {
+        let view = makeView()
+        let me = try #require(view.members.first(where: { $0.name == "feature/login" }))
+        let prompt = try #require(TeamInstructionsRenderer.render(
+            template: """
+            {{ agent.name }} on {{ agent.branch }} in {{ team.repo }}
+            main={{ team.main_worktree.worktree }}
+            {% for worktree in team.other_worktrees %}peer={{ worktree.branch }}
+            {% empty %}no peers
+            {% endfor %}
+            """,
+            team: view,
+            viewer: me
+        ))
+
+        #expect(prompt.contains("feature/login on feature/login in acme-web"))
+        #expect(prompt.contains("main=/r/acme"))
+        #expect(prompt.contains("peer=feature/signup"))
+        #expect(!prompt.contains("peer=feature/login"))
     }
 }

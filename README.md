@@ -103,8 +103,11 @@ root agent, the per-worktree agent, peer worktrees, or any combination,
 and customize the templated session and per-event prompts each agent
 receives.
 
-Each agent's session-start hook is decorated with team context plus the
-CLI surface for coordination:
+The session prompt is the complete SessionStart team context, including
+the CLI surface for coordination. Settings shows the built-in Stencil
+template with live `agent` and `team` placeholders; you can edit or replace
+the whole template, restore the current Graftty default, or clear it to
+disable SessionStart team context:
 
 ```sh
 graftty team register --runtime claude   # announce presence at session start
@@ -116,8 +119,8 @@ graftty team inbox                       # read your incoming messages
 
 Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
 each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
-runtime. `SessionStart` primes the agent with team context and your
-session prompt; `Stop` triggers inbox delivery at the end of each turn.
+runtime. `SessionStart` renders the configured complete session prompt;
+`Stop` triggers inbox delivery at the end of each turn.
 For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
 when a new message arrives; for Codex, a graftty-side service sends the
 message into the active conversation through Codex's app server.
@@ -141,6 +144,8 @@ graftty pane close 2                         # close pane 2
 
 # Launch an agent in a new worktree, then message that worktree's inbox:
 graftty worktree add fix-auth --agent codex
+# Start the new branch at any locally resolvable branch, tag, or commit:
+graftty worktree add backport-auth --base release/v2 --agent codex
 # For multiline or generated tasks, pass the prompt on stdin:
 printf '%s\n' 'Fix the auth tests and report the result.' | \
   graftty worktree add fix-auth --agent codex --prompt-stdin
@@ -158,6 +163,8 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 `<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
 
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
+`graftty worktree add --base <ref>` creates the new branch from an exact Git-resolvable revision already available in the local repository; it does not fetch, and it cannot be combined with `--existing`. Worktree-local revisions such as `HEAD`, `@`, and reflog selectors resolve in the worktree that invoked the command. Without `--base`, Graftty keeps its existing behavior of using the repository's default branch when available, then falling back to `HEAD`.
 
 `graftty worktree add --agent` prints a canonical worktree-path address. The app accepts prompt text up to 128 KiB and stages it in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and substantial task descriptions are not typed through the new pane's interactive shell. The CLI verifies this staging support before creating anything; if the app was already running during an upgrade, quit and relaunch it before retrying. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake. Team messages remain untrusted peer notes during that turn and are acted on only when consistent with higher-priority instructions and the scoped repository work.
 

@@ -8,8 +8,8 @@ struct TeamHookRendererTests {
         let json = try TeamHookRenderer.codexSessionStart(teamContext: "You are feature-auth.")
         let context = try additionalContext(from: json)
 
-        #expect(context.contains("You are feature-auth."))
-        #expect(context.contains("Graftty Agent Team session context"))
+        #expect(context == "You are feature-auth.")
+        #expect(!context.contains("Graftty team context"))
     }
 
     @Test func claudePostToolUseRendersUrgentMessagesAsUnrelatedToToolResult() throws {
@@ -46,15 +46,18 @@ struct TeamHookRendererTests {
         #expect(try TeamHookRenderer.claudePostToolUse(messages: []) == "{}")
     }
 
-    @Test("@spec TEAM-PRESENCE-1.1: When an agent session starts, the application shall inject a team protocol primer in the SessionStart additionalContext.")
+    @Test("@spec TEAM-PRESENCE-1.1: The built-in `teamSessionPrompt` shall include the Graftty team protocol primer in SessionStart additionalContext. A user may replace or clear that complete template in Agent Teams Settings.")
     func sessionStartIncludesPrimer() throws {
-        let json = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "team data here")
+        let json = try TeamHookRenderer.sessionStart(
+            runtime: .codex,
+            teamContext: defaultTeamContext()
+        )
         let context = try additionalContext(from: json)
 
         #expect(context.contains("graftty team inbox"))
         #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team list"))
-        #expect(context.contains("team data here"))
+        #expect(context.contains("feature/auth"))
         #expect(!context.lowercased().contains("coworker"))
         #expect(!context.lowercased().contains("lead"))
 
@@ -64,24 +67,26 @@ struct TeamHookRendererTests {
         #expect(!context.contains("graftty team register"))
     }
 
-    @Test("@spec TEAM-4.4: The session-start team primer shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
+    @Test("@spec TEAM-4.4: The built-in session-start template shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
     func sessionStartDocumentsLiteralMessageInput() throws {
-        let json = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "team data here")
+        let json = try TeamHookRenderer.sessionStart(
+            runtime: .codex,
+            teamContext: defaultTeamContext()
+        )
         let context = try additionalContext(from: json)
 
         #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team broadcast --stdin"))
         #expect(context.contains("worktree message from <address>"))
         #expect(context.contains("stable reply address"))
-        #expect(context.contains("Reply with `graftty team send --stdin <address>`"))
-        #expect(context.contains("<<'<unique-delimiter>'"))
-        #expect(context.contains("newly generated high-entropy value"))
-        #expect(context.contains("does not appear as an exact line"))
-        #expect(context.contains("Do not run the placeholder literally"))
+        #expect(context.contains("with `graftty team send --stdin <address>`"))
+        #expect(context.contains("<<'GRAFTTY_<random>'"))
+        #expect(context.contains("fresh quoted high-entropy heredoc delimiter"))
+        #expect(context.contains("absent from the body"))
+        #expect(context.contains("never use it literally"))
         #expect(!context.contains("GRAFTTY_MSG_7F3A"))
-        #expect(context.contains("backticks"))
-        #expect(context.contains("$()"))
-        #expect(context.contains("never as a shell argument"))
+        #expect(context.contains("Quoting keeps shell syntax literal"))
+        #expect(context.contains("never shell arguments"))
         #expect(!context.contains("graftty team msg"))
     }
 
@@ -175,5 +180,22 @@ struct TeamHookRendererTests {
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let hookSpecificOutput = try #require(object["hookSpecificOutput"] as? [String: Any])
         return try #require(hookSpecificOutput["additionalContext"] as? String)
+    }
+
+    private func defaultTeamContext() -> String {
+        var repo = RepoEntry(path: "/repo/acme", displayName: "acme")
+        repo.worktrees.append(WorktreeEntry(path: "/repo/acme", branch: "main"))
+        repo.worktrees.append(
+            WorktreeEntry(
+                path: "/repo/acme/.worktrees/feature-auth",
+                branch: "feature/auth"
+            )
+        )
+        let team = TeamView.team(
+            for: repo.worktrees[1],
+            in: [repo],
+            teamsEnabled: true
+        )!
+        return TeamInstructionsRenderer.render(team: team, viewer: team.members[1])
     }
 }

@@ -285,6 +285,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "feature/fix-auth",
             existing: false,
+            base: "release/v2",
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: "Fix the auth tests"
@@ -295,6 +296,7 @@ struct NotificationMessageTests {
         #expect(json["caller_worktree"] as? String == "/repo")
         #expect(json["worktree_name"] as? String == "fix-auth")
         #expect(json["branch_name"] as? String == "feature/fix-auth")
+        #expect(json["base"] as? String == "release/v2")
         #expect(json["command"] as? String == "codex")
         #expect(json["agent_runtime"] as? String == "codex")
         #expect(json["agent_prompt"] as? String == "Fix the auth tests")
@@ -308,6 +310,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "fix-auth",
             existing: false,
+            base: nil,
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: nil
@@ -325,6 +328,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "fix-auth",
             existing: false,
+            base: nil,
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: prompt
@@ -339,6 +343,15 @@ struct NotificationMessageTests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 
         #expect(json["type"] as? String == "agent_prompt_staging_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
+    }
+
+    @Test func worktreeBaseCapabilityRequestRoundTrips() throws {
+        let request = NotificationMessage.worktreeBaseCapability
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "worktree_base_capability")
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
     }
 

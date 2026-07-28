@@ -49,11 +49,9 @@ public enum EventBodyRenderer {
         return bodyReferencePattern.firstMatch(in: template, range: range) != nil
     }
 
-    /// Builds the `[String: Any]` agent dict consumed by every Stencil render
-    /// in `Graftty`. Centralizes the four key strings so the wire shape can't
-    /// drift between call sites (`split(...)`, team-instructions composition,
-    /// tests). Event-scoped flags default to `false` for the session-start path
-    /// where no event exists yet.
+    /// Builds the event-delivery `agent` dictionary. The full session-start
+    /// context is a superset built by `TeamInstructionsRenderer`; it preserves
+    /// these four shared keys while adding session identity and team data.
     public static func makeAgentContext(
         branch: String,
         isMainWorktree: Bool,
@@ -143,19 +141,19 @@ public enum EventBodyRenderer {
 
 extension EventBodyRenderer {
     /// Renders a Stencil template against an agent-context dict, with
-    /// optional top-level `body` and `event` variables carrying the
-    /// original event content and event metadata respectively. Returns
-    /// the trimmed rendered string, or nil on render failure / empty
-    /// result. `body` and `event` default to nil for the session-start
-    /// path where no event is in flight.
+    /// optional top-level `body`, `event`, and caller-provided context.
+    /// Returns the trimmed rendered string, or nil on render failure / empty
+    /// result. `body` and `event` default to nil for the session-start path.
     public static func renderAgentTemplate(
         _ template: String,
         agent: [String: Any],
         body: String? = nil,
-        event: [String: Any]? = nil
+        event: [String: Any]? = nil,
+        additionalContext: [String: Any] = [:]
     ) -> String? {
         guard !template.isEmpty else { return nil }
-        var context: [String: Any] = ["agent": agent]
+        var context = additionalContext
+        context["agent"] = agent
         if let body { context["body"] = body }
         if let event { context["event"] = event }
         let rendered: String
@@ -167,20 +165,6 @@ extension EventBodyRenderer {
         }
         let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    /// Convenience: renders the user's `teamSessionPrompt` against a session-
-    /// start agent context (only `branch` and `main_worktree` are meaningful
-    /// before any event has fired).
-    public static func renderSessionPrompt(
-        template: String,
-        branch: String,
-        isMainWorktree: Bool
-    ) -> String? {
-        renderAgentTemplate(
-            template,
-            agent: makeAgentContext(branch: branch, isMainWorktree: isMainWorktree)
-        )
     }
 
 }

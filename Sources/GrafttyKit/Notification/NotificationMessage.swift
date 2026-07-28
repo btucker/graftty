@@ -45,11 +45,13 @@ public enum NotificationMessage: Sendable, Equatable {
         worktreeName: String,
         branchName: String,
         existing: Bool,
+        base: String?,
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?
     )
     case agentPromptStagingCapability
+    case worktreeBaseCapability
     case worktreeCreateStatus(operationID: String)
 }
 
@@ -60,6 +62,7 @@ extension NotificationMessage: Codable {
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
         case worktreeName = "worktree_name"
         case branchName = "branch_name"
+        case base
         case operationID = "operation_id"
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
@@ -149,6 +152,7 @@ extension NotificationMessage: Codable {
             let worktreeName,
             let branchName,
             let existing,
+            let base,
             let command,
             let agentRuntime,
             let agentPrompt
@@ -158,11 +162,14 @@ extension NotificationMessage: Codable {
             try container.encode(worktreeName, forKey: .worktreeName)
             try container.encode(branchName, forKey: .branchName)
             try container.encode(existing, forKey: .existing)
+            try container.encodeIfPresent(base, forKey: .base)
             try container.encodeIfPresent(command, forKey: .command)
             try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
             try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
         case .agentPromptStagingCapability:
             try container.encode("agent_prompt_staging_capability", forKey: .type)
+        case .worktreeBaseCapability:
+            try container.encode("worktree_base_capability", forKey: .type)
         case .worktreeCreateStatus(let operationID):
             try container.encode("worktree_create_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
@@ -252,12 +259,15 @@ extension NotificationMessage: Codable {
                 worktreeName: try container.decode(String.self, forKey: .worktreeName),
                 branchName: try container.decode(String.self, forKey: .branchName),
                 existing: try container.decode(Bool.self, forKey: .existing),
+                base: try container.decodeIfPresent(String.self, forKey: .base),
                 command: try container.decodeIfPresent(String.self, forKey: .command),
                 agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
                 agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt)
             )
         case "agent_prompt_staging_capability":
             self = .agentPromptStagingCapability
+        case "worktree_base_capability":
+            self = .worktreeBaseCapability
         case "worktree_create_status":
             self = .worktreeCreateStatus(
                 operationID: try container.decode(String.self, forKey: .operationID)

@@ -84,6 +84,7 @@ enum AddWorktreeFlow {
         repoPath: String,
         worktreeName: String,
         branch: BranchSelection,
+        base: String? = nil,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
         let usesExistingBranch: Bool
@@ -95,7 +96,8 @@ enum AddWorktreeFlow {
         if let message = WorktreeCreationInput.validationError(
             worktreeName: worktreeName,
             branchName: branch.branchName,
-            existing: usesExistingBranch
+            existing: usesExistingBranch,
+            base: base
         ) {
             return .failure(.invalidInput(message))
         }
@@ -135,6 +137,8 @@ enum AddWorktreeFlow {
         repoPath: String,
         worktreePath: String,
         branch: BranchSelection,
+        base: String? = nil,
+        baseResolutionPath: String? = nil,
         appState: Binding<AppState>,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
@@ -144,11 +148,21 @@ enum AddWorktreeFlow {
         terminalStartTiming: TerminalStartTiming
     ) async -> Swift.Result<Result, FlowError> {
         // For .useExisting, the start point is the existing branch itself;
-        // git takes it from argv. For .createNew, default to origin's main.
+        // git takes it from argv. For .createNew, an explicit CLI base wins;
+        // otherwise default to origin's main.
         let startPoint: String?
-        if case .createNew = branch {
-            startPoint = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
-        } else {
+        switch branch {
+        case .createNew:
+            if let base {
+                startPoint = base
+            } else {
+                startPoint = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+            }
+        case .useExisting:
+            precondition(
+                base == nil,
+                "AddWorktreeFlow: base must be nil when reusing an existing branch"
+            )
             startPoint = nil
         }
 
@@ -157,7 +171,11 @@ enum AddWorktreeFlow {
                 repoPath: repoPath,
                 worktreePath: worktreePath,
                 branch: branch,
-                startPoint: startPoint
+                startPoint: startPoint,
+                // Explicit pseudo-refs such as HEAD and @ are worktree-local.
+                // Resolve them to an immutable commit in the CLI caller's
+                // worktree before running the mutation from the repo root.
+                startPointResolutionPath: base == nil ? nil : baseResolutionPath
             )
         } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {
             removePlaceholder(at: worktreePath, appState: appState)

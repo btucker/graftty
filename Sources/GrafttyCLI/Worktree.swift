@@ -22,6 +22,7 @@ struct WorktreeAdd: ParsableCommand {
           graftty worktree add fix-auth --agent codex --prompt-stdin <<'GRAFTTY_PROMPT'
           Review the failing tests without expanding $(shell syntax).
           GRAFTTY_PROMPT
+          graftty worktree add review-pr --base origin/main --agent codex
           graftty worktree add review-pr --branch existing-branch --existing --agent codex
 
         On success, the command prints the worktree's stable message address.
@@ -36,6 +37,9 @@ struct WorktreeAdd: ParsableCommand {
 
     @Option(name: .long, help: "Branch name (default: normalized worktree name)")
     var branch: String?
+
+    @Option(name: .long, help: "Git revision from which to create the new branch (default: repository default branch or HEAD)")
+    var base: String?
 
     @Flag(name: .long, help: "Check out an existing local branch instead of creating a new branch")
     var existing: Bool = false
@@ -65,6 +69,9 @@ struct WorktreeAdd: ParsableCommand {
         if (prompt != nil || promptStdin) && agent == nil {
             throw ValidationError("--prompt and --prompt-stdin require --agent")
         }
+        if base != nil && existing {
+            throw ValidationError("--base cannot be used with --existing")
+        }
         if let agent, TeamHookRuntime(rawValue: agent) == nil {
             throw ValidationError("--agent must be one of: codex, claude")
         }
@@ -81,7 +88,8 @@ struct WorktreeAdd: ParsableCommand {
         if let error = WorktreeCreationInput.validationError(
             worktreeName: names.worktree,
             branchName: names.branch,
-            existing: existing
+            existing: existing,
+            base: base
         ) {
             throw ValidationError(error)
         }
@@ -92,19 +100,25 @@ struct WorktreeAdd: ParsableCommand {
         }
         let agentRuntime = agent.flatMap { TeamHookRuntime(rawValue: $0) }
         if agentRuntime != nil {
-            try Self.requireAgentPromptStagingCapability()
+            try Self.requireCapability(
+                .agentPromptStagingCapability,
+                unsupportedMessage: "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry",
+                verificationMessage: "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
+            )
+        }
+        if base != nil {
+            try Self.requireCapability(
+                .worktreeBaseCapability,
+                unsupportedMessage: "the running Graftty app does not support worktree --base; quit and relaunch the updated app, then retry",
+                verificationMessage: "could not verify worktree --base support; quit and relaunch Graftty, then retry"
+            )
         }
         let callerWorktree = try CLIEnv.resolveWorktree()
-        var response = try CLIEnv.sendRequest(.createWorktree(
+        var response = try CLIEnv.sendRequest(creationRequest(
             callerWorktree: callerWorktree,
-            worktreeName: names.worktree,
-            branchName: names.branch,
-            existing: existing,
-            // The capability check above guarantees the app will replace this
-            // bare fallback with its staged loader before starting Git.
-            command: command ?? agentRuntime?.rawValue,
+            names: names,
             agentRuntime: agentRuntime,
-            agentPrompt: resolvedPrompt
+            resolvedPrompt: resolvedPrompt
         ))
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
 
@@ -165,27 +179,47 @@ struct WorktreeAdd: ParsableCommand {
         return prompt
     }
 
-    private static func requireAgentPromptStagingCapability() throws {
+    func creationRequest(
+        callerWorktree: String,
+        names: (worktree: String, branch: String),
+        agentRuntime: TeamHookRuntime?,
+        resolvedPrompt: String?
+    ) -> NotificationMessage {
+        .createWorktree(
+            callerWorktree: callerWorktree,
+            worktreeName: names.worktree,
+            branchName: names.branch,
+            existing: existing,
+            base: base,
+            // The capability check in `run()` guarantees the app will replace
+            // this bare fallback with its staged loader before starting Git.
+            command: command ?? agentRuntime?.rawValue,
+            agentRuntime: agentRuntime,
+            agentPrompt: resolvedPrompt
+        )
+    }
+
+    private static func requireCapability(
+        _ request: NotificationMessage,
+        unsupportedMessage: String,
+        verificationMessage: String
+    ) throws {
         do {
             guard case .ok = try SocketClient.sendExpectingResponse(
-                .agentPromptStagingCapability
+                request
             ) else {
                 throw CLIError.socketError("unexpected capability response")
             }
         } catch let error as CLIError {
             switch error {
             case .socketTimeout, .socketError:
-                CLIEnv.printError(
-                    "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry"
-                )
+                CLIEnv.printError(unsupportedMessage)
             case .notInsideWorktree, .appNotRunning, .staleControlSocket, .socketPathTooLong:
                 CLIEnv.printError(error.description)
             }
             throw ExitCode(1)
         } catch {
-            CLIEnv.printError(
-                "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
-            )
+            CLIEnv.printError(verificationMessage)
             throw ExitCode(1)
         }
     }

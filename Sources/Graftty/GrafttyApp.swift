@@ -3243,7 +3243,8 @@ struct GrafttyApp: App {
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
-             .createWorktree, .agentPromptStagingCapability, .worktreeCreateStatus:
+             .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
+             .worktreeCreateStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3362,11 +3363,14 @@ struct GrafttyApp: App {
             )
         case .agentPromptStagingCapability:
             return .ok
+        case .worktreeBaseCapability:
+            return .ok
         case .createWorktree(
             let callerPath,
             let worktreeName,
             let branchName,
             let existing,
+            let base,
             let command,
             let agentRuntime,
             let agentPrompt
@@ -3376,6 +3380,7 @@ struct GrafttyApp: App {
                 worktreeName: worktreeName,
                 branchName: branchName,
                 existing: existing,
+                base: base,
                 command: command,
                 agentRuntime: agentRuntime,
                 agentPrompt: agentPrompt,
@@ -3403,6 +3408,7 @@ struct GrafttyApp: App {
         worktreeName: String,
         branchName: String,
         existing: Bool,
+        base: String?,
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
@@ -3463,6 +3469,7 @@ struct GrafttyApp: App {
             repoPath: repo.path,
             worktreeName: worktreeName,
             branch: branch,
+            base: base,
             appState: appState
         ) {
         case .success(let path):
@@ -3485,6 +3492,8 @@ struct GrafttyApp: App {
                 repoPath: repo.path,
                 worktreePath: worktreePath,
                 branch: branch,
+                base: base,
+                baseResolutionPath: callerPath,
                 appState: appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -3783,10 +3792,10 @@ struct GrafttyApp: App {
 
     private static func renderTeamSessionPrompt(team: TeamView, viewer: TeamMember) -> String? {
         let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
-        return EventBodyRenderer.renderSessionPrompt(
+        return TeamInstructionsRenderer.render(
             template: template,
-            branch: viewer.branch,
-            isMainWorktree: viewer.isMainWorktree
+            team: team,
+            viewer: viewer
         )
     }
 
