@@ -5,8 +5,8 @@ import GrafttyProtocol
 
 struct Worktree: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Create worktrees and optionally launch agents in them",
-        subcommands: [WorktreeAdd.self]
+        abstract: "Create and remove worktrees",
+        subcommands: [WorktreeAdd.self, WorktreeRemove.self]
     )
 }
 
@@ -100,14 +100,14 @@ struct WorktreeAdd: ParsableCommand {
         }
         let agentRuntime = agent.flatMap { TeamHookRuntime(rawValue: $0) }
         if agentRuntime != nil {
-            try Self.requireCapability(
+            try WorktreeCapability.require(
                 .agentPromptStagingCapability,
                 unsupportedMessage: "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry",
                 verificationMessage: "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
             )
         }
         if base != nil {
-            try Self.requireCapability(
+            try WorktreeCapability.require(
                 .worktreeBaseCapability,
                 unsupportedMessage: "the running Graftty app does not support worktree --base; quit and relaunch the updated app, then retry",
                 verificationMessage: "could not verify worktree --base support; quit and relaunch Graftty, then retry"
@@ -152,7 +152,8 @@ struct WorktreeAdd: ParsableCommand {
             case .error(let message):
                 CLIEnv.printError(message)
                 throw ExitCode(1)
-            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput, .teamInbox:
+            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+                 .teamInbox, .worktreeRemove:
                 CLIEnv.printError("Unexpected response for worktree add")
                 throw ExitCode(1)
             }
@@ -199,7 +200,161 @@ struct WorktreeAdd: ParsableCommand {
         )
     }
 
-    private static func requireCapability(
+}
+
+struct WorktreeRemove: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "remove",
+        abstract: "Remove a linked worktree while preserving its branch",
+        discussion: """
+        The target may be an absolute worktree path, "." for the current
+        worktree, or a worktree name printed by `graftty team list`.
+        If that name exists in more than one repository, use an absolute path.
+
+        Removal fails when Git finds modified, staged, or untracked files.
+        Pass --force to mirror Graftty's “Force Delete” action.
+
+        Examples:
+          graftty worktree remove feature-auth
+          graftty worktree remove /repo/.worktrees/feature-auth
+          graftty worktree remove feature-auth --force
+        """
+    )
+
+    @Argument(help: "Worktree name, absolute path, or . for the current worktree")
+    var target: String
+
+    @Flag(name: .long, help: "Remove even when the worktree contains uncommitted or untracked files")
+    var force: Bool = false
+
+    @Option(name: .long, help: "Maximum seconds to wait for worktree removal")
+    var timeout: Int = 300
+
+    func validate() throws {
+        guard timeout > 0 else {
+            throw ValidationError("--timeout must be greater than 0")
+        }
+    }
+
+    func run() throws {
+        let worktreePath: String
+        if target == "." {
+            worktreePath = try CLIEnv.resolveWorktree()
+        } else {
+            switch Self.resolveTarget(target) {
+            case .resolved(let path):
+                worktreePath = path
+            case .unknown:
+                throw ValidationError(
+                    "unknown worktree '\(target)'; use an absolute tracked path or a name from `graftty team list`"
+                )
+            case .ambiguous(let paths):
+                let candidates = paths.map { "  \($0)" }.joined(separator: "\n")
+                throw ValidationError(
+                    "worktree name '\(target)' is ambiguous; use an absolute path:\n\(candidates)"
+                )
+            }
+        }
+
+        try WorktreeCapability.require(
+            .worktreeRemoveCapability,
+            unsupportedMessage: "the running Graftty app does not support worktree remove; quit and relaunch the updated app, then retry",
+            verificationMessage: "could not verify worktree remove support; quit and relaunch Graftty, then retry"
+        )
+
+        var response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+
+        while true {
+            switch response {
+            case .worktreeRemove(let operation):
+                switch operation.state {
+                case .pending:
+                    guard Date() < deadline else {
+                        CLIEnv.printError(
+                            "timed out waiting for worktree removal; operation \(operation.operationID) may still finish"
+                        )
+                        throw ExitCode(1)
+                    }
+                    Thread.sleep(forTimeInterval: 0.1)
+                    response = try CLIEnv.sendRequest(
+                        .worktreeRemoveStatus(operationID: operation.operationID)
+                    )
+                case .removed:
+                    let path = WorktreeAgentLaunchCommand.shellLiteral(
+                        operation.worktreePath
+                    )
+                    print("removed worktree=\(path)  branch-preserved=true")
+                    return
+                case .failed:
+                    CLIEnv.printError(Self.failureMessage(operation))
+                    throw ExitCode(1)
+                }
+            case .error(let message):
+                CLIEnv.printError(message)
+                throw ExitCode(1)
+            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+                 .teamInbox, .worktreeCreate:
+                CLIEnv.printError("Unexpected response for worktree remove")
+                throw ExitCode(1)
+            }
+        }
+    }
+
+    func removalRequest(worktreePath: String) -> NotificationMessage {
+        .removeWorktree(worktreePath: worktreePath, force: force)
+    }
+
+    static func resolveTarget(
+        _ target: String,
+        stateDirectory: URL = AppState.defaultDirectory
+    ) -> WorktreeRemoveTargetResolution {
+        guard let state = try? AppState.load(from: stateDirectory) else {
+            return .unknown
+        }
+        if NSString(string: target).isAbsolutePath {
+            let standardized = URL(fileURLWithPath: target)
+                .standardizedFileURL.path
+            return state.worktree(forPath: standardized) == nil
+                ? .unknown
+                : .resolved(standardized)
+        }
+        let matches = state.repos
+            .flatMap(\.worktrees)
+            .filter {
+                WorktreeNameSanitizer.sanitize($0.branch) == target
+            }
+            .map(\.path)
+        switch matches.count {
+        case 0:
+            return .unknown
+        case 1:
+            return .resolved(matches[0])
+        default:
+            return .ambiguous(matches)
+        }
+    }
+
+    static func failureMessage(_ operation: WorktreeRemoveStatus) -> String {
+        var sections = [operation.error ?? "worktree removal failed"]
+        if let shortStatus = operation.shortStatus, !shortStatus.isEmpty {
+            sections.append(shortStatus)
+        }
+        if operation.forceAllowed {
+            sections.append("Rerun with --force to remove it anyway.")
+        }
+        return sections.joined(separator: "\n\n")
+    }
+}
+
+enum WorktreeRemoveTargetResolution: Equatable {
+    case resolved(String)
+    case unknown
+    case ambiguous([String])
+}
+
+private enum WorktreeCapability {
+    static func require(
         _ request: NotificationMessage,
         unsupportedMessage: String,
         verificationMessage: String

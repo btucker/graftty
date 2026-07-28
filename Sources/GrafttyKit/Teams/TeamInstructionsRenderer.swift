@@ -27,6 +27,10 @@ public enum TeamInstructionsRenderer {
     - `--base` selects an exact locally resolvable start ref and cannot be combined with `--existing`.
     - Use `--prompt` for trusted literal text and `--prompt-stdin` for dynamic or untrusted text. The command returns the worktree's stable reply address; immediate messages are queued.
 
+    Remove a linked worktree while preserving its branch:
+    `graftty worktree remove <worktree> [--force]`
+    Without `--force`, modified, staged, or untracked files block removal.
+
     Coordinate:
     - `graftty team list`; `graftty team inbox` for manual inspection.
     - Reply to `worktree message from <address>:` with `graftty team send --stdin <address>`.

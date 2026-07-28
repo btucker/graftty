@@ -172,7 +172,8 @@ struct TeamHook: ParsableCommand {
                 print(output)
             case .error:
                 print("{}")
-            case .ok, .paneList, .paneShow, .teamList, .teamInbox, .worktreeCreate:
+            case .ok, .paneList, .paneShow, .teamList, .teamInbox,
+                 .worktreeCreate, .worktreeRemove:
                 print("{}")
             }
         } catch {
@@ -230,7 +231,8 @@ struct TeamInbox: ParsableCommand {
         case .error(let msg):
             CLIEnv.printError(msg)
             throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamList, .teamHookOutput, .worktreeCreate:
+        case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+             .worktreeCreate, .worktreeRemove:
             CLIEnv.printError("Unexpected response for team inbox")
             throw ExitCode(1)
         }
@@ -904,7 +906,8 @@ private enum TeamOutput {
         case .error(let msg):
             CLIEnv.printError(msg)
             throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox, .worktreeCreate:
+        case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
+             .worktreeCreate, .worktreeRemove:
             CLIEnv.printError("Unexpected response for team members")
             throw ExitCode(1)
         }

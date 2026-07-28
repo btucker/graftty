@@ -2076,6 +2076,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.6** When `graftty worktree add <name> --base <ref>` is invoked for a new branch, the application shall create that branch from the exact locally available Git-resolvable revision without fetching, reject `--base` with `--existing`, and document the option in CLI help and the built-in team session template. Before mutation, the application shall resolve the ref to an immutable commit ID in the worktree that invoked the CLI, so worktree-local revisions such as `HEAD`, `@`, `HEAD~1`, and reflog selectors do not accidentally resolve against the repository's main checkout.
 
+**AGENT-5.7** `graftty worktree remove <worktree>` shall resolve a tracked worktree name, absolute path, or `.` for the current worktree; reject ambiguous names and the repository's main checkout; and route removal through the same application flow as the native Delete Worktree action so successful removal tears down its panes, removes it from the UI and per-path stores, emits team departure state, and preserves its Git branch. A normal removal shall fail when Git reports modified, staged, or untracked files, include `git status --short` in the CLI error, and instruct the user to rerun with `--force`; `--force` shall mirror the UI's Force Delete action. The CLI shall poll an asynchronous operation status so slow removal does not exceed the control socket request timeout.
+
 ## CLI — CLI
 
 ### CLI-1.x

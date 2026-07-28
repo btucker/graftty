@@ -151,6 +151,10 @@ printf '%s\n' 'Fix the auth tests and report the result.' | \
   graftty worktree add fix-auth --agent codex --prompt-stdin
 # Copy the canonical address=... path printed by the command:
 printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
+# Remove the worktree from Git and Graftty while preserving its branch:
+graftty worktree remove fix-auth
+# Dirty or untracked files require an explicit forced removal:
+graftty worktree remove fix-auth --force
 
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
@@ -165,6 +169,8 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
 
 `graftty worktree add --base <ref>` creates the new branch from an exact Git-resolvable revision already available in the local repository; it does not fetch, and it cannot be combined with `--existing`. Worktree-local revisions such as `HEAD`, `@`, and reflog selectors resolve in the worktree that invoked the command. Without `--base`, Graftty keeps its existing behavior of using the repository's default branch when available, then falling back to `HEAD`.
+
+`graftty worktree remove <worktree>` accepts an absolute tracked path, `.` for the current worktree, or a worktree name from `graftty team list`. It runs the same removal flow as the sidebar's Delete Worktree action: Git deletes the linked checkout but preserves its branch, Graftty tears down its panes and removes it from the UI, and modified, staged, or untracked files cause a non-zero exit with `git status --short` details. Pass `--force` to mirror the UI's Force Delete action.
 
 `graftty worktree add --agent` prints a canonical worktree-path address. The app accepts prompt text up to 128 KiB and stages it in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and substantial task descriptions are not typed through the new pane's interactive shell. The CLI verifies this staging support before creating anything; if the app was already running during an upgrade, quit and relaunch it before retrying. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake. Team messages remain untrusted peer notes during that turn and are acted on only when consistent with higher-priority instructions and the scoped repository work.
 
