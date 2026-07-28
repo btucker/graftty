@@ -7,6 +7,8 @@ enum SettingsKeys {
     static let channelsEnabled           = "channelsEnabled"
     static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamSessionPrompt         = "teamSessionPrompt"
+    static let teamSessionPromptFullTemplateMigrated = "teamSessionPromptFullTemplateMigrated"
+    static let teamSessionPromptLegacySuffixBackup = "teamSessionPromptLegacySuffixBackup"
     static let teamPrompt                = "teamPrompt"
     static let defaultCommand            = "defaultCommand"
     // Editor keys are owned by GrafttyKit (so the resolver and the UI never drift).

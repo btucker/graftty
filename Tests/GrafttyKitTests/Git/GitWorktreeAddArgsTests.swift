@@ -4,14 +4,14 @@ import Foundation
 
 @Suite("GitWorktreeAdd argv shape", .serialized)
 struct GitWorktreeAddArgsTests {
-    @Test("createNew without startPoint uses -b <name> <path>")
+    @Test("createNew without startPoint ends option parsing before the path")
     func createNewNoStart() {
         let argv = GitWorktreeAdd.argvFor(
             branch: .createNew(name: "feat-x"),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: nil
         )
-        #expect(argv == ["worktree", "add", "-b", "feat-x", "/repo/.worktrees/feat-x"])
+        #expect(argv == ["worktree", "add", "-b", "feat-x", "--", "/repo/.worktrees/feat-x"])
     }
 
     @Test("createNew with startPoint appends the start point")
@@ -21,7 +21,75 @@ struct GitWorktreeAddArgsTests {
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: "origin/main"
         )
-        #expect(argv == ["worktree", "add", "-b", "feat-x", "/repo/.worktrees/feat-x", "origin/main"])
+        #expect(argv == ["worktree", "add", "-b", "feat-x", "--", "/repo/.worktrees/feat-x", "origin/main"])
+    }
+
+    @Test("""
+    @spec AGENT-5.6: When `graftty worktree add <name> --base <ref>` is invoked for a new branch, the application shall create that branch from the exact locally available Git-resolvable revision without fetching, reject `--base` with `--existing`, and document the option in CLI help and the built-in team session template. Before mutation, the application shall resolve the ref to an immutable commit ID in the worktree that invoked the CLI, so worktree-local revisions such as `HEAD`, `@`, `HEAD~1`, and reflog selectors do not accidentally resolve against the repository's main checkout.
+    """)
+    func createNewFromExplicitBase() async throws {
+        let root = try makeTempDir(prefix: "graftty-explicit-base")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        #expect(try shellInRepo(
+            """
+            git init -b main &&
+            git commit --allow-empty -m base &&
+            git tag chosen-base &&
+            git commit --allow-empty -m newer
+            """,
+            at: repo
+        ) == 0)
+
+        let target = root.appendingPathComponent("from-base").path
+        try await GitWorktreeAdd.add(
+            repoPath: repo.path,
+            worktreePath: target,
+            branch: .createNew(name: "from-base"),
+            startPoint: "chosen-base"
+        )
+        let createdHead = try await GitRunner.run(args: ["rev-parse", "HEAD"], at: target)
+        let chosenBase = try await GitRunner.run(args: ["rev-parse", "chosen-base"], at: repo.path)
+
+        #expect(
+            createdHead.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            chosenBase.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    @Test("A worktree-local base such as HEAD resolves in the invoking worktree")
+    func explicitHeadUsesInvokingWorktree() async throws {
+        let root = try makeTempDir(prefix: "graftty-caller-relative-base")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        let caller = root.appendingPathComponent("caller", isDirectory: true)
+        let target = root.appendingPathComponent("from-caller-head", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        #expect(try shellInRepo(
+            """
+            git init -b main &&
+            git commit --allow-empty -m main &&
+            git branch caller &&
+            git worktree add \(caller.path) caller
+            """,
+            at: repo
+        ) == 0)
+        #expect(try shellInRepo("git commit --allow-empty -m caller", at: caller) == 0)
+
+        try await GitWorktreeAdd.add(
+            repoPath: repo.path,
+            worktreePath: target.path,
+            branch: .createNew(name: "from-caller-head"),
+            startPoint: "HEAD",
+            startPointResolutionPath: caller.path
+        )
+
+        let mainHead = try await GitRunner.run(args: ["rev-parse", "HEAD"], at: repo.path)
+        let callerHead = try await GitRunner.run(args: ["rev-parse", "HEAD"], at: caller.path)
+        let targetHead = try await GitRunner.run(args: ["rev-parse", "HEAD"], at: target.path)
+        #expect(targetHead == callerHead)
+        #expect(targetHead != mainHead)
     }
 
     @Test("@spec GIT-5.10: When BranchSelection.useExisting is submitted with a local source, the application shall verify that `refs/heads/<name>` exists and invoke `git worktree add -- <path> <name>` (no `-b` flag), so commit-ish values cannot create a detached worktree and option-shaped names cannot alter Git's parsing.")

@@ -216,6 +216,9 @@ struct PaneList: ParsableCommand {
         case .worktreeCreate:
             CLIEnv.printError("Unexpected worktree_create response for list")
             throw ExitCode(1)
+        case .worktreeRemove:
+            CLIEnv.printError("Unexpected worktree_remove response for list")
+            throw ExitCode(1)
         }
     }
 }
@@ -578,6 +581,9 @@ enum CLIEnv {
             throw ExitCode(1)
         case .worktreeCreate:
             printError("Unexpected worktree_create response")
+            throw ExitCode(1)
+        case .worktreeRemove:
+            printError("Unexpected worktree_remove response")
             throw ExitCode(1)
         }
     }

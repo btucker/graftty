@@ -285,6 +285,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "feature/fix-auth",
             existing: false,
+            base: "release/v2",
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: "Fix the auth tests"
@@ -295,6 +296,7 @@ struct NotificationMessageTests {
         #expect(json["caller_worktree"] as? String == "/repo")
         #expect(json["worktree_name"] as? String == "fix-auth")
         #expect(json["branch_name"] as? String == "feature/fix-auth")
+        #expect(json["base"] as? String == "release/v2")
         #expect(json["command"] as? String == "codex")
         #expect(json["agent_runtime"] as? String == "codex")
         #expect(json["agent_prompt"] as? String == "Fix the auth tests")
@@ -308,6 +310,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "fix-auth",
             existing: false,
+            base: nil,
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: nil
@@ -325,6 +328,7 @@ struct NotificationMessageTests {
             worktreeName: "fix-auth",
             branchName: "fix-auth",
             existing: false,
+            base: nil,
             command: "codex",
             agentRuntime: .codex,
             agentPrompt: prompt
@@ -342,8 +346,46 @@ struct NotificationMessageTests {
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
     }
 
+    @Test func worktreeBaseCapabilityRequestRoundTrips() throws {
+        let request = NotificationMessage.worktreeBaseCapability
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "worktree_base_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
+    }
+
     @Test func worktreeCreateStatusRequestRoundTrips() throws {
         let original: NotificationMessage = .worktreeCreateStatus(operationID: "op-123")
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func removeWorktreeRequestRoundTrips() throws {
+        let original: NotificationMessage = .removeWorktree(
+            worktreePath: "/repo/.worktrees/feature",
+            force: true
+        )
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "remove_worktree")
+        #expect(json["worktree_path"] as? String == "/repo/.worktrees/feature")
+        #expect(json["force"] as? Bool == true)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeRemoveCapabilityRequestRoundTrips() throws {
+        let request = NotificationMessage.worktreeRemoveCapability
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "worktree_remove_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
+    }
+
+    @Test func worktreeRemoveStatusRequestRoundTrips() throws {
+        let original: NotificationMessage = .worktreeRemoveStatus(operationID: "op-remove")
         let data = try JSONEncoder().encode(original)
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
     }
@@ -361,6 +403,26 @@ struct NotificationMessageTests {
         #expect(json["type"] as? String == "worktree_create")
         let operation = json["operation"] as! [String: Any]
         #expect(operation["message_address"] as? String == "/repo/.worktrees/fix-auth")
+        #expect(try JSONDecoder().decode(ResponseMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeRemoveResponseRoundTripsForceableFailure() throws {
+        let status = WorktreeRemoveStatus(
+            operationID: "op-remove",
+            state: .failed,
+            worktreePath: "/repo/.worktrees/feature",
+            error: "contains modified or untracked files",
+            forceAllowed: true,
+            shortStatus: "?? scratch.txt"
+        )
+        let original: ResponseMessage = .worktreeRemove(status)
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "worktree_remove")
+        let operation = json["operation"] as! [String: Any]
+        #expect(operation["force_allowed"] as? Bool == true)
+        #expect(operation["short_status"] as? String == "?? scratch.txt")
         #expect(try JSONDecoder().decode(ResponseMessage.self, from: data) == original)
     }
 

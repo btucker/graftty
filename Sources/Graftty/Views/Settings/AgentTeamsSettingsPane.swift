@@ -5,9 +5,24 @@ import GrafttyKit
 /// matrix, and the two user-editable prompts.
 struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
-    @AppStorage("teamSessionPrompt") private var teamSessionPrompt: String = DefaultPrompts.sessionPrompt
-    @AppStorage("teamPrompt") private var teamPrompt: String = DefaultPrompts.eventPrompt
+    @AppStorage private var teamSessionPrompt: String
+    @AppStorage private var teamPrompt: String
     @AppStorage("teamEventRoutingPreferences") private var teamEventRoutingPreferences = TeamEventRoutingPreferences()
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        _teamSessionPrompt = AppStorage(
+            wrappedValue: DefaultPrompts.sessionPrompt,
+            SettingsKeys.teamSessionPrompt,
+            store: defaults
+        )
+        _teamPrompt = AppStorage(
+            wrappedValue: DefaultPrompts.eventPrompt,
+            SettingsKeys.teamPrompt,
+            store: defaults
+        )
+    }
 
     var body: some View {
         Form {
@@ -32,17 +47,19 @@ struct AgentTeamsSettingsPane: View {
 
                 Section {
                     TextEditor(text: $teamSessionPrompt)
-                        .frame(minHeight: 100)
+                        .frame(minHeight: 260)
                         .font(.system(.body, design: .monospaced))
                     AgentVariablesDocs(includesEventScope: false)
                 } header: {
                     PromptSectionHeader(title: "Session prompt") {
-                        DefaultPrompts.restoreSessionPrompt()
+                        DefaultPrompts.restoreSessionPrompt(in: defaults) {
+                            teamSessionPrompt = $0
+                        }
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Stencil template rendered once when each Codex or Claude session starts. Appended to the hook-provided team context, so it stays in the agent's context for the whole session. Useful for stable team-level coordination policy that doesn't depend on individual events.")
-                        Text("Clearing the editor disables this optional prompt. Restore Graftty Default removes your saved override so future built-in updates apply.")
+                        Text("Complete Stencil template rendered once when each Codex or Claude session starts. This is the team context delivered by the session-start hook; dynamic identity and roster values are represented by the placeholders listed below.")
+                        Text("Clearing the editor disables this session-start prompt. Restore Graftty Default immediately reloads the complete built-in template and removes your saved override so future built-in updates apply.")
                         Text("Changes apply when each agent session next starts. Live in-session refresh has been removed.")
                     }
                     .font(.caption)
@@ -56,12 +73,14 @@ struct AgentTeamsSettingsPane: View {
                     AgentVariablesDocs(includesEventScope: true)
                 } header: {
                     PromptSectionHeader(title: "Per-event prompt") {
-                        DefaultPrompts.restoreEventPrompt()
+                        DefaultPrompts.restoreEventPrompt(in: defaults) {
+                            teamPrompt = $0
+                        }
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Stencil template rendered freshly for each automated event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
-                        Text("Clearing the editor disables this prompt. Restore Graftty Default removes your saved override so future built-in updates apply.")
+                        Text("Clearing the editor disables this prompt. Restore Graftty Default immediately reloads the built-in text and removes your saved override so future built-in updates apply.")
                         Text("Changes apply to automated events written after the change. Already-written inbox events keep their existing rendered prompt.")
                     }
                     .font(.caption)
@@ -111,6 +130,18 @@ private struct AgentVariablesDocs: View {
                     Text(verbatim: "    \"\(TeamChannelEvents.WireType.mergeStateChanged)\" — branch mergeability vs. default branch changed.")
                     Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberJoined)\" — new worktree joined the team.")
                     Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberLeft)\" — worktree left the team.")
+                    Text("body (String) — original event body.")
+                    Text("event.attrs (Object) — event attribute dictionary.")
+                    Text("event.body (String) — original event body.")
+                } else {
+                    Text("agent.name (String) — stable member name.")
+                    Text("agent.worktree (String) — absolute worktree path.")
+                    Text("agent.running (Bool) — whether the worktree currently has a running pane backend.")
+                    Text("team.repo (String) — repository display name.")
+                    Text("team.repo_path (String) — main repository worktree path.")
+                    Text("team.main_worktree (Object) — main member; exposes name, branch, worktree, main_worktree, and running.")
+                    Text("team.members (Array) — all team members using that same object shape.")
+                    Text("team.other_worktrees (Array) — linked worktrees other than the current agent, using that same object shape.")
                 }
             }
             .font(.caption)

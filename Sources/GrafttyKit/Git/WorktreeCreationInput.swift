@@ -10,10 +10,22 @@ public enum WorktreeCreationInput {
     public static func validationError(
         worktreeName: String,
         branchName: String,
-        existing: Bool = false
+        existing: Bool = false,
+        base: String? = nil
     ) -> String? {
         if let error = identifierError(worktreeName, label: "worktree name", path: true) {
             return error
+        }
+        if existing, base != nil {
+            return "--base cannot be used with --existing"
+        }
+        if let base {
+            guard !base.isEmpty else {
+                return "base revision must not be empty"
+            }
+            guard !base.utf8.contains(0) else {
+                return "base revision cannot contain NUL bytes"
+            }
         }
         // Existing refs come from Git discovery and may contain characters
         // outside the deliberately narrow worktree-name alphabet. Preserve

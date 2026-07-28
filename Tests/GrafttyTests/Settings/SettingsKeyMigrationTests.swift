@@ -47,7 +47,9 @@ struct SettingsKeyMigrationTests {
 
         SettingsKeyMigration.run(in: defaults)
 
-        #expect(defaults.string(forKey: "teamSessionPrompt") == "{% if agent.main_worktree %}main{% endif %}")
+        let session = defaults.string(forKey: "teamSessionPrompt")
+        #expect(session?.hasPrefix(DefaultPrompts.sessionPrompt) == true)
+        #expect(session?.hasSuffix("{% if agent.main_worktree %}main{% endif %}") == true)
         #expect(defaults.string(forKey: "teamPrompt") == "{{ agent.main_worktree }} / {{ agent.this_worktree }}")
     }
 
@@ -58,6 +60,114 @@ struct SettingsKeyMigrationTests {
 
         SettingsKeyMigration.run(in: defaults)
 
-        #expect(defaults.string(forKey: "teamSessionPrompt") == "Follow agent.leadership guidance")
+        let migrated = defaults.string(forKey: "teamSessionPrompt")
+        #expect(migrated?.hasPrefix(DefaultPrompts.sessionPrompt) == true)
+        #expect(migrated?.hasSuffix("Follow agent.leadership guidance") == true)
+    }
+
+    @Test func migratesLegacySessionSuffixIntoTheCompleteVisibleTemplateOnce() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set(
+            "My custom coordination policy.",
+            forKey: SettingsKeys.teamSessionPrompt
+        )
+
+        SettingsKeyMigration.run(in: defaults)
+        let first = defaults.string(forKey: SettingsKeys.teamSessionPrompt)
+        SettingsKeyMigration.run(in: defaults)
+
+        #expect(first?.hasPrefix(DefaultPrompts.sessionPrompt) == true)
+        #expect(first?.hasSuffix("My custom coordination policy.") == true)
+        #expect(defaults.string(forKey: SettingsKeys.teamSessionPrompt) == first)
+    }
+
+    @Test func legacyEmptySessionSuffixRevealsTheCompleteRegisteredDefault() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set("", forKey: SettingsKeys.teamSessionPrompt)
+
+        SettingsKeyMigration.run(in: defaults)
+        defaults.register(defaults: DefaultPrompts.registrations)
+
+        #expect(
+            defaults.string(forKey: SettingsKeys.teamSessionPrompt) ==
+            DefaultPrompts.sessionPrompt
+        )
+        let persisted = defaults.persistentDomain(forName: suiteName) ?? [:]
+        #expect(persisted[SettingsKeys.teamSessionPrompt] == nil)
+    }
+
+    @Test func legacySuffixMentioningTheNewHeaderStillMigrates() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let suffix = "Do not repeat “Graftty team context.”"
+        defaults.set(suffix, forKey: SettingsKeys.teamSessionPrompt)
+
+        SettingsKeyMigration.run(in: defaults)
+
+        let migrated = defaults.string(forKey: SettingsKeys.teamSessionPrompt)
+        #expect(migrated?.hasPrefix(DefaultPrompts.sessionPrompt) == true)
+        #expect(migrated?.hasSuffix(suffix) == true)
+        #expect(migrated != suffix)
+    }
+
+    @Test func invalidLegacySessionSuffixCannotDisableTheBuiltInContext() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let invalidSuffix = "{% if %}"
+        defaults.set(invalidSuffix, forKey: SettingsKeys.teamSessionPrompt)
+
+        SettingsKeyMigration.run(in: defaults)
+        defaults.register(defaults: DefaultPrompts.registrations)
+
+        #expect(
+            defaults.string(forKey: SettingsKeys.teamSessionPrompt) ==
+            DefaultPrompts.sessionPrompt
+        )
+        #expect(
+            defaults.string(
+                forKey: SettingsKeys.teamSessionPromptLegacySuffixBackup
+            ) == invalidSuffix
+        )
+    }
+
+    @Test func contextDependentLegacyFailuresCannotDisableAnyViewerContext() {
+        let invalidSuffixes = [
+            """
+            {% if agent.main_worktree %}main-only{% else %}
+            {% include "missing-linked-template" %}
+            {% endif %}
+            """,
+            """
+            {% for peer in team.other_worktrees %}
+            {% include "missing-peer-template" %}
+            {% endfor %}
+            """,
+            """
+            {% for peer in team.other_worktrees %}peer
+            {% empty %}{% include "missing-empty-roster-template" %}
+            {% endfor %}
+            """,
+        ]
+
+        for invalidSuffix in invalidSuffixes {
+            let suiteName = "test-\(UUID())"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.set(invalidSuffix, forKey: SettingsKeys.teamSessionPrompt)
+
+            SettingsKeyMigration.run(in: defaults)
+            defaults.register(defaults: DefaultPrompts.registrations)
+
+            #expect(
+                defaults.string(forKey: SettingsKeys.teamSessionPrompt) ==
+                DefaultPrompts.sessionPrompt
+            )
+            #expect(
+                defaults.string(
+                    forKey: SettingsKeys.teamSessionPromptLegacySuffixBackup
+                ) == invalidSuffix
+            )
+        }
     }
 }

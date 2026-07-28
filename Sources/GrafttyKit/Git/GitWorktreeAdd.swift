@@ -25,7 +25,8 @@ public enum GitWorktreeAdd {
         repoPath: String,
         worktreePath: String,
         branch: BranchSelection,
-        startPoint: String?
+        startPoint: String?,
+        startPointResolutionPath: String? = nil
     ) async throws {
         if case .useExisting(let name, .local) = branch {
             let ref = "refs/heads/\(name)"
@@ -46,10 +47,44 @@ public enum GitWorktreeAdd {
             }
         }
 
+        let resolvedStartPoint: String?
+        if let startPointResolutionPath,
+           let startPoint,
+           !startPoint.isEmpty {
+            let result: CLIOutput
+            do {
+                result = try await GitRunner.captureAll(
+                    args: [
+                        "rev-parse",
+                        "--verify",
+                        "--end-of-options",
+                        "\(startPoint)^{commit}",
+                    ],
+                    at: startPointResolutionPath
+                )
+            } catch let err as CLIError {
+                throw Error.cliFailure(err)
+            }
+            guard result.exitCode == 0 else {
+                let stderr = result.stderr
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw Error.gitFailed(
+                    exitCode: result.exitCode,
+                    stderr: stderr.isEmpty
+                        ? "base revision does not resolve to a commit: \(startPoint)"
+                        : stderr
+                )
+            }
+            resolvedStartPoint = result.stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            resolvedStartPoint = startPoint
+        }
+
         let args = argvFor(
             branch: branch,
             worktreePath: worktreePath,
-            startPoint: startPoint
+            startPoint: resolvedStartPoint
         )
         let result: CLIOutput
         do {
@@ -72,7 +107,10 @@ public enum GitWorktreeAdd {
     ) -> [String] {
         switch branch {
         case .createNew(let name):
-            var args = ["worktree", "add", "-b", name, worktreePath]
+            // End option parsing before the caller-controlled path and base
+            // revision. This keeps an option-shaped revision an operand that
+            // Git can either resolve or reject, never an accidental flag.
+            var args = ["worktree", "add", "-b", name, "--", worktreePath]
             if let startPoint, !startPoint.isEmpty {
                 args.append(startPoint)
             }

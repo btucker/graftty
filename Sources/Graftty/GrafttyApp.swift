@@ -240,6 +240,7 @@ final class AppServices {
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     let cliWorktreeCreations: CLIWorktreeCreationStore
+    let cliWorktreeRemovals: CLIWorktreeRemovalStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
     /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
@@ -307,6 +308,7 @@ final class AppServices {
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
         self.cliWorktreeCreations = CLIWorktreeCreationStore()
+        self.cliWorktreeRemovals = CLIWorktreeRemovalStore()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -1407,7 +1409,9 @@ struct GrafttyApp: App {
                     teamEventDispatcher: teamEventDispatcher,
                     worktreeMonitor: services.worktreeMonitor,
                     statsStore: services.statsStore,
-                    worktreeCreations: services.cliWorktreeCreations
+                    prStatusStore: services.prStatusStore,
+                    worktreeCreations: services.cliWorktreeCreations,
+                    worktreeRemovals: services.cliWorktreeRemovals
                 )
             }
         }
@@ -3243,7 +3247,9 @@ struct GrafttyApp: App {
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
-             .createWorktree, .agentPromptStagingCapability, .worktreeCreateStatus:
+             .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
+             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
+             .worktreeRemoveStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3263,7 +3269,9 @@ struct GrafttyApp: App {
         teamEventDispatcher: TeamEventDispatcher,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
-        worktreeCreations: CLIWorktreeCreationStore
+        prStatusStore: PRStatusStore,
+        worktreeCreations: CLIWorktreeCreationStore,
+        worktreeRemovals: CLIWorktreeRemovalStore
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -3362,11 +3370,16 @@ struct GrafttyApp: App {
             )
         case .agentPromptStagingCapability:
             return .ok
+        case .worktreeBaseCapability:
+            return .ok
+        case .worktreeRemoveCapability:
+            return .ok
         case .createWorktree(
             let callerPath,
             let worktreeName,
             let branchName,
             let existing,
+            let base,
             let command,
             let agentRuntime,
             let agentPrompt
@@ -3376,6 +3389,7 @@ struct GrafttyApp: App {
                 worktreeName: worktreeName,
                 branchName: branchName,
                 existing: existing,
+                base: base,
                 command: command,
                 agentRuntime: agentRuntime,
                 agentPrompt: agentPrompt,
@@ -3391,10 +3405,97 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree creation operation")
             }
             return .worktreeCreate(status)
+        case .removeWorktree(let worktreePath, let force):
+            return beginCLIWorktreeRemoval(
+                worktreePath: worktreePath,
+                force: force,
+                appState: appState,
+                terminalManager: terminalManager,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore,
+                teamEventDispatcher: teamEventDispatcher,
+                worktreeRemovals: worktreeRemovals
+            )
+        case .worktreeRemoveStatus(let operationID):
+            guard let status = worktreeRemovals.status(operationID: operationID) else {
+                return .error("unknown or expired worktree removal operation")
+            }
+            return .worktreeRemove(status)
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
+    }
+
+    @MainActor
+    private static func beginCLIWorktreeRemoval(
+        worktreePath: String,
+        force: Bool,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        statsStore: WorktreeStatsStore,
+        prStatusStore: PRStatusStore,
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeRemovals: CLIWorktreeRemovalStore
+    ) -> ResponseMessage {
+        guard let (repoIndex, worktreeIndex) = appState.wrappedValue
+            .indices(forWorktreePath: worktreePath) else {
+            return .error("unknown worktree")
+        }
+        let repo = appState.wrappedValue.repos[repoIndex]
+        let worktree = repo.worktrees[worktreeIndex]
+        guard worktree.path != repo.path else {
+            return .error("cannot remove the main checkout")
+        }
+        guard worktree.state != .deleting else {
+            return .error("worktree removal is already in progress")
+        }
+        guard !worktreeRemovals.hasPendingRemoval(worktreePath: worktreePath) else {
+            return .error("worktree removal is already in progress")
+        }
+
+        let status = worktreeRemovals.begin(worktreePath: worktreePath)
+        Task { @MainActor in
+            let result = await DeleteWorktreeFlow.delete(
+                worktreePath: worktreePath,
+                force: force,
+                appState: appState,
+                terminalManager: terminalManager,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore,
+                teamEventDispatcher: teamEventDispatcher
+            )
+            switch result {
+            case .success:
+                worktreeRemovals.markRemoved(operationID: status.operationID)
+            case .failure(.gitFailedForceable(let stderr, let shortStatus)):
+                worktreeRemovals.markFailed(
+                    operationID: status.operationID,
+                    error: stderr,
+                    forceAllowed: true,
+                    shortStatus: shortStatus.isEmpty ? nil : shortStatus
+                )
+            case .failure(.gitFailedFinal(let message)):
+                worktreeRemovals.markFailed(
+                    operationID: status.operationID,
+                    error: message,
+                    forceAllowed: false
+                )
+            case .failure(.notFound):
+                worktreeRemovals.markFailed(
+                    operationID: status.operationID,
+                    error: "unknown worktree",
+                    forceAllowed: false
+                )
+            case .failure(.mainCheckoutRejected):
+                worktreeRemovals.markFailed(
+                    operationID: status.operationID,
+                    error: "cannot remove the main checkout",
+                    forceAllowed: false
+                )
+            }
+        }
+        return .worktreeRemove(status)
     }
 
     @MainActor
@@ -3403,6 +3504,7 @@ struct GrafttyApp: App {
         worktreeName: String,
         branchName: String,
         existing: Bool,
+        base: String?,
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
@@ -3463,6 +3565,7 @@ struct GrafttyApp: App {
             repoPath: repo.path,
             worktreeName: worktreeName,
             branch: branch,
+            base: base,
             appState: appState
         ) {
         case .success(let path):
@@ -3485,6 +3588,8 @@ struct GrafttyApp: App {
                 repoPath: repo.path,
                 worktreePath: worktreePath,
                 branch: branch,
+                base: base,
+                baseResolutionPath: callerPath,
                 appState: appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -3783,10 +3888,10 @@ struct GrafttyApp: App {
 
     private static func renderTeamSessionPrompt(team: TeamView, viewer: TeamMember) -> String? {
         let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
-        return EventBodyRenderer.renderSessionPrompt(
+        return TeamInstructionsRenderer.render(
             template: template,
-            branch: viewer.branch,
-            isMainWorktree: viewer.isMainWorktree
+            team: team,
+            viewer: viewer
         )
     }
 

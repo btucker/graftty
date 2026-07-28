@@ -411,21 +411,20 @@ struct DidYouMeanWiringTests {
     }
 }
 
-@Suite("@spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a brief block describing the `pane list` / `pane show` / `pane send` commands and the `<worktree>:<id>` address grammar, with a pointer to `graftty pane <verb> --help` for full examples.")
+@Suite("@spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a concise block naming the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.")
 struct TeamPrimerPaneBulletsTests {
     @Test("Primer text includes pane control commands")
     func primerHasPaneBullets() throws {
-        let primer = TeamHookRenderer.teamProtocolPrimer_forTesting
+        let primer = TeamInstructionsRenderer.defaultTemplate
         #expect(primer.contains("graftty pane list"))
         #expect(primer.contains("graftty pane show"))
         #expect(primer.contains("graftty pane send"))
-        #expect(primer.contains("<worktree>:<id>"))
-        #expect(primer.contains("--help"))
+        #expect(primer.contains("graftty pane send --help"))
     }
 
     @Test("Primer flags lack of consent layer for pane send")
     func primerWarnsAboutPaneSend() throws {
-        let primer = TeamHookRenderer.teamProtocolPrimer_forTesting
+        let primer = TeamInstructionsRenderer.defaultTemplate
         #expect(
             primer.contains("no inbox") ||
             primer.contains("consent layer") ||

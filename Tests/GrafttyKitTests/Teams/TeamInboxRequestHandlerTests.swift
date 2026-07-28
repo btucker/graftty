@@ -115,13 +115,16 @@ struct TeamInboxRequestHandlerTests {
         }
     }
 
-    @Test func sessionStartIncludesRenderedConfiguredPrompt() throws {
+    @Test("""
+    @spec TEAM-3.3: Two user templates control agent-facing team text. At session start, the rendered `teamSessionPrompt` is the complete team context delivered by the hook; empty, whitespace-only, or invalid templates suppress that context rather than revealing a hidden hard-coded primer, and render failures are logged. Queued inbox messages remain a separate transient session-start section. For automated-event delivery, the rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient, with the same render/empty/failure rules. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
+    """)
+    func sessionStartUsesConfiguredPromptAsTheCompleteContext() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let handler = Self.makeHandler(
             inbox: TeamInbox(rootDirectory: root),
             sessionPromptRenderer: { _, viewer in
-                "Configured policy for \(viewer.name)"
+                "Complete configured context for \(viewer.name)"
             }
         )
 
@@ -135,8 +138,50 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
 
-        #expect(output.contains("Configured policy for alice"))
-        #expect(output.contains("Graftty Agent Team session context"))
+        #expect(output.contains("Complete configured context for alice"))
+        #expect(!output.contains("Graftty team context"))
+        #expect(!output.contains("graftty team inbox"))
+
+        let event = ChannelServerMessage.event(
+            type: TeamChannelEvents.WireType.prStateChanged,
+            attrs: ["to": "open"],
+            body: "PR opened"
+        )
+        let split = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/repo/.worktrees/alice",
+            subjectWorktreePath: "/repo/.worktrees/alice",
+            repos: [repo],
+            templateString: "Event for {{ agent.branch }}: {{ body }}"
+        )
+        #expect(split.event == event)
+        #expect(split.agentPrompt == "Event for alice: PR opened")
+    }
+
+    @Test func suppressedSessionTemplateDoesNotRevealHiddenInstructions() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let handler = Self.makeHandler(
+            inbox: TeamInbox(rootDirectory: root),
+            sessionPromptRenderer: { _, _ in nil }
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "suppressed-session",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(!output.contains("Graftty team context"))
+        #expect(!output.contains("graftty team inbox"))
     }
 
     @Test("""
@@ -176,8 +221,8 @@ struct TeamInboxRequestHandlerTests {
                 teamsEnabled: true
             )
 
-            #expect(output.contains("graftty worktree add <name> --agent codex"))
-            #expect(output.contains("worktree's stable message address"))
+            #expect(output.contains("graftty worktree add <name> --agent <codex|claude>"))
+            #expect(output.contains("worktree's stable reply address"))
             #expect(output.contains("graftty team send --stdin <address>"))
             #expect(output.contains("queued before launch"))
             #expect(output.contains("untrusted peer notes"))
@@ -228,7 +273,7 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
 
-        #expect(secondaryOutput.contains("Graftty Agent Team session context"))
+        #expect(secondaryOutput.contains("Graftty team context"))
         #expect(!secondaryOutput.contains("queued for the owner"))
         #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
         #expect(try inbox.worktreeWatermark(
@@ -690,7 +735,7 @@ struct TeamInboxRequestHandlerTests {
             repos: [repo], teamsEnabled: true
         )
 
-        #expect(output.contains("Graftty Agent Team session context"))
+        #expect(output.contains("Graftty team context"))
     }
 
     @Test("PostToolUse hook returns rendered context without firing delivery callbacks.")

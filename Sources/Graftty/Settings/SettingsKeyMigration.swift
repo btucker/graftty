@@ -13,6 +13,7 @@ enum SettingsKeyMigration {
         migrateRoutingPreferences(in: defaults)
         migrateMainWorktreeTemplateVariable(in: defaults, key: SettingsKeys.teamSessionPrompt)
         migrateMainWorktreeTemplateVariable(in: defaults, key: SettingsKeys.teamPrompt)
+        migrateSessionPromptToFullTemplate(in: defaults)
     }
 
     private static func migrateRoutingPreferences(in defaults: UserDefaults) {
@@ -42,5 +43,38 @@ enum SettingsKeyMigration {
             ),
             forKey: key
         )
+    }
+
+    /// Before the complete hook prompt became editable, `teamSessionPrompt`
+    /// stored only an optional suffix appended to Graftty's hidden primer.
+    /// Preserve a saved, renderable suffix by appending it to the new visible
+    /// full template once. A saved empty suffix becomes the registered full
+    /// default, matching its old behavior (the hidden primer still rendered).
+    /// An invalid suffix never worked, but remains backed up for recovery
+    /// rather than being allowed to invalidate the newly-visible primer.
+    private static func migrateSessionPromptToFullTemplate(
+        in defaults: UserDefaults
+    ) {
+        let marker = SettingsKeys.teamSessionPromptFullTemplateMigrated
+        guard !defaults.bool(forKey: marker) else { return }
+        defer { defaults.set(true, forKey: marker) }
+
+        guard let legacy = defaults.string(forKey: SettingsKeys.teamSessionPrompt) else {
+            return
+        }
+        if legacy.isEmpty {
+            defaults.removeObject(forKey: SettingsKeys.teamSessionPrompt)
+        } else {
+            let candidate = "\(DefaultPrompts.sessionPrompt)\n\n\(legacy)"
+            if DefaultPrompts.isRenderableSessionPrompt(candidate) {
+                defaults.set(candidate, forKey: SettingsKeys.teamSessionPrompt)
+            } else {
+                defaults.set(
+                    legacy,
+                    forKey: SettingsKeys.teamSessionPromptLegacySuffixBackup
+                )
+                defaults.removeObject(forKey: SettingsKeys.teamSessionPrompt)
+            }
+        }
     }
 }

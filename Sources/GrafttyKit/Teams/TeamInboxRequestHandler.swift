@@ -209,9 +209,16 @@ public final class TeamInboxRequestHandler {
                     runtime: runtime.rawValue
                 )
             } ?? []
-            var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
-            if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
-                text += "\n\n\(renderedPrompt)"
+            let text: String
+            if let sessionPromptRenderer {
+                // A configured session template owns the complete prompt.
+                // Empty or invalid templates intentionally suppress it.
+                text = sessionPromptRenderer(context.team, context.sender) ?? ""
+            } else {
+                text = TeamInstructionsRenderer.render(
+                    team: context.team,
+                    viewer: context.sender
+                )
             }
             let output = try TeamHookRenderer.sessionStart(
                 runtime: runtime,

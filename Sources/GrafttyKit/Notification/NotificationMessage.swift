@@ -45,12 +45,17 @@ public enum NotificationMessage: Sendable, Equatable {
         worktreeName: String,
         branchName: String,
         existing: Bool,
+        base: String?,
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?
     )
     case agentPromptStagingCapability
+    case worktreeBaseCapability
     case worktreeCreateStatus(operationID: String)
+    case removeWorktree(worktreePath: String, force: Bool)
+    case worktreeRemoveCapability
+    case worktreeRemoveStatus(operationID: String)
 }
 
 extension NotificationMessage: Codable {
@@ -60,6 +65,9 @@ extension NotificationMessage: Codable {
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
         case worktreeName = "worktree_name"
         case branchName = "branch_name"
+        case worktreePath = "worktree_path"
+        case base
+        case force
         case operationID = "operation_id"
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
@@ -149,6 +157,7 @@ extension NotificationMessage: Codable {
             let worktreeName,
             let branchName,
             let existing,
+            let base,
             let command,
             let agentRuntime,
             let agentPrompt
@@ -158,13 +167,25 @@ extension NotificationMessage: Codable {
             try container.encode(worktreeName, forKey: .worktreeName)
             try container.encode(branchName, forKey: .branchName)
             try container.encode(existing, forKey: .existing)
+            try container.encodeIfPresent(base, forKey: .base)
             try container.encodeIfPresent(command, forKey: .command)
             try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
             try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
         case .agentPromptStagingCapability:
             try container.encode("agent_prompt_staging_capability", forKey: .type)
+        case .worktreeBaseCapability:
+            try container.encode("worktree_base_capability", forKey: .type)
         case .worktreeCreateStatus(let operationID):
             try container.encode("worktree_create_status", forKey: .type)
+            try container.encode(operationID, forKey: .operationID)
+        case .removeWorktree(let worktreePath, let force):
+            try container.encode("remove_worktree", forKey: .type)
+            try container.encode(worktreePath, forKey: .worktreePath)
+            try container.encode(force, forKey: .force)
+        case .worktreeRemoveCapability:
+            try container.encode("worktree_remove_capability", forKey: .type)
+        case .worktreeRemoveStatus(let operationID):
+            try container.encode("worktree_remove_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
         }
     }
@@ -252,14 +273,28 @@ extension NotificationMessage: Codable {
                 worktreeName: try container.decode(String.self, forKey: .worktreeName),
                 branchName: try container.decode(String.self, forKey: .branchName),
                 existing: try container.decode(Bool.self, forKey: .existing),
+                base: try container.decodeIfPresent(String.self, forKey: .base),
                 command: try container.decodeIfPresent(String.self, forKey: .command),
                 agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
                 agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt)
             )
         case "agent_prompt_staging_capability":
             self = .agentPromptStagingCapability
+        case "worktree_base_capability":
+            self = .worktreeBaseCapability
         case "worktree_create_status":
             self = .worktreeCreateStatus(
+                operationID: try container.decode(String.self, forKey: .operationID)
+            )
+        case "remove_worktree":
+            self = .removeWorktree(
+                worktreePath: try container.decode(String.self, forKey: .worktreePath),
+                force: try container.decode(Bool.self, forKey: .force)
+            )
+        case "worktree_remove_capability":
+            self = .worktreeRemoveCapability
+        case "worktree_remove_status":
+            self = .worktreeRemoveStatus(
                 operationID: try container.decode(String.self, forKey: .operationID)
             )
         default:
@@ -306,6 +341,47 @@ public struct WorktreeCreateStatus: Codable, Sendable, Equatable {
         case operationID = "operation_id"
         case worktreePath = "worktree_path"
         case messageAddress = "message_address"
+    }
+}
+
+public enum WorktreeRemoveState: String, Codable, Sendable, Equatable {
+    case pending
+    case removed
+    case failed
+}
+
+/// Snapshot returned while a CLI-requested worktree removal moves through
+/// Git, terminal teardown, and model cleanup.
+public struct WorktreeRemoveStatus: Codable, Sendable, Equatable {
+    public let operationID: String
+    public let state: WorktreeRemoveState
+    public let worktreePath: String
+    public let error: String?
+    public let forceAllowed: Bool
+    public let shortStatus: String?
+
+    public init(
+        operationID: String,
+        state: WorktreeRemoveState,
+        worktreePath: String,
+        error: String? = nil,
+        forceAllowed: Bool = false,
+        shortStatus: String? = nil
+    ) {
+        self.operationID = operationID
+        self.state = state
+        self.worktreePath = worktreePath
+        self.error = error
+        self.forceAllowed = forceAllowed
+        self.shortStatus = shortStatus
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state, error
+        case operationID = "operation_id"
+        case worktreePath = "worktree_path"
+        case forceAllowed = "force_allowed"
+        case shortStatus = "short_status"
     }
 }
 
@@ -428,6 +504,7 @@ public enum ResponseMessage: Sendable, Equatable {
     case teamHookOutput(String)
     case teamInbox([TeamInboxMessage])
     case worktreeCreate(WorktreeCreateStatus)
+    case worktreeRemove(WorktreeRemoveStatus)
 }
 
 extension ResponseMessage: Codable {
@@ -464,6 +541,9 @@ extension ResponseMessage: Codable {
         case .worktreeCreate(let operation):
             try container.encode("worktree_create", forKey: .type)
             try container.encode(operation, forKey: .operation)
+        case .worktreeRemove(let operation):
+            try container.encode("worktree_remove", forKey: .type)
+            try container.encode(operation, forKey: .operation)
         }
     }
 
@@ -495,6 +575,10 @@ extension ResponseMessage: Codable {
         case "worktree_create":
             self = .worktreeCreate(
                 try container.decode(WorktreeCreateStatus.self, forKey: .operation)
+            )
+        case "worktree_remove":
+            self = .worktreeRemove(
+                try container.decode(WorktreeRemoveStatus.self, forKey: .operation)
             )
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown response type: \(type)"))

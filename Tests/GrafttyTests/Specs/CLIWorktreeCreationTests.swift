@@ -12,9 +12,49 @@ struct CLIWorktreeCreationTests {
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
         #expect(help.contains("--agent"))
+        #expect(help.contains("--base"))
         #expect(help.contains("--existing"))
         #expect(help.contains("--prompt-stdin"))
         #expect(help.contains("team send --stdin"))
+    }
+
+    @Test("Parsed --base is forwarded into the create-worktree request")
+    func parsedBaseReachesProtocolRequest() throws {
+        let command = try WorktreeAdd.parse([
+            "review",
+            "--branch", "review-branch",
+            "--base", "HEAD~2",
+        ])
+        let names = WorktreeRequestNames.resolve(
+            name: command.name,
+            branch: command.branch,
+            existing: command.existing
+        )
+        let request = command.creationRequest(
+            callerWorktree: "/repo/.worktrees/caller",
+            names: names,
+            agentRuntime: nil,
+            resolvedPrompt: nil
+        )
+
+        guard case let .createWorktree(
+            callerWorktree,
+            worktreeName,
+            branchName,
+            existing,
+            base,
+            _,
+            _,
+            _
+        ) = request else {
+            Issue.record("expected createWorktree request")
+            return
+        }
+        #expect(callerWorktree == "/repo/.worktrees/caller")
+        #expect(worktreeName == "review")
+        #expect(branchName == "review-branch")
+        #expect(existing == false)
+        #expect(base == "HEAD~2")
     }
 
     @Test("Existing Git refs are preserved while the worktree directory name is normalized")
@@ -444,10 +484,11 @@ struct CLIWorktreeCreationTests {
 
     @Test("Injected instructions avoid persona language and document shell-safe prompting")
     func injectedInstructionsDocumentWorktreeAddressWorkflow() {
-        let primer = TeamHookRenderer.teamProtocolPrimer_forTesting
-        #expect(primer.contains("graftty worktree add <name> --agent codex"))
-        #expect(primer.contains("worktree's stable message address"))
+        let primer = TeamInstructionsRenderer.defaultTemplate
+        #expect(primer.contains("graftty worktree add <name> --agent <codex|claude>"))
+        #expect(primer.contains("worktree's stable reply address"))
         #expect(primer.contains("graftty team send --stdin <address>"))
+        #expect(primer.contains("--base <ref>"))
         #expect(primer.contains("--prompt-stdin"))
         #expect(!primer.contains("Spawn a teammate"))
     }
