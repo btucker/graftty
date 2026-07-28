@@ -2931,7 +2931,7 @@ struct GrafttyApp: App {
         //  - Carried-forward: mutate path (and latest branch label)
         //    in place on the `pre` copy, preserving id / splitTree /
         //    state / attention / paneAttention / focusedPaneSlotID /
-        //    offeredDeleteForResolvedPR.
+        //    primaryPaneSlotID / offeredDeleteForResolvedPR.
         //  - Gone-stale: preserve the full entry, flip state to `.stale`
         //    so the sidebar can still offer a Dismiss action.
         //  - Fresh: discovered branches that didn't match any existing
@@ -3035,41 +3035,51 @@ struct GrafttyApp: App {
         }
     }
 
+    @MainActor
+    internal static func prepareRunningWorktreeForRestore(
+        _ worktree: inout WorktreeEntry,
+        terminalManager: TerminalManager
+    ) {
+        if worktree.splitTree.root == nil {
+            worktree.splitTree = SplitTree(root: .leaf(PaneSlotID()))
+        }
+        worktree.ensurePaneSessionsForRunningRestore()
+        terminalManager.recordPaneSessions(
+            for: worktree.splitTree,
+            paneSessions: worktree.paneSessions,
+            worktreePath: worktree.path
+        )
+        _ = worktree.normalizeFocusedPane()
+        let primaryPane = worktree.ensurePrimaryPane()
+        // Mark every restored leaf as rehydrated *before* surface creation
+        // so surviving zmx sessions never receive another default command.
+        for leafID in worktree.splitTree.allLeaves {
+            terminalManager.markRehydrated(leafID)
+        }
+        // If zmx reports a session missing, createSurfaces clears only that
+        // leaf's rehydration marker. Retaining one primary marker lets the
+        // first-pane-only policy restart exactly one default command.
+        if let primaryPane {
+            terminalManager.markFirstPane(primaryPane)
+        }
+    }
+
     private func restoreRunningWorktrees() {
         let selectedPath = appState.selectedWorktreePath
         for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices
+            where appState.repos[repoIdx].worktrees[wtIdx].state == .running {
+                Self.prepareRunningWorktreeForRestore(
+                    &appState.repos[repoIdx].worktrees[wtIdx],
+                    terminalManager: terminalManager
+                )
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                if wt.state == .running {
-                    if wt.splitTree.root == nil {
-                        let id = PaneSlotID()
-                        appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
-                    }
-                    appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
-                    terminalManager.recordPaneSessions(
-                        for: appState.repos[repoIdx].worktrees[wtIdx]
-                            .splitTree,
-                        paneSessions: appState.repos[repoIdx]
-                            .worktrees[wtIdx].paneSessions,
-                        worktreePath: wt.path
-                    )
-                    // Mark every restored leaf as rehydrated *before*
-                    // surface creation so the first-PWD event (which
-                    // triggers onShellReady) finds wasRehydrated == true
-                    // and short-circuits command injection. Without this
-                    // guard, relaunching Graftty would type the default
-                    // command on top of whatever process is already
-                    // running inside the persisted zmx session.
-                    for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
-                        terminalManager.markRehydrated(leafID)
-                    }
-                    guard wt.path == selectedPath else { continue }
-                    _ = terminalManager.createSurfaces(
-                        for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
-                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
-                        worktreePath: wt.path
-                    )
-                }
+                guard wt.path == selectedPath else { continue }
+                _ = terminalManager.createSurfaces(
+                    for: wt.splitTree,
+                    paneSessions: wt.paneSessions,
+                    worktreePath: wt.path
+                )
             }
         }
 
@@ -4130,10 +4140,20 @@ struct GrafttyApp: App {
 
                 let splitTree = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].splitTree
-                for leafID in splitTree.allLeaves {
+                let leaves = splitTree.allLeaves
+                for leafID in leaves {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .ensurePaneSession(for: leafID)
-                    terminalManager.markFirstPane(leafID)
+                }
+                // TERM-1.4: a saved multi-pane layout still has only one
+                // "first" pane for default-command eligibility. Keep that
+                // pane stable even when focus has since moved elsewhere.
+                _ = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].normalizeFocusedPane()
+                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
+                if let primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
                 }
                 _ = terminalManager.createSurfaces(
                     for: splitTree,
@@ -4173,8 +4193,21 @@ struct GrafttyApp: App {
     ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                guard candidate.state == .running,
+                      candidate.splitTree.containsLeaf(targetID) else {
+                    continue
+                }
+                // A split never changes which existing pane is primary.
+                // Migrate legacy running state before adding a new leaf so
+                // Split Left/Up cannot accidentally elect the new pane by
+                // tree order.
+                _ = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.state == .running, wt.splitTree.containsLeaf(targetID) else { continue }
+                if let primaryPane = wt.primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
+                }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
                 let newID = PaneSlotID()
@@ -4303,6 +4336,8 @@ struct GrafttyApp: App {
         // Remember where this pane was sitting in the source tree *before*
         // we remove it, so a later return trip can land it in (roughly)
         // the same spot.
+        _ = appState.wrappedValue.repos[currentRepoIdx]
+            .worktrees[currentWorktreeIdx].ensurePrimaryPane()
         let sourceWt = appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
         terminalManager.rememberPosition(
             terminalID: terminalID,
@@ -4338,6 +4373,11 @@ struct GrafttyApp: App {
                     remainingTree: sourceTree
                 )
         }
+        // Preserve the source's primary pane unless that was the pane that
+        // moved. If it was, persist the focused survivor (or first leaf) as
+        // the replacement; an empty source clears the primary.
+        let replacementSourcePrimary = appState.wrappedValue.repos[currentRepoIdx]
+            .worktrees[currentWorktreeIdx].ensurePrimaryPane()
 
         // Graft onto the target tree. Prefer a previously-remembered
         // position (pane is returning to a worktree it once occupied); if
@@ -4345,6 +4385,11 @@ struct GrafttyApp: App {
         // the layout feels like the pane "came back to its seat." Fall
         // back to inserting at an arbitrary leaf when no usable
         // breadcrumb exists.
+        // Migrate an existing target's primary before inserting the moving
+        // pane. Otherwise a left/top insertion could become primary merely
+        // because it moved to the front of tree order.
+        _ = appState.wrappedValue.repos[targetRepoIdx]
+            .worktrees[targetWorktreeIdx].ensurePrimaryPane()
         let targetWt = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
         let targetTree: SplitTree
         let remembered = terminalManager.rememberedPosition(
@@ -4375,6 +4420,19 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
+        let targetPrimary = appState.wrappedValue.repos[targetRepoIdx]
+            .worktrees[targetWorktreeIdx].ensurePrimaryPane()
+        // PaneSlotIDs are globally unique, so moving a pane can safely
+        // clear its source marker before applying both worktrees' current
+        // primary ownership. This also handles an empty target electing
+        // the moved pane.
+        terminalManager.unmarkFirstPane(terminalID)
+        if let replacementSourcePrimary {
+            terminalManager.markFirstPane(replacementSourcePrimary)
+        }
+        if let targetPrimary {
+            terminalManager.markFirstPane(targetPrimary)
+        }
         let targetPath = targetWt.path
         if let paneSession = sessionTarget.paneSessions[terminalID] {
             terminalManager.recordPaneSession(
@@ -4584,8 +4642,8 @@ struct GrafttyApp: App {
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.splitTree.containsLeaf(targetID) else { continue }
+                let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                guard candidate.splitTree.containsLeaf(targetID) else { continue }
 
                 // TERM-5.7 (Stop cascade) vs TERM-5.8 (phantom leaf).
                 // `handle == nil` can mean either:
@@ -4601,6 +4659,9 @@ struct GrafttyApp: App {
                     handleExists: terminalManager.handle(for: targetID) != nil
                 ) else { continue }
 
+                _ = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
@@ -4635,6 +4696,13 @@ struct GrafttyApp: App {
                        newFocus != previousFocus {
                         terminalManager.setFocus(newFocus)
                     }
+                }
+                // Closing a non-primary pane preserves startup ownership.
+                // Closing the primary elects and persists a survivor.
+                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
+                if let primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
                 }
                 return
             }

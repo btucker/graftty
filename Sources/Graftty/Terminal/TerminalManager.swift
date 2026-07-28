@@ -118,9 +118,9 @@ final class TerminalManager: ObservableObject {
         }
     }
 
-    /// Terminal IDs that are the "first pane" of a worktree — the pane
-    /// whose creation caused `.closed → .running`. Populated by
-    /// `markFirstPane(_:)` from the sidebar/open-worktree path.
+    /// Terminal IDs that are the primary pane of a worktree — the pane
+    /// eligible for first-pane-only startup behavior. Populated from each
+    /// worktree's persisted `primaryPaneSlotID`.
     private var firstPaneMarkers: Set<PaneSlotID> = []
 
     /// Terminal IDs that were recreated by restore-on-launch rather than
@@ -952,12 +952,16 @@ final class TerminalManager: ObservableObject {
         }
     }
 
-    /// Mark a terminal as the first pane of its worktree — the pane whose
-    /// creation caused the worktree to transition from `.closed` to
-    /// `.running`. Called by the sidebar "Open" action (and any other
-    /// caller that triggers a `.closed → .running` transition).
+    /// Mark a terminal as the primary pane of its worktree.
     func markFirstPane(_ terminalID: PaneSlotID) {
         firstPaneMarkers.insert(terminalID)
+    }
+
+    /// Remove primary-pane eligibility when a pane changes ownership.
+    /// Destruction does this through `forgetTrackingState`; pane moves
+    /// need an explicit update because their surface remains alive.
+    func unmarkFirstPane(_ terminalID: PaneSlotID) {
+        firstPaneMarkers.remove(terminalID)
     }
 
     /// Mark a terminal as rehydrated from on-disk state at launch, rather

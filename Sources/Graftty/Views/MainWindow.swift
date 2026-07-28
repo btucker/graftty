@@ -716,7 +716,7 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.focusedPaneSlotID ?? wt.splitTree.allLeaves.first {
+           let target = wt.firstPane {
             makePaneFirstResponder(target)
         }
 

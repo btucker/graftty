@@ -262,6 +262,61 @@ struct WorktreeEntryTests {
         #expect(object["focusedPaneSlotID"] == nil)
     }
 
+    @Test func primaryPaneCodableRoundTripIsIndependentOfFocus() throws {
+        let primary = PaneSlotID()
+        let focused = PaneSlotID()
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        entry.splitTree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(primary),
+            right: .leaf(focused)
+        )))
+        entry.primaryPaneSlotID = primary
+        entry.focusedPaneSlotID = focused
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.primaryPaneSlotID == primary)
+        #expect(decoded.primaryPane == primary)
+        #expect(decoded.focusedPaneSlotID == focused)
+    }
+
+    @Test func legacyStateElectsFocusedPaneOnceThenRemembersIt() throws {
+        let first = PaneSlotID()
+        let focused = PaneSlotID()
+        var legacyEntry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        legacyEntry.splitTree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(first),
+            right: .leaf(focused)
+        )))
+        legacyEntry.focusedPaneSlotID = focused
+
+        let data = try JSONEncoder().encode(legacyEntry)
+        var decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.primaryPaneSlotID == nil)
+        #expect(decoded.ensurePrimaryPane() == focused)
+        decoded.focusedPaneSlotID = first
+        #expect(decoded.ensurePrimaryPane() == focused)
+        #expect(decoded.primaryPaneSlotID == focused)
+    }
+
+    @Test func removedPrimaryElectsFocusedSurvivor() {
+        let removed = PaneSlotID()
+        let survivor = PaneSlotID()
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        entry.splitTree = SplitTree(root: .leaf(survivor))
+        entry.primaryPaneSlotID = removed
+        entry.focusedPaneSlotID = survivor
+
+        #expect(entry.ensurePrimaryPane() == survivor)
+        #expect(entry.primaryPaneSlotID == survivor)
+    }
+
     @Test func paneSessionsCodableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
@@ -525,6 +580,7 @@ struct WorktreeEntryTests {
         )))
         entry.state = .stale
         entry.focusedPaneSlotID = leaf1
+        entry.primaryPaneSlotID = leaf2
         entry.paneAttention[leaf1] = Attention(text: "!", timestamp: Date())
         entry.ensurePaneSession(for: leaf1)
         entry.ensurePaneSession(for: leaf2)
@@ -535,6 +591,7 @@ struct WorktreeEntryTests {
         #expect(entry.state == .closed)
         #expect(entry.splitTree.root == nil)
         #expect(entry.focusedPaneSlotID == nil)
+        #expect(entry.primaryPaneSlotID == nil)
         #expect(entry.paneAttention.isEmpty)
         #expect(entry.paneSessions.isEmpty)
     }
@@ -576,6 +633,7 @@ struct WorktreeEntryTests {
         )))
         entry.state = .stale
         entry.focusedPaneSlotID = leafA
+        entry.primaryPaneSlotID = leafB
         entry.paneAttention[leafA] = Attention(text: "!", timestamp: Date())
         entry.ensurePaneSession(for: leafA)
         entry.ensurePaneSession(for: leafB)
@@ -585,6 +643,7 @@ struct WorktreeEntryTests {
         #expect(Set(toDestroy) == Set([leafA, leafB]))
         #expect(entry.splitTree.root == nil)
         #expect(entry.focusedPaneSlotID == nil)
+        #expect(entry.primaryPaneSlotID == nil)
         #expect(entry.paneAttention.isEmpty)
         #expect(entry.paneSessions.isEmpty)
     }
@@ -611,7 +670,8 @@ struct WorktreeEntryTests {
     // must go.
     //
     // `prepareForStop()` transitions state → .closed, clears
-    // paneAttention, leaves splitTree + focusedPaneSlotID + the
+    // paneAttention, leaves splitTree + focusedPaneSlotID +
+    // primaryPaneSlotID + the
     // worktree-level `attention` slot alone so the closed→running
     // re-open block can recreate the exact layout and the user still
     // sees any CLI-notify badge (which is a worktree-level concern).
@@ -646,12 +706,14 @@ struct WorktreeEntryTests {
         entry.state = .running
         entry.splitTree = SplitTree(root: .leaf(paneA))
         entry.focusedPaneSlotID = paneA
+        entry.primaryPaneSlotID = paneA
 
         entry.prepareForStop()
 
         // TERM-1.2: re-open after Stop recreates the same layout.
         #expect(entry.splitTree.allLeaves == [paneA])
         #expect(entry.focusedPaneSlotID == paneA)
+        #expect(entry.primaryPaneSlotID == paneA)
     }
 
     @Test func prepareForStopClearsPaneSessionsButPreservesSlots() {

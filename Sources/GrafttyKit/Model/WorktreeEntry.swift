@@ -89,6 +89,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var paneSessions: [PaneSlotID: PaneSessionID]
     public var splitTree: SplitTree
     public var focusedPaneSlotID: PaneSlotID?
+    /// The pane that owns worktree-level startup behavior such as a
+    /// first-pane-only default command. Unlike `focusedPaneSlotID`, this
+    /// does not change as the user moves focus between panes. Persisting
+    /// the slot keeps the same pane primary across worktree stops, app
+    /// launches, and zmx restarts.
+    public var primaryPaneSlotID: PaneSlotID?
     /// PR number for which the "PR resolved — delete worktree?" offer
     /// dialog has already been presented (the PR has either merged or
     /// been closed without merging — GIT-4.7). Persisted so that a
@@ -113,18 +119,19 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneSessions = [:]
         self.splitTree = splitTree
         self.focusedPaneSlotID = nil
+        self.primaryPaneSlotID = nil
         self.offeredDeleteForResolvedPR = nil
     }
 
-    // Custom Decodable so `paneAttention`, `paneSessions`, and
-    // `offeredDeleteForResolvedPR` (added after the initial release) are
-    // optional on disk. Pre-fix
-    // persisted blobs don't carry those keys; defaulting lets existing
-    // users keep their saved split trees across upgrades rather than
-    // failing to decode and silently losing everything.
+    // Custom Decodable so fields added after the initial release are
+    // optional on disk. Older persisted blobs don't carry those keys;
+    // defaulting lets existing users keep their saved split trees across
+    // upgrades rather than failing to decode and silently losing
+    // everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, attention, paneAttention,
-             paneSessions, splitTree, offeredDeleteForResolvedPR
+             paneSessions, splitTree, primaryPaneSlotID,
+             offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
     }
 
@@ -156,6 +163,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.focusedPaneSlotID = try container.decodeIfPresent(
             PaneSlotID.self,
             forKey: .focusedPaneSlotID
+        )
+        self.primaryPaneSlotID = try container.decodeIfPresent(
+            PaneSlotID.self,
+            forKey: .primaryPaneSlotID
         )
         let resolved = try container.decodeIfPresent(
             Int.self, forKey: .offeredDeleteForResolvedPR
@@ -293,6 +304,37 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneSessions.removeAll()
     }
 
+    /// Return the persisted primary pane when it is still part of the
+    /// current split tree.
+    public var primaryPane: PaneSlotID? {
+        guard let primaryPaneSlotID,
+              splitTree.containsLeaf(primaryPaneSlotID) else {
+            return nil
+        }
+        return primaryPaneSlotID
+    }
+
+    /// Preserve a valid persisted primary pane, or elect and persist a
+    /// replacement. A valid focused pane is the migration fallback for
+    /// state written before `primaryPaneSlotID` existed; otherwise tree
+    /// order provides a deterministic choice. An empty tree has no
+    /// primary pane.
+    @discardableResult
+    public mutating func ensurePrimaryPane() -> PaneSlotID? {
+        if let primaryPane {
+            return primaryPane
+        }
+        let replacement: PaneSlotID?
+        if let focusedPaneSlotID,
+           splitTree.containsLeaf(focusedPaneSlotID) {
+            replacement = focusedPaneSlotID
+        } else {
+            replacement = splitTree.allLeaves.first
+        }
+        primaryPaneSlotID = replacement
+        return replacement
+    }
+
     /// Inverts `paneSessions` to find the pane slot whose zmx session name
     /// matches `sessionName` (the `ZMX_SESSION` an agent inherited). Shared
     /// by busy/idle rendering, agent-stop attribution, and `notify --session`.
@@ -328,6 +370,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         state = .closed
         splitTree = SplitTree(root: nil)
         focusedPaneSlotID = nil
+        primaryPaneSlotID = nil
         paneAttention.removeAll()
         clearAllPaneSessions()
         return oldLeaves
@@ -356,6 +399,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         let leaves = splitTree.allLeaves
         splitTree = SplitTree(root: nil)
         focusedPaneSlotID = nil
+        primaryPaneSlotID = nil
         paneAttention.removeAll()
         clearAllPaneSessions()
         return leaves
@@ -364,11 +408,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Transitions the entry from `.running` to `.closed` as part of the
     /// Stop menu action, dropping `paneAttention` for every pane (all
     /// panes are being destroyed; their pane-scoped badges must go per
-    /// `STATE-2.11`). Leaves `splitTree` and `focusedPaneSlotID` alone
-    /// so re-open recreates the exact same layout at the same leaf IDs
-    /// (`TERM-1.2`), and leaves the worktree-level `attention` slot
-    /// alone since a CLI-notify ping is a worktree-level concern
-    /// independent of which panes are alive.
+    /// `STATE-2.11`). Leaves `splitTree`, `focusedPaneSlotID`, and
+    /// `primaryPaneSlotID` alone so re-open recreates the exact same
+    /// layout, focus, and primary pane at the same leaf IDs (`TERM-1.2`),
+    /// and leaves the worktree-level `attention` slot alone since a
+    /// CLI-notify ping is a worktree-level concern independent of which
+    /// panes are alive.
     public mutating func prepareForStop() {
         state = .closed
         paneAttention.removeAll()
