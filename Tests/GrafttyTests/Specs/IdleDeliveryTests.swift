@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("GrafttyApp — Codex app-server inbox delivery wiring")
 struct CodexAppServerInboxDeliveryWiringTests {
@@ -105,6 +106,62 @@ struct CodexAppServerInboxDeliveryWiringTests {
             .init(team: "/repo", worktree: "/repo/.worktrees/alice"),
             .init(team: "/repo", worktree: "/repo/.worktrees/bob"),
         ]))
+    }
+
+    @MainActor
+    @Test("""
+    @spec TEAM-12.1: When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+    """)
+    func directMessageDeliversToBackgroundAgentWithoutMountedSurface() async throws {
+        let fixture = try BackgroundDeliveryFixture()
+        #expect(fixture.terminalManager.handle(forSessionName: fixture.sessionName) == nil)
+
+        _ = try fixture.dispatcher.dispatchTeamMessage(
+            fromWorktree: fixture.repo.path,
+            to: "alice",
+            text: "direct background message",
+            priority: .normal,
+            repos: [fixture.repo],
+            teamsEnabled: true
+        )
+        await fixture.deliverAppendedMessages()
+
+        #expect(await fixture.delivery.calls == [
+            .init(team: fixture.teamID, worktree: fixture.backgroundWorktree),
+        ])
+    }
+
+    @MainActor
+    @Test("""
+    @spec TEAM-12.2: When an automated team lifecycle or state event arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+    """)
+    func automatedEventDeliversToBackgroundAgentWithoutMountedSurface() async throws {
+        let fixture = try BackgroundDeliveryFixture()
+        #expect(fixture.terminalManager.handle(forSessionName: fixture.sessionName) == nil)
+        let event = ChannelServerMessage.event(
+            type: TeamChannelEvents.WireType.prStateChanged,
+            attrs: [
+                "worktree": fixture.backgroundWorktree,
+                "to": "open",
+                "from": "draft",
+                "pr_number": "42",
+                "pr_url": "https://example.test/pr/42",
+                "provider": "github",
+                "repo": "example/repo",
+            ],
+            body: "PR #42 state changed: draft → open"
+        )
+
+        try fixture.dispatcher.dispatchRoutableEvent(
+            event,
+            subjectWorktreePath: fixture.backgroundWorktree,
+            repos: [fixture.repo]
+        )
+        await fixture.deliverAppendedMessages()
+
+        #expect(await fixture.delivery.calls == [
+            .init(team: fixture.teamID, worktree: fixture.backgroundWorktree),
+        ])
     }
 
     @Test("Presence refresh skips Codex worktrees with no pending unread messages.")
@@ -387,5 +444,137 @@ struct CodexAppServerInboxDeliveryWiringTests {
             }
         }
 
+    }
+
+    @MainActor
+    struct BackgroundDeliveryFixture {
+        let teamID = "/repo"
+        let backgroundWorktree = "/repo/.worktrees/alice"
+        let sessionName: String
+        let repo: RepoEntry
+        let inbox: TeamInbox
+        let dispatcher: TeamEventDispatcher
+        let terminalManager: TerminalManager
+        let observerState = GrafttyApp.CodexAppServerInboxObserverDeliveryState()
+        let delivery: OwnerGatedRecordingDelivery
+
+        init() throws {
+            let paneSlot = PaneSlotID()
+            let paneSession = PaneSessionID()
+            self.sessionName = ZmxLauncher.sessionName(for: paneSession)
+            self.repo = RepoEntry(
+                path: teamID,
+                displayName: "repo",
+                worktrees: [
+                    WorktreeEntry(path: teamID, branch: "main", state: .running),
+                    WorktreeEntry(path: backgroundWorktree, branch: "alice", state: .running),
+                ]
+            )
+
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("graftty-background-delivery-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            self.inbox = TeamInbox(rootDirectory: root)
+            self.dispatcher = TeamEventDispatcher(
+                inbox: inbox,
+                preferencesProvider: {
+                    TeamEventRoutingPreferences(
+                        prStateChanged: [.worktree],
+                        prMerged: [.root],
+                        ciConclusionChanged: [.worktree],
+                        mergabilityChanged: [.worktree]
+                    )
+                },
+                templateProvider: { "" }
+            )
+
+            let terminalManager = TerminalManager(
+                socketPath: root.appendingPathComponent("graftty.sock").path
+            )
+            terminalManager.recordPaneSession(
+                paneSession,
+                for: paneSlot,
+                worktreePath: backgroundWorktree
+            )
+            self.terminalManager = terminalManager
+
+            let presence = TeamPresenceRecord(
+                teamID: teamID,
+                worktree: backgroundWorktree,
+                runtime: .codex,
+                paneSessionName: sessionName,
+                pid: 123,
+                processStartTimeMicroseconds: 456,
+                registeredAt: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+            let liveSessionNames = GrafttyApp.livePaneSessionNamesForAutomaticDelivery(
+                records: [presence],
+                terminalManager: terminalManager
+            )
+            self.delivery = OwnerGatedRecordingDelivery(
+                presence: presence,
+                liveSessionNames: liveSessionNames
+            )
+        }
+
+        func deliverAppendedMessages() async {
+            let messages = (try? inbox.messages(teamID: teamID)) ?? []
+            let recipientWorktrees = await observerState.claimRecipientWorktrees(in: messages)
+            await GrafttyApp.deliverCodexAppServerMessages(
+                teamID: teamID,
+                recipientWorktrees: recipientWorktrees,
+                delivery: delivery
+            )
+        }
+    }
+
+    actor OwnerGatedRecordingDelivery: CodexAppServerDeliveryTrigger {
+        typealias Call = RecordingCodexDelivery.Call
+
+        private let presence: TeamPresenceRecord
+        private let liveSessionNames: Set<String>
+        private var recordedCalls: [Call] = []
+
+        init(
+            presence: TeamPresenceRecord,
+            liveSessionNames: Set<String>
+        ) {
+            self.presence = presence
+            self.liveSessionNames = liveSessionNames
+        }
+
+        var calls: [Call] {
+            recordedCalls
+        }
+
+        func onMessageArrival(team: String, worktree: String) async {
+            let resolver = TeamDeliveryOwnershipResolver(
+                records: { [presence] in [presence] },
+                liveness: BackgroundDeliveryLiveness(
+                    liveSessionNames: liveSessionNames,
+                    processStartTimeMicroseconds: presence.processStartTimeMicroseconds
+                )
+            )
+            let owner = resolver.owner(for: TeamDeliveryOwnerKey(
+                teamID: team,
+                worktree: worktree,
+                runtime: .codex
+            ))
+            guard owner != nil else { return }
+            recordedCalls.append(.init(team: team, worktree: worktree))
+        }
+    }
+
+    struct BackgroundDeliveryLiveness: TeamDeliveryLivenessChecking {
+        let liveSessionNames: Set<String>
+        let processStartTimeMicroseconds: Int64?
+
+        func isLivePaneSession(_ sessionName: String) -> Bool {
+            liveSessionNames.contains(sessionName)
+        }
+
+        func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+            processStartTimeMicroseconds
+        }
     }
 }
