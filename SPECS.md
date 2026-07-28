@@ -1678,6 +1678,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.12** On startup, the application shall migrate `agent.lead` references in saved team session and event prompt templates to `agent.main_worktree` before any AppStorage binding reads them.
 
+**TEAM-1.13** When the user activates "Restore Graftty Default" for either Agent Teams prompt editor, the application shall remove the corresponding persistent `UserDefaults` key so the registered default becomes visible and later built-in updates continue to apply.
+
 ### TEAM-2.x — Team Identity & Membership
 
 **TEAM-2.1** A *team* is implicit in any `RepoEntry` with two or more `WorktreeEntry` children, while `agentTeamsEnabled` is true. A repo with one worktree (or with team mode off) has no team and no team-aware behavior.
@@ -2054,7 +2056,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 

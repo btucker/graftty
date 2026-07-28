@@ -226,7 +226,7 @@ struct SessionReconnectTests {
         await waitUntil {
             provider.invocationCount == 1 &&
                 client.connectionState == .reconnecting(attempt: 1) &&
-                clock.pendingSleepCount(dueWithin: 1.0) == 1
+                clock.hasPendingSleep(for: 1.0)
         }
         // First dial: the provider hands back a dead connection whose
         // `openTerminalSession` throws immediately, feeding the same
@@ -234,7 +234,7 @@ struct SessionReconnectTests {
         #expect(provider.invocationCount == 1)
         #expect(client.connectionState == .reconnecting(attempt: 1))
         #expect(
-            clock.pendingSleepCount(dueWithin: 1.0) == 1,
+            clock.hasPendingSleep(for: 1.0),
             "the first backoff sleep must be registered before time advances"
         )
 
@@ -242,7 +242,7 @@ struct SessionReconnectTests {
         await waitUntil {
             provider.invocationCount == 2 &&
                 client.connectionState == .reconnecting(attempt: 2) &&
-                clock.pendingSleepCount(dueWithin: 2.0) == 1
+                clock.hasPendingSleep(for: 2.0)
         }
         // Second dial. Before this fix, the connection resolved for the
         // FIRST dial was captured by value in the factory closure and
@@ -252,14 +252,15 @@ struct SessionReconnectTests {
         #expect(provider.invocationCount == 2, "the provider must be asked again on the second dial, not just the first")
         #expect(client.connectionState == .reconnecting(attempt: 2))
         #expect(
-            clock.pendingSleepCount(dueWithin: 2.0) == 1,
+            clock.hasPendingSleep(for: 2.0),
             "the second backoff sleep must be registered before time advances"
         )
 
         clock.advance(by: 2.0)
         await waitUntil {
             provider.invocationCount == 3 &&
-                client.connectionState == .reconnecting(attempt: 3)
+                client.connectionState == .reconnecting(attempt: 3) &&
+                clock.hasPendingSleep(for: 4.0)
         }
         #expect(provider.invocationCount == 3, "and again on the third dial")
         #expect(client.connectionState == .reconnecting(attempt: 3))

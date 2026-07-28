@@ -42,4 +42,16 @@ enum DefaultPrompts {
         SettingsKeys.teamSessionPrompt: sessionPrompt,
         SettingsKeys.teamPrompt: eventPrompt,
     ]
+
+    /// Remove the persisted override instead of writing today's default into
+    /// the application domain. The registered value then becomes visible
+    /// immediately, and a future Graftty release can update that value without
+    /// the old default being mistaken for a user customization.
+    static func restoreSessionPrompt(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: SettingsKeys.teamSessionPrompt)
+    }
+
+    static func restoreEventPrompt(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: SettingsKeys.teamPrompt)
+    }
 }

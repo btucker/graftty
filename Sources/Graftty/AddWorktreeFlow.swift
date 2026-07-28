@@ -24,6 +24,13 @@ import GrafttyKit
 /// orchestration dependencies.
 @MainActor
 enum AddWorktreeFlow {
+    /// Host-managed zmx panes normally wait for their AppKit view's first
+    /// settled layout before attaching. Background creation has no guarantee
+    /// that a view will ever mount, so each caller must choose deliberately.
+    enum TerminalStartTiming {
+        case afterViewLayout
+        case immediately
+    }
 
     /// The worktree name slots into `<repo>/.worktrees/<name>` and must
     /// not collide with an existing sibling. Stale entries count as
@@ -133,7 +140,8 @@ enum AddWorktreeFlow {
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
-        initialCommand: String? = nil
+        initialCommand: String? = nil,
+        terminalStartTiming: TerminalStartTiming
     ) async -> Swift.Result<Result, FlowError> {
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, default to origin's main.
@@ -242,7 +250,16 @@ enum AddWorktreeFlow {
             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
             return .failure(.discoveryFailed("failed to create terminal surface"))
         }
-        if initialCommand != nil, !firstHandle.startForBackgroundLaunch() {
+        // CLI-created worktrees may never be selected in the Mac window, so
+        // their view never receives the layout callback that normally starts
+        // the host-managed zmx backend. This must be an explicit caller
+        // choice rather than inferred from `initialCommand`: a plain
+        // `graftty worktree add <name>` still promises to start a shell.
+        //
+        // Native sheet creation chooses `.afterViewLayout` so TERM-11.10 can
+        // defer the attach until the selected pane has its real AppKit layout.
+        if terminalStartTiming == .immediately,
+           !firstHandle.startForBackgroundLaunch() {
             terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
             return .failure(.discoveryFailed("failed to start terminal backend"))
@@ -271,8 +288,7 @@ enum AddWorktreeFlow {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
-        teamEventDispatcher: TeamEventDispatcher,
-        initialCommand: String? = nil
+        teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Result, FlowError> {
         let worktreePath: String
         switch beginCreate(
@@ -293,7 +309,10 @@ enum AddWorktreeFlow {
             statsStore: statsStore,
             terminalManager: terminalManager,
             teamEventDispatcher: teamEventDispatcher,
-            initialCommand: initialCommand
+            // The web client establishes its own zmx attachment from the
+            // returned session name. Keep the hidden Mac surface deferred so
+            // it does not claim display ownership ahead of that client.
+            terminalStartTiming: .afterViewLayout
         )
     }
 

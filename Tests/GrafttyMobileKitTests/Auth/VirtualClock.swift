@@ -8,6 +8,7 @@ final class VirtualClock: Clock, @unchecked Sendable {
     private var sleepers: [UUID: Sleeper] = [:]
 
     private struct Sleeper {
+        let duration: TimeInterval
         let deadline: Date
         let continuation: CheckedContinuation<Void, Error>
     }
@@ -24,7 +25,11 @@ final class VirtualClock: Clock, @unchecked Sendable {
             try await withCheckedThrowingContinuation { continuation in
                 lock.withLock {
                     let deadline = _now.addingTimeInterval(duration)
-                    sleepers[id] = Sleeper(deadline: deadline, continuation: continuation)
+                    sleepers[id] = Sleeper(
+                        duration: duration,
+                        deadline: deadline,
+                        continuation: continuation
+                    )
                 }
             }
         } onCancel: {
@@ -49,10 +54,9 @@ final class VirtualClock: Clock, @unchecked Sendable {
 
     var pendingSleepCount: Int { lock.withLock { sleepers.count } }
 
-    func pendingSleepCount(dueWithin duration: TimeInterval) -> Int {
+    func hasPendingSleep(for duration: TimeInterval) -> Bool {
         lock.withLock {
-            let cutoff = _now.addingTimeInterval(duration)
-            return sleepers.values.count { $0.deadline <= cutoff }
+            sleepers.values.contains { $0.duration == duration }
         }
     }
 }
