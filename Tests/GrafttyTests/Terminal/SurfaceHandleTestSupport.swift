@@ -29,6 +29,8 @@ final class SurfaceHandleTestHarness {
     var writeBufferCalls: [SurfaceWriteBufferCall] = []
     var processExitCalls: [ProcessExitCall] = []
     var setSizeCalls: [SetSizeCall] = []
+    var setOcclusionCalls: [Bool] = []
+    var refreshCalls = 0
     var requestCloseCalls: [ghostty_surface_t] = []
     var sizeStub: ghostty_surface_size_s = .zero
     var onSetSize: (() -> Void)?
@@ -68,6 +70,12 @@ final class SurfaceHandleTestHarness {
             setSize: { [weak self] surface, w, h in
                 self?.onSetSize?()
                 self?.setSizeCalls.append(SetSizeCall(surface: surface, width: w, height: h))
+            },
+            setOcclusion: { [weak self] _, visible in
+                self?.setOcclusionCalls.append(visible)
+            },
+            refresh: { [weak self] _ in
+                self?.refreshCalls += 1
             },
             requestClose: { [weak self] surface in
                 self?.requestCloseCalls.append(surface)

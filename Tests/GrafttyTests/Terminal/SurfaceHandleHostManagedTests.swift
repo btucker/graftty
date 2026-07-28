@@ -134,9 +134,6 @@ struct SurfaceHandleHostManagedTests {
     func firstVisibilityAfterBackgroundStartForwardsLiveGridWithoutLaterCallback() throws {
         let store = SessionDisplayOwnershipStore()
         let session = FirstVisibilityRecordingSession()
-        let liveGrid = FirstVisibilityGridProvider(
-            RecordedGrid(cols: 49, rows: 17)
-        )
         var spawnedAt: RecordedGrid?
         let backend = HostManagedZmxBackend(
             spawnConfiguration: testSurfaceHandleSpawnConfiguration(),
@@ -152,6 +149,7 @@ struct SurfaceHandleHostManagedTests {
             }
         )
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let terminalID = Self.terminalID()
         harness.sizeStub = ghostty_surface_size_s(
             columns: 49,
             rows: 17,
@@ -161,23 +159,15 @@ struct SurfaceHandleHostManagedTests {
             cell_height_px: 16
         )
         let handle = try #require(SurfaceHandle(
-            terminalID: Self.terminalID(),
+            terminalID: terminalID,
             app: fakeApp(),
             worktreePath: "/tmp/worktree",
             socketPath: "/tmp/graftty.sock",
             surfaceFactory: harness.factory,
             hostManagedBackend: backend
         ))
-        // Keep the integration path through SurfaceHandle for creation,
-        // background start, and first-show forwarding, while replacing the
-        // refresh callback that would dereference this test's fake C pointer.
-        backend.bindSurfaceSync(
-            currentGridSize: {
-                let grid = liveGrid.value()
-                return (cols: grid.cols, rows: grid.rows)
-            },
-            requestRefresh: {}
-        )
+        let terminalManager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        terminalManager.insertSurfaceForTesting(handle, for: terminalID)
 
         // CLI/background creation starts zmx before the view ever mounts, so
         // its PTY begins at libghostty's provisional grid.
@@ -189,9 +179,10 @@ struct SurfaceHandleHostManagedTests {
         // grid. Model the observed absence of any later layout/viewport
         // callback by driving only the first-show reconcile.
         harness.sizeStub = .testSize132x43
-        liveGrid.set(RecordedGrid(cols: 132, rows: 43))
-        handle.resyncVisibleGrid()
+        terminalManager.setVisible(true, for: terminalID)
 
+        #expect(harness.setOcclusionCalls == [true])
+        #expect(harness.refreshCalls == 2)
         #expect(session.resizes() == [RecordedGrid(cols: 132, rows: 43)])
         let snapshot = store.snapshot(
             sessionName: "graftty-test",
@@ -617,26 +608,5 @@ private final class FirstVisibilityRecordingSession: HostManagedZmxSession {
         lock.lock()
         defer { lock.unlock() }
         return recordedResizes
-    }
-}
-
-private final class FirstVisibilityGridProvider {
-    private let lock = NSLock()
-    private var grid: RecordedGrid
-
-    init(_ grid: RecordedGrid) {
-        self.grid = grid
-    }
-
-    func set(_ grid: RecordedGrid) {
-        lock.lock()
-        self.grid = grid
-        lock.unlock()
-    }
-
-    func value() -> RecordedGrid {
-        lock.lock()
-        defer { lock.unlock() }
-        return grid
     }
 }

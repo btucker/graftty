@@ -111,6 +111,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var setOcclusion: (ghostty_surface_t, Bool) -> Void
+    var refresh: (ghostty_surface_t) -> Void
     var requestClose: (ghostty_surface_t) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
@@ -123,6 +125,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
         },
         size: { surface in ghostty_surface_size(surface) },
         setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) },
+        setOcclusion: { surface, visible in ghostty_surface_set_occlusion(surface, visible) },
+        refresh: { surface in ghostty_surface_refresh(surface) },
         requestClose: { surface in ghostty_surface_request_close(surface) }
     )
 }
@@ -527,12 +531,12 @@ final class SurfaceHandle {
     /// Tell libghostty whether this surface is currently visible. Despite
     /// the C symbol's name, the boolean is `visible`, not `occluded`.
     func setVisible(_ visible: Bool) {
-        ghostty_surface_set_occlusion(surface, visible)
+        surfaceFactory.setOcclusion(surface, visible)
     }
 
     /// Force a full repaint on libghostty's next draw cycle.
     func refresh() {
-        ghostty_surface_refresh(surface)
+        surfaceFactory.refresh(surface)
     }
 
     /// TERM-11.13 / TERM-11.17: the pane entered the visible set. Ask the
