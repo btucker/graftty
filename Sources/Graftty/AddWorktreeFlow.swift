@@ -251,8 +251,10 @@ enum AddWorktreeFlow {
         for leafID in splitTree.allLeaves {
             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].ensurePaneSession(for: leafID)
         }
-        for leafID in splitTree.allLeaves {
-            terminalManager.markFirstPane(leafID)
+        let primaryPane = appState.wrappedValue.repos[repoIdx]
+            .worktrees[wtIdx].ensurePrimaryPane()
+        if let primaryPane {
+            terminalManager.markFirstPane(primaryPane)
         }
         let createdSurfaces = terminalManager.createSurfaces(
             for: splitTree,

@@ -2,10 +2,9 @@ import Foundation
 import GrafttyKit
 
 extension WorktreeEntry {
-    /// The pane graftty considers "primary" for this worktree: the focused
-    /// pane when it still belongs to the split tree, otherwise the first
-    /// leaf. Persisted focus can be stale after state migration or repair.
-    /// Used by focus / split commands that need a single target.
+    /// The best pane to target for focus/navigation: the focused pane when
+    /// it still belongs to the split tree, otherwise the first leaf.
+    /// Startup ownership is tracked separately by `primaryPaneSlotID`.
     var firstPane: PaneSlotID? {
         if let focusedPaneSlotID,
            splitTree.containsLeaf(focusedPaneSlotID) {
@@ -15,7 +14,7 @@ extension WorktreeEntry {
     }
 
     /// Repair a stale persisted focus while preserving nil as "no explicit
-    /// focus yet." Returns the same validated primary pane as `firstPane`.
+    /// focus yet." Returns the same validated target as `firstPane`.
     @discardableResult
     mutating func normalizeFocusedPane() -> PaneSlotID? {
         let primaryPane = firstPane

@@ -2931,7 +2931,7 @@ struct GrafttyApp: App {
         //  - Carried-forward: mutate path (and latest branch label)
         //    in place on the `pre` copy, preserving id / splitTree /
         //    state / attention / paneAttention / focusedPaneSlotID /
-        //    offeredDeleteForResolvedPR.
+        //    primaryPaneSlotID / offeredDeleteForResolvedPR.
         //  - Gone-stale: preserve the full entry, flip state to `.stale`
         //    so the sidebar can still offer a Dismiss action.
         //  - Fresh: discovered branches that didn't match any existing
@@ -3049,7 +3049,8 @@ struct GrafttyApp: App {
             paneSessions: worktree.paneSessions,
             worktreePath: worktree.path
         )
-        let primaryPane = worktree.normalizeFocusedPane()
+        _ = worktree.normalizeFocusedPane()
+        let primaryPane = worktree.ensurePrimaryPane()
         // Mark every restored leaf as rehydrated *before* surface creation
         // so surviving zmx sessions never receive another default command.
         for leafID in worktree.splitTree.allLeaves {
@@ -4145,10 +4146,12 @@ struct GrafttyApp: App {
                         .ensurePaneSession(for: leafID)
                 }
                 // TERM-1.4: a saved multi-pane layout still has only one
-                // "first" pane for default-command eligibility. Restart ZMX
-                // preserves the focused leaf, so prefer it when it is valid.
-                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                // "first" pane for default-command eligibility. Keep that
+                // pane stable even when focus has since moved elsewhere.
+                _ = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].normalizeFocusedPane()
+                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
                 if let primaryPane {
                     terminalManager.markFirstPane(primaryPane)
                 }
@@ -4190,8 +4193,21 @@ struct GrafttyApp: App {
     ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                guard candidate.state == .running,
+                      candidate.splitTree.containsLeaf(targetID) else {
+                    continue
+                }
+                // A split never changes which existing pane is primary.
+                // Migrate legacy running state before adding a new leaf so
+                // Split Left/Up cannot accidentally elect the new pane by
+                // tree order.
+                _ = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.state == .running, wt.splitTree.containsLeaf(targetID) else { continue }
+                if let primaryPane = wt.primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
+                }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
                 let newID = PaneSlotID()
@@ -4320,6 +4336,8 @@ struct GrafttyApp: App {
         // Remember where this pane was sitting in the source tree *before*
         // we remove it, so a later return trip can land it in (roughly)
         // the same spot.
+        _ = appState.wrappedValue.repos[currentRepoIdx]
+            .worktrees[currentWorktreeIdx].ensurePrimaryPane()
         let sourceWt = appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
         terminalManager.rememberPosition(
             terminalID: terminalID,
@@ -4355,6 +4373,11 @@ struct GrafttyApp: App {
                     remainingTree: sourceTree
                 )
         }
+        // Preserve the source's primary pane unless that was the pane that
+        // moved. If it was, persist the focused survivor (or first leaf) as
+        // the replacement; an empty source clears the primary.
+        let replacementSourcePrimary = appState.wrappedValue.repos[currentRepoIdx]
+            .worktrees[currentWorktreeIdx].ensurePrimaryPane()
 
         // Graft onto the target tree. Prefer a previously-remembered
         // position (pane is returning to a worktree it once occupied); if
@@ -4362,6 +4385,11 @@ struct GrafttyApp: App {
         // the layout feels like the pane "came back to its seat." Fall
         // back to inserting at an arbitrary leaf when no usable
         // breadcrumb exists.
+        // Migrate an existing target's primary before inserting the moving
+        // pane. Otherwise a left/top insertion could become primary merely
+        // because it moved to the front of tree order.
+        _ = appState.wrappedValue.repos[targetRepoIdx]
+            .worktrees[targetWorktreeIdx].ensurePrimaryPane()
         let targetWt = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
         let targetTree: SplitTree
         let remembered = terminalManager.rememberedPosition(
@@ -4392,6 +4420,19 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
+        let targetPrimary = appState.wrappedValue.repos[targetRepoIdx]
+            .worktrees[targetWorktreeIdx].ensurePrimaryPane()
+        // PaneSlotIDs are globally unique, so moving a pane can safely
+        // clear its source marker before applying both worktrees' current
+        // primary ownership. This also handles an empty target electing
+        // the moved pane.
+        terminalManager.unmarkFirstPane(terminalID)
+        if let replacementSourcePrimary {
+            terminalManager.markFirstPane(replacementSourcePrimary)
+        }
+        if let targetPrimary {
+            terminalManager.markFirstPane(targetPrimary)
+        }
         let targetPath = targetWt.path
         if let paneSession = sessionTarget.paneSessions[terminalID] {
             terminalManager.recordPaneSession(
@@ -4601,8 +4642,8 @@ struct GrafttyApp: App {
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.splitTree.containsLeaf(targetID) else { continue }
+                let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                guard candidate.splitTree.containsLeaf(targetID) else { continue }
 
                 // TERM-5.7 (Stop cascade) vs TERM-5.8 (phantom leaf).
                 // `handle == nil` can mean either:
@@ -4618,6 +4659,9 @@ struct GrafttyApp: App {
                     handleExists: terminalManager.handle(for: targetID) != nil
                 ) else { continue }
 
+                _ = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
@@ -4652,6 +4696,13 @@ struct GrafttyApp: App {
                        newFocus != previousFocus {
                         terminalManager.setFocus(newFocus)
                     }
+                }
+                // Closing a non-primary pane preserves startup ownership.
+                // Closing the primary elects and persists a survivor.
+                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].ensurePrimaryPane()
+                if let primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
                 }
                 return
             }
