@@ -111,6 +111,7 @@ struct TeamInstructionsRendererTests {
         #expect(template.contains("Graftty team context."))
         #expect(template.contains("graftty worktree add <name> --agent <codex|claude>"))
         #expect(template.contains("graftty worktree remove <worktree> [--force]"))
+        #expect(template.contains("Removing `.` closes its panes"))
         #expect(template.contains("--base <ref>"))
         #expect(template.contains("graftty team send --stdin"))
         #expect(template.contains("do not poll"))
