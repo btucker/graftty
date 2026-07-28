@@ -14,8 +14,14 @@ struct AgentStopFocusTargetTests {
         let agentSlot = PaneSlotID(id: UUID())
         let agentSession = PaneSessionID(id: UUID())
         var wt = WorktreeEntry(path: "/tmp/wt", branch: "feature")
+        wt.splitTree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(firstSlot),
+            right: .leaf(agentSlot)
+        )))
         wt.paneSessions = [agentSlot: agentSession]
-        // Drives the firstPane fallback (firstPane = focusedPaneSlotID ?? first leaf).
+        // Drives the firstPane fallback with a valid live focused leaf.
         wt.focusedPaneSlotID = firstSlot
 
         // The triggering pane resolves → focus THAT pane, not the first one.
