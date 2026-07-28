@@ -1774,6 +1774,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.3** If a Claude asyncRewake inbox watcher resolves after the hook's stderr reader has closed, the CLI shall discard the output failure rather than terminate from SIGPIPE or an NSFileHandle exception.
 
+### TEAM-12.x
+
+**TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+
+**TEAM-12.2** When an automated team lifecycle or state event arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+
+**TEAM-12.3** On application launch, the immediate retry of preexisting unread messages shall refresh automatic-delivery liveness after restoring pane-session metadata, so a live background Codex agent is not delayed until the periodic presence retry.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x

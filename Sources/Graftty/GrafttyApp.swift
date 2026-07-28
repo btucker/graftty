@@ -1540,16 +1540,12 @@ struct GrafttyApp: App {
         let livePaneSessionNames = LivePaneSessionNames()
         func refreshDeliveryLiveness(records: [TeamPresenceRecord]? = nil) {
             let records = records ?? refreshPresenceIndex()
-            let names = Set(records.compactMap { record -> String? in
-                guard let sessionName = record.paneSessionName,
-                      tm.handle(forSessionName: sessionName) != nil else {
-                    return nil
-                }
-                return sessionName
-            })
+            let names = Self.livePaneSessionNamesForAutomaticDelivery(
+                records: records,
+                terminalManager: tm
+            )
             livePaneSessionNames.replace(with: names)
         }
-        refreshDeliveryLiveness(records: presenceIndex.allRecords())
 
         let codexAppServerDeliveryService = CodexAppServerDeliveryService(
             inbox: services.teamInbox,
@@ -1568,13 +1564,6 @@ struct GrafttyApp: App {
             await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: records,
-                delivery: codexAppServerDeliveryService
-            )
-        }
-        Task {
-            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: presenceIndex.allRecords(),
                 delivery: codexAppServerDeliveryService
             )
         }
@@ -1656,6 +1645,21 @@ struct GrafttyApp: App {
         }
 
         restoreRunningWorktrees()
+
+        // Restoring running worktrees installs the durable pane-to-session
+        // mappings used by automatic delivery liveness. Refresh only after
+        // those mappings exist, then retry unread rows from while the app was
+        // down; otherwise a background owner can be skipped until the
+        // 30-second presence ticker runs.
+        let restoredPresenceRecords = refreshPresenceIndex()
+        refreshDeliveryLiveness(records: restoredPresenceRecords)
+        Task {
+            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                inbox: services.teamInbox,
+                records: restoredPresenceRecords,
+                delivery: codexAppServerDeliveryService
+            )
+        }
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
         // shared registry so Mac pane backends can see web-client attaches.
@@ -2637,6 +2641,25 @@ struct GrafttyApp: App {
         }
     }
 
+    @MainActor
+    static func livePaneSessionNamesForAutomaticDelivery(
+        records: [TeamPresenceRecord],
+        terminalManager: TerminalManager
+    ) -> Set<String> {
+        Set(records.compactMap { record -> String? in
+            // A background or LRU-evicted pane intentionally has no mounted
+            // SurfaceHandle, but its durable pane-to-zmx mapping remains
+            // authoritative until the pane is destroyed. Delivery liveness
+            // must follow that mapping rather than UI visibility; the owner
+            // resolver separately verifies the registered process identity.
+            guard let sessionName = record.paneSessionName,
+                  terminalManager.paneID(forSessionName: sessionName) != nil else {
+                return nil
+            }
+            return sessionName
+        })
+    }
+
     nonisolated static func deliverCodexAppServerMessages(
         teamID: String,
         recipientWorktrees: [String],
@@ -3556,13 +3579,10 @@ struct GrafttyApp: App {
             let presenceRecords = (try? TeamPresenceStorage(
                 rootDirectory: TeamPresenceStorage.defaultRoot()
             ).listAll()) ?? []
-            let liveSessionNames = Set(presenceRecords.compactMap { record -> String? in
-                guard let sessionName = record.paneSessionName,
-                      terminalManager.handle(forSessionName: sessionName) != nil else {
-                    return nil
-                }
-                return sessionName
-            })
+            let liveSessionNames = Self.livePaneSessionNamesForAutomaticDelivery(
+                records: presenceRecords,
+                terminalManager: terminalManager
+            )
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
