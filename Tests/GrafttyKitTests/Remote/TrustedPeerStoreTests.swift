@@ -6,6 +6,24 @@ import GrafttyProtocol
 
 @Suite("TrustedPeerStore Tests")
 struct TrustedPeerStoreTests {
+    @Test
+    func omittedWorktreeManagementFollowsTerminalControl() {
+        let disabled = PairedDeviceCapabilities(
+            terminalControl: .disabled,
+            portTunnel: .disabled,
+            screenView: .disabled,
+            screenControl: .disabled
+        )
+        let allowed = PairedDeviceCapabilities(
+            terminalControl: .allowed,
+            portTunnel: .disabled,
+            screenView: .disabled,
+            screenControl: .disabled
+        )
+
+        #expect(disabled.worktreeManagement == .disabled)
+        #expect(allowed.worktreeManagement == .allowed)
+    }
 
     func makeTempDir() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -29,6 +47,39 @@ struct TrustedPeerStoreTests {
             capabilities: .defaultsAfterPairing,
             pairedAt: pairedAt,
             lastSeenAt: lastSeenAt
+        )
+    }
+
+    @Test("""
+    @spec REMOTE-13.6: When an existing paired-device capability record \
+    predates worktree-management permission, the application shall inherit \
+    management permission from terminal control so upgrades neither silently \
+    revoke trusted Macs nor grant management to disabled peers.
+    """)
+    func legacyCapabilitiesDeriveWorktreeManagementPermission() throws {
+        func decode(terminalControl: String) throws
+            -> PairedDeviceCapabilities {
+            let json = """
+            {
+              "terminalControl": "\(terminalControl)",
+              "portTunnel": "ask_each_time",
+              "screenView": "disabled",
+              "screenControl": "disabled"
+            }
+            """
+            return try JSONDecoder().decode(
+                PairedDeviceCapabilities.self,
+                from: Data(json.utf8)
+            )
+        }
+
+        #expect(
+            try decode(terminalControl: "allowed").worktreeManagement
+                == .allowed
+        )
+        #expect(
+            try decode(terminalControl: "disabled").worktreeManagement
+                == .disabled
         )
     }
 

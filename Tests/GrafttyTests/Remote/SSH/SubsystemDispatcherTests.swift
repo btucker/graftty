@@ -127,6 +127,64 @@ final class SubsystemDispatcherTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// @spec REMOTE-13.7: When a paired client opens the authenticated
+    /// worktree-management subsystem, the host shall install the management
+    /// handler only if that peer has worktree-management permission and shall
+    /// reject and close the channel otherwise.
+    func testWorktreeManagementSubsystemRequiresCapability() async throws {
+        let allowedChannel = NIOAsyncTestingChannel()
+        let allowedCapture = OutboundEventCapture()
+        let allowedDispatcher = makeDispatcher(
+            streamFactory: RecordingStreamFactory().callable,
+            worktreeManagementMutator: { _ in .ok },
+            worktreeManagementAllowed: { true }
+        )
+        try await allowedChannel.pipeline.addHandler(allowedCapture).get()
+        try await allowedChannel.pipeline.addHandler(allowedDispatcher).get()
+
+        allowedChannel.pipeline.fireUserInboundEventTriggered(
+            SSHChannelRequestEvent.SubsystemRequest(
+                subsystem: SSHChannelTypeNames.worktreeManagement,
+                wantReply: true
+            )
+        )
+        try await waitFor(channel: allowedChannel) {
+            allowedCapture.sawSuccess
+        }
+        XCTAssertFalse(allowedCapture.sawFailure)
+        let allowedDispatcherWasRemoved = try await Self.dispatcherRemoved(
+            from: allowedChannel,
+            dispatcher: allowedDispatcher
+        )
+        XCTAssertTrue(allowedDispatcherWasRemoved)
+        _ = try? await allowedChannel.finish()
+
+        let deniedChannel = NIOAsyncTestingChannel()
+        let deniedCapture = OutboundEventCapture()
+        let deniedDispatcher = makeDispatcher(
+            streamFactory: RecordingStreamFactory().callable,
+            worktreeManagementMutator: { _ in .ok },
+            worktreeManagementAllowed: { false }
+        )
+        try await deniedChannel.pipeline.addHandler(deniedCapture).get()
+        try await deniedChannel.pipeline.addHandler(deniedDispatcher).get()
+        try await deniedChannel.connect(
+            to: .init(unixDomainSocketPath: "/tmp/test")
+        ).get()
+
+        deniedChannel.pipeline.fireUserInboundEventTriggered(
+            SSHChannelRequestEvent.SubsystemRequest(
+                subsystem: SSHChannelTypeNames.worktreeManagement,
+                wantReply: true
+            )
+        )
+        try await waitFor(channel: deniedChannel) {
+            deniedCapture.sawFailure && !deniedChannel.isActive
+        }
+        XCTAssertFalse(deniedCapture.sawSuccess)
+        XCTAssertFalse(deniedChannel.isActive)
+    }
+
     /// Unknown subsystem name: dispatcher must reply with ChannelFailureEvent
     /// (when `wantReply: true`) and close the channel.
     func testUnknownSubsystemFailsAndCloses() async throws {
@@ -158,9 +216,14 @@ final class SubsystemDispatcherTests: XCTestCase {
         streamFactory: @escaping @Sendable (String) async throws -> any TerminalByteStream,
         panesStateSubscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: PaneControlChannelHandler.Mutator? = nil,
+        worktreeManagementMutator:
+            WorktreeManagementChannelHandler.Mutator? = nil,
         ownershipStore: SessionDisplayOwnershipStore? = nil,
         ownershipBroadcaster: DisplayOwnershipBroadcaster? = nil,
-        deviceID: RemoteDeviceID? = nil
+        deviceID: RemoteDeviceID? = nil,
+        worktreeManagementAllowed: @escaping @Sendable () -> Bool = {
+            true
+        }
     ) -> SubsystemDispatcher {
         SubsystemDispatcher(
             streamFactory: streamFactory,
@@ -168,9 +231,13 @@ final class SubsystemDispatcherTests: XCTestCase {
                 PanesStateChannelHandler.Cancellable(cancel: {})
             },
             paneControlMutator: paneControlMutator ?? { _ in .ok },
+            worktreeManagementMutator: worktreeManagementMutator,
             ownershipStore: ownershipStore ?? SessionDisplayOwnershipStore(),
             ownershipBroadcaster: ownershipBroadcaster ?? DisplayOwnershipBroadcaster(),
-            deviceIDProvider: { deviceID ?? RemoteDeviceID(value: "test-device") }
+            deviceIDProvider: {
+                deviceID ?? RemoteDeviceID(value: "test-device")
+            },
+            worktreeManagementAllowed: worktreeManagementAllowed
         )
     }
 

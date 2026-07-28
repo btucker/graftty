@@ -233,6 +233,10 @@ struct SessionReconnectTests {
         // backoff path a plain socket failure would.
         #expect(provider.invocationCount == 1)
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(
+            clock.hasPendingSleep(for: 1.0),
+            "the first backoff sleep must be registered before time advances"
+        )
 
         clock.advance(by: 1.0)
         await waitUntil {
@@ -247,6 +251,10 @@ struct SessionReconnectTests {
         // loop calls on every attempt.
         #expect(provider.invocationCount == 2, "the provider must be asked again on the second dial, not just the first")
         #expect(client.connectionState == .reconnecting(attempt: 2))
+        #expect(
+            clock.hasPendingSleep(for: 2.0),
+            "the second backoff sleep must be registered before time advances"
+        )
 
         clock.advance(by: 2.0)
         await waitUntil {

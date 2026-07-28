@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GrafttyProtocol
 @testable import GrafttyKit
 
 /// Endpoint coverage for `GET /repos` and `POST /worktrees`. Uses stub
@@ -25,6 +26,9 @@ struct WebServerWorktreeEndpointTests {
 
     private static func makeConfig(
         repos: [WebServer.RepoInfo] = [],
+        relayedRepos: [WebServer.RepoInfo] = [],
+        worktrees: [WorktreePanes] = [],
+        relayedWorktrees: [WorktreePanes] = [],
         creator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)? = nil,
         defaultBranchPuller: (@Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome)? = nil
     ) -> WebServer.Config {
@@ -33,8 +37,11 @@ struct WebServerWorktreeEndpointTests {
             zmxExecutable: URL(fileURLWithPath: "/dev/null"),
             zmxDir: URL(fileURLWithPath: "/tmp"),
             reposProvider: { repos },
+            relayedReposProvider: { relayedRepos },
             worktreeCreator: creator,
-            defaultBranchPuller: defaultBranchPuller
+            defaultBranchPuller: defaultBranchPuller,
+            worktreePanesProvider: { worktrees },
+            relayedWorktreePanesProvider: { relayedWorktrees }
         )
     }
 
@@ -89,6 +96,96 @@ struct WebServerWorktreeEndpointTests {
         #expect(decoded[0].defaultBranchStatus?.behindCount == 2)
         #expect(decoded[1].path == "/tmp/beta")
         #expect(decoded[1].defaultBranchStatus == nil)
+    }
+
+    @Test
+    func relayedReposRequireFeatureAdvertisement() async throws {
+        if skipInCI() { return }
+
+        let (server, port) = try Self.startServer(config: Self.makeConfig(
+            repos: [.init(path: "/tmp/local", displayName: "local")],
+            relayedRepos: [
+                .init(path: "relay-repository-1", displayName: "remote"),
+            ]
+        ))
+        defer { server.stop() }
+
+        let url = URL(string: "https://localhost:\(port)/repos")!
+        let (legacyData, _) = try await trustAllData(from: url)
+        let legacy = try JSONDecoder().decode(
+            [WebServer.RepoInfo].self,
+            from: legacyData
+        )
+        #expect(legacy.map(\.displayName) == ["local"])
+
+        var relayRequest = URLRequest(url: url)
+        relayRequest.setValue(
+            "another-feature, \(RemoteWorktreeFeatures.oneHopRelay)",
+            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+        )
+        let (relayData, _) = try await trustAllData(for: relayRequest)
+        let relayAware = try JSONDecoder().decode(
+            [WebServer.RepoInfo].self,
+            from: relayData
+        )
+        #expect(relayAware.map(\.displayName) == ["local", "remote"])
+    }
+
+    @Test
+    func relayedWorktreesRequireFeatureAdvertisement() async throws {
+        if skipInCI() { return }
+
+        let local = WorktreePanes(
+            path: "/tmp/local",
+            displayName: "local",
+            repoDisplayName: "repo",
+            displayBranch: "main",
+            state: .closed,
+            isMainCheckout: true,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+        let remote = WorktreePanes(
+            path: "relay-worktree-1",
+            displayName: "remote",
+            repoDisplayName: "repo",
+            displayBranch: "feature",
+            state: .closed,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+        let (server, port) = try Self.startServer(config: Self.makeConfig(
+            worktrees: [local],
+            relayedWorktrees: [remote]
+        ))
+        defer { server.stop() }
+
+        let url = URL(
+            string: "https://localhost:\(port)/worktrees/panes"
+        )!
+        let (legacyData, _) = try await trustAllData(from: url)
+        let legacy = try JSONDecoder().decode(
+            [WorktreePanes].self,
+            from: legacyData
+        )
+        #expect(legacy.map(\.displayName) == ["local"])
+
+        var relayRequest = URLRequest(url: url)
+        relayRequest.setValue(
+            RemoteWorktreeFeatures.oneHopRelay,
+            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+        )
+        let (relayData, _) = try await trustAllData(for: relayRequest)
+        let relayAware = try JSONDecoder().decode(
+            [WorktreePanes].self,
+            from: relayData
+        )
+        #expect(relayAware.map(\.displayName) == ["local", "remote"])
     }
 
     @Test func deniedReposRequestReturns403WithoutCallingProvider() async throws {

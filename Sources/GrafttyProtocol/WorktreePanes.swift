@@ -43,6 +43,11 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
     public let ahead: Int
     public let behind: Int
     public let hasUncommittedChanges: Bool
+    /// Optional line-level detail used by the macOS sidebar gutter. Older
+    /// hosts omit these fields; clients keep rendering the compact
+    /// ahead/behind/dirty summary in that case.
+    public let insertions: Int?
+    public let deletions: Int?
     /// Ref label the divergence was measured against. Used in the
     /// tooltip on macOS; iOS may surface it via accessibility or a
     /// long-press affordance.
@@ -52,16 +57,51 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
         ahead: Int,
         behind: Int,
         hasUncommittedChanges: Bool,
-        baseRef: String?
+        baseRef: String?,
+        insertions: Int? = nil,
+        deletions: Int? = nil
     ) {
         self.ahead = ahead
         self.behind = behind
         self.hasUncommittedChanges = hasUncommittedChanges
         self.baseRef = baseRef
+        self.insertions = insertions
+        self.deletions = deletions
     }
 
     public var isEmpty: Bool {
         ahead == 0 && behind == 0 && !hasUncommittedChanges
+    }
+}
+
+/// Identifies the Mac that owns a worktree in an origin-aware snapshot.
+///
+/// `relayDepth == 0` is always local to the server emitting the snapshot.
+/// A server may promote those rows to depth 1 when sharing a directly
+/// connected Remote Mac, but rows already carrying a non-zero depth must
+/// never be promoted again. That single rule prevents A↔B relay loops.
+public struct WorktreeOrigin: Codable, Sendable, Hashable {
+    public let deviceID: RemoteDeviceID
+    public let deviceLabel: String
+    public let relayDepth: Int
+
+    public init(deviceID: RemoteDeviceID, deviceLabel: String, relayDepth: Int) {
+        self.deviceID = deviceID
+        self.deviceLabel = deviceLabel
+        self.relayDepth = max(0, relayDepth)
+    }
+}
+
+/// Live, opaque route identifiers attached only to relayed rows. They are
+/// lookup keys, not encoded filesystem paths or zmx names: hosts must resolve
+/// them against their current route table and reject unknown values.
+public struct WorktreeRoute: Codable, Sendable, Hashable {
+    public let repositoryID: String
+    public let worktreeID: String
+
+    public init(repositoryID: String, worktreeID: String) {
+        self.repositoryID = repositoryID
+        self.worktreeID = worktreeID
     }
 }
 
@@ -77,18 +117,17 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
 ///      from `RepoEntry` + `WorktreeEntry` + the various stat / PR /
 ///      attention stores; the iPad consumes it directly from the wire.
 ///
-/// **Known gap (today):** the Mac sidebar's `WorktreeRow` does not yet
-/// consume `WorktreePanes` directly — it still takes the richer
-/// `WorktreeStats` for its hover tooltip (`+I -D lines vs. baseRef`)
-/// which carries `insertions` / `deletions` that `WorktreeWireStats`
-/// drops. Once those two fields are added to the wire (a backwards-
-/// compatible expansion since the mobile decoder is decodeIfPresent-
-/// tolerant), the Mac sidebar can switch to consuming `WorktreePanes`
-/// for its row inputs too, single-sourcing the row contract end-to-end.
+/// `WorktreeWireStats` carries the line-level details needed by the macOS
+/// `WorktreeRow`, allowing relayed rows to use the same presentation
+/// component without reconstructing filesystem-backed state locally.
 public struct WorktreePanes: Codable, Sendable, Hashable {
     public let path: String
     public let displayName: String
     public let repoDisplayName: String
+    /// Opaque identity of the owning repository. New hosts populate this
+    /// with their canonical repository token; nil preserves compatibility
+    /// with older snapshots that exposed only `repoDisplayName`.
+    public let repositoryID: String?
     /// Branch name, sanitized of bidirectional-override scalars so
     /// the mobile client can render it directly without re-running
     /// the Trojan-Source defense (`GIT-2.10`).
@@ -106,32 +145,55 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// Rendered as a red capsule next to the branch label. nil when
     /// there is no active worktree-scoped ping.
     public let attentionText: String?
+    /// Source of worktree-scoped attention. Optional for compatibility with
+    /// older hosts; consumers conservatively treat a missing source as a
+    /// user notification.
+    public let attentionSource: AttentionSource?
+    /// Timestamp of the active attention occurrence. New hosts include this
+    /// so a repeated notification with identical text is still observable;
+    /// nil preserves compatibility with snapshots from older hosts.
+    public let attentionTimestamp: Date?
     /// nil when the worktree has no panes currently running. Always
     /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
     public let layout: PaneLayoutNode?
+    /// nil for legacy snapshots. New origin-aware snapshots identify their
+    /// owning Mac explicitly, including local rows (`relayDepth == 0`).
+    public let origin: WorktreeOrigin?
+    /// Present only for rows relayed through another Mac.
+    public let route: WorktreeRoute?
 
     public init(
         path: String,
         displayName: String,
         repoDisplayName: String,
+        repositoryID: String? = nil,
         displayBranch: String,
         state: WorktreeWireState,
         isMainCheckout: Bool,
         prBadge: PRBadge?,
         stats: WorktreeWireStats?,
         attentionText: String?,
-        layout: PaneLayoutNode?
+        attentionSource: AttentionSource? = nil,
+        attentionTimestamp: Date? = nil,
+        layout: PaneLayoutNode?,
+        origin: WorktreeOrigin? = nil,
+        route: WorktreeRoute? = nil
     ) {
         self.path = path
         self.displayName = displayName
         self.repoDisplayName = repoDisplayName
+        self.repositoryID = repositoryID
         self.displayBranch = displayBranch
         self.state = state
         self.isMainCheckout = isMainCheckout
         self.prBadge = prBadge
         self.stats = stats
         self.attentionText = attentionText
+        self.attentionSource = attentionSource
+        self.attentionTimestamp = attentionTimestamp
         self.layout = layout
+        self.origin = origin
+        self.route = route
     }
 
     /// Custom decode preserves readability when an older server
@@ -139,8 +201,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// repoDisplayName/layout only): missing fields fall back to
     /// safe defaults rather than failing the decode.
     private enum CodingKeys: String, CodingKey {
-        case path, displayName, repoDisplayName, displayBranch, state,
-             isMainCheckout, prBadge, stats, attentionText, layout
+        case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
+             isMainCheckout, prBadge, stats, attentionText, attentionSource,
+             attentionTimestamp, layout, origin, route
     }
 
     public init(from decoder: Decoder) throws {
@@ -148,13 +211,27 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.path = try c.decode(String.self, forKey: .path)
         self.displayName = try c.decode(String.self, forKey: .displayName)
         self.repoDisplayName = try c.decode(String.self, forKey: .repoDisplayName)
+        self.repositoryID = try c.decodeIfPresent(
+            String.self,
+            forKey: .repositoryID
+        )
         self.displayBranch = try c.decodeIfPresent(String.self, forKey: .displayBranch) ?? ""
         self.state = try c.decodeIfPresent(WorktreeWireState.self, forKey: .state) ?? .running
         self.isMainCheckout = try c.decodeIfPresent(Bool.self, forKey: .isMainCheckout) ?? false
         self.prBadge = try c.decodeIfPresent(PRBadge.self, forKey: .prBadge)
         self.stats = try c.decodeIfPresent(WorktreeWireStats.self, forKey: .stats)
         self.attentionText = try c.decodeIfPresent(String.self, forKey: .attentionText)
+        self.attentionSource = try c.decodeIfPresent(
+            AttentionSource.self,
+            forKey: .attentionSource
+        )
+        self.attentionTimestamp = try c.decodeIfPresent(
+            Date.self,
+            forKey: .attentionTimestamp
+        )
         self.layout = try c.decodeIfPresent(PaneLayoutNode.self, forKey: .layout)
+        self.origin = try c.decodeIfPresent(WorktreeOrigin.self, forKey: .origin)
+        self.route = try c.decodeIfPresent(WorktreeRoute.self, forKey: .route)
     }
 }
 
@@ -165,7 +242,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 ///
 /// Wire format uses a `"kind"` discriminator so the JSON is stable across
 /// Swift changes to indirect-enum Codable synthesis:
-///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?,"attentionSource":"…"?}`
+///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?,"attentionSource":"…"?,"attentionTimestamp":"…"?}`
 ///           (`isBusy` is omitted from the JSON when false, so idle leaves
 ///           keep their compact shape and legacy decoders are unaffected.
 ///           `attentionSource` is likewise optional — absent when the pane
@@ -174,7 +251,14 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 ///   - split: `{"kind":"split","direction":"horizontal","ratio":0.5,
 ///             "left":{…},"right":{…}}`
 public indirect enum PaneLayoutNode: Sendable, Hashable {
-    case leaf(sessionName: String, title: String, attentionText: String?, isBusy: Bool, attentionSource: AttentionSource?)
+    case leaf(
+        sessionName: String,
+        title: String,
+        attentionText: String?,
+        isBusy: Bool,
+        attentionSource: AttentionSource?,
+        attentionTimestamp: Date? = nil
+    )
     case split(direction: SplitAxis, ratio: Double, left: PaneLayoutNode, right: PaneLayoutNode)
 
     public enum SplitAxis: String, Codable, Sendable, Hashable {
@@ -194,6 +278,9 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
         /// (`.agentStop`) versus other attention sources. nil when the pane
         /// has no attention or the source is unknown.
         public let attentionSource: AttentionSource?
+        /// Timestamp of the active attention occurrence, when supplied by
+        /// the host. Distinguishes repeated notifications with equal text.
+        public let attentionTimestamp: Date?
 
         /// Falls back to the literal `"shell"` when the libghostty
         /// `SET_TITLE` action hasn't fired yet. Centralizing the
@@ -222,10 +309,18 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
 
     private func collectLeaves(into out: inout [Leaf]) {
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
+        case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            isBusy,
+            attentionSource,
+            attentionTimestamp
+        ):
             out.append(Leaf(sessionName: sessionName, title: title,
                             attentionText: attentionText, isBusy: isBusy,
-                            attentionSource: attentionSource))
+                            attentionSource: attentionSource,
+                            attentionTimestamp: attentionTimestamp))
         case let .split(_, _, left, right):
             left.collectLeaves(into: &out)
             right.collectLeaves(into: &out)
@@ -240,7 +335,8 @@ extension PaneLayoutNode: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, sessionName, title, attentionText, isBusy, attentionSource, direction, ratio, left, right
+        case kind, sessionName, title, attentionText, isBusy, attentionSource,
+             attentionTimestamp, direction, ratio, left, right
     }
 
     public init(from decoder: Decoder) throws {
@@ -253,7 +349,8 @@ extension PaneLayoutNode: Codable {
                 title: try c.decode(String.self, forKey: .title),
                 attentionText: try c.decodeIfPresent(String.self, forKey: .attentionText),
                 isBusy: try c.decodeIfPresent(Bool.self, forKey: .isBusy) ?? false,
-                attentionSource: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource)
+                attentionSource: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource),
+                attentionTimestamp: try c.decodeIfPresent(Date.self, forKey: .attentionTimestamp)
             )
         case .split:
             self = .split(
@@ -268,13 +365,21 @@ extension PaneLayoutNode: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
+        case let .leaf(
+            sessionName,
+            title,
+            attentionText,
+            isBusy,
+            attentionSource,
+            attentionTimestamp
+        ):
             try c.encode(Kind.leaf, forKey: .kind)
             try c.encode(sessionName, forKey: .sessionName)
             try c.encode(title, forKey: .title)
             try c.encodeIfPresent(attentionText, forKey: .attentionText)
             if isBusy { try c.encode(true, forKey: .isBusy) }
             try c.encodeIfPresent(attentionSource, forKey: .attentionSource)
+            try c.encodeIfPresent(attentionTimestamp, forKey: .attentionTimestamp)
         case let .split(direction, ratio, left, right):
             try c.encode(Kind.split, forKey: .kind)
             try c.encode(direction, forKey: .direction)

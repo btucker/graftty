@@ -30,7 +30,9 @@ public actor WebRTCHostAgent {
     public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
+    private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
+    private var worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     /// REMOTE-9: the SAME process-wide store the `/ws` bridge uses
     /// (`AppServices.displayOwnershipStore`), so a Mac-side or web-side
     /// owner change reaches SSH terminal clients and vice versa. This
@@ -159,7 +161,9 @@ public actor WebRTCHostAgent {
         activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
+        panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
+        worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -168,7 +172,16 @@ public actor WebRTCHostAgent {
         self.activeRemotePeers = activeRemotePeers
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
+        self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
         self.paneControlMutator = paneControlMutator
+        self.worktreeManagementMutator = worktreeManagementMutator ?? { _ in
+            .error(
+                code: "unavailable",
+                message: "worktree management is unavailable",
+                forceAllowed: false,
+                shortStatus: nil
+            )
+        }
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
@@ -186,11 +199,21 @@ public actor WebRTCHostAgent {
         self.panesStateSubscribe = subscribe
     }
 
+    public func setPanesStateV2Subscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {
+        self.panesStateV2Subscribe = subscribe
+    }
+
     /// Replace the `pane-control` mutator callback. See `setPanesStateSubscribe`
     /// for the timing contract — both setters share the same init/startup
     /// split and the same "wire before signaling" ordering requirement.
     public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
         self.paneControlMutator = mutator
+    }
+
+    public func setWorktreeManagementMutator(
+        _ mutator: @escaping WorktreeManagementChannelHandler.Mutator
+    ) {
+        self.worktreeManagementMutator = mutator
     }
 
     /// Test-only seam mirroring `acceptOffer`'s busy-guard precondition
@@ -554,7 +577,9 @@ public actor WebRTCHostAgent {
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
         let panesStateSubscribe = self.panesStateSubscribe
+        let panesStateV2Subscribe = self.panesStateV2Subscribe
         let paneControlMutator = self.paneControlMutator
+        let worktreeManagementMutator = self.worktreeManagementMutator
         let activeRemotePeers = self.activeRemotePeers
         transport.channel.closeFuture.whenComplete { [weak self, transport] _ in
             Task {
@@ -617,10 +642,15 @@ public actor WebRTCHostAgent {
                             let dispatcher = SubsystemDispatcher(
                                 streamFactory: factory,
                                 panesStateSubscribe: panesStateSubscribe,
+                                panesStateV2Subscribe: panesStateV2Subscribe,
                                 paneControlMutator: paneControlMutator,
+                                worktreeManagementMutator: worktreeManagementMutator,
                                 ownershipStore: ownershipStore,
                                 ownershipBroadcaster: ownershipBroadcaster,
                                 deviceIDProvider: { peerBox.deviceID },
+                                worktreeManagementAllowed: {
+                                    peerBox.worktreeManagementAllowed
+                                },
                                 displayKindProvider: { peerBox.displayKind }
                             )
                             try child.pipeline.syncOperations.addHandler(dispatcher)
@@ -935,5 +965,11 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
         case .iphone, .ipad, nil:
             return .ios
         }
+    }
+
+    var worktreeManagementAllowed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _peer?.capabilities.worktreeManagement == .allowed
     }
 }

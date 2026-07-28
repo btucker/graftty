@@ -27,6 +27,8 @@ struct SidebarView: View {
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
     let onSelectRemotePane: (RemoteMac, String, String) -> Void
+    let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
+    let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
@@ -81,6 +83,8 @@ struct SidebarView: View {
                     onSelectRemoteMac: onSelectRemoteMac,
                     onSelectRemoteWorktree: onSelectRemoteWorktree,
                     onSelectRemotePane: onSelectRemotePane,
+                    onAddRemoteWorktree: onAddRemoteWorktree,
+                    onDeleteRemoteWorktree: onDeleteRemoteWorktree,
                     onAddRemoteMac: onAddRemoteMac
                 )
             }

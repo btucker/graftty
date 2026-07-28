@@ -64,5 +64,70 @@ struct WorktreeListContentTests {
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)
     }
+
+    @Test("""
+    @spec REMOTE-13.18: When GrafttyMobile selects a closed local or relayed \
+    worktree over an authenticated management connection, the application \
+    shall open the worktree before navigating to its running pane layout.
+    """)
+    func closedWorktreesRequireManagementOpen() {
+        func worktree(state: WorktreeWireState) -> WorktreePanes {
+            WorktreePanes(
+                path: "worktree",
+                displayName: "worktree",
+                repoDisplayName: "repo",
+                displayBranch: "feature",
+                state: state,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            )
+        }
+
+        #expect(WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            includesRemoteWorktrees: true,
+            providerAvailable: true
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .running),
+            includesRemoteWorktrees: true,
+            providerAvailable: true
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            includesRemoteWorktrees: true,
+            providerAvailable: false
+        ))
+        #expect(!WorktreeListContent.requiresManagementOpen(
+            worktree(state: .closed),
+            includesRemoteWorktrees: false,
+            providerAvailable: true
+        ))
+        #expect(WorktreeListContent.shouldApplySelectionIntent(
+            capturedGeneration: 4,
+            currentGeneration: 4
+        ))
+        #expect(!WorktreeListContent.shouldApplySelectionIntent(
+            capturedGeneration: 4,
+            currentGeneration: 5
+        ))
+    }
+
+    @Test("force-delete confirmation cannot cross host boundaries")
+    func forceDeleteConfirmationIsHostScoped() {
+        let originalHostID = UUID()
+
+        #expect(WorktreeListContent.forceDeleteMatchesHost(
+            capturedHostID: originalHostID,
+            currentHostID: originalHostID
+        ))
+        #expect(!WorktreeListContent.forceDeleteMatchesHost(
+            capturedHostID: originalHostID,
+            currentHostID: UUID()
+        ))
+    }
 }
 #endif

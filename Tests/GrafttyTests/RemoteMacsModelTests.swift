@@ -251,6 +251,280 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
+    @spec REMOTE-13.12: When several panes in one remote layout request a \
+    connection concurrently, they shall share the same connection attempt \
+    rather than cancelling earlier pane opens.
+    """)
+    func concurrentConnectCallersShareOneAttempt() async throws {
+        let gate = RemoteMacsModelConnectGate()
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            await gate.wait()
+            return RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let remote = try remoteMac()
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: try tempStoreURL()),
+            connectionRegistry: registry
+        )
+
+        let first = Task { try await model.connect(to: remote) }
+        await gate.waitUntilStarted()
+        let second = Task { try await model.connect(to: remote) }
+        await gate.release()
+
+        let firstEntry = try await first.value
+        let secondEntry = try await second.value
+        #expect(firstEntry.id == secondEntry.id)
+        #expect(
+            model.connectionState(for: RemoteMacIdentity(remote))
+                == .connected
+        )
+    }
+
+    @Test("""
+    @spec REMOTE-13.14: While a Mac displays a remote worktree, pane \
+    control requests shall be serialized per owning Mac so repeated split \
+    resize and layout commands cannot overlap the single-request channel, \
+    and a disconnect shall invalidate every command queued for the old \
+    connection.
+    """)
+    func paneControlRequestsAreSerializedPerRemote() async throws {
+        let recorder = RemoteMacsModelPaneControlRecorder(
+            suspendFirstRequest: true
+        )
+        let client = PaneControlClient(driver: recorder)
+        try await client.open()
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: RemoteMacPaneEnvironment(
+                    worktreePanesStore: nil,
+                    paneControlClient: client
+                )
+            )
+        })
+        let remote = try remoteMac()
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: try tempStoreURL()),
+            connectionRegistry: registry
+        )
+
+        let first = model.queuePaneControl(
+            on: remote,
+            request: .resize(
+                target: "pane-a",
+                direction: .right,
+                amount: 4,
+                viewportExtent: 1440
+            )
+        )
+        await recorder.waitUntilFirstRequestStarted()
+        let second = model.queuePaneControl(
+            on: remote,
+            request: .equalize(target: "pane-a")
+        )
+        await Task.yield()
+        #expect(await recorder.requests().count == 1)
+
+        await recorder.releaseFirstRequest()
+        #expect(await first.value == .ok)
+        #expect(await second.value == .ok)
+        #expect(await recorder.requests() == [
+            .resize(
+                target: "pane-a",
+                direction: .right,
+                amount: 4,
+                viewportExtent: 1440
+            ),
+            .equalize(target: "pane-a"),
+        ])
+    }
+
+    @Test("disconnect invalidates every queued pane command")
+    func disconnectInvalidatesQueuedPaneCommands() async throws {
+        let recorder = RemoteMacsModelPaneControlRecorder(
+            suspendFirstRequest: true
+        )
+        let client = PaneControlClient(driver: recorder)
+        try await client.open()
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: RemoteMacPaneEnvironment(
+                    worktreePanesStore: nil,
+                    paneControlClient: client
+                )
+            )
+        })
+        let remote = try remoteMac()
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: try tempStoreURL()),
+            connectionRegistry: registry
+        )
+
+        let first = model.queuePaneControl(
+            on: remote,
+            request: .equalize(target: "pane-a")
+        )
+        await recorder.waitUntilFirstRequestStarted()
+        let second = model.queuePaneControl(
+            on: remote,
+            request: .close(target: "pane-a")
+        )
+        let third = model.queuePaneControl(
+            on: remote,
+            request: .split(target: "pane-a", direction: .right)
+        )
+
+        model.disconnect(identity: RemoteMacIdentity(remote))
+        await recorder.releaseFirstRequest()
+
+        let cancelled = PaneControlResponse.error(
+            code: "cancelled",
+            message: "pane command was cancelled"
+        )
+        #expect(await first.value == cancelled)
+        #expect(await second.value == cancelled)
+        #expect(await third.value == cancelled)
+        #expect(await recorder.requests() == [
+            .equalize(target: "pane-a"),
+        ])
+    }
+
+    @Test("direct and relayed layout commands forward opaque targets")
+    func directAndRelayedOpenAndLayoutCommandsForwardOpaqueTargets()
+        async throws {
+        let paneRecorder = RemoteMacsModelPaneControlRecorder(
+            splitCreatedSessionName: "created-pane"
+        )
+        let managementRecorder = RemoteMacsModelManagementRecorder()
+        let client = PaneControlClient(driver: paneRecorder)
+        try await client.open()
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelRecordingConnection(
+                    managementRecorder: managementRecorder
+                ),
+                paneEnvironment: RemoteMacPaneEnvironment(
+                    worktreePanesStore: nil,
+                    paneControlClient: client
+                )
+            )
+        })
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        try store.add(remote)
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+
+        #expect(await model.openWorktree(
+            on: remote,
+            worktreePath: "/repos/app/.worktrees/feature"
+        ) == .ok)
+
+        registry.onPaneSnapshot(identity, [
+            WorktreePanes(
+                path: "/repos/app/.worktrees/feature",
+                displayName: "feature",
+                repoDisplayName: "app",
+                repositoryID: "/repos/app",
+                displayBranch: "feature",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: .leaf(
+                    sessionName: "real-pane",
+                    title: "shell",
+                    attentionText: nil,
+                    isBusy: false,
+                    attentionSource: nil
+                ),
+                origin: WorktreeOrigin(
+                    deviceID: remote.id,
+                    deviceLabel: remote.label,
+                    relayDepth: 0
+                )
+            ),
+        ])
+        let promoted = try #require(
+            model.promotedWorktreesForRelay().first
+        )
+        let paneAlias = try #require(promoted.layout?.leaves.first?.sessionName)
+
+        #expect(await model.sendRelayedPaneControl(
+            .equalize(target: paneAlias)
+        ) == .ok)
+        let splitResponse = await model.sendRelayedPaneControl(
+            .split(target: paneAlias, direction: .right)
+        )
+        guard case .splitCreated(let createdPaneAlias) = splitResponse else {
+            Issue.record("expected an aliased created-pane response")
+            return
+        }
+        #expect(createdPaneAlias.hasPrefix("relay-pane-"))
+        #expect(await model.sendRelayedPaneControl(
+            .close(target: createdPaneAlias)
+        ) == .ok)
+        #expect(await model.sendRelayedPaneControl(
+            .resize(
+                target: paneAlias,
+                direction: .down,
+                amount: 7,
+                viewportExtent: 900
+            )
+        ) == .ok)
+        #expect(await model.sendRelayedWorktreeManagement(
+            .open(worktreeID: promoted.path)
+        ) == .ok)
+
+        #expect(await paneRecorder.requests() == [
+            .equalize(target: "real-pane"),
+            .split(target: "real-pane", direction: .right),
+            .close(target: "created-pane"),
+            .resize(
+                target: "real-pane",
+                direction: .down,
+                amount: 7,
+                viewportExtent: 900
+            ),
+        ])
+        #expect(await managementRecorder.requests() == [
+            .open(worktreeID: "/repos/app/.worktrees/feature"),
+            .open(worktreeID: "/repos/app/.worktrees/feature"),
+        ])
+    }
+
+    @Test("""
     @spec REMOTE-12.14: If a saved Remote Mac presents a host key that does \
     not match its pinned fingerprint, the application shall fail closed, \
     transition the Mac to needs pairing, and preserve that state through \
@@ -338,6 +612,356 @@ struct RemoteMacsModelTests {
         registry.onPaneSnapshot(RemoteMacIdentity(remote), snapshot)
 
         #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == snapshot)
+    }
+
+    @Test("""
+    @spec REMOTE-13.9: When a Remote Mac connection becomes unavailable, \
+    the application shall remove its cached worktree and repository rows so \
+    offline remote worktrees are not displayed or relayed.
+    """)
+    func offlineRemoteRowsAreRemoved() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        let snapshot = [
+            WorktreePanes(
+                path: "/repos/app",
+                displayName: "main",
+                repoDisplayName: "app",
+                repositoryID: "/repos/app",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            ),
+        ]
+        registry.onPaneSnapshot(identity, snapshot)
+
+        registry.onConnectionStateChange(
+            identity,
+            .closed
+        )
+
+        #expect(model.worktreePanesByRemote[identity] == nil)
+        #expect(model.repositoriesByRemote[identity] == nil)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
+    @Test("failed setup removes snapshots received during the connection attempt")
+    func failedSetupRemovesEarlySnapshot() async throws {
+        struct SetupFailure: Error {}
+
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let identity = RemoteMacIdentity(remote)
+        let registry = RemoteMacConnectionRegistry(factory: { _, _ in
+            throw SetupFailure()
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+
+        registry.onPaneSnapshot(identity, [
+            WorktreePanes(
+                path: "/repos/app",
+                displayName: "app",
+                repoDisplayName: "app",
+                repositoryID: "/repos/app",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            ),
+        ])
+        #expect(model.worktreePanesByRemote[identity]?.count == 1)
+
+        await #expect(throws: SetupFailure.self) {
+            _ = try await model.connect(to: remote)
+        }
+
+        #expect(model.connectionState(for: identity) == .failed)
+        #expect(model.worktreePanesByRemote[identity] == nil)
+        #expect(model.repositoriesByRemote[identity] == nil)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+    }
+
+    @Test("""
+    @spec REMOTE-13.5: While a Remote Mac is connected, when a remote \
+    worktree receives a new user-notify or agent-stop attention transition, \
+    the application shall deliver a macOS notification targeting that exact \
+    worktree or pane, but shall not replay attention already present in the \
+    first snapshot after connection.
+    """)
+    func remoteAttentionNotifiesOnlyOnLiveTransitions() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+
+        func snapshot(
+            worktreeAttention: String? = nil,
+            worktreeSource: AttentionSource? = nil,
+            worktreeAttentionTimestamp: Date? = nil,
+            paneAttention: String? = nil,
+            source: AttentionSource? = nil,
+            paneAttentionTimestamp: Date? = nil
+        ) -> [WorktreePanes] {
+            [
+                WorktreePanes(
+                    path: "/repos/app/.worktrees/feature",
+                    displayName: "feature",
+                    repoDisplayName: "app",
+                    repositoryID: "/repos/app",
+                    displayBranch: "feature",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: worktreeAttention,
+                    attentionSource: worktreeSource,
+                    attentionTimestamp: worktreeAttentionTimestamp,
+                    layout: .leaf(
+                        sessionName: "agent-pane",
+                        title: "agent",
+                        attentionText: paneAttention,
+                        isBusy: false,
+                        attentionSource: source,
+                        attentionTimestamp: paneAttentionTimestamp
+                    ),
+                    origin: WorktreeOrigin(
+                        deviceID: remote.id,
+                        deviceLabel: remote.label,
+                        relayDepth: 0
+                    )
+                ),
+            ]
+        }
+
+        // First snapshot is durable state restoration, not a new event.
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(worktreeAttention: "old notification")
+        )
+        #expect(events.isEmpty)
+
+        registry.onPaneSnapshot(identity, snapshot())
+        let firstOccurrence = Date(timeIntervalSince1970: 1_700_000_100)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                worktreeAttentionTimestamp: firstOccurrence
+            )
+        )
+        #expect(events.count == 1)
+        #expect(events[0].kind == .userNotify)
+        #expect(events[0].worktreeID == "/repos/app/.worktrees/feature")
+        #expect(events[0].paneID == nil)
+        #expect(events[0].timestamp == firstOccurrence)
+
+        // A repeated notification is a new occurrence even when its visible
+        // text/source are unchanged and the original badge is still active.
+        let repeatedOccurrence = firstOccurrence.addingTimeInterval(1)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                worktreeAttentionTimestamp: repeatedOccurrence
+            )
+        )
+        #expect(events.count == 2)
+        #expect(events[1].timestamp == repeatedOccurrence)
+
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                paneAttention: "Claude needs input",
+                source: .agentStop
+            )
+        )
+        #expect(events.count == 3)
+        #expect(events[2].kind == .agentStop)
+        #expect(events[2].paneID == "agent-pane")
+
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "Claude needs input",
+                worktreeSource: .agentStop
+            )
+        )
+        #expect(events.count == 4)
+        #expect(events[3].kind == .agentStop)
+        #expect(events[3].paneID == nil)
+
+        // Reconnect restoration remains silent even if the badge persists.
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "Claude needs input",
+                worktreeSource: .agentStop
+            )
+        )
+        #expect(events.count == 4)
+
+        // Command-finished attention is a visual status marker, not a system
+        // notification.
+        registry.onPaneSnapshot(identity, snapshot())
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(paneAttention: "✓", source: .commandFinished)
+        )
+        #expect(events.count == 4)
+    }
+
+    @Test("""
+    @spec REMOTE-13.11: When a Remote Mac reconnects with user-notify or \
+    agent-stop attention that was not present in its final connected snapshot, \
+    the application shall deliver one summary notification for all newly \
+    observed items, keep unchanged attention silent, and target the first \
+    affected worktree or pane when the summary is activated.
+    """)
+    func reconnectCollapsesNewAttentionIntoOneSummary() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry(factory: {
+            remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+
+        func snapshot(
+            worktreeAttention: String? = nil,
+            paneAttention: String? = nil
+        ) -> [WorktreePanes] {
+            [
+                WorktreePanes(
+                    path: "/repos/app/.worktrees/feature",
+                    displayName: "feature",
+                    repoDisplayName: "app",
+                    repositoryID: "/repos/app",
+                    displayBranch: "feature",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: worktreeAttention,
+                    layout: .leaf(
+                        sessionName: "agent-pane",
+                        title: "agent",
+                        attentionText: paneAttention,
+                        isBusy: false,
+                        attentionSource: paneAttention == nil
+                            ? nil
+                            : .agentStop
+                    ),
+                    origin: WorktreeOrigin(
+                        deviceID: remote.id,
+                        deviceLabel: remote.label,
+                        relayDepth: 0
+                    )
+                ),
+            ]
+        }
+
+        // Establish an empty connected baseline, then observe two new items in
+        // the first snapshot after reconnect.
+        registry.onPaneSnapshot(identity, snapshot())
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+
+        #expect(events.count == 1)
+        let summary = try #require(events.first)
+        #expect(summary.kind == .reconnectSummary)
+        #expect(summary.title == "Studio Mac needs attention")
+        #expect(summary.body == "2 items across 1 remote worktree need attention.")
+        #expect(summary.worktreeID == "/repos/app/.worktrees/feature")
+        #expect(summary.paneID == nil)
+
+        // Repeated durable state and another reconnect with the same badges do
+        // not replay the summary.
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+        model.disconnect(identity: identity)
+        registry.onPaneSnapshot(
+            identity,
+            snapshot(
+                worktreeAttention: "deploy finished",
+                paneAttention: "Claude needs input"
+            )
+        )
+        #expect(events.count == 1)
     }
 
     @Test("""
@@ -494,6 +1118,117 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
     }
 
     func close() async {}
+}
+
+private struct RemoteMacsModelRecordingConnection: RemoteMacHostConnection {
+    let managementRecorder: RemoteMacsModelManagementRecorder
+
+    func createOfferSDP() async throws -> String { "v=0\n" }
+    func applyAnswerSDP(_ sdp: String) async throws {}
+
+    func makePanesStateDriver(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void
+    ) async throws -> any PanesStateChannelDriver {
+        RemoteMacsModelTestPanesStateDriver()
+    }
+
+    func makePaneControlDriver() async throws
+        -> any PaneControlChannelDriver {
+        RemoteMacsModelTestPaneControlDriver()
+    }
+
+    func makeWorktreeManagementDriver() async throws
+        -> any WorktreeManagementChannelDriver {
+        managementRecorder
+    }
+
+    func openTerminalSession(sessionName: String) async throws
+        -> any WebSocketClient & Sendable {
+        RemoteMacsModelTestWebSocketClient()
+    }
+
+    func close() async {}
+}
+
+private actor RemoteMacsModelPaneControlRecorder:
+    PaneControlChannelDriver {
+    private var recordedRequests: [PaneControlRequest] = []
+    private let suspendFirstRequest: Bool
+    private let splitCreatedSessionName: String?
+    private var firstRequestStarted = false
+    private var firstRequestStartWaiters:
+        [CheckedContinuation<Void, Never>] = []
+    private var firstRequestReleaseWaiters:
+        [CheckedContinuation<Void, Never>] = []
+    private var firstRequestReleased = false
+
+    init(
+        suspendFirstRequest: Bool = false,
+        splitCreatedSessionName: String? = nil
+    ) {
+        self.suspendFirstRequest = suspendFirstRequest
+        self.splitCreatedSessionName = splitCreatedSessionName
+    }
+
+    func open() async throws {}
+    nonisolated func close() {}
+
+    func send(
+        _ request: PaneControlRequest
+    ) async throws -> PaneControlResponse {
+        recordedRequests.append(request)
+        if recordedRequests.count == 1, suspendFirstRequest {
+            firstRequestStarted = true
+            firstRequestStartWaiters.forEach { $0.resume() }
+            firstRequestStartWaiters.removeAll()
+            if !firstRequestReleased {
+                await withCheckedContinuation {
+                    firstRequestReleaseWaiters.append($0)
+                }
+            }
+        }
+        if case .split = request, let splitCreatedSessionName {
+            return .splitCreated(sessionName: splitCreatedSessionName)
+        }
+        return .ok
+    }
+
+    func waitUntilFirstRequestStarted() async {
+        guard !firstRequestStarted else { return }
+        await withCheckedContinuation {
+            firstRequestStartWaiters.append($0)
+        }
+    }
+
+    func releaseFirstRequest() {
+        firstRequestReleased = true
+        firstRequestReleaseWaiters.forEach { $0.resume() }
+        firstRequestReleaseWaiters.removeAll()
+    }
+
+    func requests() -> [PaneControlRequest] {
+        recordedRequests
+    }
+}
+
+private actor RemoteMacsModelManagementRecorder:
+    WorktreeManagementChannelDriver {
+    private var recordedRequests: [WorktreeManagementRequest] = []
+
+    func open() async throws {}
+    nonisolated func close() {}
+
+    func send(
+        _ request: WorktreeManagementRequest
+    ) async throws -> WorktreeManagementResponse {
+        recordedRequests.append(request)
+        return .ok
+    }
+
+    func requests() -> [WorktreeManagementRequest] {
+        recordedRequests
+    }
 }
 
 private struct RemoteMacsModelTestPanesStateDriver: PanesStateChannelDriver {

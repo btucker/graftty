@@ -423,7 +423,9 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// handshake has not completed.
     public func makePanesStateClient(
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
+        onClosed: @escaping @Sendable (String) async -> Void,
+        originAware: Bool = false,
+        requestReply: Bool = false
     ) throws -> PanesStateChannelClient {
         guard
             let transport = sshTransport,
@@ -434,6 +436,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         return PanesStateChannelClient(
             parentChannel: transport.channel,
             parentHandler: box.handler,
+            subsystemName: originAware
+                ? SSHChannelTypeNames.panesStateV2
+                : SSHChannelTypeNames.panesState,
+            requestReply: requestReply,
             onSnapshot: onSnapshot,
             onClosed: onClosed
         )
@@ -463,6 +469,27 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             throw ConnectionError.notConnected
         }
         return PaneControlChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler
+        )
+    }
+
+    public func openWorktreeManagementChannel() async throws
+        -> WorktreeManagementChannelClient {
+        let client = try makeWorktreeManagementClient()
+        try await client.open()
+        return client
+    }
+
+    public func makeWorktreeManagementClient() throws
+        -> WorktreeManagementChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        return WorktreeManagementChannelClient(
             parentChannel: transport.channel,
             parentHandler: box.handler
         )

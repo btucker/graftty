@@ -120,6 +120,44 @@ struct SSHPanesAndControlLoopbackTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(3)))
+    func panesStateNegotiationObservesUnknownSubsystemRejection() async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(
+            fingerprint: Self.fingerprint(of: clientKey),
+            terminalControl: .allowed
+        )
+
+        do {
+            _ = try await runPanesStateLoopback(
+                serverKey: serverKey,
+                trustedPeers: peerStore,
+                clientKey: clientKey,
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
+                subscribe: { _ in TestCancellable(cancel: {}) },
+                mutator: { _ in .ok },
+                responseDeadline: .seconds(20),
+                subsystemName: "unknown-panes-state@graftty.dev",
+                requestReply: true
+            )
+            Issue.record("expected the unknown subsystem to be rejected")
+        } catch let error as PanesStateChannelClient.ClientError {
+            guard case .openFailed(let underlying) = error,
+                  let underlying = underlying
+                    as? PanesStateChannelClient.ClientError,
+                  case .subsystemRejected = underlying else {
+                Issue.record(
+                    "expected an explicit subsystem rejection, got \(error)"
+                )
+                return
+            }
+        } catch {
+            Issue.record("expected a panes-state client error, got \(error)")
+        }
+    }
+
     // MARK: - Loopback drivers
 
     /// Builds a loopback, opens a panes-state channel, waits for the first
@@ -131,7 +169,9 @@ struct SSHPanesAndControlLoopbackTests {
         expectedHostFingerprint: RemoteIdentityFingerprint,
         subscribe: @escaping TestPanesStateSubscribe,
         mutator: @escaping TestPaneControlMutator,
-        responseDeadline: Duration = .seconds(180)
+        responseDeadline: Duration = .seconds(180),
+        subsystemName: String = SSHChannelTypeNames.panesState,
+        requestReply: Bool = false
     ) async throws -> [WorktreePanes] {
         let offerer = LoopbackPeer(role: .offerer)
         let answerer = LoopbackPeer(role: .answerer)
@@ -192,6 +232,8 @@ struct SSHPanesAndControlLoopbackTests {
         let client = PanesStateChannelClient(
             parentChannel: clientTransport.channel,
             parentHandler: sshHandler,
+            subsystemName: subsystemName,
+            requestReply: requestReply,
             onSnapshot: { snapshots in await snapshotBox.set(snapshots) },
             onClosed: { _ in await snapshotBox.fail(LoopbackError.channelClosedBeforeSnapshot) }
         )

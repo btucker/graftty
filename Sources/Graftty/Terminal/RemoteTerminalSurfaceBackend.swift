@@ -36,6 +36,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
 
     private let client: WebSocketClient
     private let writeBuffer: SurfaceWriteBuffer
+    private let onUnexpectedClose: () -> Void
     private let lock = NSCondition()
 
     private var lifecycle: Lifecycle = .idle
@@ -56,6 +57,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var pendingInputBytes = 0
     private var takeoverRequested = false
     private var takeoverBaseEpoch: UInt64?
+    private var didReportUnexpectedClose = false
 
     private static let maxPendingInputBytes = 1_048_576
     private static let maxPendingInputFrames = 1_024
@@ -65,11 +67,13 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         writeBuffer: @escaping SurfaceWriteBuffer = { surface, data in
             RemoteTerminalSurfaceBackend.defaultWriteBuffer(surface: surface, data: data)
         },
-        requestRefresh: @escaping () -> Void = {}
+        requestRefresh: @escaping () -> Void = {},
+        onUnexpectedClose: @escaping () -> Void = {}
     ) {
         self.client = client
         self.writeBuffer = writeBuffer
         self.requestRefresh = requestRefresh
+        self.onUnexpectedClose = onUnexpectedClose
 
         let userdata = RemoteTerminalSurfaceBackendUserdata(backend: self)
         self.userdataPointer = Unmanaged.passRetained(userdata).toOpaque()
@@ -78,12 +82,14 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     convenience init(
         client: WebSocketClient,
         writeBuffer: @escaping (Data) -> Void,
-        requestRefresh: @escaping () -> Void = {}
+        requestRefresh: @escaping () -> Void = {},
+        onUnexpectedClose: @escaping () -> Void = {}
     ) {
         self.init(
             client: client,
             writeBuffer: { _, data in writeBuffer(data) },
-            requestRefresh: requestRefresh
+            requestRefresh: requestRefresh,
+            onUnexpectedClose: onUnexpectedClose
         )
     }
 
@@ -285,9 +291,23 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                     break
                 }
             } catch {
+                reportUnexpectedClose()
                 return
             }
         }
+    }
+
+    private func reportUnexpectedClose() {
+        lock.lock()
+        guard case .running = lifecycle,
+              !didReportUnexpectedClose else {
+            lock.unlock()
+            return
+        }
+        didReportUnexpectedClose = true
+        let callback = onUnexpectedClose
+        lock.unlock()
+        callback()
     }
 
     private func deliver(_ data: Data, to expectedSurface: ghostty_surface_t) {

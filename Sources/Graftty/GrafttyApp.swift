@@ -122,20 +122,45 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
     static let shared = AgentNotificationRouter()
 
     @MainActor var onActivate: ((AgentStopNotificationPayload) -> Void)?
+    @MainActor var onActivateRemote: ((RemoteNotificationEvent) -> Void)?
 
     func install() {
         UNUserNotificationCenter.current().delegate = self
     }
 
     func post(_ notification: AgentStopNotificationContent) {
+        post(
+            title: notification.title,
+            body: notification.body,
+            userInfo: notification.userInfo
+        )
+    }
+
+    func post(_ event: RemoteNotificationEvent) {
+        guard let data = try? JSONEncoder().encode(event) else { return }
+        post(
+            title: event.title,
+            body: event.body,
+            userInfo: [
+                "kind": "remote_attention",
+                "event": data.base64EncodedString(),
+            ]
+        )
+    }
+
+    private func post(
+        title: String,
+        body: String,
+        userInfo: [String: String]
+    ) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             let post = {
                 let content = UNMutableNotificationContent()
-                content.title = notification.title
-                content.body = notification.body
+                content.title = title
+                content.body = body
                 content.sound = .default
-                content.userInfo = notification.userInfo
+                content.userInfo = userInfo
                 let request = UNNotificationRequest(
                     identifier: UUID().uuidString,
                     content: content,
@@ -166,10 +191,32 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
             guard let key = key as? String else { continue }
             userInfo[key] = value
         }
+        if userInfo["kind"] as? String == "remote_attention",
+           let encoded = userInfo["event"] as? String,
+           let data = Data(base64Encoded: encoded),
+           let event = try? JSONDecoder().decode(
+               RemoteNotificationEvent.self,
+               from: data
+           ) {
+            await MainActor.run {
+                self.onActivateRemote?(event)
+            }
+            return
+        }
         guard let payload = try? AgentStopNotification.payload(from: userInfo) else { return }
         await MainActor.run {
             self.onActivate?(payload)
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        notification.request.content.userInfo["kind"] as? String
+            == "remote_attention"
+            ? [.banner, .sound]
+            : []
     }
 }
 
@@ -505,7 +552,7 @@ final class AppServices {
         return "\(hostName).local"
     }
 
-    private static func localRemoteDeviceID() -> RemoteDeviceID {
+    fileprivate static func localRemoteDeviceID() -> RemoteDeviceID {
         let key = "remoteMac.localDeviceID"
         if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
             return RemoteDeviceID(value: value)
@@ -515,7 +562,7 @@ final class AppServices {
         return RemoteDeviceID(value: value)
     }
 
-    private static func localHostDisplayName() -> String {
+    fileprivate static func localHostDisplayName() -> String {
         let localizedName = Host.current().localizedName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let localizedName, !localizedName.isEmpty {
@@ -526,6 +573,13 @@ final class AppServices {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return hostName.isEmpty ? "Mac" : hostName
     }
+}
+
+enum WorktreeStartResult: Equatable {
+    case started
+    case alreadyRunning
+    case notFound
+    case unavailable
 }
 
 @main
@@ -615,7 +669,8 @@ struct GrafttyApp: App {
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
-        _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
+        let terminalManager = TerminalManager(socketPath: socketPath)
+        _terminalManager = StateObject(wrappedValue: terminalManager)
         let pairingAdmission = HostPairingAdmission()
         let appServices = AppServices(
             socketPath: socketPath,
@@ -679,15 +734,31 @@ struct GrafttyApp: App {
         ))
 
         do {
+            let remoteMacsModel = appServices.remoteMacsModel
             appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
-                streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
+                streamFactory: {
+                    [registry = appServices.remoteAttachmentRegistry,
+                     terminalManager] sessionName in
+                    if sessionName.hasPrefix("relay-pane-") {
+                        return try await remoteMacsModel.openRelayedTerminal(
+                            alias: sessionName
+                        )
+                    }
+                    let workingDirectoryPath = await MainActor.run {
+                        terminalManager.worktreePath(
+                            forSessionName: sessionName
+                        )
+                    }
+                    let workingDirectory = workingDirectoryPath.map {
+                        URL(fileURLWithPath: $0, isDirectory: true)
+                    }
                     let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil
+                        workingDirectory: workingDirectory
                     ))
                     engine.attachmentRegistry = registry
                     try engine.start()
@@ -1046,6 +1117,14 @@ struct GrafttyApp: App {
                 terminalManager: tm
             )
         }
+        services.remoteMacsModel.onRemoteNotification = {
+            AgentNotificationRouter.shared.post($0)
+        }
+        AgentNotificationRouter.shared.onActivateRemote = {
+            [remoteMacsModel = services.remoteMacsModel] event in
+            NSApp.activate(ignoringOtherApps: true)
+            remoteMacsModel.activateRemoteNotification(event)
+        }
 
         terminalManager.editorPreference = EditorPreference(
             defaults: .standard,
@@ -1058,6 +1137,12 @@ struct GrafttyApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .split(direction),
+                    for: terminalID
+                ) {
+                    return
+                }
                 _ = Self.splitPane(
                     appState: appState,
                     terminalManager: tm,
@@ -1113,24 +1198,52 @@ struct GrafttyApp: App {
             }
         }
 
-        // Shell-exit (or libghostty-initiated close) → remove the pane from
-        // the tree and free the surface. Same logic Cmd+W uses, but keyed
-        // on an arbitrary terminalID rather than the currently-focused one.
+        // A user-issued close action targets the pane that emitted it.
         terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(.close, for: terminalID) {
+                    return
+                }
                 switch paneCloseAction() {
                 case .closePane:
                     Self.closePane(
                         appState: appState,
                         terminalManager: tm,
-                        targetID: terminalID
+                        targetID: terminalID,
+                        userInitiated: true
                     )
                 }
             }
         }
 
+        // A surface can also disappear because its shell exited or, for a
+        // host-managed proxy, its transport dropped. Keep that distinct from
+        // user close so a network failure cannot kill the owning Mac's pane.
+        terminalManager.onSurfaceClosed = {
+            [appState = $appState, tm = terminalManager] terminalID in
+            MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .surfaceClosed,
+                    for: terminalID
+                ) {
+                    return
+                }
+                Self.closePane(
+                    appState: appState,
+                    terminalManager: tm,
+                    targetID: terminalID
+                )
+            }
+        }
+
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .focus(direction),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.navigatePane(
                     appState: appState,
                     terminalManager: tm,
@@ -1142,6 +1255,12 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .focusOrder(forward: forward),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.navigatePaneInTreeOrder(
                     appState: appState,
                     terminalManager: tm,
@@ -1151,14 +1270,26 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onToggleZoom = { [appState = $appState] terminalID in
+        terminalManager.onToggleZoom = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .toggleZoom,
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
-        terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
+        terminalManager.onResizeSplit = { [appState = $appState, tm = terminalManager] terminalID, direction, amount in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .resize(direction: direction, amount: amount),
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.resizeSplit(
                     appState: appState,
                     target: terminalID,
@@ -1168,8 +1299,14 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
+        terminalManager.onEqualizeSplits = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
+                if tm.routeHostManagedPaneCommand(
+                    .equalize,
+                    for: terminalID
+                ) {
+                    return
+                }
                 Self.equalizeSplits(appState: appState, around: terminalID)
             }
         }
@@ -1600,6 +1737,11 @@ struct GrafttyApp: App {
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
+        let localWorktreeOrigin = WorktreeOrigin(
+            deviceID: AppServices.localRemoteDeviceID(),
+            deviceLabel: AppServices.localHostDisplayName(),
+            relayDepth: 0
+        )
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1620,12 +1762,15 @@ struct GrafttyApp: App {
                         path: wt.path,
                         displayName: labels[wt.id] ?? "",
                         repoDisplayName: repo.displayName,
+                        repositoryID: repo.path,
                         displayBranch: wt.displayBranch,
                         state: WorktreeWireState(wt.state),
                         isMainCheckout: wt.path == repo.path,
                         prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
                         stats: stats?.toWire(),
                         attentionText: wt.attention?.text,
+                        attentionSource: wt.attention?.source,
+                        attentionTimestamp: wt.attention?.timestamp,
                         layout: (wt.state == .running ? wt.splitTree.root : nil)
                             .map {
                                 paneLayoutNode(
@@ -1635,7 +1780,8 @@ struct GrafttyApp: App {
                                     paneAttention: wt.paneAttention,
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
-                            }
+                            },
+                        origin: localWorktreeOrigin
                     ))
                 }
             }
@@ -1643,6 +1789,9 @@ struct GrafttyApp: App {
         }
         webController.setWorktreePanesProvider {
             await MainActor.run { buildWorktreePanesSnapshot() }
+        }
+        webController.setRelayedWorktreePanesProvider {
+            await services.remoteMacsModel.promotedWorktreesForRelay()
         }
 
         let statsStore = services.statsStore
@@ -1659,10 +1808,30 @@ struct GrafttyApp: App {
                         defaultBranchStatus: defaultBranchStatus(
                             for: repo,
                             stats: statsStore.stats[repo.path]
-                        )
+                        ),
+                        origin: localWorktreeOrigin
                     )
                 }
             }
+        }
+        webController.setRelayedReposProvider {
+            await services.remoteMacsModel
+                .promotedRepositoriesForRelay()
+                .map { repository in
+                    WebServer.RepoInfo(
+                        path: repository.id,
+                        displayName: repository.displayName,
+                        defaultBranchStatus: repository.defaultBranchStatus.map {
+                            .init(
+                                branchName: $0.branchName,
+                                remoteRef: $0.remoteRef,
+                                behindCount: $0.behindCount
+                            )
+                        },
+                        branches: repository.branches,
+                        origin: repository.origin
+                    )
+                }
         }
 
         // WEB-7.2: drive `POST /worktrees` into the shared
@@ -1816,8 +1985,42 @@ struct GrafttyApp: App {
                 }
             }
 
+            let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
+                onChange in
+                let snapshot: @MainActor () -> [WorktreePanes] = {
+                    buildWorktreePanesSnapshot()
+                        + services.remoteMacsModel.promotedWorktreesForRelay()
+                }
+                let initial = await MainActor.run { snapshot() }
+                await onChange(initial)
+
+                let task = Task {
+                    var last = initial
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(1))
+                        if Task.isCancelled { return }
+                        let next = await MainActor.run { snapshot() }
+                        if next != last {
+                            last = next
+                            await onChange(next)
+                        }
+                    }
+                }
+                return PanesStateChannelHandler.Cancellable {
+                    task.cancel()
+                }
+            }
+
             let paneControlMutator: PaneControlChannelHandler.Mutator = { request in
-                await MainActor.run { () -> PaneControlResponse in
+                if let target = request.primaryTarget,
+                   target.hasPrefix("relay-pane-") {
+                    return await services.remoteMacsModel.sendRelayedPaneControl(request)
+                        ?? .error(
+                            code: "not-found",
+                            message: "unknown or disconnected relayed pane"
+                        )
+                }
+                return await MainActor.run { () -> PaneControlResponse in
                     switch request {
                     case .split(let target, let direction):
                         guard let paneID = terminalManager.paneID(forSessionName: target) else {
@@ -1838,18 +2041,52 @@ struct GrafttyApp: App {
                             split = .up
                         }
                         let slot = PaneSlotID(id: paneID)
-                        guard Self.splitPane(
+                        let targetWorktreePath =
+                            appStateBinding.wrappedValue.repos.lazy
+                            .flatMap(\.worktrees)
+                            .first(where: {
+                                $0.splitTree.containsLeaf(slot)
+                            })?.path
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && terminalManager.view(for: slot)?
+                                .window?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath.flatMap {
+                                    appStateBinding.wrappedValue
+                                        .worktree(forPath: $0)
+                                }?.splitTree.containsLeaf(slot) == true
+                        guard let newID = Self.splitPane(
                             appState: appStateBinding,
                             terminalManager: terminalManager,
                             targetID: slot,
-                            split: split
-                        ) != nil else {
+                            split: split,
+                            activateNewPane: false,
+                            preserveZoom: true
+                        ) else {
                             return .error(
                                 code: "conflict",
                                 message: "split rejected (target not in a running worktree, or surface creation failed)"
                             )
                         }
-                        return .ok
+                        if !targetIsVisible {
+                            terminalManager.setVisible(false, for: newID)
+                        }
+                        if let targetWorktreePath {
+                            terminalManager.surfaceBudget.noteCreated(
+                                worktreePath: targetWorktreePath,
+                                splitTreesByPath: appStateBinding.wrappedValue
+                                    .runningSplitTreesByPath()
+                            )
+                        }
+                        guard let sessionName = terminalManager
+                            .zmxSessionName(for: newID) else {
+                            return .error(
+                                code: "conflict",
+                                message: "split succeeded without a pane session"
+                            )
+                        }
+                        return .splitCreated(sessionName: sessionName)
                     case .close(let target):
                         guard let paneID = terminalManager.paneID(forSessionName: target) else {
                             return .error(
@@ -1858,11 +2095,21 @@ struct GrafttyApp: App {
                             )
                         }
                         let slot = PaneSlotID(id: paneID)
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && terminalManager.view(for: slot)?
+                                .window?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath.flatMap {
+                                    appStateBinding.wrappedValue
+                                        .worktree(forPath: $0)
+                                }?.splitTree.containsLeaf(slot) == true
                         Self.closePane(
                             appState: appStateBinding,
                             terminalManager: terminalManager,
                             targetID: slot,
-                            userInitiated: true
+                            userInitiated: true,
+                            activateReplacement: targetIsVisible
                         )
                         return .ok
                     case .swap:
@@ -1874,6 +2121,391 @@ struct GrafttyApp: App {
                         return .error(
                             code: "unsupported",
                             message: "swap is not implemented on this host yet"
+                        )
+                    case .equalize(let target):
+                        guard let paneID = terminalManager.paneID(
+                            forSessionName: target
+                        ) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        Self.equalizeSplits(
+                            appState: appStateBinding,
+                            around: PaneSlotID(id: paneID),
+                            preserveZoom: true
+                        )
+                        return .ok
+                    case let .resize(
+                        target,
+                        direction,
+                        amount,
+                        viewportExtent
+                    ):
+                        guard let paneID = terminalManager.paneID(
+                            forSessionName: target
+                        ) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        let resizeDirection: ResizeDirection
+                        switch direction {
+                        case .right:
+                            resizeDirection = .right
+                        case .down:
+                            resizeDirection = .down
+                        case .left:
+                            resizeDirection = .left
+                        case .up:
+                            resizeDirection = .up
+                        }
+                        let viewerBounds = viewportExtent.map { extent in
+                            switch direction {
+                            case .left, .right:
+                                return CGRect(
+                                    x: 0,
+                                    y: 0,
+                                    width: CGFloat(extent),
+                                    height: 1
+                                )
+                            case .up, .down:
+                                return CGRect(
+                                    x: 0,
+                                    y: 0,
+                                    width: 1,
+                                    height: CGFloat(extent)
+                                )
+                            }
+                        }
+                        guard Self.resizeSplit(
+                            appState: appStateBinding,
+                            target: PaneSlotID(id: paneID),
+                            direction: resizeDirection,
+                            pixels: amount,
+                            ancestorBounds: viewerBounds,
+                            preserveZoom: true
+                        ) else {
+                            return .error(
+                                code: "no-matching-split",
+                                message: "no split in that direction can be resized"
+                            )
+                        }
+                        return .ok
+                    }
+                }
+            }
+
+            let localRepositorySnapshot: @MainActor () -> [RemoteRepositoryInfo] = {
+                appStateBinding.wrappedValue.repos.map { repo in
+                    let snapshot = panesRemoteBranchStore.branchesByRepo[repo.path]
+                        ?? RemoteBranchSnapshot()
+                    var mounted: [String: String] = [:]
+                    for worktree in repo.worktrees
+                    where worktree.state.hasOnDiskWorktree {
+                        mounted[worktree.branch] = worktree.path
+                    }
+                    let pullRequests = services.prStatusStore.prsByRepoBranch[
+                        repo.path
+                    ] ?? [:]
+                    let branches = BranchPickerViewModel.entries(
+                        branchSnapshot: snapshot,
+                        mountedBranchToPath: mounted,
+                        prsByBranch: pullRequests,
+                        filterText: ""
+                    ).map { branch in
+                        RemoteRepositoryInfo.Branch(
+                            name: branch.name,
+                            source: branch.source == .local
+                                ? .local
+                                : .remoteOnly,
+                            lastCommitDate: branch.lastCommitDate,
+                            mountedWorktreeID: branch.mountedWorktreePath,
+                            pullRequest: branch.pr.map {
+                                .init(number: $0.number, title: $0.title)
+                            }
+                        )
+                    }
+                    let status = defaultBranchStatus(
+                        for: repo,
+                        stats: statsStore.stats[repo.path]
+                    )
+                    return RemoteRepositoryInfo(
+                        id: repo.path,
+                        displayName: repo.displayName,
+                        origin: localWorktreeOrigin,
+                        defaultBranchStatus: status.map {
+                            .init(
+                                branchName: $0.branchName,
+                                remoteRef: $0.remoteRef,
+                                behindCount: $0.behindCount
+                            )
+                        },
+                        branches: branches
+                    )
+                }
+            }
+
+            let worktreeManagementMutator:
+                WorktreeManagementChannelHandler.Mutator = { request in
+                if request.targetsRelayedResource {
+                    return await services.remoteMacsModel
+                        .sendRelayedWorktreeManagement(request)
+                        ?? .error(
+                            code: "not-found",
+                            message: "unknown or disconnected relayed resource",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                }
+
+                switch request {
+                case .listRepositories:
+                    let local = await MainActor.run {
+                        localRepositorySnapshot()
+                    }
+                    let remote = await services.remoteMacsModel
+                        .promotedRepositoriesForRelay()
+                    return .repositories(local + remote)
+
+                case let .create(
+                    repositoryID,
+                    worktreeName,
+                    branchName,
+                    existingSource
+                ):
+                    let branch: BranchSelection
+                    if let existingSource {
+                        let resolvedSource:
+                            BranchSelection.ExistingSource?
+                        switch existingSource {
+                        case .local:
+                            resolvedSource = .local
+                        case .remoteOnly:
+                            resolvedSource = .remoteOnly
+                        case .automatic:
+                            resolvedSource = try? await
+                                GitExistingBranchSource.resolve(
+                                    repoPath: repositoryID,
+                                    branchName: branchName
+                                )
+                        }
+                        guard let resolvedSource else {
+                            return .error(
+                                code: "branch-not-found",
+                                message:
+                                    "No local or origin branch named "
+                                    + branchName + " exists.",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        }
+                        branch = .useExisting(
+                            name: branchName,
+                            source: resolvedSource
+                        )
+                    } else {
+                        branch = .createNew(name: branchName)
+                    }
+                    let result = await AddWorktreeFlow.add(
+                        repoPath: repositoryID,
+                        worktreeName: worktreeName,
+                        branch: branch,
+                        appState: appStateBinding,
+                        worktreeMonitor: worktreeMonitor,
+                        statsStore: statsStore,
+                        terminalManager: terminalManager,
+                        teamEventDispatcher: dispatcherForWeb
+                    )
+                    switch result {
+                    case .success(let outcome):
+                        return .created(
+                            worktreeID: outcome.worktreePath,
+                            paneID: outcome.sessionName
+                        )
+                    case .failure(let error):
+                        return .error(
+                            code: "create-failed",
+                            message: error.userMessage
+                                ?? "could not create worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case .pullDefaultBranch(let repositoryID):
+                    let status = await MainActor.run {
+                        () -> WebServer.RepoInfo.DefaultBranchStatus? in
+                        guard let target = appStateBinding.wrappedValue.repos
+                            .first(where: { $0.path == repositoryID }) else {
+                            return nil
+                        }
+                        return defaultBranchStatus(
+                            for: target,
+                            stats: statsStore.stats[target.path]
+                        )
+                    }
+                    guard let status else {
+                        return .error(
+                            code: "invalid",
+                            message: "default checkout is not behind origin",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+                    do {
+                        try await GitDefaultBranchPull.pull(
+                            repoPath: repositoryID,
+                            branchName: status.branchName
+                        )
+                        return .ok
+                    } catch {
+                        return .error(
+                            code: "pull-failed",
+                            message: String(describing: error),
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case .open(let worktreeID):
+                    return await MainActor.run {
+                        let result = Self.startWorktree(
+                            path: worktreeID,
+                            appState: appStateBinding,
+                            terminalManager: terminalManager,
+                            startSurfacesInBackground: true
+                        )
+                        let targetIsVisible =
+                            !NSApp.isHidden
+                            && NSApp.mainWindow?.isVisible == true
+                            && appStateBinding.wrappedValue
+                                .selectedWorktreePath == worktreeID
+                        if result == .started || result == .alreadyRunning {
+                            let splitTrees = appStateBinding.wrappedValue
+                                .runningSplitTreesByPath()
+                            if targetIsVisible {
+                                terminalManager.surfaceBudget.noteSelected(
+                                    worktreePath: worktreeID,
+                                    splitTreesByPath: splitTrees
+                                )
+                            } else {
+                                terminalManager.surfaceBudget.noteCreated(
+                                    worktreePath: worktreeID,
+                                    splitTreesByPath: splitTrees
+                                )
+                            }
+                        }
+                        if result == .started,
+                           !targetIsVisible,
+                           let worktree = appStateBinding.wrappedValue
+                               .worktree(forPath: worktreeID) {
+                            for terminalID in worktree.splitTree.allLeaves {
+                                terminalManager.setVisible(
+                                    false,
+                                    for: terminalID
+                                )
+                            }
+                        }
+                        switch result {
+                        case .started, .alreadyRunning:
+                            return .ok
+                        case .notFound:
+                            return .error(
+                                code: "not-found",
+                                message: "unknown worktree",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        case .unavailable:
+                            return .error(
+                                code: "unavailable",
+                                message: "worktree cannot be opened in its current state",
+                                forceAllowed: false,
+                                shortStatus: nil
+                            )
+                        }
+                    }
+
+                case let .delete(worktreeID, force):
+                    let result = await DeleteWorktreeFlow.delete(
+                        worktreePath: worktreeID,
+                        force: force,
+                        appState: appStateBinding,
+                        terminalManager: terminalManager,
+                        statsStore: statsStore,
+                        prStatusStore: services.prStatusStore,
+                        teamEventDispatcher: dispatcherForWeb
+                    )
+                    switch result {
+                    case .success(let outcome):
+                        return .deleted(dismissed: outcome.dismissed)
+                    case .failure(.notFound):
+                        return .error(
+                            code: "not-found",
+                            message: "unknown worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    case .failure(.mainCheckoutRejected):
+                        return .error(
+                            code: "invalid",
+                            message: "cannot delete the main checkout",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    case .failure(.gitFailedForceable(let stderr, let status)):
+                        return .error(
+                            code: "git-failed",
+                            message: stderr,
+                            forceAllowed: true,
+                            shortStatus: status
+                        )
+                    case .failure(.gitFailedFinal(let message)):
+                        return .error(
+                            code: "git-failed",
+                            message: message,
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
+                    }
+
+                case let .acknowledge(worktreeID, paneID):
+                    return await MainActor.run {
+                        for repoIndex in appStateBinding.wrappedValue.repos.indices {
+                            for worktreeIndex in appStateBinding.wrappedValue
+                                .repos[repoIndex].worktrees.indices
+                            where appStateBinding.wrappedValue.repos[repoIndex]
+                                .worktrees[worktreeIndex].path == worktreeID {
+                                if let paneID {
+                                    guard let slot = appStateBinding.wrappedValue
+                                        .repos[repoIndex].worktrees[worktreeIndex]
+                                        .paneSlot(forSessionName: paneID) else {
+                                        return .error(
+                                            code: "not-found",
+                                            message: "unknown pane in worktree",
+                                            forceAllowed: false,
+                                            shortStatus: nil
+                                        )
+                                    }
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .paneAttention[slot] = nil
+                                } else {
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .acknowledgeAttention()
+                                }
+                                return .ok
+                            }
+                        }
+                        return .error(
+                            code: "not-found",
+                            message: "unknown worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
                         )
                     }
                 }
@@ -1889,7 +2521,11 @@ struct GrafttyApp: App {
             let controller = webController
             Task { @MainActor in
                 await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
+                await hostAgent.setPanesStateV2Subscribe(panesStateV2Subscribe)
                 await hostAgent.setPaneControlMutator(paneControlMutator)
+                await hostAgent.setWorktreeManagementMutator(
+                    worktreeManagementMutator
+                )
                 // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
                 // The signalingHandler closure bridges between the HTTP layer's
                 // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
@@ -2383,6 +3019,13 @@ struct GrafttyApp: App {
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
                     appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
+                    terminalManager.recordPaneSessions(
+                        for: appState.repos[repoIdx].worktrees[wtIdx]
+                            .splitTree,
+                        paneSessions: appState.repos[repoIdx]
+                            .worktrees[wtIdx].paneSessions,
+                        worktreePath: wt.path
+                    )
                     // Mark every restored leaf as rehydrated *before*
                     // surface creation so the first-PWD event (which
                     // triggers onShellReady) finds wasRehydrated == true
@@ -3335,10 +3978,63 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Shared split implementation used by both the menu shortcuts and the
-    /// right-click context menu. Finds the worktree that currently owns the
-    /// target terminal, inserts a new leaf adjacent to it, spawns a surface,
-    /// and moves focus to the new pane.
+    /// Shared closed-to-running transition used by local sidebar selection
+    /// and authenticated remote-open requests.
+    @MainActor
+    static func startWorktree(
+        path: String,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        startSurfacesInBackground: Bool = false
+    ) -> WorktreeStartResult {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+            where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
+                == path {
+                let state = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].state
+                guard state != .running else { return .alreadyRunning }
+                guard state == .closed else { return .unavailable }
+
+                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .splitTree.root == nil {
+                    let id = PaneSlotID()
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .splitTree = SplitTree(root: .leaf(id))
+                }
+
+                let splitTree = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].splitTree
+                for leafID in splitTree.allLeaves {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .ensurePaneSession(for: leafID)
+                    terminalManager.markFirstPane(leafID)
+                }
+                _ = terminalManager.createSurfaces(
+                    for: splitTree,
+                    paneSessions: appState.wrappedValue.repos[repoIdx]
+                        .worktrees[wtIdx].paneSessions,
+                    worktreePath: path
+                )
+                if startSurfacesInBackground,
+                   !terminalManager.startSurfacesForBackgroundLaunch(
+                       in: splitTree
+                   ) {
+                    NSLog(
+                        "[Graftty] failed to start one or more background panes for %@",
+                        path
+                    )
+                }
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state =
+                    .running
+                return .started
+            }
+        }
+        return .notFound
+    }
+
+    /// Shared split implementation used by local commands and authenticated
+    /// pane-control requests. Remote callers can suppress host focus changes.
     @MainActor
     @discardableResult
     fileprivate static func splitPane(
@@ -3346,7 +4042,9 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager,
         targetID: PaneSlotID,
         split: PaneSplit,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        activateNewPane: Bool = true,
+        preserveZoom: Bool = false
     ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
@@ -3355,12 +4053,15 @@ struct GrafttyApp: App {
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
                 let newID = PaneSlotID()
-                let newTree: SplitTree
+                var newTree: SplitTree
                 switch split {
                 case .right, .down:
                     newTree = wt.splitTree.inserting(newID, at: targetID, direction: direction)
                 case .left, .up:
                     newTree = wt.splitTree.insertingBefore(newID, at: targetID, direction: direction)
+                }
+                if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                    newTree = newTree.withZoom(zoomed)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -3379,10 +4080,14 @@ struct GrafttyApp: App {
                 ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)
+                    terminalManager.discardPaneSessionMetadata(for: newID)
                     return nil
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newID
-                terminalManager.setFocus(newID)
+                if activateNewPane {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .focusedPaneSlotID = newID
+                    terminalManager.setFocus(newID)
+                }
                 return newID
             }
         }
@@ -3545,6 +4250,14 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
+        let targetPath = targetWt.path
+        if let paneSession = sessionTarget.paneSessions[terminalID] {
+            terminalManager.recordPaneSession(
+                paneSession,
+                for: terminalID,
+                worktreePath: targetPath
+            )
+        }
 
         // Follow the pane with the UI ONLY when the reassigned pane was the
         // user's active typing target — i.e. the focused pane of the
@@ -3553,7 +4266,6 @@ struct GrafttyApp: App {
         // user's view whenever ANY background pane `cd`'d across a
         // worktree boundary — Andy's 3–6 concurrent Claude-session setup
         // made that immediately pathological. `PWD-2.3` (revised).
-        let targetPath = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path
         let follow = PWDReassignmentPolicy.shouldFollowToDestination(
             selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
             sourceWorktreePath: sourceWt.path,
@@ -3651,28 +4363,40 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: PaneSlotID) {
+    fileprivate static func equalizeSplits(
+        appState: Binding<AppState>,
+        around terminalID: PaneSlotID,
+        preserveZoom: Bool = false
+    ) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.equalizing()
+            if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                copy.splitTree = copy.splitTree.withZoom(zoomed)
+            }
             return copy
         }
     }
 
     @MainActor
+    @discardableResult
     fileprivate static func resizeSplit(
         appState: Binding<AppState>,
         target: PaneSlotID,
         direction: ResizeDirection,
-        pixels: UInt16
-    ) {
+        pixels: UInt16,
+        ancestorBounds: CGRect? = nil,
+        preserveZoom: Bool = false
+    ) -> Bool {
         // MVP: use the key window's content-area bounds as a proxy for the
         // ancestor split bounds. Accurate for single-split layouts; for nested
         // splits the delta will be slightly off. A follow-up can capture
         // per-split bounds via SwiftUI preference keys.
         // TODO: plumb per-split GeometryReader bounds for multi-level accuracy.
-        let bounds = NSApp.keyWindow?.contentView?.bounds
+        let bounds = ancestorBounds
+            ?? NSApp.keyWindow?.contentView?.bounds
             ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        var didResize = false
         mutateWorktreeContaining(appState: appState, leaf: target) { wt in
             var copy = wt
             do {
@@ -3682,11 +4406,16 @@ struct GrafttyApp: App {
                     pixels: pixels,
                     ancestorBounds: bounds
                 )
+                if preserveZoom, let zoomed = wt.splitTree.zoomed {
+                    copy.splitTree = copy.splitTree.withZoom(zoomed)
+                }
+                didResize = true
             } catch {
                 // No matching orientation ancestor — silent no-op, matches Ghostty.
             }
             return copy
         }
+        return didResize
     }
 
     /// Find the worktree that owns `leaf` and apply `transform` to it.
@@ -3725,7 +4454,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         targetID: PaneSlotID,
-        userInitiated: Bool = false
+        userInitiated: Bool = false,
+        activateReplacement: Bool = true
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
@@ -3775,7 +4505,9 @@ struct GrafttyApp: App {
                     // Only push focus to libghostty if it actually
                     // changed — otherwise we're re-raising the same
                     // surface for no reason.
-                    if let newFocus, newFocus != previousFocus {
+                    if activateReplacement,
+                       let newFocus,
+                       newFocus != previousFocus {
                         terminalManager.setFocus(newFocus)
                     }
                 }
@@ -3834,37 +4566,59 @@ struct GrafttyApp: App {
     }
 
     private func handleSplit(_ split: PaneSplit) {
+        if routeFocusedHostManagedPaneCommand(.split(split)) { return }
         guard let id = focusedPaneSlotID else { return }
         _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
     }
 
     private func handleNavigate(_ dir: NavigationDirection) {
+        if routeFocusedHostManagedPaneCommand(.focus(dir)) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
     }
 
     private func handleNavigateTreeOrder(forward: Bool) {
+        if routeFocusedHostManagedPaneCommand(
+            .focusOrder(forward: forward)
+        ) {
+            return
+        }
         guard let id = focusedPaneSlotID else { return }
         Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
     }
 
     private func handleToggleZoom() {
+        if routeFocusedHostManagedPaneCommand(.toggleZoom) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.toggleZoom(appState: $appState, on: id)
     }
 
     private func handleEqualizeSplits() {
+        if routeFocusedHostManagedPaneCommand(.equalize) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.equalizeSplits(appState: $appState, around: id)
     }
 
     private func handleClosePane() {
+        if routeFocusedHostManagedPaneCommand(.close) { return }
         guard let id = focusedPaneSlotID else { return }
         Self.closePane(
             appState: $appState,
             terminalManager: terminalManager,
             targetID: id,
             userInitiated: true
+        )
+    }
+
+    private func routeFocusedHostManagedPaneCommand(
+        _ command: HostManagedPaneCommand
+    ) -> Bool {
+        guard let terminalID = terminalManager.focusedTerminalID else {
+            return false
+        }
+        return terminalManager.routeHostManagedPaneCommand(
+            command,
+            for: terminalID
         )
     }
 
@@ -4110,6 +4864,34 @@ struct GrafttyApp: App {
 
         if alert.runModal() == .alertFirstButtonReturn {
             Pasteboard.copy(command)
+        }
+    }
+}
+
+private extension PaneControlRequest {
+    var primaryTarget: String? {
+        switch self {
+        case .split(let target, _), .close(let target),
+             .equalize(let target), .resize(let target, _, _, _):
+            return target
+        case .swap(let source, _):
+            return source
+        }
+    }
+}
+
+private extension WorktreeManagementRequest {
+    var targetsRelayedResource: Bool {
+        switch self {
+        case .listRepositories:
+            return false
+        case .create(let repositoryID, _, _, _),
+             .pullDefaultBranch(let repositoryID):
+            return repositoryID.hasPrefix("relay-repository-")
+        case .open(let worktreeID),
+             .delete(let worktreeID, _),
+             .acknowledge(let worktreeID, _):
+            return worktreeID.hasPrefix("relay-worktree-")
         }
     }
 }
@@ -4405,7 +5187,8 @@ private func paneLayoutNode(
             isBusy: AgentLivenessMerge.isPaneBusy(
                 sessionName: sessionName,
                 liveness: liveness),
-            attentionSource: paneAttention[id]?.source
+            attentionSource: paneAttention[id]?.source,
+            attentionTimestamp: paneAttention[id]?.timestamp
         )
     case let .split(s):
         return .split(

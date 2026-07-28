@@ -9,7 +9,9 @@ public extension WorktreeStats {
             ahead: ahead,
             behind: behind,
             hasUncommittedChanges: hasUncommittedChanges,
-            baseRef: upstreamRefs?.displayLabel
+            baseRef: upstreamRefs?.displayLabel,
+            insertions: insertions,
+            deletions: deletions
         )
     }
 }

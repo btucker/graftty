@@ -58,4 +58,13 @@ public protocol PanesStateChannelDriver: Sendable {
     func close()
 }
 
-extension PanesStateChannelClient: PanesStateChannelDriver {}
+public protocol PanesStateCallbacksConfigurable: Sendable {
+    func setCallbacks(
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed: @escaping PanesStateChannelClient.OnClosed
+    )
+}
+
+extension PanesStateChannelClient:
+    PanesStateChannelDriver,
+    PanesStateCallbacksConfigurable {}
