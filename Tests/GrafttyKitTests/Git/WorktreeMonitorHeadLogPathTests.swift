@@ -92,3 +92,62 @@ struct WorktreeMonitorHeadLogPathTests {
         #expect(result == "\(repo.path)/.git/worktrees/named-wt/logs/HEAD")
     }
 }
+
+/// A genuine `SF_DATALESS` file can only be produced by the fileprovider
+/// kernel path (iCloud eviction), so the spec is enforced on the pure
+/// stat-predicate `WorktreeMonitor.isMaterializedRegularFile` with
+/// synthetic `stat` values, plus a wiring assertion that
+/// `resolveHeadLogPath` degrades to the conventional-location guess when
+/// the `.git` entry is not readable as a materialized regular file.
+@Suite("""
+@spec GIT-3.20: If a linked worktree's `.git` entry is not a materialized regular file \
+(an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then \
+`WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only \
+stat, which never triggers materialization — and fall back to the \
+`<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the \
+calling thread on network materialization. `startup()` resolves reflog paths on the main \
+thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at \
+launch (Application Not Responding).
+""")
+struct DatalessGitFileGuardTests {
+
+    private func syntheticStat(mode: mode_t, flags: UInt32 = 0) -> stat {
+        var st = stat()
+        st.st_mode = mode
+        st.st_flags = flags
+        return st
+    }
+
+    @Test func materializedRegularFileIsReadable() {
+        let st = syntheticStat(mode: S_IFREG | 0o644)
+        #expect(WorktreeMonitor.isMaterializedRegularFile(st))
+    }
+
+    @Test func datalessRegularFileIsRejected() {
+        let st = syntheticStat(mode: S_IFREG | 0o644, flags: UInt32(SF_DATALESS))
+        #expect(!WorktreeMonitor.isMaterializedRegularFile(st))
+    }
+
+    @Test func nonRegularFileIsRejected() {
+        let st = syntheticStat(mode: S_IFIFO | 0o644)
+        #expect(!WorktreeMonitor.isMaterializedRegularFile(st))
+    }
+
+    @Test func resolveHeadLogPathFallsBackWhenGitEntryIsNotMaterializedRegular() throws {
+        let scratch = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-dataless-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let repo = scratch.appendingPathComponent("repo")
+        let worktree = scratch.appendingPathComponent("fifo-wt")
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        // A FIFO stands in for the dataless placeholder: same guard
+        // (stat says not a materialized regular file → don't read).
+        #expect(mkfifo(worktree.appendingPathComponent(".git").path, 0o644) == 0)
+
+        let monitor = WorktreeMonitor()
+        let result = monitor.resolveHeadLogPath(worktreePath: worktree.path, repoPath: repo.path)
+        #expect(result == "\(repo.path)/.git/worktrees/fifo-wt/logs/HEAD")
+    }
+}
