@@ -226,10 +226,31 @@ public final class WorktreeMonitor: @unchecked Sendable {
         return source
     }
 
+    /// `GIT-3.20`: true iff `st` describes a regular file whose bytes are
+    /// actually on disk. `SF_DATALESS` marks an iCloud-evicted placeholder:
+    /// its metadata is local but read(2) blocks — unbounded, on the network —
+    /// while the fileprovider materializes the contents. `stat` itself is
+    /// metadata-only and never triggers materialization, so gating reads on
+    /// this predicate is safe.
+    static func isMaterializedRegularFile(_ st: stat) -> Bool {
+        (st.st_mode & S_IFMT) == S_IFREG && st.st_flags & UInt32(SF_DATALESS) == 0
+    }
+
+    /// Reads `path` only when a stat-check says the read cannot block on
+    /// iCloud materialization (`GIT-3.20`). Callers on the main thread
+    /// (`startup()` → `installRepoWatchers`) must never issue a plain
+    /// `String(contentsOfFile:)` against worktree `.git` entries: one
+    /// evicted file under `~/Documents` hangs the app at launch.
+    private static func contentsIfMaterialized(_ path: String) -> String? {
+        var st = stat()
+        guard stat(path, &st) == 0, isMaterializedRegularFile(st) else { return nil }
+        return try? String(contentsOfFile: path, encoding: .utf8)
+    }
+
     func resolveHeadLogPath(worktreePath: String, repoPath: String) -> String {
         if worktreePath == repoPath { return "\(repoPath)/.git/logs/HEAD" }
         let gitFilePath = "\(worktreePath)/.git"
-        if let contents = try? String(contentsOfFile: gitFilePath, encoding: .utf8),
+        if let contents = Self.contentsIfMaterialized(gitFilePath),
            contents.hasPrefix("gitdir: ") {
             let raw = String(contents
                 .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -388,6 +388,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.19** When a local `origin/<branch>` ref disappears for a non-stale worktree's current branch, the application shall clear cached PR/MR status for that worktree so stale PR badges do not remain attached to an unpushed or deleted remote branch.
 
+**GIT-3.20** If a linked worktree's `.git` entry is not a materialized regular file (an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then `WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only stat, which never triggers materialization — and fall back to the `<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the calling thread on network materialization. `startup()` resolves reflog paths on the main thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at launch (Application Not Responding).
+
 ### GIT-4.x — Deleting a Worktree
 
 **GIT-4.1** While a worktree entry is not in the stale state and is not the repository's main checkout, the context menu shall include a "Delete Worktree" action.
