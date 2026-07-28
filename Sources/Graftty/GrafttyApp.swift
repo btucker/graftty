@@ -1546,7 +1546,6 @@ struct GrafttyApp: App {
             )
             livePaneSessionNames.replace(with: names)
         }
-        refreshDeliveryLiveness(records: presenceIndex.allRecords())
 
         let codexAppServerDeliveryService = CodexAppServerDeliveryService(
             inbox: services.teamInbox,
@@ -1565,13 +1564,6 @@ struct GrafttyApp: App {
             await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: records,
-                delivery: codexAppServerDeliveryService
-            )
-        }
-        Task {
-            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: presenceIndex.allRecords(),
                 delivery: codexAppServerDeliveryService
             )
         }
@@ -1653,6 +1645,21 @@ struct GrafttyApp: App {
         }
 
         restoreRunningWorktrees()
+
+        // Restoring running worktrees installs the durable pane-to-session
+        // mappings used by automatic delivery liveness. Refresh only after
+        // those mappings exist, then retry unread rows from while the app was
+        // down; otherwise a background owner can be skipped until the
+        // 30-second presence ticker runs.
+        let restoredPresenceRecords = refreshPresenceIndex()
+        refreshDeliveryLiveness(records: restoredPresenceRecords)
+        Task {
+            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                inbox: services.teamInbox,
+                records: restoredPresenceRecords,
+                delivery: codexAppServerDeliveryService
+            )
+        }
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
         // shared registry so Mac pane backends can see web-client attaches.

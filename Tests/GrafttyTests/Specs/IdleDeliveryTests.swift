@@ -164,6 +164,67 @@ struct CodexAppServerInboxDeliveryWiringTests {
         ])
     }
 
+    @MainActor
+    @Test("""
+    @spec TEAM-12.3: On application launch, the immediate retry of preexisting unread messages shall refresh automatic-delivery liveness after restoring pane-session metadata, so a live background Codex agent is not delayed until the periodic presence retry.
+    """)
+    func startupRetryUsesRestoredBackgroundPaneMetadata() async throws {
+        let teamID = "/repo"
+        let worktree = "/repo/.worktrees/alice"
+        let paneSlot = PaneSlotID()
+        let paneSession = PaneSessionID()
+        let sessionName = ZmxLauncher.sessionName(for: paneSession)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-startup-delivery-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let terminalManager = TerminalManager(
+            socketPath: root.appendingPathComponent("graftty.sock").path
+        )
+        let presence = TeamPresenceRecord(
+            teamID: teamID,
+            worktree: worktree,
+            runtime: .codex,
+            paneSessionName: sessionName,
+            pid: 123,
+            processStartTimeMicroseconds: 456,
+            registeredAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let inbox = TeamInbox(rootDirectory: root)
+        _ = try Self.appendMessage(to: worktree, inbox: inbox)
+
+        #expect(GrafttyApp.livePaneSessionNamesForAutomaticDelivery(
+            records: [presence],
+            terminalManager: terminalManager
+        ).isEmpty)
+
+        // Mirrors restoreRunningWorktrees installing pane metadata before
+        // startup refreshes liveness and schedules its immediate retry.
+        terminalManager.recordPaneSession(
+            paneSession,
+            for: paneSlot,
+            worktreePath: worktree
+        )
+        let restoredSessionNames = GrafttyApp.livePaneSessionNamesForAutomaticDelivery(
+            records: [presence],
+            terminalManager: terminalManager
+        )
+        let delivery = OwnerGatedRecordingDelivery(
+            presence: presence,
+            liveSessionNames: restoredSessionNames
+        )
+
+        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: [presence],
+            delivery: delivery
+        )
+
+        #expect(terminalManager.handle(forSessionName: sessionName) == nil)
+        #expect(await delivery.calls == [
+            .init(team: teamID, worktree: worktree),
+        ])
+    }
+
     @Test("Presence refresh skips Codex worktrees with no pending unread messages.")
     func presenceRefreshSkipsWhenNoPendingUnreadMessages() async throws {
         let delivery = RecordingCodexDelivery()
