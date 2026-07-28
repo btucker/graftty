@@ -815,10 +815,11 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
-    /// reconcile the zmx PTY to the live grid (TERM-11.13: a size can drift
-    /// while a pane is occluded with no viewport callback to forward it,
-    /// leaving the session's TUI rendering off-anchor) and force a repaint
-    /// so a re-shown pane presents a clean full frame.
+    /// reconcile the zmx PTY to the live grid (TERM-11.13 / TERM-11.17: a
+    /// size can drift while a pane is occluded or starts in the background
+    /// with no viewport callback to forward it, leaving the session's TUI
+    /// rendering off-anchor) and force a repaint so a shown pane presents a
+    /// clean full frame.
     func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
         guard let handle = surfaces[terminalID] else { return }
         handle.setVisible(visible)
