@@ -32,7 +32,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
 
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
+    private let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private let paneControlMutator: PaneControlChannelHandler.Mutator
+    private let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     /// REMOTE-9: display-ownership plumbing threaded through to
     /// `TerminalSessionHandler` for the terminal-session path only —
     /// panes-state/pane-control subsystem channels don't participate in
@@ -46,22 +48,41 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// shared box at that point always sees the value userauth set before
     /// NIOSSH allowed any channel to open.
     private let deviceIDProvider: @Sendable () -> RemoteDeviceID?
+    private let worktreeManagementAllowed: @Sendable () -> Bool
+    /// Authenticated transport kind. The control envelope's kind remains
+    /// caller-controlled and must not decide ownership eligibility.
+    private let displayKindProvider: @Sendable () -> DisplayClientKind
     private var dispatched = false
 
     public init(
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
+        panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
+        worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
-        deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?
+        deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
+        worktreeManagementAllowed: @escaping @Sendable () -> Bool = { true },
+        displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios }
     ) {
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
+        self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
         self.paneControlMutator = paneControlMutator
+        self.worktreeManagementMutator = worktreeManagementMutator ?? { _ in
+            .error(
+                code: "unavailable",
+                message: "worktree management is unavailable",
+                forceAllowed: false,
+                shortStatus: nil
+            )
+        }
         self.ownershipStore = ownershipStore
         self.ownershipBroadcaster = ownershipBroadcaster
         self.deviceIDProvider = deviceIDProvider
+        self.worktreeManagementAllowed = worktreeManagementAllowed
+        self.displayKindProvider = displayKindProvider
     }
 
     public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -100,7 +121,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                         streamFactory: streamFactory,
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
-                        deviceID: deviceID
+                        deviceID: deviceID,
+                        defaultKind: displayKindProvider()
                     ),
                     position: .after(self)
                 )
@@ -135,10 +157,35 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 context: context
             )
 
+        case SSHChannelTypeNames.panesStateV2:
+            dispatched = true
+            installSubsystem(
+                handler: PanesStateChannelHandler(subscribe: panesStateV2Subscribe),
+                request: request,
+                context: context
+            )
+
         case SSHChannelTypeNames.paneControl:
             dispatched = true
             installSubsystem(
                 handler: PaneControlChannelHandler(mutator: paneControlMutator),
+                request: request,
+                context: context
+            )
+
+        case SSHChannelTypeNames.worktreeManagement:
+            dispatched = true
+            guard worktreeManagementAllowed() else {
+                if request.wantReply {
+                    context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+                }
+                context.close(promise: nil)
+                return
+            }
+            installSubsystem(
+                handler: WorktreeManagementChannelHandler(
+                    mutator: worktreeManagementMutator
+                ),
                 request: request,
                 context: context
             )

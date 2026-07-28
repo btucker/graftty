@@ -165,6 +165,7 @@ final class SurfaceHandle {
         displayOwnershipStore: SessionDisplayOwnershipStore? = nil,
         displayClientID: DisplayClientID? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
+        hostManagedBackend: SurfaceHandleZmxBackend? = nil,
         zmxBackendFactory: (
             ZmxSpawnConfiguration,
             PtyProcess.WindowSize?,
@@ -193,7 +194,8 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
-        _ = remoteAttachmentRegistry
+        // Strong capture of the registry is fine: it's app-lifetime and
+        // holds no reference back to the backend.
         let zmxOwnership = zmxSpawnConfiguration.flatMap { spawn -> HostManagedZmxOwnership? in
             guard let displayOwnershipStore, let displayClientID else { return nil }
             return HostManagedZmxOwnership(
@@ -203,7 +205,7 @@ final class SurfaceHandle {
                 kind: .mac
             )
         }
-        let backend = zmxSpawnConfiguration.map { spawn in
+        let backend = hostManagedBackend ?? zmxSpawnConfiguration.map { spawn in
             zmxBackendFactory(
                 spawn,
                 initialGridSize.map {
@@ -214,7 +216,7 @@ final class SurfaceHandle {
                         ypixel: UInt16(clamping: $0.height_px)
                     )
                 },
-                { false },
+                { remoteAttachmentRegistry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false },
                 zmxOwnership
             )
         }
@@ -249,7 +251,7 @@ final class SurfaceHandle {
         // Allocate C strings up front so we can free them deterministically.
         let cwdCStr = strdup(worktreePath)
 
-        let directShellInitialInput = zmxSpawnConfiguration == nil ? extraInitialInput : nil
+        let directShellInitialInput = backend == nil ? extraInitialInput : nil
         let initialInputCStr: UnsafeMutablePointer<CChar>?
         if let directShellInitialInput, !directShellInitialInput.isEmpty {
             initialInputCStr = strdup(directShellInitialInput)
@@ -258,7 +260,7 @@ final class SurfaceHandle {
         }
 
         let envPairs: [(key: String, value: String)]
-        if zmxSpawnConfiguration == nil {
+        if backend == nil {
             // PATH is overridden to dodge the case-insensitive `Graftty` /
             // `graftty` collision — libghostty's bundle-self-locating logic
             // puts `Contents/MacOS` (where the GUI binary lives) on PATH; on
@@ -422,10 +424,12 @@ final class SurfaceHandle {
 
     private var pendingZmxStart: PendingZmxStart?
 
-    /// Start a fresh command-bearing zmx surface without waiting for AppKit
-    /// to mount its view. CLI-created worktrees run in the background, so
-    /// their view may never receive the layout callback that normally starts
-    /// zmx. Rehydrated and ordinary panes keep the deferred TERM-11.10 path.
+    /// Start a fresh zmx surface without waiting for AppKit to mount its view.
+    /// CLI-created worktrees run in the background, so their view may never
+    /// receive the layout callback that normally starts zmx. This applies even
+    /// when no explicit command was supplied: `graftty worktree add <name>`
+    /// promises a live shell. Rehydrated and ordinary panes keep the deferred
+    /// TERM-11.10 path.
     @discardableResult
     func startForBackgroundLaunch() -> Bool {
         guard zmxBackend != nil else { return true }

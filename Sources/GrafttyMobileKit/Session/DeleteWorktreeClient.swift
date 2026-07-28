@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 
 public enum DeleteWorktreeClient {
 
@@ -56,6 +57,10 @@ public enum DeleteWorktreeClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(
+            RemoteWorktreeFeatures.oneHopRelay,
+            forHTTPHeaderField: RemoteWorktreeFeatures.headerName
+        )
         do {
             req.httpBody = try JSONEncoder().encode(body)
         } catch {

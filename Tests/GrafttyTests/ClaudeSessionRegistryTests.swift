@@ -88,6 +88,7 @@ struct ClaudeSessionRegistryTests {
 /// First `claude` call awaits `release` (signalling once it has entered);
 /// every later `claude` call returns `fastOutput` immediately. `ps` is constant.
 private final class GatedExecutor: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
     private let slowOutput: String
     private let fastOutput: String
     private let ps: String
@@ -110,8 +111,11 @@ private final class GatedExecutor: CLIExecutor, @unchecked Sendable {
 
     func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         if command == "ps" { return CLIOutput(stdout: ps, stderr: "", exitCode: 0) }
-        claudeCallCount += 1
-        if claudeCallCount == 1 {
+        let callNumber = lock.withLock {
+            claudeCallCount += 1
+            return claudeCallCount
+        }
+        if callNumber == 1 {
             entered.signal()
             await release.wait()
             return CLIOutput(stdout: slowOutput, stderr: "", exitCode: 0)
@@ -123,18 +127,28 @@ private final class GatedExecutor: CLIExecutor, @unchecked Sendable {
 /// One-shot continuation gate: `wait()` suspends until `signal()` fires once;
 /// `wait()` after a prior `signal()` returns immediately.
 private final class AsyncSignal: @unchecked Sendable {
+    private let lock = NSLock()
     private var fired = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func signal() {
-        let pending = waiters
-        waiters = []
-        fired = true
+        let pending = lock.withLock {
+            fired = true
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
         for w in pending { w.resume() }
     }
 
     func wait() async {
-        if fired { return }
-        await withCheckedContinuation { waiters.append($0) }
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = lock.withLock {
+                if fired { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
     }
 }

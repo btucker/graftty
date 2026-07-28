@@ -10,7 +10,14 @@ public enum SSHChannelTypeNames {
     /// `RemoteHostConnection`.
     public static let panesState: String = "panes-state@graftty.dev"
 
+    /// Origin-aware snapshots. Kept separate from the legacy channel so an
+    /// older client can never mistake relayed aliases for local paths.
+    public static let panesStateV2: String = "panes-state-v2@graftty.dev"
+
     /// Client→server RPC for splittree mutations (`split`, `close`,
     /// `swap`). One channel per connection; RPCs serialised by the client.
     public static let paneControl: String = "pane-control@graftty.dev"
+
+    /// Repository discovery and create/delete/acknowledge RPCs.
+    public static let worktreeManagement: String = "worktree-management@graftty.dev"
 }

@@ -382,14 +382,14 @@ final class GhosttyApp {
             // The callback may fire from any thread and is invoked while
             // libghostty is unwinding the surface — we must NOT call
             // `ghostty_surface_free` synchronously. Hop to main and defer
-            // the actual destruction through `onCloseRequest`.
+            // the actual destruction through `onSurfaceClosed`.
             guard let userdata else { return }
             let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
             let terminalID = box.terminalID
             let manager = box.terminalManager
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    manager?.onCloseRequest?(terminalID)
+                    manager?.onSurfaceClosed?(terminalID)
                 }
             }
         }

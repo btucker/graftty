@@ -170,6 +170,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>CE9gods92d0ACzxxj85iTEaMxeF/kdJNjKRBdoLaOFY=</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Graftty uses the local network to discover and connect to your other Macs.</string>
+    <key>NSBonjourServices</key>
+    <array>
+      <string>_graftty._tcp</string>
+    </array>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+    </dict>
     <key>CFBundleURLTypes</key>
     <array>
       <dict>

@@ -70,6 +70,7 @@ public struct RootView: View {
                 .navigationDestination(for: Host.self) { host in
                     WorktreePickerView(
                         host: host,
+                        coordinator: coordinator,
                         onSelect: { wt in
                             switch MobileNavigationDecision.decide(layout: wt.layout) {
                             case let .session(sessionName, title):

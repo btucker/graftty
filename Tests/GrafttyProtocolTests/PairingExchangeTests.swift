@@ -82,7 +82,8 @@ struct PairingExchangeRoundtripTests {
     @Test func errorResponseRoundtripsForEveryCode() throws {
         let codes: [PairingErrorResponse.Code] = [
             .unsupportedVersion, .unknownNonce, .noActiveSession,
-            .sessionExpired, .wrongSessionState, .internalError
+            .sessionExpired, .wrongSessionState, .pairingBusy,
+            .rateLimited, .hostBusy, .internalError
         ]
         for code in codes {
             let response = PairingErrorResponse(code: code, error: "human readable: \(code.rawValue)")

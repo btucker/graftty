@@ -155,4 +155,55 @@ struct TerminalManagerMetadataTests {
         #expect(manager.paneID(forSessionName: "graftty-aaaaaaaa") == nil)
         #expect(manager.paneID(forSessionName: "graftty-bbbbbbbb") == slot.id)
     }
+
+    @Test("""
+    @spec REMOTE-13.16: When a remote client wins the race to create a pane's \
+    zmx daemon, the host shall start that daemon in the pane's owning \
+    worktree directory.
+    """)
+    func sessionLookupRetainsOwningWorktreeForRemoteAttach() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slot = PaneSlotID()
+        let session = PaneSessionID(
+            id: UUID(
+                uuidString: "CCCCCCCC-0000-0000-0000-000000000000"
+            )!
+        )
+
+        manager.recordPaneSession(
+            session,
+            for: slot,
+            worktreePath: "/repos/app/.worktrees/feature"
+        )
+
+        #expect(
+            manager.worktreePath(forSessionName: "graftty-cccccccc")
+                == "/repos/app/.worktrees/feature"
+        )
+    }
+
+    @Test("failable surfaces retain authoritative metadata until rollback")
+    func failableSurfaceMetadataCanBeExplicitlyDiscarded() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slot = PaneSlotID()
+        let session = PaneSessionID(
+            id: UUID(
+                uuidString: "DDDDDDDD-0000-0000-0000-000000000000"
+            )!
+        )
+
+        #expect(manager.createSurface(
+            terminalID: slot,
+            paneSessionID: session,
+            worktreePath: "/repos/app/.worktrees/feature"
+        ) == nil)
+        #expect(
+            manager.paneID(forSessionName: "graftty-dddddddd") == slot.id
+        )
+
+        manager.discardPaneSessionMetadata(for: slot)
+        #expect(
+            manager.paneID(forSessionName: "graftty-dddddddd") == nil
+        )
+    }
 }

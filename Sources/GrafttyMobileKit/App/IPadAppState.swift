@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import SwiftUI
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 /// Observable selection state for the iPad regular-width layout.
 /// `selectedHostId` and `sidebarWidth` persist to `UserDefaults`;

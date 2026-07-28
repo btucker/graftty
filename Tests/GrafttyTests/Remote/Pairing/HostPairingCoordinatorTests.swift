@@ -25,16 +25,20 @@ struct HostPairingCoordinatorTests {
         }
     }
 
-    private func makeFixture() throws -> Fixture {
+    private func makeFixture(
+        admission: HostPairingAdmission? = nil
+    ) throws -> Fixture {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let peerStore = TrustedPeerStore(directory: dir)
+        let resolvedAdmission = admission ?? HostPairingAdmission()
         let coordinator = HostPairingCoordinator(
             identityStore: HostIdentityStore(directory: dir),
             trustedPeerStore: peerStore,
             deviceIDStore: HostDeviceIDStore(directory: dir),
             hostDisplayName: "Test Mac",
-            webBaseURLProvider: { Self.webBaseURL }
+            webBaseURLProvider: { Self.webBaseURL },
+            admission: resolvedAdmission
         )
         return Fixture(dir: dir, coordinator: coordinator, peerStore: peerStore)
     }
@@ -165,6 +169,69 @@ struct HostPairingCoordinatorTests {
             await fx.coordinator.beginPairing()
             #expect(fx.coordinator.lastError == nil, "lastError should be cleared on new beginPairing")
         }
+    }
+
+    @Test("""
+    @spec REMOTE-12.2: While any host pairing ceremony is active, the \
+    application shall reject attempts to start a second ceremony through \
+    another host pairing entry point without replacing the active session.
+    """)
+    func settingsAndLANPairingShareOneAdmission() async throws {
+        let admission = HostPairingAdmission()
+        let fx = try makeFixture(admission: admission)
+        let lanSession = HostPairingSession(
+            identityStore: HostIdentityStore(directory: fx.dir),
+            peerStore: fx.peerStore,
+            hostDeviceID: RemoteDeviceID(value: "host-mac"),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            pairingURLProvider: { URL(string: "http://host.local/v1/pairing")! }
+        )
+        let lanServer = HostPairingServer(session: lanSession)
+        let lanCoordinator = RemoteMacHostPairingCoordinator(
+            server: lanServer,
+            admission: admission
+        )
+
+        await fx.coordinator.beginPairing()
+        #expect(fx.coordinator.payload != nil)
+
+        let blocked = await lanCoordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: URL(string: "http://host.local/v1/pairing")!
+        )
+        guard case .failure(let error) = blocked else {
+            Issue.record("Expected LAN pairing to be rejected while Settings pairing is active")
+            await lanCoordinator.cancel()
+            await fx.cleanup()
+            return
+        }
+        #expect(error.code == .pairingBusy)
+        #expect(fx.coordinator.payload != nil)
+
+        await fx.coordinator.endPairing()
+        let admitted = await lanCoordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: URL(string: "http://host.local/v1/pairing")!
+        )
+        guard case .success = admitted else {
+            Issue.record("Expected LAN pairing after Settings released admission")
+            await lanCoordinator.cancel()
+            await fx.cleanup()
+            return
+        }
+
+        await fx.coordinator.beginPairing()
+        #expect(fx.coordinator.payload == nil)
+        #expect(fx.coordinator.lastError == "Another pairing session is already active.")
+        guard case .awaitingClient = await lanServer.currentState() else {
+            Issue.record("Settings pairing must not replace the active LAN ceremony")
+            await lanCoordinator.cancel()
+            await fx.cleanup()
+            return
+        }
+        await lanCoordinator.cancel()
+        await fx.cleanup()
     }
 
     // MARK: - endPairing

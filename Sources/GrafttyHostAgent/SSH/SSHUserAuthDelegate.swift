@@ -26,16 +26,33 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
     private let store: TrustedPeerStore
+    private let activePeerRegistry: ActiveRemotePeerRegistry?
+    private let closeActiveTransport: (@Sendable () async -> Void)?
+    private let onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)?
     /// REMOTE-9.1: invoked synchronously with the authenticated peer's
     /// `RemoteDeviceID` the moment userauth succeeds — before
     /// `responsePromise` is even resolved, so a caller that stashes the
     /// value in a box sees it populated by the time NIOSSH allows the
     /// first channel-open (which cannot happen until auth completes).
     private let onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)?
+    /// Full trusted metadata for transport properties such as display kind.
+    /// This is derived from the authenticated public key, not a client frame.
+    private let onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)?
 
-    public init(store: TrustedPeerStore, onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil) {
+    public init(
+        store: TrustedPeerStore,
+        activePeerRegistry: ActiveRemotePeerRegistry? = nil,
+        closeActiveTransport: (@Sendable () async -> Void)? = nil,
+        onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
+        onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
+        onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil
+    ) {
         self.store = store
+        self.activePeerRegistry = activePeerRegistry
+        self.closeActiveTransport = closeActiveTransport
+        self.onActivePeerRegistered = onActivePeerRegistered
         self.onAuthenticated = onAuthenticated
+        self.onAuthenticatedPeer = onAuthenticatedPeer
     }
 
     public func requestReceived(
@@ -49,7 +66,16 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
                 if let peer = try store.get(fingerprint: fingerprint),
                    peer.capabilities.terminalControl == .allowed {
+                    if let activePeerRegistry, let closeActiveTransport {
+                        let entryID = activePeerRegistry.register(
+                            peerID: peer.id,
+                            fingerprint: fingerprint,
+                            close: closeActiveTransport
+                        )
+                        onActivePeerRegistered?(entryID)
+                    }
                     onAuthenticated?(peer.id)
+                    onAuthenticatedPeer?(peer)
                     responsePromise.succeed(.success)
                 } else {
                     // Either no matching trusted peer (unpaired / revoked) or the

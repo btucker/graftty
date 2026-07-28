@@ -1682,6 +1682,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.12** On startup, the application shall migrate `agent.lead` references in saved team session and event prompt templates to `agent.main_worktree` before any AppStorage binding reads them.
 
+**TEAM-1.13** When the user activates "Restore Graftty Default" for either Agent Teams prompt editor, the application shall remove the corresponding persistent `UserDefaults` key so the registered default becomes visible and later built-in updates continue to apply.
+
 ### TEAM-2.x — Team Identity & Membership
 
 **TEAM-2.1** A *team* is implicit in any `RepoEntry` with two or more `WorktreeEntry` children, while `agentTeamsEnabled` is true. A repo with one worktree (or with team mode off) has no team and no team-aware behavior.
@@ -1771,6 +1773,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
+
+**TEAM-11.2** When a Claude asyncRewake inbox watcher reaches its 24-hour timeout without a message, the CLI shall exit cleanly without writing a timeout diagnostic to the hook's stderr pipe.
+
+**TEAM-11.3** If a Claude asyncRewake inbox watcher resolves after the hook's stderr reader has closed, the CLI shall discard the output failure rather than terminate from SIGPIPE or an NSFileHandle exception.
+
+### TEAM-12.x
+
+**TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+
+**TEAM-12.2** When an automated team lifecycle or state event arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
+
+**TEAM-12.3** On application launch, the immediate retry of preexisting unread messages shall refresh automatic-delivery liveness after restoring pane-session metadata, so a live background Codex agent is not delayed until the periodic presence retry.
 
 ## EDITOR — Editor Integration
 
@@ -1880,7 +1894,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-9.x
 
-**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
 
 **REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
 
@@ -1893,6 +1907,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
 
 **REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
+
+**REMOTE-9.8** If an SSH terminal's PTY input consumer stalls until the bounded write queue is full, the host shall close that terminal channel rather than retain input without limit or silently drop terminal bytes.
 
 ### REMOTE-10.x
 
@@ -1907,6 +1923,84 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.3** When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
 
 **REMOTE-11.4** While a data channel's SSH transport has not yet attached, the application shall buffer inbound data-channel bytes losslessly from the moment the channel is announced and deliver them to the transport in arrival order ahead of live traffic.
+
+### REMOTE-12.x — Mac-to-Mac Remote Access
+
+**REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
+
+**REMOTE-12.2** While any host pairing ceremony is active, the application shall reject attempts to start a second ceremony through another host pairing entry point without replacing the active session.
+
+**REMOTE-12.3** When a discovered Remote Mac service disappears, the application shall remove its transient candidate instead of continuing to present stale reachability.
+
+**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, and signaling base URL.
+
+**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall exchange a WebRTC offer at its last known LAN base URL, apply the answer, and open the remote pane-state/control environment.
+
+**REMOTE-12.6** While connection setup or a live connection already exists for a Remote Mac identity, repeated connect requests shall reuse that one connection rather than dial another transport.
+
+**REMOTE-12.7** While a saved Remote Mac is connected, its latest panes-state snapshot shall project remote worktree and pane rows beneath that Mac in the sidebar.
+
+**REMOTE-12.8** If the user disconnects a Remote Mac while connection setup is suspended, the late setup result shall not overwrite the explicit offline state.
+
+**REMOTE-12.9** When a Remote Mac owns a terminal surface whose live grid differs from the host snapshot, it shall request one owner resize and stop requesting once the host snapshot acknowledges that grid.
+
+**REMOTE-12.10** While unauthenticated LAN pairing and signaling routes are rate limited, one source address exhausting its allowance shall not consume another source address's allowance.
+
+**REMOTE-12.11** While multiple Add Remote Mac sheets use discovery, the application shall keep the shared browser active until the final sheet releases its discovery lease.
+
+**REMOTE-12.12** If a cached Remote Mac connection is already in a terminal state when connect is requested, the registry shall evict and close it before dialing a fresh transport.
+
+**REMOTE-12.13** When an obsolete Remote Mac pane subscription emits after disconnect or replacement, the registry shall discard that snapshot instead of overwriting the current sidebar projection.
+
+**REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
+
+### REMOTE-13.x
+
+**REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.
+
+**REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
+
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+
+**REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
+
+**REMOTE-13.5** While a Remote Mac is connected, when a remote worktree receives a new user-notify or agent-stop attention transition, the application shall deliver a macOS notification targeting that exact worktree or pane, but shall not replay attention already present in the first snapshot after connection.
+
+**REMOTE-13.6** When an existing paired-device capability record predates worktree-management permission, the application shall inherit management permission from terminal control so upgrades neither silently revoke trusted Macs nor grant management to disabled peers.
+
+**REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
+
+**REMOTE-13.8** While a Remote Mac is connected, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
+
+**REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
+
+**REMOTE-13.10** When GrafttyMobile creates a worktree while the connected Mac exposes repositories from multiple Macs, the Add Worktree sheet shall require an explicit target Mac selection before repository selection and creation.
+
+**REMOTE-13.11** When a Remote Mac reconnects with user-notify or agent-stop attention that was not present in its final connected snapshot, the application shall deliver one summary notification for all newly observed items, keep unchanged attention silent, and target the first affected worktree or pane when the summary is activated.
+
+**REMOTE-13.12** When several panes in one remote layout request a connection concurrently, they shall share the same connection attempt rather than cancelling earlier pane opens.
+
+**REMOTE-13.13** When a user selects a closed remote worktree or a relayed client opens one, the owning Mac shall start the worktree without changing the owner's selected worktree.
+
+**REMOTE-13.14** While a Mac displays a remote worktree, pane control requests shall be serialized per owning Mac so repeated split resize and layout commands cannot overlap the single-request channel, and a disconnect shall invalidate every command queued for the old connection.
+
+**REMOTE-13.15** While a remote worktree is selected, the application shall route split, close, focus, zoom, resize, and equalize commands through that worktree's host-managed pane command handler.
+
+**REMOTE-13.16** When a remote client wins the race to create a pane's zmx daemon, the host shall start that daemon in the pane's owning worktree directory.
+
+**REMOTE-13.17** When a remote terminal transport closes unexpectedly, its host-managed adapter shall report the closure exactly once so the viewer can recreate the proxy without closing the owner's pane.
+
+**REMOTE-13.18** When GrafttyMobile selects a closed local or relayed worktree over an authenticated management connection, the application shall open the worktree before navigating to its running pane layout.
+
+**REMOTE-13.19** While GrafttyMobile views a relayed terminal, opening or resizing the follower shall not steal downstream display ownership; input shall claim ownership when needed, ownership loss shall permit a later reclaim, and the downstream owner's authoritative grid shall be reported back through the outer session.
+
+**REMOTE-13.20** When multiple Mobile split commands complete, the newest created pane shall receive focus unless the user explicitly changed host, worktree, or pane selection while those commands were in flight.
+
+**REMOTE-13.21** Remote worktree snapshots shall preserve the source of worktree-scoped attention so direct and relayed rows and macOS notifications retain agent-stop versus user-notify semantics.
+
+**REMOTE-13.22** A successful remote split shall return the exact created pane session through direct and relayed pane-control responses so rapid split focus never depends on coalesced snapshot leaf order.
+
+**REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
 
 ## URL — Worktree URL Handler
 
@@ -1974,7 +2068,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 

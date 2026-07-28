@@ -78,11 +78,15 @@ jobs:
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
         # A package-wide invocation intermittently stalls while the many async,
-        # subprocess, and socket suites contend in one test process. Launching
-        # one process per test target isolates those executors and resources
-        # while reusing the build products from the preceding step. Discover
-        # targets from Package.swift so a future target cannot silently miss CI;
-        # OwnershipModelTests keeps its dedicated corpus gate below.
+        # subprocess, WebRTC, and socket suites contend in one test process.
+        # Launch one process per target while reusing the preceding build.
+        #
+        # SwiftPM's target-qualified --filter is honored by XCTest but stripped
+        # before Swift Testing runs; using it alone makes Swift Testing execute
+        # the ENTIRE package once per target. Build a suite-name filter from
+        # `swift test list` for Swift Testing, and run XCTest separately with
+        # its target-qualified filter. OwnershipModelTests keeps its dedicated
+        # corpus gate below.
         run: |
           set -o pipefail
           test_targets="$(
@@ -94,10 +98,54 @@ jobs:
             exit 1
           fi
 
+          test_list="$(swift test list --skip-build)"
           while IFS= read -r target; do
             echo "::group::$target"
+            suite_names="$(
+              awk -v prefix="${target}." '
+                index($0, prefix) == 1 {
+                  name = substr($0, length(prefix) + 1)
+                  sub(/\/.*/, "", name)
+                  print name
+                }
+              ' <<< "$test_list" \
+                | sort -u \
+                | sed 's/[][(){}.^$*+?|\\]/\\&/g'
+            )"
+
+            # Keep regexes below Swift Testing's practical argument-size
+            # ceiling and serialize within each process. Several NIO server
+            # suites synchronously join event-loop shutdown from cooperative
+            # tasks; unbounded Swift Testing parallelism can park the entire
+            # cooperative pool in those joins.
+            suite_filter=""
+            suite_count=0
+            while IFS= read -r suite; do
+              [[ -z "$suite" ]] && continue
+              if [[ -n "$suite_filter" ]]; then
+                suite_filter="${suite_filter}|${suite}"
+              else
+                suite_filter="$suite"
+              fi
+              suite_count=$((suite_count + 1))
+              if [[ "$suite_count" -eq 20 ]]; then
+                /usr/bin/script -q /dev/null \
+                  swift test --skip-build --disable-xctest --no-parallel \
+                    --filter "(${suite_filter})" \
+                  < /dev/null
+                suite_filter=""
+                suite_count=0
+              fi
+            done <<< "$suite_names"
+            if [[ -n "$suite_filter" ]]; then
+              /usr/bin/script -q /dev/null \
+                swift test --skip-build --disable-xctest --no-parallel \
+                  --filter "(${suite_filter})" \
+                < /dev/null
+            fi
             /usr/bin/script -q /dev/null \
-              swift test --skip-build --filter "^${target}\\." \
+              swift test --skip-build --disable-swift-testing \
+                --filter "^${target}\\." \
               < /dev/null
             echo "::endgroup::"
           done <<< "$test_targets"
@@ -202,24 +250,24 @@ jobs:
             test-arguments: >-
               -skip-testing:GrafttyMobileKitTests/RemoteConnectionCoordinatorTests
               -skip-testing:GrafttyMobileKitTests/RemoteConnectionReconnectTests
-              -skip-testing:GrafttyMobileKitTests/RemoteHostConnectionLoopbackTests
-              -skip-testing:GrafttyMobileKitTests/SSHAuthLoopbackTests
-              -skip-testing:GrafttyMobileKitTests/SSHOverWebRTCLoopbackTests
-              -skip-testing:GrafttyMobileKitTests/SSHPanesAndControlLoopbackTests
-              -skip-testing:GrafttyMobileKitTests/SSHTerminalLoopbackTests
+              -skip-testing:GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests
+              -skip-testing:GrafttyRemoteClientTests/SSHAuthLoopbackTests
+              -skip-testing:GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests
+              -skip-testing:GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests
+              -skip-testing:GrafttyRemoteClientTests/SSHTerminalLoopbackTests
           - shard: coordinator
             test-arguments: >-
               -only-testing:GrafttyMobileKitTests/RemoteConnectionCoordinatorTests
           - shard: ssh-auth-terminal
             test-arguments: >-
-              -only-testing:GrafttyMobileKitTests/SSHAuthLoopbackTests
-              -only-testing:GrafttyMobileKitTests/SSHTerminalLoopbackTests
+              -only-testing:GrafttyRemoteClientTests/SSHAuthLoopbackTests
+              -only-testing:GrafttyRemoteClientTests/SSHTerminalLoopbackTests
           - shard: remote-loopbacks
             test-arguments: >-
               -only-testing:GrafttyMobileKitTests/RemoteConnectionReconnectTests
-              -only-testing:GrafttyMobileKitTests/RemoteHostConnectionLoopbackTests
-              -only-testing:GrafttyMobileKitTests/SSHOverWebRTCLoopbackTests
-              -only-testing:GrafttyMobileKitTests/SSHPanesAndControlLoopbackTests
+              -only-testing:GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests
+              -only-testing:GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests
+              -only-testing:GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests
     steps:
       - uses: actions/checkout@v4
 

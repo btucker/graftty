@@ -27,6 +27,67 @@ indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
 
+## Remote Macs
+
+Graftty can connect two Macs on the same local network so you can use one
+Mac's existing worktrees and persistent terminal sessions from the other.
+This is terminal access, not screen sharing. Both Macs run the normal
+Graftty app; no separate server, Tailscale connection, or system SSH setup
+is required.
+
+### Pair two Macs
+
+Graftty advertises its dedicated local remote-access service with Bonjour
+while it is running. To add another Mac:
+
+1. Open Graftty on both Macs and allow Local Network access when macOS asks.
+2. On the Mac you want to work from, click **Add Remote Mac…** in the
+   **Remote Macs** sidebar section.
+3. Select the discovered Mac. If Bonjour/mDNS is unavailable on the
+   network, enter its LAN listener URL instead.
+4. Click **Pair** and compare the verification code shown on both Macs.
+   Accept the request on the host Mac and confirm it on the client only
+   when the codes match.
+
+The client saves the paired Mac by its stable device ID and public-key
+fingerprint, not by its changeable hostname or IP address. Only paired Macs
+become persistent sidebar rows; nearby, unpaired Bonjour results remain
+inside the Add Remote Mac sheet.
+
+Select a saved Mac to connect on demand. Once connected, its worktrees and
+panes appear beneath it in the sidebar. Selecting a remote pane opens an
+interactive terminal attached to that pane's persistent `zmx` session.
+Graftty keeps one client connection per saved Mac and carries terminal,
+pane-list, and pane-control traffic through an encrypted
+WebRTC DataChannel with mutually authenticated SSH inside it.
+
+### Trust, revocation, and recovery
+
+Bonjour discovery is only an address hint—it does not establish trust.
+Pairing exchanges public identity keys, requires approval on the host, and
+uses the matching verification code to prevent an untrusted LAN peer from
+silently adding itself. The LAN listener exposes only pairing and WebRTC
+signaling routes and rate-limits unauthenticated requests.
+
+Every later connection verifies the host's SSH key against the fingerprint
+pinned during pairing. If the key does not match, Graftty fails closed and
+shows the saved Mac with a key icon (`needsPairing`). A later Bonjour
+announcement does not clear that warning. Use **Add Remote Mac…** to pair
+again only after confirming why the host identity changed—for example,
+after the other Mac's Graftty identity data was intentionally reset.
+
+The host can revoke a paired client under **Settings → Web Access → Device
+Pairing**. Removing it also closes that client's active SSH connection.
+The current host accepts one active incoming remote connection at a time;
+another client receives a retryable “host busy” failure without displacing
+the active connection.
+
+If a Mac does not appear, confirm that both apps are running on the same
+LAN, Local Network permission is enabled for Graftty, and the network
+allows Bonjour/mDNS. Corporate and guest networks often block peer
+discovery or device-to-device traffic; use the manual LAN URL when one is
+available. Remote Macs are currently local-network only.
+
 ## Agent teams
 
 When a repo has more than one worktree open, Graftty treats it as an

@@ -1,4 +1,5 @@
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
 import os
 
@@ -84,6 +85,10 @@ extension SessionClient {
                 if let remoteHost = await remoteConnectionProvider?() {
                     return try await remoteHost.openTerminalSession(sessionName: sessionName)
                 }
+                if sessionName.hasPrefix("relay-pane-") {
+                    throw RemoteSessionTransportError
+                        .relayRequiresPairedConnection
+                }
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },
@@ -93,6 +98,17 @@ extension SessionClient {
             role: role,
             reclaimControlOnOwnerlessConnect: reclaimControlOnOwnerlessConnect
         )
+    }
+}
+
+enum RemoteSessionTransportError: LocalizedError, Equatable {
+    case relayRequiresPairedConnection
+
+    var errorDescription: String? {
+        switch self {
+        case .relayRequiresPairedConnection:
+            return "Remote Mac panes require an active paired connection."
+        }
     }
 }
 

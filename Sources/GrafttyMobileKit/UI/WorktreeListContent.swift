@@ -12,6 +12,8 @@ public struct WorktreeListContent: View {
     @State private var pendingForceDelete: PendingForceDelete?
     @State private var errorToast: String?
     @State private var errorToastTask: Task<Void, Never>?
+    @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
+    @State private var selectionIntentGeneration: UInt64 = 0
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -19,11 +21,23 @@ public struct WorktreeListContent: View {
         let action: WorktreePickerSwipeAction
     }
 
-    private struct PendingForceDelete: Identifiable, Equatable {
+    private struct DeleteRequestContext {
+        let hostID: UUID
+        let baseURL: URL
+        let remoteConnectionProvider: RemoteConnectionProvider?
+    }
+
+    private struct PendingForceDelete: Identifiable {
         let id = UUID()
         let worktreePath: String
         let stderr: String
         let shortStatus: String
+        let requestContext: DeleteRequestContext
+    }
+
+    private struct OpeningWorktreeKey: Hashable {
+        let hostID: UUID
+        let path: String
     }
 
     public let host: Host
@@ -41,6 +55,8 @@ public struct WorktreeListContent: View {
     /// When set, the matching pane row uses the brightest focused
     /// bucket via `theme.paneTitle(isFocusedPane: true, …)`.
     public let focusedPaneId: String?
+    public let includeRemoteWorktrees: Bool
+    public let remoteConnectionProvider: RemoteConnectionProvider?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
@@ -51,6 +67,8 @@ public struct WorktreeListContent: View {
         theme: GhosttyThemeColors? = nil,
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
+        includeRemoteWorktrees: Bool = false,
+        remoteConnectionProvider: RemoteConnectionProvider? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
@@ -60,6 +78,8 @@ public struct WorktreeListContent: View {
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.remoteConnectionProvider = remoteConnectionProvider
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
@@ -88,16 +108,27 @@ public struct WorktreeListContent: View {
                 }
             case .loaded(let worktrees):
                 List {
-                    ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
+                    ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                         Section {
-                            ForEach(entries, id: \.path) { wt in
+                            ForEach(group.worktrees, id: \.path) { wt in
                                 WorktreeBlock(
                                     worktree: wt,
                                     theme: theme,
                                     isActive: wt.path == selectedWorktreePath,
+                                    isOpening: openingWorktrees.contains(
+                                        OpeningWorktreeKey(
+                                            hostID: host.id,
+                                            path: wt.path
+                                        )
+                                    ),
                                     focusedPaneId: focusedPaneId,
-                                    onSelect: { onSelect(wt) },
-                                    onSelectPane: onSelectPane
+                                    onSelect: {
+                                        beginSelectingWorktree(wt)
+                                    },
+                                    onSelectPane: { leaf in
+                                        selectionIntentGeneration &+= 1
+                                        onSelectPane(leaf)
+                                    }
                                 )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if let action = WorktreePickerGrouping.swipeAction(for: wt) {
@@ -110,7 +141,7 @@ public struct WorktreeListContent: View {
                                 }
                             }
                         } header: {
-                            Text(repoName)
+                            Text(group.title)
                                 .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                         }
                     }
@@ -144,15 +175,28 @@ public struct WorktreeListContent: View {
         .confirmationDialog(
             "Could not delete worktree",
             isPresented: Binding(
-                get: { pendingForceDelete != nil },
+                get: {
+                    pendingForceDelete.map {
+                        Self.forceDeleteMatchesHost(
+                            capturedHostID: $0.requestContext.hostID,
+                            currentHostID: host.id
+                        )
+                    } ?? false
+                },
                 set: { if !$0 { pendingForceDelete = nil } }
             ),
             titleVisibility: .visible,
             presenting: pendingForceDelete
         ) { pending in
             Button("Force Delete", role: .destructive) {
-                let path = pending.worktreePath
-                Task { await performForceDelete(worktreePath: path) }
+                guard Self.forceDeleteMatchesHost(
+                    capturedHostID: pending.requestContext.hostID,
+                    currentHostID: host.id
+                ) else {
+                    pendingForceDelete = nil
+                    return
+                }
+                Task { await performForceDelete(pending) }
             }
             Button("Cancel", role: .cancel) { }
         } message: { pending in
@@ -189,7 +233,11 @@ public struct WorktreeListContent: View {
             }
         }
         .sheet(isPresented: $isAddSheetPresented) {
-            AddWorktreeSheetView(host: host) { response in
+            AddWorktreeSheetView(
+                host: host,
+                includeRemoteWorktrees: includeRemoteWorktrees,
+                remoteConnectionProvider: remoteConnectionProvider
+            ) { response in
                 Task { await handleCreated(response) }
             }
         }
@@ -201,6 +249,40 @@ public struct WorktreeListContent: View {
             guard externalRefreshToken != 0 else { return }
             await refresh()
         }
+        .onChange(of: selectedWorktreePath) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
+        .onChange(of: focusedPaneId) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
+        .onChange(of: host.id) { _, _ in
+            selectionIntentGeneration &+= 1
+            pendingDelete = nil
+            pendingForceDelete = nil
+        }
+        .task(id: RemotePollingKey(
+            hostID: host.id,
+            enabled: includeRemoteWorktrees
+        )) {
+            guard includeRemoteWorktrees else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                    let list = try await WorktreePanesFetcher.fetch(
+                        baseURL: host.baseURL,
+                        includeRemoteWorktrees: true
+                    )
+                    guard !Task.isCancelled else { return }
+                    state = .loaded(list)
+                    onListChanged(list)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Keep the last usable list. The primary load/refresh
+                    // paths still surface transport errors to the user.
+                }
+            }
+        }
         .onDisappear { errorToastTask?.cancel() }
     }
 
@@ -211,7 +293,10 @@ public struct WorktreeListContent: View {
 
     private func refresh() async {
         do {
-            let list = try await WorktreePanesFetcher.fetch(baseURL: host.baseURL)
+            let list = try await WorktreePanesFetcher.fetch(
+                baseURL: host.baseURL,
+                includeRemoteWorktrees: includeRemoteWorktrees
+            )
             state = .loaded(list)
             onListChanged(list)
         } catch WorktreePanesFetcher.FetchError.forbidden {
@@ -225,13 +310,144 @@ public struct WorktreeListContent: View {
         }
     }
 
+    static func requiresManagementOpen(
+        _ worktree: WorktreePanes,
+        includesRemoteWorktrees: Bool,
+        providerAvailable: Bool
+    ) -> Bool {
+        worktree.state == .closed
+            && includesRemoteWorktrees
+            && providerAvailable
+    }
+
+    static func forceDeleteMatchesHost(
+        capturedHostID: UUID,
+        currentHostID: UUID
+    ) -> Bool {
+        capturedHostID == currentHostID
+    }
+
+    static func shouldApplySelectionIntent(
+        capturedGeneration: UInt64,
+        currentGeneration: UInt64
+    ) -> Bool {
+        capturedGeneration == currentGeneration
+    }
+
+    private func beginSelectingWorktree(_ worktree: WorktreePanes) {
+        selectionIntentGeneration &+= 1
+        let generation = selectionIntentGeneration
+        let selectionHost = host
+        let provider = remoteConnectionProvider
+        let shouldIncludeRemoteWorktrees = includeRemoteWorktrees
+        Task {
+            await selectWorktree(
+                worktree,
+                generation: generation,
+                selectionHost: selectionHost,
+                provider: provider,
+                includeRemoteWorktrees: shouldIncludeRemoteWorktrees
+            )
+        }
+    }
+
+    /// Closed worktrees shared over the authenticated management channel
+    /// have no pane layout yet. Start the owning Mac's worktree, then poll
+    /// until the authoritative running layout arrives before navigating.
+    private func selectWorktree(
+        _ worktree: WorktreePanes,
+        generation: UInt64,
+        selectionHost: Host,
+        provider: RemoteConnectionProvider?,
+        includeRemoteWorktrees: Bool
+    ) async {
+        func selectionIsCurrent() -> Bool {
+            selectionHost.id == host.id
+                && Self.shouldApplySelectionIntent(
+                    capturedGeneration: generation,
+                    currentGeneration: selectionIntentGeneration
+                )
+        }
+        guard Self.requiresManagementOpen(
+            worktree,
+            includesRemoteWorktrees: includeRemoteWorktrees,
+            providerAvailable: provider != nil
+        ) else {
+            if selectionIsCurrent() {
+                onSelect(worktree)
+            }
+            return
+        }
+        let openingKey = OpeningWorktreeKey(
+            hostID: selectionHost.id,
+            path: worktree.path
+        )
+        guard !openingWorktrees.contains(openingKey) else { return }
+        openingWorktrees.insert(openingKey)
+        defer { openingWorktrees.remove(openingKey) }
+
+        do {
+            let response = try await RelayedWorktreeManagementClient.send(
+                .open(worktreeID: worktree.path),
+                using: provider
+            )
+            guard selectionIsCurrent() else { return }
+            guard response == .ok else {
+                if case let .error(_, message, _, _) = response {
+                    showErrorToast(message)
+                } else {
+                    showErrorToast(
+                        "The remote Mac returned an unexpected response."
+                    )
+                }
+                return
+            }
+
+            for attempt in 0..<12 {
+                let list = try await WorktreePanesFetcher.fetch(
+                    baseURL: selectionHost.baseURL,
+                    includeRemoteWorktrees: includeRemoteWorktrees
+                )
+                guard !Task.isCancelled, selectionIsCurrent() else { return }
+                state = .loaded(list)
+                onListChanged(list)
+                if let opened = list.first(where: {
+                    $0.path == worktree.path
+                        && $0.state == .running
+                        && $0.layout != nil
+                }) {
+                    if selectionIsCurrent() {
+                        onSelect(opened)
+                    }
+                    return
+                }
+                guard attempt < 11 else { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            showErrorToast("The worktree started, but its panes are not ready.")
+        } catch is CancellationError {
+            return
+        } catch {
+            if selectionIsCurrent() {
+                showErrorToast("Couldn't reach the remote Mac.")
+            }
+        }
+    }
+
     /// Re-fetch without blanking the existing list so the user isn't
     /// shown a spinner over a list they just saw populated.
     private func handleCreated(_ response: CreateWorktreeClient.Response) async {
-        await refresh()
-        guard case .loaded(let list) = state else { return }
-        if let match = list.first(where: { $0.path == response.worktreePath }) {
-            onSelect(match)
+        for attempt in 0..<5 {
+            await refresh()
+            guard case .loaded(let list) = state else { return }
+            if let match = list.first(where: {
+                $0.path == response.worktreePath
+            }) {
+                onSelect(match)
+                return
+            }
+            guard attempt < 4 else { return }
+            try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
@@ -239,17 +455,41 @@ public struct WorktreeListContent: View {
     /// forceable failure surface the Force Delete confirmation, on
     /// any other failure surface a transient error toast.
     private func performDelete(worktree: WorktreePanes, force: Bool) async {
+        let requestContext = DeleteRequestContext(
+            hostID: host.id,
+            baseURL: host.baseURL,
+            remoteConnectionProvider: remoteConnectionProvider
+        )
         do {
-            _ = try await DeleteWorktreeClient.delete(
-                baseURL: host.baseURL,
-                body: DeleteWorktreeClient.Request(worktreePath: worktree.path, force: force)
-            )
+            if worktree.path.hasPrefix("relay-worktree-") {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .delete(worktreeID: worktree.path, force: force),
+                    using: requestContext.remoteConnectionProvider
+                )
+                guard case .deleted = response else {
+                    handleRemoteDeleteResponse(
+                        response,
+                        worktreePath: worktree.path,
+                        requestContext: requestContext
+                    )
+                    return
+                }
+            } else {
+                _ = try await DeleteWorktreeClient.delete(
+                    baseURL: requestContext.baseURL,
+                    body: DeleteWorktreeClient.Request(
+                        worktreePath: worktree.path,
+                        force: force
+                    )
+                )
+            }
             await refresh()
         } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
             pendingForceDelete = PendingForceDelete(
                 worktreePath: worktree.path,
                 stderr: stderr,
-                shortStatus: status
+                shortStatus: status,
+                requestContext: requestContext
             )
         } catch let error as DeleteWorktreeClient.DeleteError {
             surfaceDeleteError(error)
@@ -260,12 +500,30 @@ public struct WorktreeListContent: View {
 
     /// User confirmed Force Delete on a 409 forceable response —
     /// re-issue with `force: true`.
-    private func performForceDelete(worktreePath: String) async {
+    private func performForceDelete(_ pending: PendingForceDelete) async {
         do {
-            _ = try await DeleteWorktreeClient.delete(
-                baseURL: host.baseURL,
-                body: DeleteWorktreeClient.Request(worktreePath: worktreePath, force: true)
-            )
+            if pending.worktreePath.hasPrefix("relay-worktree-") {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .delete(worktreeID: pending.worktreePath, force: true),
+                    using: pending.requestContext.remoteConnectionProvider
+                )
+                guard case .deleted = response else {
+                    handleRemoteDeleteResponse(
+                        response,
+                        worktreePath: pending.worktreePath,
+                        requestContext: pending.requestContext
+                    )
+                    return
+                }
+            } else {
+                _ = try await DeleteWorktreeClient.delete(
+                    baseURL: pending.requestContext.baseURL,
+                    body: DeleteWorktreeClient.Request(
+                        worktreePath: pending.worktreePath,
+                        force: true
+                    )
+                )
+            }
             await refresh()
         } catch let error as DeleteWorktreeClient.DeleteError {
             surfaceDeleteError(error)
@@ -287,6 +545,27 @@ public struct WorktreeListContent: View {
         }
     }
 
+    private func handleRemoteDeleteResponse(
+        _ response: WorktreeManagementResponse,
+        worktreePath: String,
+        requestContext: DeleteRequestContext
+    ) {
+        if case let .error(_, message, forceAllowed, shortStatus) = response {
+            if forceAllowed {
+                pendingForceDelete = PendingForceDelete(
+                    worktreePath: worktreePath,
+                    stderr: message,
+                    shortStatus: shortStatus ?? "",
+                    requestContext: requestContext
+                )
+            } else {
+                showErrorToast(message)
+            }
+        } else {
+            showErrorToast("The remote Mac returned an unexpected response.")
+        }
+    }
+
     private func showErrorToast(_ message: String) {
         errorToastTask?.cancel()
         withAnimation { errorToast = message }
@@ -302,6 +581,11 @@ public struct WorktreeListContent: View {
 
 }
 
+private struct RemotePollingKey: Hashable {
+    let hostID: UUID
+    let enabled: Bool
+}
+
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors?
@@ -310,6 +594,7 @@ private struct WorktreeBlock: View {
     /// highlight on the whole block and the active brightness bucket
     /// for pane rows beneath it.
     let isActive: Bool
+    let isOpening: Bool
     /// Session name of the focused pane within `appState`. Each pane
     /// row tests `leaf.sessionName == focusedPaneId` to decide whether
     /// to use the brightest focused bucket from `theme.paneTitle(…)`.
@@ -364,12 +649,23 @@ private struct WorktreeBlock: View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
+            WorktreeRowContent(
+                worktree: worktree,
+                theme: theme,
+                isActive: isActive,
+                isOpening: isOpening
+            )
         } else {
             Button(action: onSelect) {
-                WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
+                WorktreeRowContent(
+                    worktree: worktree,
+                    theme: theme,
+                    isActive: isActive,
+                    isOpening: isOpening
+                )
             }
             .buttonStyle(.plain)
+            .disabled(isOpening)
         }
     }
 
@@ -391,13 +687,13 @@ private struct WorktreeBlock: View {
             ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
                 let effective = leaf.attentionText
                     ?? (index == 0 ? worktree.attentionText : nil)
-                // Use the leaf's own source for the icon decision; an
-                // inherited worktree-scoped ping carries no wire source
-                // here, so it renders as text.
                 let style: AttentionCapsuleStyle? = effective.map {
                     AttentionCapsuleStyle.from(
                         text: $0,
-                        source: leaf.attentionText != nil ? leaf.attentionSource : nil)
+                        source: leaf.attentionText != nil
+                            ? leaf.attentionSource
+                            : worktree.attentionSource
+                    )
                 }
                 let isFocused = leaf.sessionName == focusedPaneId
                 if layout.isLeaf {
@@ -444,6 +740,7 @@ private struct WorktreeRowContent: View {
     /// (isActive: …)` so the selected row reads brighter than its
     /// siblings (IPAD-1.16).
     let isActive: Bool
+    let isOpening: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -478,7 +775,7 @@ private struct WorktreeRowContent: View {
 
     @ViewBuilder
     private var typeIcon: some View {
-        if worktree.state.isInFlight {
+        if worktree.state.isInFlight || isOpening {
             ProgressView()
                 .controlSize(.mini)
                 .frame(width: 14)
