@@ -131,8 +131,8 @@ struct HostManagedZmxBackendTests {
         #expect(secondSession.resizes().isEmpty)
     }
 
-    @Test("Show-time reconcile refreshes a follower presentation without stealing ownership or resizing the PTY.")
-    func showTimeReconcileDoesNotStealOwnership() throws {
+    @Test("A first-show reconcile before layout settles shall not steal remote display ownership or resize the follower PTY.")
+    func preLayoutFirstShowReconcileDoesNotStealOwnership() throws {
         let store = SessionDisplayOwnershipStore()
         let ownerSession = FakeHostManagedSession()
         let owner = Self.makeBackend(
@@ -152,8 +152,10 @@ struct HostManagedZmxBackendTests {
         defer { follower.releaseReceiveUserdataAfterSurfaceFree() }
         follower.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
         try follower.start(surface: Self.fakeSurface())
-        follower.markLayoutSettled()
 
+        // Exercise TERM-11.17's newly-authorized pre-layout first-show path.
+        // The explicit lifecycle event bypasses only layout withholding;
+        // ownership authorization must still reject this follower.
         follower.resyncVisibleGrid()
 
         #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("mac-owner"))

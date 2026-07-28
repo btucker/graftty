@@ -152,10 +152,12 @@ struct WorktreeMonitorBridgeTests {
             selectedWorktreePath: nil
         ))
         // Mirror app launch: prStore needs `getRepos` set before it
-        // can apply fetched snapshots to worktrees. The bridge does
-        // not start the store; the app does.
+        // can apply fetched snapshots to worktrees. Keep the ticker
+        // passive so its immediate startup tick cannot consume the
+        // sequenced fetcher's create-race result before the origin-ref
+        // event under test drives the first refresh.
         prStore.start(
-            ticker: PollingTicker(interval: .seconds(60)),
+            ticker: PassivePollingTicker(),
             getRepos: { stateBox.state.repos }
         )
         defer { prStore.stop() }
@@ -357,6 +359,13 @@ private final class RecordingStatsCompute: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         calls[path, default: 0] += 1
     }
+}
+
+@MainActor
+private final class PassivePollingTicker: PollingTickerLike {
+    func start(onTick: @MainActor @escaping () async -> Void) {}
+    func stop() {}
+    func pulse() {}
 }
 
 private struct NoopCLIExecutor: CLIExecutor {

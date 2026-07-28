@@ -57,12 +57,14 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func markLayoutSettled()
     /// The last remote client detached from this pane's session (TERM-11.4).
     func remoteClientsDidDetach()
-    /// The pane re-entered the visible set; reconcile the PTY to the live
-    /// grid by forwarding it unconditionally (TERM-11.13). NOT a
-    /// drift-gated no-op: a same-size forward is a kernel no-op (no
-    /// SIGWINCH), and forwarding regardless corrects a divergence that a
-    /// previously-failed/ignored resize left behind — which an in-sync
-    /// check against the optimistic last-forwarded record would hide.
+    /// The pane entered the visible set; reconcile the PTY to the live grid
+    /// by forwarding it unconditionally (TERM-11.13 / TERM-11.17). This
+    /// includes first visibility after an explicit background start, before
+    /// any layout callback. NOT a drift-gated no-op: a same-size forward is a
+    /// kernel no-op (no SIGWINCH), and forwarding regardless corrects a
+    /// divergence that a previously-failed/ignored resize left behind —
+    /// which an in-sync check against the optimistic last-forwarded record
+    /// would hide.
     func resyncVisibleGrid()
     func takeControl() -> Bool
     func close()
@@ -109,6 +111,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var setOcclusion: (ghostty_surface_t, Bool) -> Void
+    var refresh: (ghostty_surface_t) -> Void
     var requestClose: (ghostty_surface_t) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
@@ -121,6 +125,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
         },
         size: { surface in ghostty_surface_size(surface) },
         setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) },
+        setOcclusion: { surface, visible in ghostty_surface_set_occlusion(surface, visible) },
+        refresh: { surface in ghostty_surface_refresh(surface) },
         requestClose: { surface in ghostty_surface_request_close(surface) }
     )
 }
@@ -525,20 +531,21 @@ final class SurfaceHandle {
     /// Tell libghostty whether this surface is currently visible. Despite
     /// the C symbol's name, the boolean is `visible`, not `occluded`.
     func setVisible(_ visible: Bool) {
-        ghostty_surface_set_occlusion(surface, visible)
+        surfaceFactory.setOcclusion(surface, visible)
     }
 
     /// Force a full repaint on libghostty's next draw cycle.
     func refresh() {
-        ghostty_surface_refresh(surface)
+        surfaceFactory.refresh(surface)
     }
 
-    /// TERM-11.13: the pane re-entered the visible set. Ask the host-managed
-    /// backend to reconcile the zmx PTY to the live grid by forwarding it
-    /// unconditionally (no-op for non-zmx surfaces). The backend does NOT
-    /// skip an apparently-in-sync grid: a same-size forward is a kernel
-    /// no-op (no SIGWINCH), and forwarding regardless corrects a divergence
-    /// a previously-failed/ignored resize left behind.
+    /// TERM-11.13 / TERM-11.17: the pane entered the visible set. Ask the
+    /// host-managed backend to reconcile the zmx PTY to the live grid by
+    /// forwarding it unconditionally (no-op for non-zmx surfaces), including
+    /// first visibility after a background start. The backend does NOT skip
+    /// an apparently-in-sync grid: a same-size forward is a kernel no-op (no
+    /// SIGWINCH), and forwarding regardless corrects a divergence a
+    /// previously-failed/ignored resize left behind.
     func resyncVisibleGrid() {
         zmxBackend?.resyncVisibleGrid()
     }

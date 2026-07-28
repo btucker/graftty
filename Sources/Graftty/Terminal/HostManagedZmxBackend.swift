@@ -634,14 +634,16 @@ final class HostManagedZmxBackend {
         return true
     }
 
-    /// TERM-11.13: a pane re-entered the visible set (un-occluded). While it
-    /// was occluded the window's grid may have drifted to a row/col count the
-    /// PTY never received: libghostty emits a viewport callback only on a grid
-    /// *delta*, and an occluded surface re-shown at a size it already held
+    /// TERM-11.13 / TERM-11.17: a pane entered the visible set. While it was
+    /// occluded the window's grid may have drifted to a row/col count the PTY
+    /// never received: libghostty emits a viewport callback only on a grid
+    /// *delta*, and an occluded surface shown at a size it already held
     /// produces none, so the PTY keeps its stale latched dims and the
     /// session's TUI renders off-anchor (the "off by N lines" desync) until a
     /// real resize forces a SIGWINCH — which is exactly why a manual vertical
-    /// resize fixes it.
+    /// resize fixes it. This also applies to first visibility after an
+    /// explicit background start: the session is already running, but no
+    /// layout callback has settled the never-mounted view.
     ///
     /// We forward the live grid unconditionally rather than short-circuiting
     /// when it "matches" `lastForwardedResize`. That record is an optimistic
@@ -651,14 +653,17 @@ final class HostManagedZmxBackend {
     /// the user manually resizes. A same-size `TIOCSWINSZ` is a kernel no-op
     /// (no SIGWINCH emitted), so forwarding on every show costs one syscall
     /// and never churns the TUI, while correctly recovering from any prior
-    /// failed forward. Still no-ops while resize withholding applies
-    /// (pre-layout, or a follower whose ownership check rejects the resize).
+    /// failed forward. A running background session deliberately bypasses the
+    /// viewport callback's pre-layout gate here: visibility is an explicit
+    /// authoritative lifecycle event, not unsolicited placeholder noise.
+    /// Ordinary deferred panes are still idle and therefore no-op; followers
+    /// still no-op when the ownership check rejects the resize.
     func resyncVisibleGrid() {
         lock.lock()
         // No `currentGridSize() != nil` pre-check here: `flushSizeToPtyLocked`
         // re-reads the grid and handles a nil target (NO-TARGET) itself, so a
         // pre-check would just query libghostty twice under the lock.
-        guard case .running = lifecycle, layoutSettled else {
+        guard case .running = lifecycle else {
             lock.unlock()
             return
         }

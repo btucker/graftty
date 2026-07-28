@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import GhosttyKit
 import GrafttyKit
+import GrafttyProtocol
 import Testing
 @testable import Graftty
 
@@ -125,6 +126,100 @@ struct SurfaceHandleHostManagedTests {
         surfaceView.hostManagedLayoutNotifier?()
         #expect(backend.startCount == 1)
         #expect(backend.markLayoutSettledCount == 1)
+    }
+
+    @Test("""
+    @spec TERM-11.17: When a zmx-backed pane starts while backgrounded before its view lays out and then enters the visible set for the first time, the application shall forward the current live libghostty grid to the running zmx PTY unconditionally, without waiting for a later layout-settled or viewport callback; a same-size forward is a kernel no-op, so ordinary focus switches do not create harmful resize churn.
+    """)
+    func firstVisibilityAfterBackgroundStartForwardsLiveGridWithoutLaterCallback() throws {
+        try assertFirstVisibilityAfterBackgroundStart(
+            showingAt: .testSize132x43,
+            forwards: RecordedGrid(cols: 132, rows: 43)
+        )
+    }
+
+    @Test("First visibility before layout shall forward the live grid even when it equals the background-start grid.")
+    func firstVisibilityBeforeLayoutForwardsSameGridUnconditionally() throws {
+        try assertFirstVisibilityAfterBackgroundStart(
+            showingAt: ghostty_surface_size_s(
+                columns: 49,
+                rows: 17,
+                width_px: 588,
+                height_px: 272,
+                cell_width_px: 12,
+                cell_height_px: 16
+            ),
+            forwards: RecordedGrid(cols: 49, rows: 17)
+        )
+    }
+
+    private func assertFirstVisibilityAfterBackgroundStart(
+        showingAt liveSize: ghostty_surface_size_s,
+        forwards expectedGrid: RecordedGrid
+    ) throws {
+        let store = SessionDisplayOwnershipStore()
+        let session = FirstVisibilityRecordingSession()
+        var spawnedAt: RecordedGrid?
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            ownership: HostManagedZmxOwnership(
+                store: store,
+                sessionName: "graftty-test",
+                clientID: DisplayClientID("mac-background"),
+                kind: .mac
+            ),
+            sessionFactory: { _, _, initialSize in
+                spawnedAt = initialSize.map(RecordedGrid.init)
+                return session
+            }
+        )
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let terminalID = Self.terminalID()
+        harness.sizeStub = ghostty_surface_size_s(
+            columns: 49,
+            rows: 17,
+            width_px: 588,
+            height_px: 272,
+            cell_width_px: 12,
+            cell_height_px: 16
+        )
+        let handle = try #require(SurfaceHandle(
+            terminalID: terminalID,
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            surfaceFactory: harness.factory,
+            hostManagedBackend: backend
+        ))
+        let terminalManager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        terminalManager.insertSurfaceForTesting(handle, for: terminalID)
+
+        // CLI/background creation starts zmx before the view ever mounts, so
+        // its PTY begins at libghostty's provisional grid.
+        #expect(handle.startForBackgroundLaunch())
+        #expect(spawnedAt == RecordedGrid(cols: 49, rows: 17))
+        #expect(session.resizes().isEmpty)
+
+        // Selection makes the pane visible after libghostty exposes its live
+        // grid. Model the observed absence of any later layout/viewport
+        // callback by driving only the first-show reconcile. The same helper
+        // also proves cached/optimistic equality cannot dedupe this forward.
+        harness.sizeStub = liveSize
+        terminalManager.setVisible(true, for: terminalID)
+
+        #expect(harness.setOcclusionCalls == [true])
+        #expect(harness.refreshCalls == 2)
+        #expect(session.resizes() == [expectedGrid])
+        let snapshot = store.snapshot(
+            sessionName: "graftty-test",
+            fallbackGrid: .daemonFallback
+        )
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-background"))
+        let expectedDisplayGrid = try DisplayGrid(
+            cols: expectedGrid.cols,
+            rows: expectedGrid.rows
+        )
+        #expect(snapshot.grid == expectedDisplayGrid)
     }
 
     @Test func directShellFallbackPreservesExtraInitialInput() throws {
@@ -506,4 +601,41 @@ struct SurfaceHandleHostManagedTests {
         PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     }
 
+}
+
+private struct RecordedGrid: Equatable {
+    let cols: UInt16
+    let rows: UInt16
+
+    init(cols: UInt16, rows: UInt16) {
+        self.cols = cols
+        self.rows = rows
+    }
+
+    init(_ size: (cols: UInt16, rows: UInt16)) {
+        self.init(cols: size.cols, rows: size.rows)
+    }
+}
+
+private final class FirstVisibilityRecordingSession: HostManagedZmxSession {
+    private let lock = NSLock()
+    private var recordedResizes: [RecordedGrid] = []
+
+    func start() throws {}
+
+    func write(_ data: Data) throws {}
+
+    func resize(cols: UInt16, rows: UInt16) throws {
+        lock.lock()
+        recordedResizes.append(RecordedGrid(cols: cols, rows: rows))
+        lock.unlock()
+    }
+
+    func close() {}
+
+    func resizes() -> [RecordedGrid] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedResizes
+    }
 }
