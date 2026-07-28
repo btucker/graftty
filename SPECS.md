@@ -168,6 +168,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-1.3** When the user triggers Stop on a running worktree that has processes which need quit-confirmation, the application shall present a confirmation dialog whose informative text identifies the worktree by its sidebar display name (per `WorktreeEntry.displayName(amongSiblingPaths:)` / `LAYOUT-2.15`), not its raw `branch` value. For worktrees on a detached HEAD or other git sentinel (`(detached)`, `(bare)`, `(unknown)` — see `PR-7.3`), the display name resolves to the directory basename, which reads naturally ("running processes in my-feature") whereas the raw branch would render as "running processes in (detached)".
 
+**TERM-1.4** When the application reopens a closed worktree with a saved multi-pane split tree, it shall designate exactly one pane for first-pane-only default-command eligibility: the retained focused pane when it is still present in the split tree, otherwise the first leaf in tree order.
+
 ### TERM-2.x — Switching Between Worktrees
 
 **TERM-2.1** When the user switches from one running worktree to another, the application shall hide the previous worktree's terminal views without destroying the terminal surfaces or their running processes.
@@ -879,6 +881,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ZMX-7.3** When `close_surface_cb` fires for a pane, the application shall always route to the close-pane path (remove from the split tree, free the surface) regardless of the zmx session's liveness. The mid-flight "rebuild surface in place" recovery explored in an earlier design was withdrawn because the available signals (session-missing + no Graftty-initiated close) cannot distinguish a clean user `exit` from an external daemon kill, and the rebuild path regressed `TERM-5.3`. Recovery from daemon loss while Graftty is running is deferred until a zmx-side signal disambiguates the two cases.
 
 **ZMX-7.4** At application launch, before any terminal surface is spawned, the application shall `unsetenv(...)` inherited process environment variables whose values would hijack downstream spawns into the parent shell's scope. The list shall include at minimum: `ZMX_SESSION`, `GIT_DIR`, and `GIT_WORK_TREE`.
+
+**ZMX-7.5** When the application prepares a persisted running multi-pane worktree for restoration, it shall mark every leaf as rehydrated and exactly one valid primary leaf as first-pane eligible, so later missing-session recovery can restart one default command without touching surviving sessions.
 
 ### ZMX-8.x — Manual Restart
 

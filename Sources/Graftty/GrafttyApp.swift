@@ -3035,41 +3035,50 @@ struct GrafttyApp: App {
         }
     }
 
+    @MainActor
+    internal static func prepareRunningWorktreeForRestore(
+        _ worktree: inout WorktreeEntry,
+        terminalManager: TerminalManager
+    ) {
+        if worktree.splitTree.root == nil {
+            worktree.splitTree = SplitTree(root: .leaf(PaneSlotID()))
+        }
+        worktree.ensurePaneSessionsForRunningRestore()
+        terminalManager.recordPaneSessions(
+            for: worktree.splitTree,
+            paneSessions: worktree.paneSessions,
+            worktreePath: worktree.path
+        )
+        let primaryPane = worktree.normalizeFocusedPane()
+        // Mark every restored leaf as rehydrated *before* surface creation
+        // so surviving zmx sessions never receive another default command.
+        for leafID in worktree.splitTree.allLeaves {
+            terminalManager.markRehydrated(leafID)
+        }
+        // If zmx reports a session missing, createSurfaces clears only that
+        // leaf's rehydration marker. Retaining one primary marker lets the
+        // first-pane-only policy restart exactly one default command.
+        if let primaryPane {
+            terminalManager.markFirstPane(primaryPane)
+        }
+    }
+
     private func restoreRunningWorktrees() {
         let selectedPath = appState.selectedWorktreePath
         for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices
+            where appState.repos[repoIdx].worktrees[wtIdx].state == .running {
+                Self.prepareRunningWorktreeForRestore(
+                    &appState.repos[repoIdx].worktrees[wtIdx],
+                    terminalManager: terminalManager
+                )
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                if wt.state == .running {
-                    if wt.splitTree.root == nil {
-                        let id = PaneSlotID()
-                        appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
-                    }
-                    appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
-                    terminalManager.recordPaneSessions(
-                        for: appState.repos[repoIdx].worktrees[wtIdx]
-                            .splitTree,
-                        paneSessions: appState.repos[repoIdx]
-                            .worktrees[wtIdx].paneSessions,
-                        worktreePath: wt.path
-                    )
-                    // Mark every restored leaf as rehydrated *before*
-                    // surface creation so the first-PWD event (which
-                    // triggers onShellReady) finds wasRehydrated == true
-                    // and short-circuits command injection. Without this
-                    // guard, relaunching Graftty would type the default
-                    // command on top of whatever process is already
-                    // running inside the persisted zmx session.
-                    for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
-                        terminalManager.markRehydrated(leafID)
-                    }
-                    guard wt.path == selectedPath else { continue }
-                    _ = terminalManager.createSurfaces(
-                        for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
-                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
-                        worktreePath: wt.path
-                    )
-                }
+                guard wt.path == selectedPath else { continue }
+                _ = terminalManager.createSurfaces(
+                    for: wt.splitTree,
+                    paneSessions: wt.paneSessions,
+                    worktreePath: wt.path
+                )
             }
         }
 
@@ -4130,10 +4139,18 @@ struct GrafttyApp: App {
 
                 let splitTree = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].splitTree
-                for leafID in splitTree.allLeaves {
+                let leaves = splitTree.allLeaves
+                for leafID in leaves {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .ensurePaneSession(for: leafID)
-                    terminalManager.markFirstPane(leafID)
+                }
+                // TERM-1.4: a saved multi-pane layout still has only one
+                // "first" pane for default-command eligibility. Restart ZMX
+                // preserves the focused leaf, so prefer it when it is valid.
+                let primaryPane = appState.wrappedValue.repos[repoIdx]
+                    .worktrees[wtIdx].normalizeFocusedPane()
+                if let primaryPane {
+                    terminalManager.markFirstPane(primaryPane)
                 }
                 _ = terminalManager.createSurfaces(
                     for: splitTree,
