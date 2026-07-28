@@ -132,6 +132,31 @@ struct SurfaceHandleHostManagedTests {
     @spec TERM-11.17: When a zmx-backed pane starts while backgrounded before its view lays out and then enters the visible set for the first time, the application shall forward the current live libghostty grid to the running zmx PTY unconditionally, without waiting for a later layout-settled or viewport callback; a same-size forward is a kernel no-op, so ordinary focus switches do not create harmful resize churn.
     """)
     func firstVisibilityAfterBackgroundStartForwardsLiveGridWithoutLaterCallback() throws {
+        try assertFirstVisibilityAfterBackgroundStart(
+            showingAt: .testSize132x43,
+            forwards: RecordedGrid(cols: 132, rows: 43)
+        )
+    }
+
+    @Test("First visibility before layout shall forward the live grid even when it equals the background-start grid.")
+    func firstVisibilityBeforeLayoutForwardsSameGridUnconditionally() throws {
+        try assertFirstVisibilityAfterBackgroundStart(
+            showingAt: ghostty_surface_size_s(
+                columns: 49,
+                rows: 17,
+                width_px: 588,
+                height_px: 272,
+                cell_width_px: 12,
+                cell_height_px: 16
+            ),
+            forwards: RecordedGrid(cols: 49, rows: 17)
+        )
+    }
+
+    private func assertFirstVisibilityAfterBackgroundStart(
+        showingAt liveSize: ghostty_surface_size_s,
+        forwards expectedGrid: RecordedGrid
+    ) throws {
         let store = SessionDisplayOwnershipStore()
         let session = FirstVisibilityRecordingSession()
         var spawnedAt: RecordedGrid?
@@ -175,22 +200,26 @@ struct SurfaceHandleHostManagedTests {
         #expect(spawnedAt == RecordedGrid(cols: 49, rows: 17))
         #expect(session.resizes().isEmpty)
 
-        // Selection makes the pane visible after libghostty knows the real
+        // Selection makes the pane visible after libghostty exposes its live
         // grid. Model the observed absence of any later layout/viewport
-        // callback by driving only the first-show reconcile.
-        harness.sizeStub = .testSize132x43
+        // callback by driving only the first-show reconcile. The same helper
+        // also proves cached/optimistic equality cannot dedupe this forward.
+        harness.sizeStub = liveSize
         terminalManager.setVisible(true, for: terminalID)
 
         #expect(harness.setOcclusionCalls == [true])
         #expect(harness.refreshCalls == 2)
-        #expect(session.resizes() == [RecordedGrid(cols: 132, rows: 43)])
+        #expect(session.resizes() == [expectedGrid])
         let snapshot = store.snapshot(
             sessionName: "graftty-test",
             fallbackGrid: .daemonFallback
         )
         #expect(snapshot.ownerClientID == DisplayClientID("mac-background"))
-        let expectedGrid = try DisplayGrid(cols: 132, rows: 43)
-        #expect(snapshot.grid == expectedGrid)
+        let expectedDisplayGrid = try DisplayGrid(
+            cols: expectedGrid.cols,
+            rows: expectedGrid.rows
+        )
+        #expect(snapshot.grid == expectedDisplayGrid)
     }
 
     @Test func directShellFallbackPreservesExtraInitialInput() throws {
