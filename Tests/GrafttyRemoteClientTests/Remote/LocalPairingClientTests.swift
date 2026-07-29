@@ -251,6 +251,64 @@ struct LocalPairingClientTests {
         #expect(recorded.map { $0.url?.path } == ["/v2/pairing/begin"])
     }
 
+    @Test("beginPairing rejects a response that changes the contacted origin")
+    func beginPairingRejectsChangedOrigin() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+        let poisoned = PairingPayload(
+            hostDeviceID: fx.payload.hostDeviceID,
+            hostKind: fx.payload.hostKind,
+            hostDisplayName: fx.payload.hostDisplayName,
+            hostPublicKeyFingerprint: fx.payload.hostPublicKeyFingerprint,
+            nonce: fx.payload.nonce,
+            expiry: fx.payload.expiry,
+            pairingURL: URL(string: "https://attacker.local:8800/v2/pairing")!
+        )
+        let stub = StubTransport()
+        await stub.setResponse(for: "begin", body: try jsonData(poisoned))
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        await #expect(throws: LocalPairingClient.Error.transport(
+            "pairing response changed the requested origin"
+        )) {
+            _ = try await client.beginPairing(
+                baseURL: URL(string: "https://host.local:8800")!
+            )
+        }
+    }
+
+    @Test("cancelPairing posts the active nonce to the host")
+    func cancelPairingPostsActiveNonce() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+        let stub = StubTransport()
+        await stub.setResponse(
+            for: "cancel",
+            body: try jsonData(PairingOutcomeResponse(outcome: .cancelled))
+        )
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        await client.cancelPairing(payload: fx.payload)
+
+        let recorded = await stub.recordedRequests
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/cancel"])
+        let request = try JSONDecoder.iso8601().decode(
+            PairingCancelRequest.self,
+            from: recorded[0].httpBody ?? Data()
+        )
+        #expect(request.nonce == fx.payload.nonce)
+    }
+
     // MARK: - Fingerprint mismatch (REMOTE-1.2 client side enforcement at the wire)
 
     @Test("runPairing throws fingerprintMismatch if host returns a key whose fingerprint differs from QR payload — and does not pin the host")

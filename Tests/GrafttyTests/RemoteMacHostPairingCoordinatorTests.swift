@@ -276,9 +276,9 @@ struct RemoteMacHostPairingCoordinatorTests {
         #expect(fx.coordinator.pendingRequest == nil)
     }
 
-    @Test("second begin while active returns busy and does not restart existing pairing")
+    @Test("second bootstrap replaces an unintroduced ceremony")
     @MainActor
-    func secondBeginWhileActiveReturnsBusyWithoutRestarting() async throws {
+    func secondBeginReplacesUnintroducedCeremony() async throws {
         let fx = try makeFixture()
         defer { fx.cleanup() }
         let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
@@ -291,21 +291,101 @@ struct RemoteMacHostPairingCoordinatorTests {
             return
         }
 
+        guard case .success(let secondPayload) = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: lanBaseURL
+        ) else {
+            Issue.record("Expected a fresh bootstrap to replace the invisible lease")
+            return
+        }
+        guard case .awaitingClient(let activePayload, _) = await fx.server.currentState() else {
+            Issue.record("Expected replacement session to await a client")
+            return
+        }
+        #expect(activePayload.nonce == secondPayload.nonce)
+        #expect(activePayload.nonce != firstPayload.nonce)
+        #expect(fx.coordinator.pendingRequest == nil)
+    }
+
+    @Test("remote cancel releases the active admission lease")
+    @MainActor
+    func remoteCancelReleasesAdmission() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
+        guard case .success(let payload) = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: lanBaseURL
+        ) else {
+            Issue.record("Expected begin to succeed")
+            return
+        }
+
+        let cancelled = await fx.coordinator.handleCancel(
+            PairingCancelRequest(nonce: payload.nonce)
+        )
+        #expect(cancelled == .success(PairingOutcomeResponse(outcome: .cancelled)))
+
+        guard case .success = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: lanBaseURL
+        ) else {
+            Issue.record("Expected cancellation to release admission")
+            return
+        }
+    }
+
+    @Test("""
+    @spec REMOTE-2.7: If the stable paired-access listener cannot bind, Settings shall show a clear error and shall not begin a pairing ceremony that advertises the unavailable listener.
+    """)
+    @MainActor
+    func startupErrorIsPublished() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+
+        fx.coordinator.setStartupError("Port unavailable")
+
+        #expect(fx.coordinator.startupError == "Port unavailable")
+        let result = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
+        )
+        guard case .failure(let error) = result else {
+            Issue.record("Expected startup failure to prevent pairing")
+            return
+        }
+        #expect(error.error == "Port unavailable")
+    }
+
+    @Test("""
+    @spec REMOTE-12.2: Once a client identity has been introduced, the host shall reject a second pairing bootstrap without replacing the active verification ceremony; an unintroduced bootstrap may be safely replaced.
+    """)
+    @MainActor
+    func introducedCeremonyRejectsSecondBootstrap() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
+        guard case .success(let payload) = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: lanBaseURL
+        ) else {
+            Issue.record("Expected begin to succeed")
+            return
+        }
+        _ = await fx.coordinator.handleIntroduce(
+            try makeIntroduceRequest(nonce: payload.nonce)
+        )
+
         let second = await fx.coordinator.beginPairing(
             validFor: 300,
             lanBaseURL: lanBaseURL
         )
 
         guard case .failure(let error) = second else {
-            Issue.record("Expected second begin to fail while active")
+            Issue.record("Expected introduced ceremony to remain active")
             return
         }
         #expect(error.code == .pairingBusy)
-        guard case .awaitingClient(let activePayload, _) = await fx.server.currentState() else {
-            Issue.record("Expected original session to remain awaiting client")
-            return
-        }
-        #expect(activePayload.nonce == firstPayload.nonce)
-        #expect(fx.coordinator.pendingRequest == nil)
+        #expect(fx.coordinator.pendingRequest?.id == payload.nonce)
     }
 }

@@ -175,6 +175,42 @@ struct AuthenticatedSignalingServerTests {
         #expect(cached == answer)
     }
 
+    @Test("a definitively failed offer can be released and retried")
+    func releasedOfferCanBeRetried() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x24, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\nretryable\n",
+            signingKey: fixture.clientKey
+        )
+        let first = try #require(
+            await fixture.server.authenticateOffer(offer).success
+        )
+        guard case .new(let verified) = first else {
+            Issue.record("Expected a new offer")
+            return
+        }
+
+        await fixture.server.releaseOffer(verified)
+
+        let retry = try #require(
+            await fixture.server.authenticateOffer(offer).success
+        )
+        guard case .new = retry else {
+            Issue.record("Expected the released offer to be claimable again")
+            return
+        }
+    }
+
     @Test("a different valid offer cannot reuse a claimed challenge")
     func alteredReplayIsRejected() async throws {
         let fixture = try makeFixture()

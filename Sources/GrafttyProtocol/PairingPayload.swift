@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - PairingPayload
 
-/// The content of the QR code displayed during a local pairing ceremony.
+/// The bootstrap response for a local pairing ceremony.
 ///
 /// Carries everything the client needs to initiate contact with the host:
 /// where to POST, which host identity to expect, and a one-time nonce that
@@ -69,93 +69,4 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         self.routes = routes
     }
 
-    // MARK: - QR encoding / decoding
-
-    /// Prefix prepended to every QR string for parser robustness.
-    private static let qrPrefix = "GRAFTTY2:"
-
-    /// Supported payload version.
-    private static let supportedVersion = RemoteAccessProtocol.version
-
-    /// Encodes the payload to a compact QR-safe string.
-    ///
-    /// Format: `"GRAFTTY2:<base64url-no-padding(JSON)>"`.
-    /// The JSON is compact (`.sortedKeys`, no pretty printing) to keep QR
-    /// modules small.
-    public func qrEncoded() throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let jsonData = try encoder.encode(self)
-        // Base64URL, no padding
-        let b64 = jsonData.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        return "\(Self.qrPrefix)\(b64)"
-    }
-
-    /// Decodes a QR string produced by `qrEncoded()`.
-    ///
-    /// Throws `DecodeError` for malformed input or unsupported versions.
-    public static func decodeQR(_ string: String) throws -> PairingPayload {
-        guard string.hasPrefix(qrPrefix) else {
-            throw DecodeError.missingPrefix
-        }
-        let b64url = String(string.dropFirst(qrPrefix.count))
-        // Convert base64URL → standard base64 with padding
-        var b64 = b64url
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let paddingNeeded = (4 - b64.count % 4) % 4
-        b64 += String(repeating: "=", count: paddingNeeded)
-
-        guard let jsonData = Data(base64Encoded: b64) else {
-            throw DecodeError.malformedBase64
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let payload: PairingPayload
-        do {
-            payload = try decoder.decode(PairingPayload.self, from: jsonData)
-        } catch {
-            throw DecodeError.malformedJSON
-        }
-
-        guard payload.version == supportedVersion else {
-            throw DecodeError.unsupportedVersion(payload.version)
-        }
-
-        // Accept http or https. Plaintext HTTP is safe because the pairing
-        // exchange is authenticated by the QR-pinned fingerprint, single-use
-        // nonce, and verification code. Any other scheme (file:, javascript:,
-        // ftp:, nil, etc.) is rejected.
-        let scheme = payload.pairingURL.scheme?.lowercased()
-        guard scheme == "http" || scheme == "https" else {
-            throw DecodeError.insecureURL
-        }
-
-        for route in payload.routes {
-            let routeScheme = route.baseURL.scheme?.lowercased()
-            guard routeScheme == "http" || routeScheme == "https" else {
-                throw DecodeError.insecureURL
-            }
-        }
-
-        return payload
-    }
-
-    // MARK: - DecodeError
-
-    public enum DecodeError: Swift.Error, Equatable {
-        case missingPrefix
-        case malformedBase64
-        case malformedJSON
-        case unsupportedVersion(Int)
-        /// The `pairingURL` in the QR payload uses a scheme other than http or https.
-        /// Only `http://` and `https://` endpoints are accepted; other schemes (file:,
-        /// javascript:, ftp:, nil, etc.) are rejected.
-        case insecureURL
-    }
 }

@@ -187,6 +187,57 @@ struct TrustedPeerStoreTests {
         }
     }
 
+    @Test("pairing upsert replaces a rotated key for the same device ID")
+    func pairingUpsertReplacesRotatedKey() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let original = makePeer(name: "Before Rotation")
+        let replacementKey = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        )
+        let replacement = TrustedPeer(
+            id: original.id,
+            kind: original.kind,
+            publicKey: replacementKey,
+            displayName: "After Rotation",
+            capabilities: .defaultsAfterPairing,
+            pairedAt: original.pairedAt.addingTimeInterval(1),
+            lastSeenAt: nil
+        )
+
+        try store.add(original)
+        try store.upsertAfterPairing(replacement)
+
+        let loaded = try store.get(id: original.id)
+        let stored = try #require(loaded)
+        #expect(try store.list().count == 1)
+        #expect(stored.publicKey == replacementKey)
+        #expect(stored.displayName == replacement.displayName)
+    }
+
+    @Test("pairing upsert still rejects a fingerprint owned by another device ID")
+    func pairingUpsertRejectsFingerprintOwnedByAnotherDevice() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let existing = makePeer()
+        let collision = TrustedPeer(
+            id: .generate(),
+            kind: .ipad,
+            publicKey: existing.publicKey,
+            displayName: "Imposter",
+            capabilities: .defaultsAfterPairing,
+            pairedAt: existing.pairedAt,
+            lastSeenAt: nil
+        )
+        try store.add(existing)
+
+        #expect(throws: TrustedPeerStore.Error.duplicateFingerprint) {
+            try store.upsertAfterPairing(collision)
+        }
+    }
+
     // MARK: - List sorting
 
     @Test("list() returns peers sorted by lastSeenAt desc, with pairedAt desc as tiebreak")

@@ -202,7 +202,7 @@ public final class ClientPairingSession: @unchecked Sendable {
         )
 
         do {
-            try pinnedHostStore.add(host)
+            try pinnedHostStore.upsertAfterPairing(host)
         } catch {
             _state = .failed(message: "\(error)")
             throw Error.pinnedHostStoreFailed(underlying: "\(error)")

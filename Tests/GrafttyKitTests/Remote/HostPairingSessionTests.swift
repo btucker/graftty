@@ -232,6 +232,33 @@ struct HostPairingSessionTests {
         }
     }
 
+    @Test("""
+    @spec REMOTE-1.3: When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
+    """)
+    func confirmPersistsIntroducedPeer() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let session = makeSession(
+            identityStore: identityStore,
+            peerStore: peerStore
+        )
+        _ = try session.startPairing()
+        let clientID = RemoteDeviceID(value: "persisted-client")
+        try session.receiveClientIdentity(
+            clientPublicKey: makeClientPublicKey(byte: 0x7A),
+            clientDeviceID: clientID,
+            clientKind: .iphone,
+            clientDisplayName: "Persisted Phone"
+        )
+
+        _ = try session.confirm()
+
+        #expect(try peerStore.get(id: clientID)?.displayName == "Persisted Phone")
+    }
+
     // MARK: - deny() does not insert peer; state becomes .denied
 
     @Test("deny() from pendingConfirmation does not insert peer; state is .denied")

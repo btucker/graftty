@@ -284,7 +284,7 @@ public final class HostPairingSession: @unchecked Sendable {
         )
 
         do {
-            try peerStore.add(peer)
+            try peerStore.upsertAfterPairing(peer)
         } catch {
             _state = .failed(message: "\(error)")
             throw Error.peerStoreFailed(underlying: "\(error)")

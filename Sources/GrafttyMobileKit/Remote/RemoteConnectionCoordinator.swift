@@ -616,7 +616,16 @@ public final class RemoteConnectionCoordinator {
             refreshedPin.routes = exchange.answer.routes
             refreshedPin.lastSuccessfulRoute = exchange.route
             refreshedPin.lastConnectedAt = now()
-            try pinnedHostStore.update(refreshedPin)
+            do {
+                try pinnedHostStore.update(refreshedPin)
+            } catch PinnedHostStore.Error.notFound {
+                // Trust was revoked while negotiation was in flight.
+                throw PinnedHostStore.Error.notFound
+            } catch {
+                Self.logger.warning(
+                    "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
+                )
+            }
         } catch {
             await connection.close()
             guard !invalidatedAttempts.contains(attemptID) else {

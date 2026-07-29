@@ -26,7 +26,7 @@ struct NearbyMacBrowserCandidateTests {
             deviceID: RemoteDeviceID(value: "mac-1"),
             label: "Studio Mac",
             fingerprint: fingerprint,
-            protocolVersion: GrafttyBonjourService.discoveryVersion,
+            protocolVersion: String(RemoteAccessProtocol.version),
             pairingStatus: .required
         ))
 

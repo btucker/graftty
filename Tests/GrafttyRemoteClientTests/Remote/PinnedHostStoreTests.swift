@@ -142,6 +142,52 @@ struct PinnedHostStoreTests {
         }
     }
 
+    @Test("pairing upsert replaces a rotated key for the same device ID")
+    func pairingUpsertReplacesRotatedKey() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let original = makeHost(name: "Before Rotation")
+        let replacementKey = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        )
+        let replacement = PinnedHost(
+            id: original.id,
+            kind: original.kind,
+            publicKey: replacementKey,
+            displayName: "After Rotation",
+            pinnedAt: original.pinnedAt.addingTimeInterval(1),
+            pairingURL: original.pairingURL
+        )
+
+        try store.add(original)
+        try store.upsertAfterPairing(replacement)
+
+        #expect(try store.list() == [replacement])
+        #expect(try store.get(id: original.id)?.publicKey == replacementKey)
+    }
+
+    @Test("pairing upsert still rejects a fingerprint owned by another device ID")
+    func pairingUpsertRejectsFingerprintOwnedByAnotherDevice() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let existing = makeHost()
+        let collision = PinnedHost(
+            id: .generate(),
+            kind: .mac,
+            publicKey: existing.publicKey,
+            displayName: "Imposter",
+            pinnedAt: existing.pinnedAt,
+            pairingURL: existing.pairingURL
+        )
+        try store.add(existing)
+
+        #expect(throws: PinnedHostStore.Error.duplicateFingerprint) {
+            try store.upsertAfterPairing(collision)
+        }
+    }
+
     // MARK: - List sort order
 
     @Test("list() returns hosts sorted by lastConnectedAt desc, pinnedAt desc as tiebreak")

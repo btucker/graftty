@@ -42,6 +42,7 @@ public actor LANRemoteAccessRouteHandler {
     public typealias BeginPairing = @Sendable (TimeInterval, URL) async -> Result<PairingPayload, PairingErrorResponse>
     public typealias IntroduceHandler = @Sendable (PairingIntroduceRequest) async -> Result<PairingIntroduceResponse, PairingErrorResponse>
     public typealias AwaitOutcomeHandler = @Sendable (PairingAwaitOutcomeRequest) async -> Result<PairingOutcomeResponse, PairingErrorResponse>
+    public typealias CancelPairingHandler = @Sendable (PairingCancelRequest) async -> Result<PairingOutcomeResponse, PairingErrorResponse>
     public typealias SignalingChallengeHandler =
         @Sendable (SignalingChallengeRequest) async -> Result<
             SignalingChallengeResponse, PairingErrorResponse
@@ -68,6 +69,7 @@ public actor LANRemoteAccessRouteHandler {
     private let beginPairing: BeginPairing
     private let handleIntroduce: IntroduceHandler
     private let handleAwaitOutcome: AwaitOutcomeHandler
+    private let handleCancelPairing: CancelPairingHandler
     private let handleSignalingChallenge: SignalingChallengeHandler
     private let handleSignalingOffer: SignalingOfferHandler
 
@@ -82,6 +84,12 @@ public actor LANRemoteAccessRouteHandler {
         beginPairing: @escaping BeginPairing,
         handleIntroduce: @escaping IntroduceHandler,
         handleAwaitOutcome: @escaping AwaitOutcomeHandler,
+        handleCancelPairing: @escaping CancelPairingHandler = { _ in
+            .failure(PairingErrorResponse(
+                code: .noActiveSession,
+                error: "no pairing session is active"
+            ))
+        },
         handleSignalingChallenge: @escaping SignalingChallengeHandler,
         handleSignalingOffer: @escaping SignalingOfferHandler
     ) {
@@ -92,6 +100,7 @@ public actor LANRemoteAccessRouteHandler {
         self.beginPairing = beginPairing
         self.handleIntroduce = handleIntroduce
         self.handleAwaitOutcome = handleAwaitOutcome
+        self.handleCancelPairing = handleCancelPairing
         self.handleSignalingChallenge = handleSignalingChallenge
         self.handleSignalingOffer = handleSignalingOffer
     }
@@ -179,6 +188,29 @@ public actor LANRemoteAccessRouteHandler {
             }
             let result = await handleAwaitOutcome(request)
             return Self.pairingResultResponse(result, successStatus: 200)
+
+        case "/v2/pairing/cancel":
+            guard method == .POST else {
+                return Self.errorResponse(
+                    status: 405,
+                    code: .wrongSessionState,
+                    message: "method not allowed"
+                )
+            }
+            let request: PairingCancelRequest
+            do {
+                request = try Self.decoder.decode(PairingCancelRequest.self, from: body)
+            } catch {
+                return Self.errorResponse(
+                    status: 400,
+                    code: .internalError,
+                    message: "malformed pairing cancel request"
+                )
+            }
+            return Self.pairingResultResponse(
+                await handleCancelPairing(request),
+                successStatus: 200
+            )
 
         case "/v2/rtc/challenge":
             guard method == .POST else {

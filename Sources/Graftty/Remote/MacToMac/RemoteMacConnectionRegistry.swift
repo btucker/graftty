@@ -128,7 +128,7 @@ final class RemoteMacConnectionRegistry {
     private let legacyFactory: ConnectionFactory?
     private let identityProvider: IdentityProvider
     private let clientDeviceID: RemoteDeviceID
-    private let pinnedHostProvider: PinnedHostProvider?
+    private let pinnedHostProvider: PinnedHostProvider
     private let pinnedHostUpdater: PinnedHostUpdater?
     private let signalingClient: SignalingClient
     private let connectionFactory: HostConnectionFactory
@@ -175,7 +175,7 @@ final class RemoteMacConnectionRegistry {
     init(
         identityProvider: @escaping IdentityProvider,
         clientDeviceID: RemoteDeviceID,
-        pinnedHostProvider: PinnedHostProvider? = nil,
+        pinnedHostProvider: @escaping PinnedHostProvider,
         pinnedHostUpdater: PinnedHostUpdater? = nil,
         signalingClient: SignalingClient,
         connectionFactory: @escaping HostConnectionFactory,
@@ -336,44 +336,32 @@ final class RemoteMacConnectionRegistry {
             let offerSDP = try await connection.createOfferSDP()
             try ensureCurrentAttempt(attemptID, identity: identity)
             let answerSDP: String
-            if let pinnedHostProvider {
-                guard let pinnedHost = pinnedHostProvider(remoteMac.id) else {
-                    throw ConnectionError.notConnected(identity)
-                }
-                var routes: [RemoteConnectionRoute] = []
-                if let lastSuccessful = remoteMac.lastSuccessfulRoute {
-                    routes.append(lastSuccessful)
-                }
-                routes.append(contentsOf: remoteMac.routes)
-                routes.append(contentsOf: pinnedHost.routes)
-                if routes.isEmpty {
-                    routes.append(RemoteConnectionRoute(kind: .lan, baseURL: baseURL))
-                }
-                let exchange = try await signalingClient.authenticatedExchange(
-                    routes: routes,
-                    hostDeviceID: remoteMac.id,
-                    hostPublicKey: pinnedHost.publicKey,
-                    clientDeviceID: clientDeviceID,
-                    clientKey: clientKey,
-                    sdp: offerSDP
-                )
-                var refreshed = pinnedHost
-                refreshed.routes = exchange.answer.routes
-                refreshed.lastSuccessfulRoute = exchange.route
-                refreshed.lastConnectedAt = now()
-                refreshedPinnedHost = refreshed
-                answerSDP = exchange.answer.sdp
-            } else {
-                // Internal test seam. Production always supplies a pin provider.
-                let answer = try await signalingClient.exchange(
-                    baseURL: baseURL,
-                    offer: SignalingOffer(
-                        clientDeviceID: clientDeviceID.value,
-                        sdp: offerSDP
-                    )
-                )
-                answerSDP = answer.sdp
+            guard let pinnedHost = pinnedHostProvider(remoteMac.id) else {
+                throw ConnectionError.notConnected(identity)
             }
+            var routes: [RemoteConnectionRoute] = []
+            if let lastSuccessful = remoteMac.lastSuccessfulRoute {
+                routes.append(lastSuccessful)
+            }
+            routes.append(contentsOf: remoteMac.routes)
+            routes.append(contentsOf: pinnedHost.routes)
+            if routes.isEmpty {
+                routes.append(RemoteConnectionRoute(kind: .lan, baseURL: baseURL))
+            }
+            let exchange = try await signalingClient.authenticatedExchange(
+                routes: routes,
+                hostDeviceID: remoteMac.id,
+                hostPublicKey: pinnedHost.publicKey,
+                clientDeviceID: clientDeviceID,
+                clientKey: clientKey,
+                sdp: offerSDP
+            )
+            var refreshed = pinnedHost
+            refreshed.routes = exchange.answer.routes
+            refreshed.lastSuccessfulRoute = exchange.route
+            refreshed.lastConnectedAt = now()
+            refreshedPinnedHost = refreshed
+            answerSDP = exchange.answer.sdp
             try ensureCurrentAttempt(attemptID, identity: identity)
             try await connection.applyAnswerSDP(answerSDP)
             try ensureCurrentAttempt(attemptID, identity: identity)
@@ -400,7 +388,17 @@ final class RemoteMacConnectionRegistry {
                 throw ConnectionError.paneEnvironmentUnavailable(identity)
             }
             if let refreshedPinnedHost {
-                try pinnedHostUpdater?(refreshedPinnedHost)
+                do {
+                    try pinnedHostUpdater?(refreshedPinnedHost)
+                } catch PinnedHostStore.Error.notFound {
+                    // Trust was revoked while negotiation was in flight.
+                    throw PinnedHostStore.Error.notFound
+                } catch {
+                    NSLog(
+                        "[Graftty] connected to remote Mac, but could not persist route metadata: %@",
+                        String(describing: error)
+                    )
+                }
             }
 
             return Entry(

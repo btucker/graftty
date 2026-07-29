@@ -12,6 +12,7 @@ struct PendingRemotePairingRequest: Identifiable, Equatable {
 @MainActor
 final class RemoteMacHostPairingCoordinator: ObservableObject {
     @Published private(set) var pendingRequest: PendingRemotePairingRequest?
+    @Published private(set) var startupError: String?
 
     private let server: HostPairingServer
     private let beginCoordinator: PairingBeginCoordinator
@@ -46,8 +47,22 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
         validFor: TimeInterval,
         lanBaseURL: URL
     ) async -> Result<PairingPayload, PairingErrorResponse> {
+        if let startupError {
+            return .failure(PairingErrorResponse(
+                code: .internalError,
+                error: startupError
+            ))
+        }
         await server.tick()
         await refreshPendingRequest()
+        // A bootstrap request has not established either party's identity.
+        // Let a fresh bootstrap replace that otherwise invisible lease so a
+        // cancelled or disconnected client cannot block pairing for 5 minutes.
+        if admissionLease != nil,
+           case .awaitingClient = await server.currentState() {
+            await server.cancel()
+            await refreshPendingRequest()
+        }
         guard admissionLease == nil, let lease = admission.acquire() else {
             return .failure(PairingErrorResponse(
                 code: .pairingBusy,
@@ -84,6 +99,14 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
         return result
     }
 
+    func handleCancel(
+        _ request: PairingCancelRequest
+    ) async -> Result<PairingOutcomeResponse, PairingErrorResponse> {
+        let result = await server.handleCancel(request)
+        await refreshPendingRequest()
+        return result
+    }
+
     func confirm() async -> Result<TrustedPeer, PairingErrorResponse> {
         do {
             let peer = try await server.confirm()
@@ -106,6 +129,10 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
     func cancel() async {
         await server.cancel()
         await refreshPendingRequest()
+    }
+
+    func setStartupError(_ message: String?) {
+        startupError = message
     }
 
     private func refreshPendingRequest() async {

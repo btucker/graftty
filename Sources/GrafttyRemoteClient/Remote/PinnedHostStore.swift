@@ -121,6 +121,25 @@ public final class PinnedHostStore: @unchecked Sendable {
         try _save(envelope)
     }
 
+    /// Persists trust established by a completed verification-code ceremony.
+    ///
+    /// Repeating the same ceremony is idempotent, and a newly confirmed key
+    /// for the same stable device ID replaces the prior key. A fingerprint
+    /// already assigned to a *different* device ID remains an error.
+    public func upsertAfterPairing(_ host: PinnedHost) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var envelope = try _load()
+        guard !envelope.hosts.contains(where: {
+            $0.id != host.id && $0.fingerprint == host.fingerprint
+        }) else {
+            throw Error.duplicateFingerprint
+        }
+        envelope.hosts.removeAll { $0.id == host.id }
+        envelope.hosts.append(host)
+        try _save(envelope)
+    }
+
     /// Replaces the stored host with the updated value. Throws `.notFound` if
     /// no host with the same ID exists.
     public func update(_ host: PinnedHost) throws {

@@ -2,15 +2,14 @@ import Foundation
 
 // MARK: - PairingRoutes
 
-/// The two HTTP routes the local pairing ceremony serves, shared by the
-/// host's `PairingHTTPServer` (route switch), `HostPairingCoordinator`
-/// (constructing the QR-advertised `pairingURL`), and the client's
-/// `LocalPairingClient` (path suffixes appended to that URL) so the
-/// three can't drift apart.
+/// HTTP route suffixes the local pairing ceremony serves, shared by the
+/// host route handlers and the client's `LocalPairingClient`, so their
+/// path suffixes cannot drift apart.
 public enum PairingRoutes {
     public static let basePath = "/v2/pairing"
     public static let introduce = "introduce"
     public static let awaitOutcome = "await-outcome"
+    public static let cancel = "cancel"
 }
 
 // MARK: - PairingProtocolDefaults
@@ -97,6 +96,20 @@ public struct PairingIntroduceResponse: Codable, Sendable, Equatable {
 /// holds the response until the user confirms/denies in the host UI or the
 /// session expires/is cancelled.
 public struct PairingAwaitOutcomeRequest: Codable, Sendable, Equatable {
+    public let version: Int
+    public let nonce: RemotePairingNonce
+
+    public init(version: Int = RemoteAccessProtocol.version, nonce: RemotePairingNonce) {
+        self.version = version
+        self.nonce = nonce
+    }
+}
+
+/// Body of `POST /v2/pairing/cancel`.
+///
+/// Cancellation is scoped to the unpredictable nonce returned by bootstrap,
+/// so a stale client cannot cancel a newer ceremony.
+public struct PairingCancelRequest: Codable, Sendable, Equatable {
     public let version: Int
     public let nonce: RemotePairingNonce
 

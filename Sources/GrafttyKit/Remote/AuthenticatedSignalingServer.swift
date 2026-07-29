@@ -197,12 +197,30 @@ public actor AuthenticatedSignalingServer {
             challengesByHostNonce[verified.offer.hostNonce] = record
             return .success(answer)
         } catch {
+            record.acceptedOffer = nil
+            record.retentionDeadline = nil
+            challengesByHostNonce[verified.offer.hostNonce] = record
             return .failure(
                 self.error(
                     .internalError,
                     "could not sign signaling answer"
                 ))
         }
+    }
+
+    /// Releases a claimed offer after the host definitively failed to create
+    /// an answer. Exact retries may then claim it again instead of waiting on
+    /// a `.pending` record that can never complete.
+    public func releaseOffer(_ verified: VerifiedOffer) {
+        guard var record = challengesByHostNonce[verified.offer.hostNonce],
+              record.acceptedOffer == verified.offer,
+              record.answer == nil
+        else {
+            return
+        }
+        record.acceptedOffer = nil
+        record.retentionDeadline = nil
+        challengesByHostNonce[verified.offer.hostNonce] = record
     }
 
     /// Waits for the first request handling an exact signed offer to publish

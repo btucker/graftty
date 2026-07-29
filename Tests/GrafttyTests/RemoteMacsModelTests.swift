@@ -1051,13 +1051,10 @@ struct RemoteMacsModelTests {
         }
         #expect(activePayload.nonce == payload.nonce)
 
-        let offerBody = try JSONEncoder.iso8601().encode(
-            SignalingOffer(clientDeviceID: "client", sdp: "v=0\n")
-        )
         let offerResponse = await routeHandler.handle(
             method: .POST,
             path: "/v1/rtc/offer",
-            body: offerBody
+            body: Data("{}".utf8)
         )
 
         #expect(offerResponse.status == 426)

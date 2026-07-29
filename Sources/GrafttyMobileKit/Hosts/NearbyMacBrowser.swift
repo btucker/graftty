@@ -161,7 +161,7 @@ public final class NearbyMacBrowser: NSObject {
               GrafttyBonjourService.isProtocolCompatible(
                   advertisedProtocol: metadata.protocolVersion,
                   supportedProtocolVersions: [
-                      GrafttyBonjourService.discoveryVersion
+                      String(RemoteAccessProtocol.version)
                   ]
               ),
               let hostName

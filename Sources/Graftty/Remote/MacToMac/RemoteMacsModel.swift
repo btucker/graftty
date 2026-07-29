@@ -1021,6 +1021,9 @@ enum RemoteMacAccessServices {
             handleAwaitOutcome: { request in
                 await hostPairingCoordinator.handleAwaitOutcome(request)
             },
+            handleCancelPairing: { request in
+                await hostPairingCoordinator.handleCancel(request)
+            },
             handleSignalingChallenge: acceptSignalingChallenge,
             handleSignalingOffer: acceptSignalingOffer
         )

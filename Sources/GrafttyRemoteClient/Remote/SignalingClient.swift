@@ -3,8 +3,7 @@ import Foundation
 import GrafttyProtocol
 
 /// Exchanges authenticated signaling messages with the host's paired-access
-/// listener. The legacy `exchange` method remains an internal unit-test seam;
-/// production connections use `authenticatedExchange`.
+/// listener.
 public struct SignalingClient: Sendable {
     public struct AuthenticatedExchange: Sendable {
         public let answer: AuthenticatedSignalingAnswer
@@ -40,35 +39,9 @@ public struct SignalingClient: Sendable {
         case transport(String)
     }
 
-    public func exchange(baseURL: URL, offer: SignalingOffer) async throws -> SignalingAnswer {
-        guard let url = baseURL.appendingAPIPath("v1/rtc/offer") else {
-            throw Error.transport("could not construct offer URL from \(baseURL)")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("application/json", forHTTPHeaderField: "Accept")
-        let body: Data
-        do {
-            body = try JSONEncoder().encode(offer)
-        } catch {
-            throw Error.transport("encode offer: \(error)")
-        }
-        let (data, response): (Data, HTTPURLResponse)
-        do {
-            (data, response) = try await transport(request, body)
-        } catch {
-            throw Error.transport(String(describing: error))
-        }
-        guard (200..<300).contains(response.statusCode) else {
-            let bodyString = String(data: data, encoding: .utf8) ?? ""
-            throw Error.http(status: response.statusCode, body: bodyString)
-        }
-        do {
-            return try JSONDecoder().decode(SignalingAnswer.self, from: data)
-        } catch {
-            throw Error.decode(String(describing: error))
-        }
+    private enum OfferAttempt: Sendable {
+        case success(AuthenticatedExchange)
+        case failure(Error)
     }
 
     /// Races key-authenticated reachability probes, then sends one unique
@@ -115,27 +88,49 @@ public struct SignalingClient: Sendable {
         let offerRoutes = [route] + uniqueRoutes.filter {
             $0.baseURL != route.baseURL
         }
-        var lastError: Error?
-        for offerRoute in offerRoutes {
-            do {
-                let answer: AuthenticatedSignalingAnswer = try await post(
-                    path: RemoteAccessProtocol.offerPath,
-                    baseURL: offerRoute.baseURL,
-                    body: offer
-                )
-                guard answer.isValid(for: offer, using: hostPublicKey) else {
-                    throw Error.authentication("host answer signature is invalid")
+        let result: Result<AuthenticatedExchange, Error> = await withTaskGroup(
+            of: OfferAttempt.self
+        ) { group in
+            for offerRoute in offerRoutes {
+                group.addTask {
+                    do {
+                        let answer: AuthenticatedSignalingAnswer = try await post(
+                            path: RemoteAccessProtocol.offerPath,
+                            baseURL: offerRoute.baseURL,
+                            body: offer
+                        )
+                        guard answer.isValid(for: offer, using: hostPublicKey) else {
+                            return .failure(
+                                .authentication("host answer signature is invalid")
+                            )
+                        }
+                        return .success(AuthenticatedExchange(
+                            answer: answer,
+                            route: offerRoute
+                        ))
+                    } catch let error as Error {
+                        return .failure(error)
+                    } catch {
+                        return .failure(.transport(String(describing: error)))
+                    }
                 }
-                return AuthenticatedExchange(answer: answer, route: offerRoute)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let error as Error {
-                lastError = error
-            } catch {
-                lastError = .transport(String(describing: error))
             }
+
+            var lastError: Error?
+            while let attempt = await group.next() {
+                switch attempt {
+                case .success(let exchange):
+                    group.cancelAll()
+                    return .success(exchange)
+                case .failure(let error):
+                    lastError = error
+                }
+            }
+            return .failure(lastError ?? Error.transport(
+                "all authenticated signaling routes failed"
+            ))
         }
-        throw lastError ?? Error.transport("all authenticated signaling routes failed")
+        return try result.get()
     }
 
     private func firstValidChallenge(

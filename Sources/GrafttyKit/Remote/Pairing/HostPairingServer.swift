@@ -225,6 +225,33 @@ public actor HostPairingServer {
         return .success(PairingOutcomeResponse(outcome: outcome))
     }
 
+    /// Handles `POST /v2/pairing/cancel`.
+    public func handleCancel(
+        _ request: PairingCancelRequest
+    ) -> Result<PairingOutcomeResponse, PairingErrorResponse> {
+        guard request.version == RemoteAccessProtocol.version else {
+            return .failure(PairingErrorResponse(
+                code: .unsupportedVersion,
+                error: "unsupported pairing protocol version: \(request.version)"
+            ))
+        }
+        guard let active = activeNonce else {
+            return .failure(PairingErrorResponse(
+                code: .noActiveSession,
+                error: "no pairing session is active"
+            ))
+        }
+        guard active == request.nonce else {
+            return .failure(PairingErrorResponse(
+                code: .unknownNonce,
+                error: "nonce does not match active pairing session"
+            ))
+        }
+        session.cancel()
+        broadcastIfTerminal()
+        return .success(PairingOutcomeResponse(outcome: .cancelled))
+    }
+
     // MARK: - Helpers
 
     /// If the session is in a terminal state, resume every waiter with

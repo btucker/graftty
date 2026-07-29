@@ -956,8 +956,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
-**WEB-1.13** While the server is listening, the Settings pane shall render a 160 pt QR code inline beneath the Base URL row, encoding the Base URL so that an iOS client can scan it on first run to add a saved host. Alongside the QR, the pane shall render a one-sentence usage hint ("Scan with Graftty") so a reader who has never onboarded a phone before knows what the code is for. Hiding it behind a disclosure is rejected on discoverability grounds: a user who has Web Access on has almost certainly enabled it to onboard a phone, and the QR is the payoff for that action. When the server is not listening, the Base URL row (and therefore the QR) is not rendered at all, per the existing status-gated layout.
-
 **WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
 ### WEB-2.x — Authorization
@@ -1828,9 +1826,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
-**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.") func confirmPersistsIntroducedPeer() async throws { try await withFixture { fx in await fx.coordinator.beginPairing() let payload = try #require(fx.coordinator.payload) let port = try #require(payload.pairingURL.port) let status = try await self.postIntroduce(nonce: payload.nonce, port: port) #expect(status == 200) // The coordinator's tick task surfaces the introduce as // .pendingConfirmation on its next 1s tick. try await self.waitUntil { if case .pendingConfirmation = fx.coordinator.state { return true } return false } await fx.coordinator.confirm() guard case .confirmed(let trustedPeer) = fx.coordinator.state else { Issue.record("Expected .confirmed after confirm(), got \(fx.coordinator.state)") return } #expect(trustedPeer.id == RemoteDeviceID(value: "client-123")) let persisted = try fx.peerStore.get(id: RemoteDeviceID(value: "client-123")) #expect(persisted != nil) #expect(persisted?.displayName == "Client iPhone") } } // MARK: - error handling @Test("beginPairing clears any previous error by setting lastError to nil at the start of a new attempt") func beginPairingClearsLastError() async throws { try await withFixture { fx in // Start a pairing that succeeds, so lastError is nil await fx.coordinator.beginPairing() #expect(fx.coordinator.lastError == nil) await fx.coordinator.endPairing() // Call beginPairing again; lastError should remain nil // (verifying that line 99 clears it at the start) await fx.coordinator.beginPairing() #expect(fx.coordinator.lastError == nil, "lastError should be cleared on new beginPairing") } } @Test(
-
-**REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
+**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
 
 **REMOTE-1.5** When a pairing completes with host confirmation, the client shall pin the host identity and record the host device identifier on the saved host entry.
 
@@ -1856,7 +1852,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.4** Native paired-device access shall use one stable dual-stack HTTP listener on port 8800 for LAN, MagicDNS, and Tailscale-IP routes. Browser Web Access shall remain an independent HTTPS service and shall not be used for native signaling.
 
-**REMOTE-2.5** When connecting to a paired host, the client shall race authenticated challenge probes across trusted routes, construct exactly one signed SDP offer, retry that same offer across remaining routes after a transport failure, and persist the winning route plus routes refreshed in the signed answer.
+**REMOTE-2.5** When connecting to a paired host, the client shall race authenticated challenge probes across trusted routes, construct exactly one signed SDP offer, race that same offer across the routes so one blackhole cannot exhaust the challenge, and persist the winning route plus routes refreshed in the signed answer.
 
 **REMOTE-2.6** Tailscale route discovery and refresh shall not depend on Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route available; later recovery shall restore MagicDNS and Tailscale-IP routes.
 
@@ -1958,7 +1954,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
 
-**REMOTE-12.2** While any host pairing ceremony is active, the application shall reject attempts to start a second ceremony through another host pairing entry point without replacing the active session.
+**REMOTE-12.2** Once a client identity has been introduced, the host shall reject a second pairing bootstrap without replacing the active verification ceremony; an unintroduced bootstrap may be safely replaced.
 
 **REMOTE-12.3** When a discovered Remote Mac service disappears, the application shall remove its transient candidate instead of continuing to present stale reachability.
 

@@ -348,7 +348,7 @@ final class AppServices {
             let browser = GrafttyBonjourBrowser(
                 localDeviceID: Self.localRemoteDeviceID(),
                 localFingerprint: localFingerprint,
-                supportedProtocolVersions: [GrafttyBonjourService.discoveryVersion],
+                supportedProtocolVersions: [String(RemoteAccessProtocol.version)],
                 onCandidate: { [weak remoteMacsModel] candidate in
                     Task { @MainActor in
                         do {
@@ -493,8 +493,10 @@ final class AppServices {
                         return .internalFailure(error.error)
                     }
                 } catch WebRTCHostAgent.HostError.busy {
+                    await signalingServer.releaseOffer(verified)
                     return .hostBusy("host is already handling an offer")
                 } catch {
+                    await signalingServer.releaseOffer(verified)
                     NSLog("[Graftty] LAN WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
                     return .internalFailure("acceptOffer failed: \(error)")
                 }
@@ -523,7 +525,7 @@ final class AppServices {
             label: Self.localHostDisplayName(),
             deviceID: Self.localRemoteDeviceID(),
             fingerprint: localHostFingerprint,
-            protocolVersion: GrafttyBonjourService.discoveryVersion,
+            protocolVersion: String(RemoteAccessProtocol.version),
             pairingStatus: .required
         )
         do {
@@ -686,7 +688,6 @@ struct GrafttyApp: App {
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
-    @StateObject private var hostPairingCoordinator: HostPairingCoordinator
     private let services: AppServices
     /// Same `TrustedPeerStore` instance the coordinator and
     /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
@@ -800,22 +801,6 @@ struct GrafttyApp: App {
         self.trustedPeerStore = trustedPeerStore
         let sshConnectionRegistry = SSHConnectionRegistry()
         self.sshConnectionRegistry = sshConnectionRegistry
-
-        // Task 3: the Mac settings UI's "Device Pairing" section binds to
-        // this coordinator. Reuses the SAME identity/trusted-peer stores as
-        // `WebRTCHostAgent` above — a peer confirmed through the pairing UI
-        // must be the same peer `WebRTCHostAgent.acceptOffer` later trusts.
-
-        _hostPairingCoordinator = StateObject(wrappedValue: HostPairingCoordinator(
-            identityStore: hostIdentityStore,
-            trustedPeerStore: trustedPeerStore,
-            deviceIDStore: HostDeviceIDStore.shared,
-            hostDisplayName: Host.current().localizedName ?? "Mac",
-            remoteAccessRoutesProvider: {
-                await RemoteAccessRouteDiscovery.routes(lanBaseURL: $0)
-            },
-            admission: pairingAdmission
-        ))
 
         do {
             let remoteMacsModel = appServices.remoteMacsModel
@@ -1054,9 +1039,12 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
+                WebSettingsPane(
+                    pairingCoordinator: services.hostPairingCoordinator,
+                    trustedPeerStore: trustedPeerStore,
+                    sshConnectionRegistry: sshConnectionRegistry
+                )
                     .environmentObject(webController)
-                    .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }
                 AgentTeamsSettingsPane()
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
@@ -2051,7 +2039,7 @@ struct GrafttyApp: App {
         // the same `splitPane` / `closePane` static methods the Mac sidebar
         // context menu drives. `swap` returns `unsupported` — no native
         // implementation exists yet; tracked as a post-R5 follow-up.
-        hostPairingCoordinator.setRemoteAccessStartupError(
+        services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
         if let hostAgent = services.hostAgent {
@@ -2630,9 +2618,9 @@ struct GrafttyApp: App {
                     try await services.startRemoteMacAccessServices(
                         hostAgent: hostAgent
                     )
-                    hostPairingCoordinator.setRemoteAccessStartupError(nil)
+                    services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
-                    hostPairingCoordinator.setRemoteAccessStartupError(
+                    services.hostPairingCoordinator.setStartupError(
                         Self.remoteAccessStartupMessage(for: error)
                     )
                     NSLog(
@@ -2647,9 +2635,9 @@ struct GrafttyApp: App {
                     try await services.startRemoteMacAccessServices(
                         hostAgent: nil
                     )
-                    hostPairingCoordinator.setRemoteAccessStartupError(nil)
+                    services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
-                    hostPairingCoordinator.setRemoteAccessStartupError(
+                    services.hostPairingCoordinator.setStartupError(
                         Self.remoteAccessStartupMessage(for: error)
                     )
                     NSLog(

@@ -161,6 +161,11 @@ public final class PairDeviceFlowModel {
         wasCancelled = true
         pairingTask?.cancel()
         session.cancel()
+        let client = client
+        let payload = payload
+        Task {
+            await client.cancelPairing(payload: payload)
+        }
     }
 
     // MARK: - Host construction
@@ -203,6 +208,7 @@ public struct PairDeviceFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model: PairDeviceFlowModel?
     @State private var saveError: String?
+    @State private var didSaveHost = false
     /// True when `buildModel` returned `nil` (e.g. `ClientDeviceIDStore`
     /// couldn't read/persist an identity). Tracked separately from `model`
     /// because a nil model is otherwise indistinguishable from "hasn't
@@ -255,6 +261,9 @@ public struct PairDeviceFlowView: View {
         buildFailed = false
         model = built
         await built.run()
+        if case .success(let host, _) = built.state {
+            save(host)
+        }
     }
 
     /// Retries from a `buildModel` failure — distinct from `onRetry`, which
@@ -337,10 +346,20 @@ public struct PairDeviceFlowView: View {
     }
 
     private func finish(host: Host) {
+        if !didSaveHost {
+            save(host)
+        }
+        guard didSaveHost else { return }
+        dismiss()
+    }
+
+    private func save(_ host: Host) {
         do {
             try onSave(host)
-            dismiss()
+            didSaveHost = true
+            saveError = nil
         } catch {
+            didSaveHost = false
             saveError = "Couldn't save: \(error)"
         }
     }

@@ -94,14 +94,23 @@ public actor LocalPairingClient {
     /// the `/v2/pairing` route base used by `introduce` and
     /// `awaitOutcomeAndConfirm`.
     public func beginPairing(baseURL: URL) async throws -> PairingPayload {
+        guard let scheme = baseURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else {
+            throw Error.malformedPairingURL
+        }
         guard let url = Self.beginPairingURL(from: baseURL) else {
             throw Error.malformedPairingURL
         }
-        return try await postJSON(
+        let payload: PairingPayload = try await postJSON(
             url: url,
             body: EmptyBody(),
             requestTimeout: PairingProtocolDefaults.bootstrapRequestTimeout
         )
+        guard Self.sameOrigin(payload.pairingURL, baseURL) else {
+            throw Error.transport("pairing response changed the requested origin")
+        }
+        return payload
     }
 
     /// Sends this client's identity to the host and returns the verification
@@ -161,6 +170,16 @@ public actor LocalPairingClient {
         }
     }
 
+    /// Best-effort remote teardown for a ceremony the user abandoned.
+    public func cancelPairing(payload: PairingPayload) async {
+        let request = PairingCancelRequest(nonce: payload.nonce)
+        let _: PairingOutcomeResponse? = try? await postJSON(
+            pathSuffix: PairingRoutes.cancel,
+            pairingURL: payload.pairingURL,
+            body: request
+        )
+    }
+
     // MARK: - HTTP helpers
 
     private struct EmptyBody: Encodable {}
@@ -174,6 +193,20 @@ public actor LocalPairingClient {
             return baseURL.appendingAPIPath("begin")
         }
         return baseURL.appendingAPIPath("v2/pairing/begin")
+    }
+
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        func effectivePort(_ url: URL) -> Int? {
+            if let port = url.port { return port }
+            switch url.scheme?.lowercased() {
+            case "http": return 80
+            case "https": return 443
+            default: return nil
+            }
+        }
+        return lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased()
+            && effectivePort(lhs) == effectivePort(rhs)
     }
 
     private func postIntroduce(

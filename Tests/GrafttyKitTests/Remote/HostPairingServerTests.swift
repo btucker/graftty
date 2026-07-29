@@ -281,6 +281,28 @@ struct HostPairingServerTests {
         #expect(response.outcome == .cancelled)
     }
 
+    @Test("handleCancel cancels only the matching active nonce")
+    func handleCancelRequiresActiveNonce() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+        let payload = try await fx.server.start()
+
+        let wrong = await fx.server.handleCancel(
+            PairingCancelRequest(nonce: .generate())
+        )
+        guard case .failure(let error) = wrong else {
+            Issue.record("Expected an unknown-nonce failure")
+            return
+        }
+        #expect(error.code == .unknownNonce)
+
+        let result = await fx.server.handleCancel(
+            PairingCancelRequest(nonce: payload.nonce)
+        )
+        #expect(result == .success(PairingOutcomeResponse(outcome: .cancelled)))
+        #expect(await fx.server.currentState() == .cancelled)
+    }
+
     // MARK: - handleAwaitOutcome: already terminal
 
     @Test("handleAwaitOutcome returns immediately if state is already terminal")

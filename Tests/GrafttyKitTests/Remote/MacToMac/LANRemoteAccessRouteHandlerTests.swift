@@ -157,13 +157,10 @@ struct LANRemoteAccessRouteHandlerTests {
     """)
     func legacyRTCOfferIsRejected() async throws {
         let handler = makeHandler()
-        let body = try JSONEncoder.iso8601().encode(
-            SignalingOffer(clientDeviceID: "legacy", sdp: "v=0\n"))
-
         let response = await handler.handle(
             method: .POST,
             path: "/v1/rtc/offer",
-            body: body
+            body: Data("{}".utf8)
         )
 
         #expect(response.status == 426)

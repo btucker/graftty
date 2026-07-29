@@ -58,6 +58,25 @@ public final class TrustedPeerStore: @unchecked Sendable {
         try _save(envelope)
     }
 
+    /// Persists trust established by a completed verification-code ceremony.
+    ///
+    /// Repeating the same ceremony is idempotent, and a newly confirmed key
+    /// for the same stable device ID replaces the prior key. A fingerprint
+    /// already assigned to a *different* device ID remains an error.
+    public func upsertAfterPairing(_ peer: TrustedPeer) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var envelope = try _load()
+        guard !envelope.peers.contains(where: {
+            $0.id != peer.id && $0.fingerprint == peer.fingerprint
+        }) else {
+            throw Error.duplicateFingerprint
+        }
+        envelope.peers.removeAll { $0.id == peer.id }
+        envelope.peers.append(peer)
+        try _save(envelope)
+    }
+
     /// Removes the peer with the given ID. Throws `.notFound` if absent.
     public func remove(id: RemoteDeviceID) throws {
         lock.lock()
