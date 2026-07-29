@@ -1080,15 +1080,6 @@ final class HostManagedZmxBackend {
         try? session.resize(windowSize: Self.gridOnlyWindowSize(snapshot.grid))
     }
 
-    private func windowSizeForGridLocked(_ grid: DisplayGrid) -> PendingResize {
-        PendingResize(
-            cols: grid.cols,
-            rows: grid.rows,
-            xpixel: latestPixelSize.xpixel,
-            ypixel: latestPixelSize.ypixel
-        )
-    }
-
     private static func gridOnlyWindowSize(_ grid: DisplayGrid) -> PendingResize {
         PendingResize(cols: grid.cols, rows: grid.rows)
     }

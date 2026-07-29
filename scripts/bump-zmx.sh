@@ -23,6 +23,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PIN_FILE="$REPO/scripts/zmx/UPSTREAM_COMMIT"
 PATCH_FILE="$REPO/scripts/zmx/graftty.patch"
 COMPAT_TEST="$REPO/scripts/zmx/compatibility_test.py"
+COMPAT_UNIT_TEST="$REPO/scripts/test_zmx_compatibility.py"
 ZIG_VERSION_FILE="$REPO/scripts/zmx/ZIG_VERSION"
 LEGACY_COMMIT_FILE="$REPO/scripts/zmx/LEGACY_GRAFTTY_COMMIT"
 LEGACY_SHA_FILE="$REPO/scripts/zmx/LEGACY_ZMX_SHA256"
@@ -159,6 +160,8 @@ if [[ "$actual_legacy_sha" != "$LEGACY_SHA" ]]; then
     exit 1
 fi
 
+echo "→ testing compatibility harness"
+python3 "$COMPAT_UNIT_TEST"
 echo "→ testing 0.5 compatibility floor"
 python3 "$COMPAT_TEST" \
     --legacy "$LEGACY_BINARY" \
