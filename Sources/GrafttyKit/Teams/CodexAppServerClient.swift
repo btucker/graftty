@@ -315,7 +315,7 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         nextRequestID: inout Int
     ) throws -> String {
         var actualCWDs: [String] = []
-        var matchingThreadIDs: [String] = []
+        var matchingThreads: [(id: String, isSubagent: Bool)] = []
         for threadID in threadIDs {
             let requestID = nextRequestID
             nextRequestID += 1
@@ -336,20 +336,25 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                 ),
                 method: "thread/read"
             )
-            let actualCWD = try threadCWD(in: readResult)
+            let thread = try threadMetadata(in: readResult)
+            let actualCWD = thread.cwd
             if actualCWD == expectedCWD {
-                matchingThreadIDs.append(threadID)
+                matchingThreads.append((id: threadID, isSubagent: thread.isSubagent))
             } else {
                 actualCWDs.append(actualCWD)
             }
         }
-        if matchingThreadIDs.count == 1 {
-            return matchingThreadIDs[0]
+        if matchingThreads.count == 1 {
+            return matchingThreads[0].id
         }
-        if matchingThreadIDs.count > 1 {
+        if matchingThreads.count > 1 {
+            let rootThreads = matchingThreads.filter { !$0.isSubagent }
+            if rootThreads.count == 1 {
+                return rootThreads[0].id
+            }
             throw CodexAppServerClientError.multipleLoadedThreadsMatchingCWD(
                 expected: expectedCWD,
-                count: matchingThreadIDs.count
+                count: matchingThreads.count
             )
         }
         if threadIDs.count == 1, let actual = actualCWDs.first {
@@ -361,14 +366,19 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         )
     }
 
-    private func threadCWD(in result: [String: Any]) throws -> String {
+    private func threadMetadata(in result: [String: Any]) throws -> (cwd: String, isSubagent: Bool) {
         guard let thread = result["thread"] as? [String: Any] else {
             throw CodexAppServerClientError.missingThreadCWD
         }
         guard let actualCWD = thread["cwd"] as? String else {
             throw CodexAppServerClientError.missingThreadCWD
         }
-        return actualCWD
+        let source = thread["source"] as? [String: Any]
+        let hasSubagentSource = source?["subAgent"] != nil || source?["subagent"] != nil
+        return (
+            cwd: actualCWD,
+            isSubagent: thread["parentThreadId"] is String || hasSubagentSource
+        )
     }
 
     private func clientVersion() -> String {
