@@ -1104,6 +1104,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-1.1** When a display follower receives an ownership snapshot whose revision is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.
 
+**OWN-1.2** When the current display owner reports a resize whose grid equals the authoritative grid, the application shall validate the owner and epoch without advancing the ownership revision or notifying observers.
+
 ### OWN-2.x — Mac Take-Control Affordance and Reclaim
 
 **OWN-2.1** While a zmx-backed Mac pane's session is owned by another display client, or is ownerless after a prior ownership change, the application shall offer the pane's Take Control affordance (`canTakeDisplayControl()` true); while the Mac pane itself owns the session — including the automatic ownerless claim at first attach — or the session has no ownership history, the affordance shall be hidden.

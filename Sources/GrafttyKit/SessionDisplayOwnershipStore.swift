@@ -45,9 +45,10 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var ownerKind: DisplayClientKind?
         var grid: DisplayGrid?
         var epoch: UInt64 = 0
-        /// Monotonic mutation counter. Advances on every accepted mutation —
-        /// including same-epoch owner resizes — so followers can reject a
+        /// Monotonic mutation counter. Advances on every observable mutation,
+        /// including same-epoch grid changes, so followers can reject a
         /// reordered/superseded delivery that `epoch` alone cannot distinguish.
+        /// Accepted owner-resize no-ops validate authority without advancing it.
         var revision: UInt64 = 0
         var attachedClients: [DisplayClientID: AttachedClient] = [:]
     }
@@ -237,14 +238,15 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         var record = records[sessionName] ?? Record()
         let accepted = record.ownerClientID == clientID && record.epoch == epoch
-        if accepted {
+        let changed = accepted && record.grid != grid
+        if changed {
             record.grid = grid
             record.revision += 1
             records[sessionName] = record
         }
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: DisplayGrid.daemonFallback)
-        if accepted { changedSnapshot = result }
+        if changed { changedSnapshot = result }
         return SessionDisplayOwnershipResizeResult(accepted: accepted, snapshot: result)
     }
 

@@ -169,7 +169,9 @@ struct SurfaceHandleHostManagedTests {
                 kind: .mac
             ),
             sessionFactory: { _, _, initialSize in
-                spawnedAt = initialSize.map(RecordedGrid.init)
+                spawnedAt = initialSize.map {
+                    RecordedGrid(cols: $0.cols, rows: $0.rows)
+                }
                 return session
             }
         )

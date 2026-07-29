@@ -73,12 +73,13 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
     public let ownerKind: DisplayClientKind?
     public let grid: DisplayGrid
     public let epoch: UInt64
-    /// Monotonic per-session revision that advances on EVERY store mutation,
-    /// including same-epoch owner resizes (which change the grid without bumping
-    /// `epoch`).  Followers reject any snapshot whose `revision` is lower than the
-    /// last one they applied, so a reordered/superseded delivery cannot roll the
-    /// display back to a stale grid — the ordering signal `epoch` alone cannot
-    /// provide within a single ownership tenure.
+    /// Monotonic per-session revision that advances on every observable store
+    /// mutation, including same-epoch grid changes (which do not bump `epoch`).
+    /// An accepted owner-resize no-op keeps the same revision. Followers reject
+    /// any snapshot whose `revision` is lower than the last one they applied, so
+    /// a reordered/superseded delivery cannot roll the display back to a stale
+    /// grid — the ordering signal `epoch` alone cannot provide within a single
+    /// ownership tenure.
     public let revision: UInt64
 
     public var ownerless: Bool { ownerClientID == nil }
