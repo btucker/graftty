@@ -536,6 +536,9 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case .hostPresentation:
+            return nil
+
         case .listRepositories:
             return .repositories(await promotedRepositoriesForRelay())
 

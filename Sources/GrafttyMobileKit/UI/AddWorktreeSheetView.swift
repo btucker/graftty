@@ -225,10 +225,34 @@ public struct AddWorktreeSheetView: View {
     private func loadRepos() async {
         reposState = .loading
         do {
-            let repos = try await ReposFetcher.fetch(
-                baseURL: host.baseURL,
-                includeRemoteWorktrees: includeRemoteWorktrees
-            )
+            let repos: [ReposFetcher.RepoInfo]
+            if remoteConnectionProvider != nil {
+                let response = try await
+                    RelayedWorktreeManagementClient.send(
+                        .listRepositories,
+                        using: remoteConnectionProvider
+                    )
+                guard case .repositories(let remoteRepositories) = response
+                else {
+                    reposState = .error(
+                        "The paired Mac returned an unexpected response."
+                    )
+                    return
+                }
+                repos = remoteRepositories.map {
+                    ReposFetcher.RepoInfo(
+                        path: $0.id,
+                        displayName: $0.displayName,
+                        branches: $0.branches,
+                        origin: $0.origin
+                    )
+                }
+            } else {
+                repos = try await ReposFetcher.fetch(
+                    baseURL: host.baseURL,
+                    includeRemoteWorktrees: includeRemoteWorktrees
+                )
+            }
             reposState = .loaded(repos)
             let selectedRepo = repos.first { $0.path == selectedRepoPath }
             let targets = targetMacs(in: repos)
@@ -308,7 +332,7 @@ public struct AddWorktreeSheetView: View {
         )
         do {
             let response: CreateWorktreeClient.Response
-            if repoPath.hasPrefix("relay-repository-") {
+            if remoteConnectionProvider != nil {
                 let management = try await RelayedWorktreeManagementClient.send(
                     .create(
                         repositoryID: body.repoPath,

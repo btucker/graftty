@@ -1,5 +1,4 @@
 import Foundation
-import GrafttyProtocol
 
 public enum GrafttyBonjourService {
     public static let serviceType = "_graftty._tcp."

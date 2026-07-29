@@ -2,7 +2,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// A saved Graftty server the user has onboarded via QR or manual entry.
+/// A paired Mac plus its last-known routing hint.
 public struct Host: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     public var label: String

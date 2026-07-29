@@ -2270,6 +2270,18 @@ struct GrafttyApp: App {
                 }
 
                 switch request {
+                case .hostPresentation:
+                    let presentation = await MainActor.run {
+                        RemoteHostPresentation(
+                            ghosttyConfig:
+                                GhosttyConfigReader.resolvedConfig(),
+                            keybindings: GhosttyKeybindingsResponse(
+                                chords: terminalManager.keybindBridge.allChords
+                            )
+                        )
+                    }
+                    return .hostPresentation(presentation)
+
                 case .listRepositories:
                     let local = await MainActor.run {
                         localRepositorySnapshot()
@@ -5076,7 +5088,7 @@ private extension PaneControlRequest {
 private extension WorktreeManagementRequest {
     var targetsRelayedResource: Bool {
         switch self {
-        case .listRepositories:
+        case .hostPresentation, .listRepositories:
             return false
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID):

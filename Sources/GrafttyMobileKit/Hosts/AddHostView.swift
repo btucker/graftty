@@ -2,17 +2,24 @@
 import GrafttyProtocol
 import SwiftUI
 
+/// Device-first Mac onboarding. Nearby and manually entered addresses are
+/// only pairing bootstraps: no `Host` is created until the verification-code
+/// ceremony succeeds and `ClientPairingSession` pins the Mac's identity.
 public struct AddHostView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var rawURL: String = ""
-    @State private var label: String = ""
-    @State private var scanError: String?
-    @State private var isScanning = true
+    @State private var manualAddress = ""
+    @State private var errorMessage: String?
+    @State private var isStartingPairing = false
     @State private var pairingPayload: PairingPayload?
 
+    @Bindable private var browser: NearbyMacBrowser
     public let onSave: (Host) throws -> Void
 
-    public init(onSave: @escaping (Host) throws -> Void) {
+    public init(
+        browser: NearbyMacBrowser = NearbyMacBrowser(),
+        onSave: @escaping (Host) throws -> Void
+    ) {
+        self.browser = browser
         self.onSave = onSave
     }
 
@@ -23,114 +30,172 @@ public struct AddHostView: View {
                     payload: pairingPayload,
                     onSave: onSave,
                     onRetry: {
-                        scanError = nil
+                        errorMessage = nil
                         self.pairingPayload = nil
                     }
                 )
-            } else if isScanning {
-                scanner
-                    .toolbar { toolbarItems(showManualEntry: true) }
             } else {
-                manualForm
-                    .toolbar { toolbarItems(showManualEntry: false) }
+                pairingPicker
             }
         }
+        .task { browser.start() }
     }
 
-    @ToolbarContentBuilder
-    private func toolbarItems(showManualEntry: Bool) -> some ToolbarContent {
-        if showManualEntry {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Manual entry") { isScanning = false }
+    private var pairingPicker: some View {
+        List {
+            Section {
+                if browser.candidates.isEmpty {
+                    HStack(spacing: 12) {
+                        if browser.isSearching {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "wifi.exclamationmark")
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("Open Graftty on a Mac connected to this local network.")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(browser.candidates) { candidate in
+                        Button {
+                            beginPairing(
+                                at: candidate.baseURL,
+                                expectedCandidate: candidate
+                            )
+                        } label: {
+                            HStack {
+                                Image(systemName: "desktopcomputer")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(candidate.label)
+                                    Text(candidate.baseURL.host ?? candidate.baseURL.absoluteString)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .disabled(
+                            isStartingPairing
+                                || candidate.pairingStatus == .pairedOnly
+                        )
+                    }
+                }
+            } header: {
+                Text("Nearby Macs")
+            } footer: {
+                if let discoveryError = browser.errorMessage {
+                    Text(discoveryError)
+                } else {
+                    Text("Your Mac will ask you to compare and confirm a verification code.")
+                }
             }
-        }
-        ToolbarItem(placement: .cancellationAction) {
-            Button("Cancel") { dismiss() }
-        }
-    }
 
-    private var scanner: some View {
-        QRScannerView { value in
-            handle(rawURL: value)
-        }
-        .ignoresSafeArea()
-        .overlay(alignment: .bottom) {
-            if let scanError {
-                Text(scanError).padding().background(.thinMaterial).cornerRadius(8).padding()
-            }
-        }
-    }
-
-    private var manualForm: some View {
-        Form {
-            Section("Graftty server") {
-                TextField("Label (e.g. 'laptop')", text: $label)
-                TextField("URL", text: $rawURL)
+            Section("Pair by LAN address") {
+                TextField("http://mac.local:port", text: $manualAddress)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                Button("Pair") {
+                    guard let baseURL = Self.manualPairingBaseURL(
+                        manualAddress
+                    ) else {
+                        errorMessage = "Enter a valid HTTP or HTTPS address."
+                        return
+                    }
+                    beginPairing(at: baseURL)
+                }
+                .disabled(
+                    isStartingPairing
+                        || Self.manualPairingBaseURL(manualAddress) == nil
+                )
             }
-            if let scanError {
-                Section { Text(scanError).foregroundStyle(.red) }
+
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(.red)
+                }
             }
-            Button("Save") {
-                handle(rawURL: rawURL)
+        }
+        .navigationTitle("Pair a Mac")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
             }
-            .disabled(rawURL.isEmpty || label.isEmpty)
+        }
+        .disabled(isStartingPairing)
+        .overlay {
+            if isStartingPairing {
+                ProgressView("Starting pairing…")
+                    .padding()
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
     }
 
-    // MARK: - Routing (unit-testable, no SwiftUI/View state)
-
-    /// What `handle(rawURL:)` should do with a scanned/typed string.
-    enum Route: Equatable {
-        /// A valid pairing QR payload — switch to the pairing ceremony.
-        case pairing(PairingPayload)
-        /// A plain `http(s)://` URL with a host — the existing manual/URL path.
-        case url(URL)
-        /// Neither a pairing payload nor a usable URL.
-        case invalid
-    }
-
-    /// Pure classification of a scanned/typed string, tried in this order:
-    /// 1. `PairingPayload.decodeQR` — any `DecodeError` falls through.
-    /// 2. The pre-existing http(s)+host URL check.
-    static func route(for rawURL: String) -> Route {
-        if let payload = try? PairingPayload.decodeQR(rawURL) {
-            return .pairing(payload)
-        }
-        guard let url = URL(string: rawURL),
+    /// Validates a manual address as a pairing bootstrap. This deliberately
+    /// returns only the URL—not a `Host`—so no caller can accidentally
+    /// resurrect the old "save a bare server URL" path.
+    static func manualPairingBaseURL(_ rawValue: String) -> URL? {
+        let trimmed = rawValue.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
-              let urlHost = url.host, !urlHost.isEmpty else {
-            return .invalid
+              let host = url.host,
+              !host.isEmpty
+        else {
+            return nil
         }
-        return .url(url)
+        return url
     }
 
-    private func handle(rawURL: String) {
-        switch Self.route(for: rawURL) {
-        case .pairing(let payload):
-            // A prior scan's error (e.g. "QR did not contain a Graftty
-            // URL") must not linger behind the pairing sheet — if that
-            // ceremony's Retry bounces back to the scanner (via `onRetry`
-            // above), a stale error from before this successful scan would
-            // otherwise still be showing.
-            scanError = nil
-            pairingPayload = payload
-        case .url(let url):
-            let host = Host(
-                label: label.isEmpty ? (url.host ?? "") : label,
-                baseURL: url
-            )
+    private func beginPairing(
+        at baseURL: URL,
+        expectedCandidate: NearbyMac? = nil
+    ) {
+        guard !isStartingPairing else { return }
+        isStartingPairing = true
+        errorMessage = nil
+        Task {
+            defer { isStartingPairing = false }
             do {
-                try onSave(host)
-                dismiss()
+                let payload = try await PairDeviceFlowView.beginPairing(
+                    baseURL: baseURL
+                )
+                if let expectedCandidate,
+                   (
+                       payload.hostDeviceID != expectedCandidate.deviceID
+                           || payload.hostPublicKeyFingerprint
+                               != expectedCandidate.fingerprint
+                   ) {
+                    errorMessage =
+                        "The Mac's pairing identity changed during discovery. "
+                        + "Refresh and verify the device before trying again."
+                    return
+                }
+                pairingPayload = payload
             } catch {
-                scanError = "Couldn't save: \(error)"
+                errorMessage = Self.message(for: error)
             }
-        case .invalid:
-            scanError = "QR did not contain a Graftty URL"
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        switch error {
+        case let LocalPairingClient.Error.serverError(response):
+            return response.error
+        case LocalPairingClient.Error.httpStatus(409):
+            return "That Mac is already pairing with another device."
+        case let LocalPairingClient.Error.httpStatus(status):
+            return "The Mac returned HTTP \(status)."
+        default:
+            return "Couldn't start pairing: \(error.localizedDescription)"
         }
     }
 }

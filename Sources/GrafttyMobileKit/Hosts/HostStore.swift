@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 import Observation
 
 /// CRUD store for saved hosts, persisted as a single JSON file in the
@@ -74,13 +75,26 @@ public final class HostStore {
     public func add(_ host: Host) throws {
         ensureLoaded()
         var next = hosts
-        // Dedupe by normalized baseURL first (belt-and-suspenders against
-        // the scanner firing twice before the Save sheet dismisses). If a
-        // host with the same URL exists, refresh its timestamp + label
-        // rather than inserting a duplicate under a new UUID.
-        if let idx = next.firstIndex(where: { Self.sameURL($0.baseURL, host.baseURL) }) {
+        // A paired Mac is identified by its stable device ID, not its
+        // hostname or listener port. Bonjour addresses legitimately change
+        // after every host restart, while unrelated Macs can occasionally
+        // reuse an address. URL dedupe remains only as a migration path for
+        // an old unpaired row being replaced by a newly paired record.
+        if let deviceID = host.remoteDeviceID,
+           let idx = next.firstIndex(where: { $0.remoteDeviceID == deviceID }) {
             var existing = next[idx]
             existing.label = host.label
+            existing.baseURL = host.baseURL
+            existing.lastUsedAt = host.lastUsedAt ?? Date()
+            existing.remoteDeviceID = deviceID
+            next[idx] = existing
+        } else if let idx = next.firstIndex(where: {
+            Self.sameURL($0.baseURL, host.baseURL)
+                && ($0.remoteDeviceID == nil || host.remoteDeviceID == nil)
+        }) {
+            var existing = next[idx]
+            existing.label = host.label
+            existing.baseURL = host.baseURL
             existing.lastUsedAt = Date()
             // Adopt the incoming remoteDeviceID (e.g. from a fresh pairing
             // ceremony) but fall back to the prior value when the incoming
@@ -93,6 +107,28 @@ public final class HostStore {
         } else {
             next.append(host)
         }
+        try write(next)
+    }
+
+    /// Refreshes the transient LAN routing hint for an already-paired Mac.
+    /// Trust validation happens before this method is called; this store only
+    /// applies the identity-keyed persistence mutation.
+    public func refreshDiscoveredDevice(
+        id: RemoteDeviceID,
+        label: String,
+        baseURL: URL
+    ) throws {
+        ensureLoaded()
+        guard let index = hosts.firstIndex(where: { $0.remoteDeviceID == id })
+        else {
+            return
+        }
+        var next = hosts
+        var host = next[index]
+        guard host.label != label || host.baseURL != baseURL else { return }
+        host.label = label
+        host.baseURL = baseURL
+        next[index] = host
         try write(next)
     }
 

@@ -75,7 +75,7 @@ public final class IPadAppState {
     public var columnVisibility: NavigationSplitViewVisibility = .all
 
     /// Cached `true` iff any worktree (or any pane leaf) in the most
-    /// recent `GET /worktrees/panes` snapshot has a non-nil
+    /// recent authenticated panes-state snapshot has a non-nil
     /// `attentionText`. Maintained by `IPadRootLayout
     /// .onWorktreeListChanged`. The detail-column toolbar reads this
     /// to decide whether to show an attention dot beside the system

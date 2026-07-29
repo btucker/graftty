@@ -20,6 +20,9 @@ public actor WorktreePanesStore {
 
     public private(set) var current: [WorktreePanes] = []
     public private(set) var connectionState: ConnectionState = .idle
+    /// Distinguishes a legitimate first empty snapshot from "the SSH
+    /// subsystem is open but has not delivered its initial state yet."
+    public private(set) var hasReceivedSnapshot = false
 
     private let driver: PanesStateChannelDriver
 
@@ -42,6 +45,7 @@ public actor WorktreePanesStore {
     /// store (see Task 12 for production wiring; tests inject directly).
     public func applySnapshot(_ snapshot: [WorktreePanes]) {
         self.current = snapshot
+        self.hasReceivedSnapshot = true
     }
 
     /// Called by the channel driver's `onClosed` callback when the SSH

@@ -183,5 +183,31 @@ struct HostStoreTests {
         #expect(store.hosts.count == 1)
         #expect(store.hosts.first?.remoteDeviceID == deviceID)
     }
+
+    @Test("""
+    @spec IOS-2.6: When a paired Mac is rediscovered after its LAN address \
+    or listener port changes, GrafttyMobile shall update the saved address \
+    by stable remote device identity without creating a duplicate row.
+    """)
+    func rediscoveryUpdatesAddressByStableDeviceIdentity() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let deviceID = RemoteDeviceID(value: "host-1")
+        try store.add(Host(
+            label: "Old name",
+            baseURL: URL(string: "http://mac.local:51000")!,
+            remoteDeviceID: deviceID
+        ))
+
+        try store.refreshDiscoveredDevice(
+            id: deviceID,
+            label: "Studio",
+            baseURL: URL(string: "http://mac.local:52000")!
+        )
+
+        #expect(store.hosts.count == 1)
+        #expect(store.hosts[0].label == "Studio")
+        #expect(store.hosts[0].baseURL == URL(string: "http://mac.local:52000"))
+    }
 }
 #endif

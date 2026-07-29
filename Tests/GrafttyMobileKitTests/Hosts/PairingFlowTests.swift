@@ -5,53 +5,95 @@ import CryptoKit
 @testable import GrafttyMobileKit
 import GrafttyProtocol
 
-// MARK: - QR routing discrimination
+// MARK: - Nearby paired-device discovery
 
-@Suite("AddHostView.route(for:) QR discrimination")
+@Suite("NearbyMacBrowser candidate decoding")
+struct NearbyMacBrowserCandidateTests {
+    @Test("""
+    @spec IOS-2.1: While adding a Mac, GrafttyMobile shall browse the shared \
+    `_graftty._tcp` device-pairing service, accept only protocol-compatible \
+    TXT records, and treat the resolved address as an untrusted routing hint \
+    until the user confirms the pairing verification code.
+    """)
+    func compatibleAdvertisementBecomesCandidate() throws {
+        let fingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(
+                rawRepresentation: Curve25519.Signing.PrivateKey()
+                    .publicKey.rawRepresentation
+            )
+        )
+        let txt = try GrafttyBonjourService.encodeTXT(.init(
+            deviceID: RemoteDeviceID(value: "mac-1"),
+            label: "Studio Mac",
+            fingerprint: fingerprint,
+            protocolVersion: GrafttyBonjourService.discoveryVersion,
+            pairingStatus: .required
+        ))
+
+        let candidate = NearbyMacBrowser.candidate(
+            name: "fallback-name",
+            hostName: "studio.local.",
+            port: 51_234,
+            txtRecordData: txt
+        )
+
+        #expect(candidate?.deviceID == RemoteDeviceID(value: "mac-1"))
+        #expect(candidate?.label == "Studio Mac")
+        #expect(candidate?.fingerprint == fingerprint)
+        #expect(candidate?.baseURL == URL(string: "http://studio.local:51234"))
+    }
+
+    @Test("Incompatible protocol advertisements are ignored")
+    func incompatibleProtocolIsRejected() throws {
+        let fingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(
+                rawRepresentation: Curve25519.Signing.PrivateKey()
+                    .publicKey.rawRepresentation
+            )
+        )
+        let txt = try GrafttyBonjourService.encodeTXT(.init(
+            deviceID: RemoteDeviceID(value: "mac-1"),
+            label: "Studio Mac",
+            fingerprint: fingerprint,
+            protocolVersion: "999",
+            pairingStatus: .required
+        ))
+
+        #expect(NearbyMacBrowser.candidate(
+            name: "Studio Mac",
+            hostName: "studio.local.",
+            port: 51_234,
+            txtRecordData: txt
+        ) == nil)
+    }
+}
+
+// MARK: - Pairing bootstrap address validation
+
+@Suite("AddHostView pairing bootstrap")
 struct AddHostViewRoutingTests {
-
-    private func makePayload() -> PairingPayload {
-        PairingPayload(
-            hostDeviceID: RemoteDeviceID(value: "host-1"),
-            hostKind: .mac,
-            hostDisplayName: "Test Mac",
-            hostPublicKeyFingerprint: RemoteIdentityFingerprint(
-                of: try! RemoteIdentityPublicKey(rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)
-            ),
-            nonce: RemotePairingNonce.generate(),
-            // Whole-second precision: ISO8601 round-tripping through
-            // qrEncoded()/decodeQR truncates fractional seconds, so a
-            // sub-second `expiry` here would make the round-tripped
-            // payload compare unequal to the original.
-            expiry: Date(timeIntervalSince1970: Date().addingTimeInterval(300).timeIntervalSince1970.rounded(.down)),
-            pairingURL: URL(string: "http://mac.local:8800/v1/pairing")!
+    @Test("""
+    @spec IOS-2.2: When Bonjour discovery is unavailable, GrafttyMobile shall \
+    accept a manually entered HTTP(S) LAN address only as the bootstrap for \
+    the same authenticated device-pairing ceremony; it shall never save the \
+    address as an unpaired host.
+    """)
+    func manualHTTPAddressBecomesPairingBootstrap() {
+        #expect(
+            AddHostView.manualPairingBaseURL("http://mac.local:8080") ==
+                URL(string: "http://mac.local:8080")
+        )
+        #expect(
+            AddHostView.manualPairingBaseURL("https://mac.local:8080/") ==
+                URL(string: "https://mac.local:8080/")
         )
     }
 
-    @Test("A qrEncoded() pairing payload string routes to .pairing")
-    func pairingPayloadRoutesToPairing() throws {
-        let payload = makePayload()
-        let encoded = try payload.qrEncoded()
-
-        guard case .pairing(let decoded) = AddHostView.route(for: encoded) else {
-            Issue.record("Expected .pairing route")
-            return
-        }
-        #expect(decoded == payload)
-    }
-
-    @Test("A plain https URL routes to .url, unchanged from the pre-pairing behavior")
-    func plainURLRoutesToURL() {
-        guard case .url(let url) = AddHostView.route(for: "https://mac.local:8080") else {
-            Issue.record("Expected .url route")
-            return
-        }
-        #expect(url.absoluteString == "https://mac.local:8080")
-    }
-
-    @Test("Garbage input routes to .invalid")
-    func garbageRoutesToInvalid() {
-        #expect(AddHostView.route(for: "not a url or pairing string") == .invalid)
+    @Test("Non-network and hostless values cannot bootstrap pairing")
+    func invalidManualAddressesAreRejected() {
+        #expect(AddHostView.manualPairingBaseURL("not a url") == nil)
+        #expect(AddHostView.manualPairingBaseURL("file:///tmp/graftty") == nil)
+        #expect(AddHostView.manualPairingBaseURL("http:///missing-host") == nil)
     }
 }
 
@@ -347,15 +389,16 @@ struct PairDeviceFlowModelTests {
         }
         #expect(host.remoteDeviceID == fx.payload.hostDeviceID)
         #expect(host.label == fx.payload.hostDisplayName)
-        #expect(addressUnconfirmed == true) // no webBaseURL in this fixture
-        // Fallback address: pairing URL's host + the WebAccessSettings default port.
-        #expect(host.baseURL == URL(string: "https://host.local:8799"))
+        #expect(addressUnconfirmed == false)
+        // Device pairing uses the root of the authenticated LAN
+        // pairing/signaling listener, not the legacy Web Access port.
+        #expect(host.baseURL == URL(string: "http://host.local:8800"))
 
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
 
-    @Test("A payload carrying webBaseURL uses it verbatim for the saved Host and does not flag addressUnconfirmed")
+    @Test("A legacy QR payload carrying webBaseURL remains compatible")
     func usesWebBaseURLWhenPresent() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -417,7 +460,7 @@ struct PairDeviceFlowModelTests {
     }
 
     @Test("""
-    While parked in .awaitingConfirmation, the model shall expose the verification code independently derivable from the introduce response's transcript, and the host's display name from the QR payload.
+    While parked in .awaitingConfirmation, the model shall expose the verification code independently derivable from the introduce response's transcript, and the discovered host's display name from the pairing payload.
     """)
     func awaitingConfirmationExposesCodeAndHostName() async throws {
         let dir = try makeTempDir()

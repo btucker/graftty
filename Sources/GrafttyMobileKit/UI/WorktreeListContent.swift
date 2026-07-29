@@ -57,6 +57,7 @@ public struct WorktreeListContent: View {
     public let focusedPaneId: String?
     public let includeRemoteWorktrees: Bool
     public let remoteConnectionProvider: RemoteConnectionProvider?
+    public let remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
@@ -69,6 +70,7 @@ public struct WorktreeListContent: View {
         focusedPaneId: String? = nil,
         includeRemoteWorktrees: Bool = false,
         remoteConnectionProvider: RemoteConnectionProvider? = nil,
+        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
@@ -80,6 +82,7 @@ public struct WorktreeListContent: View {
         self.focusedPaneId = focusedPaneId
         self.includeRemoteWorktrees = includeRemoteWorktrees
         self.remoteConnectionProvider = remoteConnectionProvider
+        self.remoteSnapshotProvider = remoteSnapshotProvider
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
@@ -268,8 +271,9 @@ public struct WorktreeListContent: View {
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(1))
-                    let list = try await WorktreePanesFetcher.fetch(
-                        baseURL: host.baseURL,
+                    let list = try await fetchWorktrees(
+                        host: host,
+                        remoteSnapshotProvider: remoteSnapshotProvider,
                         includeRemoteWorktrees: true
                     )
                     guard !Task.isCancelled else { return }
@@ -293,8 +297,9 @@ public struct WorktreeListContent: View {
 
     private func refresh() async {
         do {
-            let list = try await WorktreePanesFetcher.fetch(
-                baseURL: host.baseURL,
+            let list = try await fetchWorktrees(
+                host: host,
+                remoteSnapshotProvider: remoteSnapshotProvider,
                 includeRemoteWorktrees: includeRemoteWorktrees
             )
             state = .loaded(list)
@@ -308,6 +313,20 @@ public struct WorktreeListContent: View {
         } catch {
             state = .error("Couldn't reach the server.")
         }
+    }
+
+    private func fetchWorktrees(
+        host: Host,
+        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?,
+        includeRemoteWorktrees: Bool
+    ) async throws -> [WorktreePanes] {
+        if let remoteSnapshotProvider {
+            return try await remoteSnapshotProvider()
+        }
+        return try await WorktreePanesFetcher.fetch(
+            baseURL: host.baseURL,
+            includeRemoteWorktrees: includeRemoteWorktrees
+        )
     }
 
     static func requiresManagementOpen(
@@ -404,8 +423,9 @@ public struct WorktreeListContent: View {
             }
 
             for attempt in 0..<12 {
-                let list = try await WorktreePanesFetcher.fetch(
-                    baseURL: selectionHost.baseURL,
+                let list = try await fetchWorktrees(
+                    host: selectionHost,
+                    remoteSnapshotProvider: remoteSnapshotProvider,
                     includeRemoteWorktrees: includeRemoteWorktrees
                 )
                 guard !Task.isCancelled, selectionIsCurrent() else { return }
@@ -461,7 +481,7 @@ public struct WorktreeListContent: View {
             remoteConnectionProvider: remoteConnectionProvider
         )
         do {
-            if worktree.path.hasPrefix("relay-worktree-") {
+            if requestContext.remoteConnectionProvider != nil {
                 let response = try await RelayedWorktreeManagementClient.send(
                     .delete(worktreeID: worktree.path, force: force),
                     using: requestContext.remoteConnectionProvider
@@ -502,7 +522,7 @@ public struct WorktreeListContent: View {
     /// re-issue with `force: true`.
     private func performForceDelete(_ pending: PendingForceDelete) async {
         do {
-            if pending.worktreePath.hasPrefix("relay-worktree-") {
+            if pending.requestContext.remoteConnectionProvider != nil {
                 let response = try await RelayedWorktreeManagementClient.send(
                     .delete(worktreeID: pending.worktreePath, force: true),
                     using: pending.requestContext.remoteConnectionProvider

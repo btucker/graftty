@@ -17,6 +17,7 @@ public struct RootView: View {
     /// instance so a host negotiated once from either surface is cached
     /// for the other.
     @State private var coordinator = RemoteConnectionCoordinator()
+    @State private var nearbyMacBrowser = NearbyMacBrowser()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init() {}
@@ -28,7 +29,8 @@ public struct RootView: View {
                 IPadRootLayout(
                     hostStore: hostStore,
                     appState: iPadAppState,
-                    coordinator: coordinator
+                    coordinator: coordinator,
+                    nearbyMacBrowser: nearbyMacBrowser
                 )
             default:
                 compactBody
@@ -39,6 +41,18 @@ public struct RootView: View {
         }
         .environment(\.biometricGate, gate)
         .task { await gate.authenticate() }
+        .onAppear { nearbyMacBrowser.start() }
+        .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
+            coordinator.updateDiscoveryCandidates(candidates)
+            for candidate in candidates
+            where coordinator.isTrustedDiscoveryCandidate(candidate) {
+                try? hostStore.refreshDiscoveredDevice(
+                    id: candidate.deviceID,
+                    label: candidate.label,
+                    baseURL: candidate.baseURL
+                )
+            }
+        }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .background:
@@ -66,7 +80,11 @@ public struct RootView: View {
     @ViewBuilder
     private var compactBody: some View {
         NavigationStack(path: $navigationPath) {
-            HostPickerView(store: hostStore)
+            HostPickerView(
+                store: hostStore,
+                browser: nearbyMacBrowser,
+                coordinator: coordinator
+            )
                 .navigationDestination(for: Host.self) { host in
                     WorktreePickerView(
                         host: host,
@@ -170,9 +188,9 @@ final class TerminalContainerBox {
     func cancelActiveSelectionIfAny() { view?.cancelActiveSelectionIfAny() }
 }
 
-/// Fullscreen terminal view for one session. Owns the WebSocket and
-/// InMemoryTerminalSession; both are torn down on `.background` and
-/// re-dialed on `.active` once the gate is unlocked.
+/// Fullscreen terminal view for one session. Owns the authenticated terminal
+/// channel and `InMemoryTerminalSession`; both are torn down on `.background`
+/// and re-dialed on `.active` once the gate is unlocked.
 struct SingleSessionView: View {
     let step: SessionStep
     @Binding var navigationPath: NavigationPath
@@ -184,14 +202,11 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
-    /// Injected from `RootView` on BOTH size classes so `openWebSocket()`
+    /// Injected from `RootView` on BOTH size classes so `openTerminal()`
     /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
-    /// SSH-over-WebRTC. `nil` only in contexts that construct this view
-    /// directly without going through `RootView` (previews, unit tests
-    /// that exercise unrelated behavior) — `SessionClient.live` falls
-    /// back to `URLSessionWebSocketClient` against `/ws` whenever the
-    /// coordinator is absent, returns nil (host isn't paired), or
-    /// negotiation fails.
+    /// SSH-over-WebRTC. `nil` exists only in preview and narrowly scoped
+    /// test contexts; production refuses the dial when pairing is absent
+    /// or negotiation fails.
     let coordinator: RemoteConnectionCoordinator?
     /// Not-yet-honored focus requests owned by app-scoped state (the iPad
     /// layout passes `appState.pendingFocusRequests`). A pending delta, not
@@ -470,7 +485,9 @@ struct SingleSessionView: View {
                 // updateConfigSource) means `baseConfigTemplate` captures
                 // the Mac config, so scene-phase / trait-collection
                 // color-scheme recomputes preserve the Mac theme.
-                let text = await GhosttyConfigFetcher.fetch(baseURL: step.host.baseURL)
+                let text = await coordinator?
+                    .presentation(for: step.host)?
+                    .ghosttyConfig
                 if controller == nil {
                     preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
                     controller = MobileTerminalControllerFactory.make(configText: text)
@@ -514,7 +531,7 @@ struct SingleSessionView: View {
             // not here — this branch also fires on `.inactive` (IOS-10.1),
             // where the shared connection must survive. IPAD-5.2's
             // foreground rebuild re-negotiates via `verifyThenOpen` →
-            // `openWebSocket` → the provider wired in below whenever
+            // `openTerminal` → the provider wired in below whenever
             // `invalidateAll()` did evict it.
             return
         }
@@ -523,36 +540,44 @@ struct SingleSessionView: View {
         case .live, .ended:
             return
         case .connecting:
-            // First dial — trust the /sessions response that put the user
-            // here. Skip verification to keep the cold-open fast.
-            await openWebSocket()
+            // First dial — trust the paired panes snapshot that put the
+            // user here. Skip verification to keep the cold-open fast.
+            await openTerminal()
         case .suspended:
             // IOS-7.2 / IOS-7.3: verify the session still exists before
-            // re-opening a WS that the server can't satisfy.
+            // re-opening a terminal channel that the host can't satisfy.
             await verifyThenOpen()
         }
     }
 
     private func verifyThenOpen() async {
-        let result: Result<[SessionInfo], Error>
+        let result: Result<[WorktreePanes], Error>
         do {
-            result = .success(try await SessionsFetcher.fetch(baseURL: step.host.baseURL))
+            guard let coordinator else {
+                await openTerminal()
+                return
+            }
+            result = .success(
+                try await coordinator.worktreePanes(for: step.host)
+            )
         } catch {
             result = .failure(error)
         }
         if Task.isCancelled { return }
-        switch SessionRehydration.decide(sessionName: step.sessionName, sessionsResult: result) {
+        switch SessionRehydration.decide(
+            sessionName: step.sessionName,
+            worktreesResult: result
+        ) {
         case .ended:
             connection = .ended
         case .dial:
-            await openWebSocket()
+            await openTerminal()
         }
     }
 
-    private func openWebSocket() async {
-        // URLSessionWebSocketTask.resume() fires synchronously inside
-        // SessionClient.live(), so guard before the dial — otherwise we
-        // burn a TCP/TLS handshake on a connection we'd immediately abort.
+    private func openTerminal() async {
+        // Guard before the dial so we do not negotiate an authenticated
+        // channel that we would immediately abort.
         if Task.isCancelled || connection == .ended { return }
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
@@ -574,8 +599,8 @@ struct SingleSessionView: View {
             reclaimControlOnOwnerlessConnect: reclaimControlOnNextDial
         )
         if Task.isCancelled || connection == .ended {
-            // Re-backgrounded (or ended) between WS construction and
-            // assignment. Stop the orphan so the WS task doesn't leak.
+            // Re-backgrounded (or ended) between channel construction and
+            // assignment. Stop the orphan so the channel does not leak.
             new.stop()
             return
         }

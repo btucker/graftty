@@ -344,7 +344,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (decoded from `GET /worktrees/panes`) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 """)
     func ipad_1_9_sharedRowContract() {
         // Smoke-check the shared accessor.
@@ -373,7 +373,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each `GET /worktrees/panes` snapshot.
+@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 """)
     func ipad_1_11_attentionDotWhenSidebarCollapsed() {
         let appState = freshAppState()
@@ -1078,7 +1078,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.17: When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
+@spec IPAD-1.17: When an authenticated panes-state snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 """)
     func ipad_1_17_stalePaneIdClearedWhenWorktreeStillPresent() {
         // Case 1: worktree still present, focused pane vanished, other

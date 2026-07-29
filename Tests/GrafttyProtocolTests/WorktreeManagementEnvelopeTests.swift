@@ -6,12 +6,14 @@ import Testing
 struct WorktreeManagementEnvelopeTests {
     @Test("""
     @spec REMOTE-13.3: When a paired Mac or GrafttyMobile client manages a \
-    remote worktree, the application shall round-trip repository, create, \
-    pull, open, delete, and acknowledgement requests over the authenticated \
-    worktree-management channel using opaque resource identifiers.
+    remote worktree, the application shall round-trip host presentation, \
+    repository, create, pull, open, delete, and acknowledgement requests \
+    over the authenticated worktree-management channel using opaque resource \
+    identifiers.
     """)
     func everyRequestRoundTrips() throws {
         let requests: [WorktreeManagementRequest] = [
+            .hostPresentation,
             .listRepositories,
             .create(
                 repositoryID: "repo-token",
@@ -72,6 +74,17 @@ struct WorktreeManagementEnvelopeTests {
             ]
         )
         let responses: [WorktreeManagementResponse] = [
+            .hostPresentation(
+                RemoteHostPresentation(
+                    ghosttyConfig: "font-size = 14",
+                    keybindings: GhosttyKeybindingsResponse(
+                        bindings: ["new_split:right": ShortcutChord(
+                            key: "d",
+                            modifiers: [.command]
+                        )]
+                    )
+                )
+            ),
             .repositories([repository]),
             .created(worktreeID: "worktree-token", paneID: "pane-token"),
             .deleted(dismissed: true),

@@ -7,8 +7,6 @@ import os
 
 /// Negotiates and caches per-host `RemoteHostConnection`s on demand.
 ///
-/// `RootView`'s `/ws` fallback (Task 3) asks this coordinator for a
-/// connection before falling back to the plain WebSocket transport.
 /// `connection(for:)` is the single entry point: it fast-nils for a
 /// host that isn't paired, returns an already-live connection, dedups
 /// concurrent negotiation requests for the same host onto one in-flight
@@ -34,6 +32,25 @@ import os
 /// methods on.
 @MainActor
 public final class RemoteConnectionCoordinator {
+    public enum ConnectionError: LocalizedError {
+        case pairingRequired
+        case unavailable
+        case paneSnapshotTimedOut
+        case paneChannelClosed
+
+        public var errorDescription: String? {
+            switch self {
+            case .pairingRequired:
+                return "This Mac must be paired before connecting."
+            case .unavailable:
+                return "The paired Mac is unavailable."
+            case .paneSnapshotTimedOut:
+                return "Timed out waiting for the Mac's worktree list."
+            case .paneChannelClosed:
+                return "The Mac closed the worktree channel."
+            }
+        }
+    }
 
     private let identityStore: ClientIdentityStore
     private let deviceIDStore: ClientDeviceIDStore
@@ -44,6 +61,20 @@ public final class RemoteConnectionCoordinator {
 
     /// Successfully negotiated, still-live connections, keyed by `Host.id`.
     private var liveConnections: [UUID: RemoteHostConnection] = [:]
+    /// Long-lived authenticated panes-state subscriptions. Keeping these
+    /// alongside the connection replaces HTTP polling without repeatedly
+    /// opening a new SSH child channel.
+    private var panesStores: [UUID: WorktreePanesStore] = [:]
+    private struct PanesAttempt {
+        let id: UUID
+        let task: Task<WorktreePanesStore?, Never>
+    }
+    private var panesStoreAttempts: [UUID: PanesAttempt] = [:]
+    private var presentations: [UUID: RemoteHostPresentation] = [:]
+    /// Current Bonjour routing hints keyed by paired device identity. These
+    /// are intentionally process-local and replace stale persisted listener
+    /// ports without changing the trust key.
+    private var discoveredBaseURLs: [RemoteDeviceID: URL] = [:]
 
     /// One negotiation attempt, identified independently of the `Task`
     /// itself so `invalidate(host:)` can mark exactly THIS attempt as
@@ -149,9 +180,8 @@ public final class RemoteConnectionCoordinator {
     /// (`remoteDeviceID` is `nil`, or `PinnedHostStore` has no matching
     /// entry), when `host` is within its post-failure cooldown window
     /// (see `failureCooldown`), and when negotiation fails for any
-    /// reason — callers fall back to `/ws` in every case and cannot tell
-    /// them apart, which is intentional: none of these should ever crash
-    /// the caller.
+    /// reason. Callers surface authenticated-connection unavailability and
+    /// never treat nil as permission to downgrade to an unpaired transport.
     public func connection(for host: Host) async -> RemoteHostConnection? {
         guard let pinnedHost = pinnedHost(for: host) else { return nil }
 
@@ -203,6 +233,11 @@ public final class RemoteConnectionCoordinator {
     /// connection the app already asked to tear down.
     public func invalidate(host: Host) async {
         cooldownUntil[host.id] = nil
+        presentations[host.id] = nil
+        panesStoreAttempts[host.id]?.task.cancel()
+        panesStoreAttempts[host.id] = nil
+        let panesStore = panesStores.removeValue(forKey: host.id)
+        await panesStore?.unsubscribe()
         if let inFlight = inFlightAttempts[host.id] {
             invalidatedAttempts.insert(inFlight.id)
         }
@@ -232,6 +267,16 @@ public final class RemoteConnectionCoordinator {
     /// foreground re-negotiates every host from a clean slate.
     public func invalidateAll() async {
         cooldownUntil.removeAll()
+        presentations.removeAll()
+        for attempt in panesStoreAttempts.values {
+            attempt.task.cancel()
+        }
+        panesStoreAttempts.removeAll()
+        let stores = Array(panesStores.values)
+        panesStores.removeAll()
+        for store in stores {
+            await store.unsubscribe()
+        }
         let hostIDs = Set(liveConnections.keys).union(inFlightAttempts.keys)
         for hostID in hostIDs {
             if let inFlight = inFlightAttempts[hostID] {
@@ -249,17 +294,198 @@ public final class RemoteConnectionCoordinator {
     /// Single source of truth for "is `host` paired" — the same
     /// two-part check `connection(for:)` performs before ever attempting
     /// to negotiate (a non-nil `remoteDeviceID` AND a matching
-    /// `PinnedHostStore` entry). `shouldLogFallbackLoudly`
-    /// (`SessionLifecycleEnvironment.swift`) reads this so its
-    /// `/ws`-fallback log-level gate can't drift from the coordinator's
-    /// actual pairing gate.
+    /// `PinnedHostStore` entry). UI routing and authenticated channel
+    /// factories read this same gate so their definition of a usable paired
+    /// Mac cannot drift.
     public func isPaired(_ host: Host) -> Bool {
         pinnedHost(for: host) != nil
+    }
+
+    /// Verifies that a Bonjour routing hint still advertises the exact host
+    /// key pinned during pairing. Discovery never establishes or changes
+    /// trust; a mismatch therefore cannot refresh the saved address.
+    public func isTrustedDiscoveryCandidate(_ candidate: NearbyMac) -> Bool {
+        guard let pinned = try? pinnedHostStore.get(id: candidate.deviceID)
+        else {
+            return false
+        }
+        return pinned.fingerprint == candidate.fingerprint
+    }
+
+    public func updateDiscoveryCandidates(_ candidates: [NearbyMac]) {
+        discoveredBaseURLs = Dictionary(
+            uniqueKeysWithValues: candidates.compactMap { candidate in
+                guard isTrustedDiscoveryCandidate(candidate) else {
+                    return nil
+                }
+                return (candidate.deviceID, candidate.baseURL)
+            }
+        )
+    }
+
+    /// Returns the latest authenticated worktree snapshot, establishing one
+    /// long-lived panes-state-v2 subscription on first use. V2 includes the
+    /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.
+    public func worktreePanes(for host: Host) async throws
+        -> [WorktreePanes] {
+        guard isPaired(host) else { throw ConnectionError.pairingRequired }
+        guard let connection = await connection(for: host) else {
+            throw ConnectionError.unavailable
+        }
+        let store = try await panesStore(
+            for: host,
+            connection: connection
+        )
+        let deadline = Date().addingTimeInterval(10)
+        while !Task.isCancelled {
+            if await store.hasReceivedSnapshot {
+                return await store.current
+            }
+            if case .closed = await store.connectionState {
+                if let current = panesStores[host.id],
+                   ObjectIdentifier(current) == ObjectIdentifier(store) {
+                    panesStores[host.id] = nil
+                }
+                await store.unsubscribe()
+                throw ConnectionError.paneChannelClosed
+            }
+            if Date() >= deadline {
+                throw ConnectionError.paneSnapshotTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw CancellationError()
+    }
+
+    /// Sends a typed request over the mutually-authenticated SSH control
+    /// channel. The child channel is intentionally request-scoped; the
+    /// panes-state subscription above is the only long-lived control channel.
+    public func sendWorktreeManagement(
+        _ request: WorktreeManagementRequest,
+        to host: Host
+    ) async throws -> WorktreeManagementResponse {
+        guard isPaired(host) else { throw ConnectionError.pairingRequired }
+        guard let connection = await connection(for: host) else {
+            throw ConnectionError.unavailable
+        }
+        let client = try await connection.openWorktreeManagementChannel()
+        defer { client.close() }
+        return try await client.send(request)
+    }
+
+    public func presentation(for host: Host) async
+        -> RemoteHostPresentation? {
+        if let cached = presentations[host.id] {
+            return cached
+        }
+        guard let response = try? await sendWorktreeManagement(
+            .hostPresentation,
+            to: host
+        ), case .hostPresentation(let presentation) = response else {
+            return nil
+        }
+        presentations[host.id] = presentation
+        return presentation
+    }
+
+    /// Forgetting a Mac removes the local trust pin and closes all channels.
+    /// The Mac intentionally continues to trust this phone until the user
+    /// also removes it from the Mac's paired-device list.
+    public func forget(_ host: Host) async throws {
+        await invalidate(host: host)
+        guard let deviceID = host.remoteDeviceID else { return }
+        do {
+            try pinnedHostStore.remove(id: deviceID)
+        } catch PinnedHostStore.Error.notFound {
+            // A legacy host row may have no surviving pin. Forget is
+            // idempotent from the user's point of view.
+        }
     }
 
     private func pinnedHost(for host: Host) -> PinnedHost? {
         guard let remoteDeviceID = host.remoteDeviceID else { return nil }
         return (try? pinnedHostStore.get(id: remoteDeviceID)) ?? nil
+    }
+
+    private func panesStore(
+        for host: Host,
+        connection: RemoteHostConnection
+    ) async throws -> WorktreePanesStore {
+        if let existing = panesStores[host.id] {
+            if case .closed = await existing.connectionState {
+                panesStores[host.id] = nil
+                await existing.unsubscribe()
+            } else {
+                return existing
+            }
+        }
+        if let attempt = panesStoreAttempts[host.id] {
+            guard let store = await attempt.task.value else {
+                throw ConnectionError.paneChannelClosed
+            }
+            guard let current = liveConnections[host.id],
+                  ObjectIdentifier(current) == ObjectIdentifier(connection)
+            else {
+                await store.unsubscribe()
+                throw ConnectionError.unavailable
+            }
+            return store
+        }
+
+        let connectionIdentity = ObjectIdentifier(connection)
+        let attempt = Task<WorktreePanesStore?, Never> {
+            await Self.makePanesStore(connection: connection)
+        }
+        let attemptID = UUID()
+        panesStoreAttempts[host.id] = PanesAttempt(
+            id: attemptID,
+            task: attempt
+        )
+        let built = await attempt.value
+        if panesStoreAttempts[host.id]?.id == attemptID {
+            panesStoreAttempts[host.id] = nil
+        }
+        guard let built else {
+            throw ConnectionError.paneChannelClosed
+        }
+        guard let current = liveConnections[host.id],
+              ObjectIdentifier(current) == connectionIdentity else {
+            await built.unsubscribe()
+            throw ConnectionError.unavailable
+        }
+        panesStores[host.id] = built
+        return built
+    }
+
+    private nonisolated static func makePanesStore(
+        connection: RemoteHostConnection
+    ) async -> WorktreePanesStore? {
+        for originAware in [true, false] {
+            var openedStore: WorktreePanesStore?
+            do {
+                let client = try await connection.makePanesStateClient(
+                    onSnapshot: { _ in },
+                    onClosed: { _ in },
+                    originAware: originAware,
+                    requestReply: originAware
+                )
+                let store = WorktreePanesStore(driver: client)
+                openedStore = store
+                client.setCallbacks(
+                    onSnapshot: { [weak store] snapshot in
+                        await store?.applySnapshot(snapshot)
+                    },
+                    onClosed: { [weak store] reason in
+                        await store?.markClosed(reason: reason)
+                    }
+                )
+                try await store.subscribe()
+                return store
+            } catch {
+                await openedStore?.unsubscribe()
+            }
+        }
+        return nil
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state
@@ -294,7 +520,9 @@ public final class RemoteConnectionCoordinator {
         do {
             let offer = try await connection.createOffer()
             let answer = try await signaling.exchange(
-                baseURL: host.baseURL,
+                baseURL: host.remoteDeviceID
+                    .flatMap { discoveredBaseURLs[$0] }
+                    ?? host.baseURL,
                 offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offer.sdp)
             )
             try await connection.applyAnswer(RTCSessionDescription(type: .answer, sdp: answer.sdp))
@@ -368,6 +596,10 @@ public final class RemoteConnectionCoordinator {
             return
         }
         liveConnections.removeValue(forKey: hostID)
+        presentations[hostID] = nil
+        if let store = panesStores.removeValue(forKey: hostID) {
+            Task { await store.unsubscribe() }
+        }
     }
 
     /// Test-only seam: seeds the registry directly, bypassing a real

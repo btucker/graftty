@@ -79,7 +79,7 @@ public struct PaneLayoutView: View {
 /// Leaf in the split tree — a tappable rounded rect with the pane title.
 /// When `client == nil` (single-pane worktrees skip the preview pool per
 /// IOS-4.14), renders a static centered title with no controller, no
-/// preview client, no WebSocket. Otherwise owns its own `TerminalController`,
+/// preview client, no terminal channel. Otherwise owns its own `TerminalController`,
 /// sized so the authoritative grid fits the tile width without an outer
 /// scaleEffect downscale (IOS-4.12).
 ///

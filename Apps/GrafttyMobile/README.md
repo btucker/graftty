@@ -1,7 +1,9 @@
 # GrafttyMobile
 
-The iOS app that attaches to a running Graftty server over Tailscale
-using the existing `/sessions` + `/ws` WebSocket protocol.
+The iOS app for a paired Graftty Mac. It discovers nearby Macs over
+Bonjour, verifies and pins the Mac's device identity, then carries terminal
+and worktree traffic over mutually authenticated SSH-over-WebRTC channels.
+Web Access does not need to be enabled.
 
 ## Generating / regenerating the Xcode project
 
@@ -28,9 +30,12 @@ Or open `GrafttyMobile.xcodeproj` in Xcode and ⌘R.
 
 ## Running
 
-1. On your Mac, launch Graftty → Settings → enable Web Access → "Show QR code".
-2. In the iOS simulator or on a tailnet iPhone/iPad, launch GrafttyMobile.
-3. Grant Face ID. Tap +, scan the QR (or enter URL manually), pick a session.
+1. Launch Graftty on a Mac and connect the iPhone/iPad to the same local network.
+2. Launch GrafttyMobile, grant Face ID, and tap +.
+3. Choose the nearby Mac, compare the verification code on both devices, and
+   confirm it on the Mac.
+4. Choose a worktree and pane. Subsequent address changes are resolved by the
+   Mac's stable paired-device identity.
 
 ## Where the code lives
 

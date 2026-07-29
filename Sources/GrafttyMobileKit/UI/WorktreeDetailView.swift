@@ -13,9 +13,8 @@ public struct WorktreeDetailView: View {
     public let onSelectPane: (_ sessionName: String) -> Void
     /// Resolves the per-host `RemoteHostConnection` for the preview pool
     /// so pane previews ride SSH-over-WebRTC when `host` is paired,
-    /// falling back to `/ws` otherwise. `nil` in contexts that construct
-    /// this view directly without going through `RootView` (previews,
-    /// unit tests).
+    /// failing closed when no authenticated channel is available. `nil` in
+    /// contexts that construct this view directly (previews / focused tests).
     public let coordinator: RemoteConnectionCoordinator?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
@@ -59,7 +58,9 @@ public struct WorktreeDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: host.id) {
             baseConfig = nil
-            let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+            let text = await coordinator?
+                .presentation(for: host)?
+                .ghosttyConfig
             preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
             baseConfig = text ?? ""
         }
@@ -93,7 +94,7 @@ public struct WorktreeDetailView: View {
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
         guard let layout = worktree.layout else { return }
-        // IOS-4.14: skip the preview WebSocket pool for single-pane worktrees.
+        // IOS-4.14: skip the preview terminal pool for single-pane worktrees.
         guard !layout.isLeaf else {
             previews?.stopAll()
             previews = nil

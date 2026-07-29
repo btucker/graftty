@@ -37,6 +37,10 @@ public struct WorktreePickerView: View {
                 host: host,
                 sessionName: "worktree-management"
             ),
+            remoteSnapshotProvider: makeRemoteWorktreeSnapshotProvider(
+                coordinator: coordinator,
+                host: host
+            ),
             onSelect: onSelect,
             onSelectPane: onSelectPane
         )
