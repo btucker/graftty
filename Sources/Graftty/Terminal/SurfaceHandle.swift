@@ -39,6 +39,9 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
     func write(_ data: Data, claimEngagement: Bool) throws
+    /// Returns false when ownership or another backend policy rejected the
+    /// bytes without throwing.
+    func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool
     /// Runs `body` while flagging that any bytes libghostty pushes back
     /// through the receive callback are automation, not user input.
     /// Display ownership still decides whether those bytes reach the PTY.
@@ -69,6 +72,13 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func takeControl() -> Bool
     func close()
     func surfaceWasFreed()
+}
+
+extension SurfaceHandleZmxBackend {
+    func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool {
+        try write(data, claimEngagement: claimEngagement)
+        return true
+    }
 }
 
 extension HostManagedZmxBackend: SurfaceHandleZmxBackend {
@@ -454,7 +464,20 @@ final class SurfaceHandle {
                 // injection (e.g., `graftty pane split --command`).
                 // It is NOT a user keystroke; ownership decides whether
                 // the injected bytes are allowed to reach the PTY.
-                try backend.write(data, claimEngagement: false)
+                let accepted = try backend.writeWithDeliveryResult(
+                    data,
+                    claimEngagement: false
+                )
+                guard accepted else {
+                    throw NSError(
+                        domain: "SurfaceHandle",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "initial pane input was not accepted",
+                        ]
+                    )
+                }
             }
             return true
         } catch {
@@ -636,16 +659,30 @@ final class SurfaceHandle {
     ///   zmx backend's display ownership gate decides whether the bytes
     ///   reach the PTY.
     func typeText(_ text: String, claimEngagement: Bool = true) {
-        guard let data = text.data(using: .utf8) else { return }
+        _ = writeText(text, claimEngagement: claimEngagement)
+    }
+
+    /// Programmatic input path with an acknowledgement for lifecycle callers
+    /// that must not report success until the backend accepted the bytes.
+    @discardableResult
+    func writeText(_ text: String, claimEngagement: Bool = true) -> Bool {
+        guard let data = text.data(using: .utf8) else { return false }
         if let zmxBackend {
-            try? zmxBackend.write(data, claimEngagement: claimEngagement)
-            return
+            do {
+                return try zmxBackend.writeWithDeliveryResult(
+                    data,
+                    claimEngagement: claimEngagement
+                )
+            } catch {
+                return false
+            }
         }
         data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             let ptr = base.assumingMemoryBound(to: CChar.self)
             surfaceFactory.text(surface, ptr, UInt(raw.count))
         }
+        return true
     }
 
     /// Synthesize a Return keypress (press + release) via

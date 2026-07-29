@@ -83,6 +83,13 @@ final class TerminalManager: ObservableObject {
     /// command, which could otherwise start a second agent on top of the one
     /// requested by `graftty worktree add --agent`.
     private var explicitInitialInputSurfaces: Set<PaneSlotID> = []
+    /// Host-managed panes hold explicit launch input until shell integration
+    /// reports the first prompt. Writing immediately after `zmx attach`
+    /// starts can race shell startup and be consumed or discarded by init.
+    private var pendingShellReadyInitialInput: [PaneSlotID: String] = [:]
+    private var initialInputDeliveryResults: [PaneSlotID: Bool] = [:]
+    private var initialInputDeliveryWaiters:
+        [PaneSlotID: [CheckedContinuation<Bool, Never>]] = [:]
 
     private enum ZmxSessionSnapshot {
         case live(Set<String>)
@@ -537,6 +544,10 @@ final class TerminalManager: ObservableObject {
             )
             let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
             let initialInput = pendingInitialInput
+            let waitsForShellReady = Self.shouldWaitForShellReady(
+                extraInitialInput: initialInput,
+                configuration: zmxSpawnConfiguration
+            )
             if initialInput != nil {
                 explicitInitialInputSurfaces.insert(terminalID)
             }
@@ -550,7 +561,7 @@ final class TerminalManager: ObservableObject {
                 worktreePath: worktreePath,
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
-                extraInitialInput: initialInput,
+                extraInitialInput: waitsForShellReady ? nil : initialInput,
                 terminalManager: self,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
@@ -559,6 +570,9 @@ final class TerminalManager: ObservableObject {
             ) else {
                 explicitInitialInputSurfaces.remove(terminalID)
                 continue
+            }
+            if waitsForShellReady, let initialInput {
+                queueInitialInputUntilShellReady(initialInput, for: terminalID)
             }
             pendingInitialInput = nil
             didCreateSurface(for: terminalID)
@@ -604,6 +618,10 @@ final class TerminalManager: ObservableObject {
             )
             : nil
         let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
+        let waitsForShellReady = Self.shouldWaitForShellReady(
+            extraInitialInput: extraInitialInput,
+            configuration: zmxSpawnConfiguration
+        )
         if extraInitialInput != nil {
             explicitInitialInputSurfaces.insert(terminalID)
         }
@@ -615,7 +633,7 @@ final class TerminalManager: ObservableObject {
             worktreePath: surfaceWorktreePath,
             socketPath: socketPath,
             zmxSpawnConfiguration: zmxSpawnConfiguration,
-            extraInitialInput: extraInitialInput,
+            extraInitialInput: waitsForShellReady ? nil : extraInitialInput,
             terminalManager: self,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
             displayOwnershipStore: displayOwnershipStore,
@@ -626,10 +644,21 @@ final class TerminalManager: ObservableObject {
             explicitInitialInputSurfaces.remove(terminalID)
             return nil
         }
+        if waitsForShellReady, let extraInitialInput {
+            queueInitialInputUntilShellReady(extraInitialInput, for: terminalID)
+        }
         didCreateSurface(for: terminalID)
         surfaces[terminalID] = handle
         registerForPortScan(terminalID)
         return handle
+    }
+
+    static func shouldWaitForShellReady(
+        extraInitialInput: String?,
+        configuration: ZmxSpawnConfiguration?
+    ) -> Bool {
+        extraInitialInput != nil
+            && configuration?.shellReadySignalAvailable == true
     }
 
     /// PORTS-4.5: At surface-creation time the zmx daemon may not have
@@ -801,6 +830,82 @@ final class TerminalManager: ObservableObject {
             }
         }
         return allStarted
+    }
+
+    /// Wait until the first shell-ready signal causes an explicit launch
+    /// command to be accepted by the pane backend. Direct-shell surfaces
+    /// receive their `initial_input` during construction and return
+    /// immediately; only zmx-backed launches enter the pending map.
+    func waitForExplicitInitialInputDelivery(
+        for terminalID: PaneSlotID,
+        timeout: TimeInterval = 30
+    ) async -> Bool {
+        if let result = initialInputDeliveryResults[terminalID] {
+            return result
+        }
+        guard pendingShellReadyInitialInput[terminalID] != nil else {
+            return true
+        }
+
+        return await withCheckedContinuation { continuation in
+            initialInputDeliveryWaiters[terminalID, default: []].append(continuation)
+            let nanoseconds = UInt64(max(0, timeout) * 1_000_000_000)
+            Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
+                }
+                guard self?.pendingShellReadyInitialInput[terminalID] != nil else {
+                    return
+                }
+                self?.completeInitialInputDelivery(for: terminalID, success: false)
+            }
+        }
+    }
+
+    private func queueInitialInputUntilShellReady(
+        _ input: String,
+        for terminalID: PaneSlotID
+    ) {
+        pendingShellReadyInitialInput[terminalID] = input
+        initialInputDeliveryResults.removeValue(forKey: terminalID)
+    }
+
+    private func completeInitialInputDelivery(
+        for terminalID: PaneSlotID,
+        success: Bool
+    ) {
+        pendingShellReadyInitialInput.removeValue(forKey: terminalID)
+        initialInputDeliveryResults[terminalID] = success
+        let waiters = initialInputDeliveryWaiters.removeValue(forKey: terminalID) ?? []
+        for waiter in waiters {
+            waiter.resume(returning: success)
+        }
+    }
+
+    /// Shared by the Ghostty PWD action and tests. The first prompt commits
+    /// any queued launch command before default-command policy runs.
+    func shellBecameReady(for terminalID: PaneSlotID) {
+        guard shellReadyFired.insert(terminalID).inserted else { return }
+        if let input = pendingShellReadyInitialInput[terminalID] {
+            let accepted = surfaces[terminalID]?.writeText(
+                input,
+                claimEngagement: false
+            ) ?? false
+            completeInitialInputDelivery(for: terminalID, success: accepted)
+        }
+        onShellReady?(terminalID)
+    }
+
+    /// Test seam for the lifecycle queue without constructing TerminalManager's
+    /// private Ghostty app wrapper.
+    func queueInitialInputUntilShellReadyForTesting(
+        _ input: String,
+        for terminalID: PaneSlotID
+    ) {
+        explicitInitialInputSurfaces.insert(terminalID)
+        queueInitialInputUntilShellReady(input, for: terminalID)
     }
 
     /// Drop and return the cached grid size for a pane, if any. Peek-then-
@@ -1000,6 +1105,11 @@ final class TerminalManager: ObservableObject {
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
     private func forgetTrackingState(for terminalID: PaneSlotID) {
+        if pendingShellReadyInitialInput[terminalID] != nil {
+            completeInitialInputDelivery(for: terminalID, success: false)
+        }
+        initialInputDeliveryResults.removeValue(forKey: terminalID)
+        initialInputDeliveryWaiters.removeValue(forKey: terminalID)
         shellReadyFired.remove(terminalID)
         explicitInitialInputSurfaces.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
@@ -1195,9 +1305,7 @@ final class TerminalManager: ObservableObject {
             let pwd = String(cString: pwdPtr)
             // Feeds `displayTitle(for:)`'s PWD-basename fallback.
             recordPWD(pwd, for: id)
-            if shellReadyFired.insert(id).inserted {
-                onShellReady?(id)
-            }
+            shellBecameReady(for: id)
 
         case GHOSTTY_ACTION_RING_BELL:
             // Default system alert sound. Visual bell (a brief flash) is a

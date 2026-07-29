@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ArgumentParser
 @testable import Graftty
 @testable import GrafttyCLI
 @testable import GrafttyKit
@@ -54,7 +55,7 @@ struct PaneShowHandlerTests {
     }
 }
 
-@Suite("@spec ATTN-1.16: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.")
+@Suite("@spec ATTN-1.16: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY and, unless `--no-enter` is set, additionally send Return so TUI consumers in raw mode (Codex, Claude) treat the input as committed. When Graftty's in-memory surface is absent but the pane still has a zmx session, it shall send the same bytes through `zmx send` instead of reporting `pane has no surface`.")
 struct PaneSendHandlerTests {
     @Test("Default flag types text and presses Return")
     @MainActor
@@ -80,15 +81,83 @@ struct PaneSendHandlerTests {
         #expect(sink.returnPresses == 0)
     }
 
+    @Test("Ownership rejection is reported instead of false success")
+    @MainActor
+    func rejectedWriteReturnsError() {
+        let sink = RecordingPaneInputSink(acceptsDelivery: false)
+        let response = GrafttyApp.handleSendPane_forTesting(
+            text: "pnpm test", pressEnter: true, sink: sink
+        )
+
+        #expect(response == .error("pane input was not accepted"))
+    }
+
+    @Test("Missing surface falls back to the persisted zmx session")
+    @MainActor
+    func missingSurfaceUsesZmxSession() {
+        let writer = RecordingZmxPaneInputWriter()
+        let response = GrafttyApp.handleSendPaneWithoutSurface_forTesting(
+            text: "pnpm test",
+            pressEnter: true,
+            sessionName: "graftty-a21c104c",
+            writer: writer
+        )
+
+        #expect(response == .ok)
+        #expect(writer.writes == [
+            .init(sessionName: "graftty-a21c104c", text: "pnpm test\r")
+        ])
+    }
+
+    @Test("Missing surface preserves --no-enter")
+    @MainActor
+    func missingSurfaceNoEnter() {
+        let writer = RecordingZmxPaneInputWriter()
+        let response = GrafttyApp.handleSendPaneWithoutSurface_forTesting(
+            text: "y",
+            pressEnter: false,
+            sessionName: "graftty-a21c104c",
+            writer: writer
+        )
+
+        #expect(response == .ok)
+        #expect(writer.writes == [
+            .init(sessionName: "graftty-a21c104c", text: "y")
+        ])
+    }
+
     private final class RecordingPaneInputSink: PaneInputSink {
         var typedText: [String] = []
         var returnPresses: Int = 0
-        func typeText(_ text: String) { typedText.append(text) }
-        func pressReturn() { returnPresses += 1 }
+        let acceptsDelivery: Bool
+
+        init(acceptsDelivery: Bool = true) {
+            self.acceptsDelivery = acceptsDelivery
+        }
+
+        func send(text: String, pressEnter: Bool) -> Bool {
+            guard acceptsDelivery else { return false }
+            typedText.append(text)
+            if pressEnter { returnPresses += 1 }
+            return true
+        }
+    }
+
+    private final class RecordingZmxPaneInputWriter: ZmxPaneInputWriter, @unchecked Sendable {
+        struct Write: Equatable {
+            let sessionName: String
+            let text: String
+        }
+
+        var writes: [Write] = []
+
+        func send(sessionName: String, text: String) throws {
+            writes.append(.init(sessionName: sessionName, text: text))
+        }
     }
 }
 
-@Suite("@spec ATTN-1.17: When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by branch name (using the same lookup `graftty team msg` uses, against the `team list` registry) and operate on that worktree regardless of the caller's current working directory; an unknown name shall produce a stderr error and a non-zero exit.")
+@Suite("@spec ATTN-1.17: When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by its branch/member name, its creation-time directory name, or its canonical absolute path and operate on that worktree regardless of the caller's current working directory; an unknown address shall produce a stderr error and a non-zero exit.")
 struct WorktreeNameResolutionTests {
     @Test("Resolves branch name to tracked worktree path")
     func resolvesBranchName() throws {
@@ -119,6 +188,113 @@ struct WorktreeNameResolutionTests {
             WorktreeNameLookup.resolvePath(name: "feature/drag-files", stateDirectory: stateDir)
                 == "/tmp/wt-feature"
         )
+    }
+
+    @Test("Resolves the directory name passed to worktree add when branch differs")
+    func resolvesCreationDirectoryName() throws {
+        let stateDir = try makeTempStateWithWorktree(
+            branch: "unified-coverage-metric",
+            path: "/tmp/repo/.worktrees/carp-1681-coverage"
+        )
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+
+        #expect(
+            WorktreeNameLookup.resolvePath(
+                name: "carp-1681-coverage",
+                stateDirectory: stateDir
+            ) == "/tmp/repo/.worktrees/carp-1681-coverage"
+        )
+        let resolved = try CLIEnv.resolveAddress(
+            "carp-1681-coverage",
+            stateDirectory: stateDir
+        )
+        #expect(resolved.path == "/tmp/repo/.worktrees/carp-1681-coverage")
+        #expect(resolved.paneID == nil)
+    }
+
+    @Test("Resolves the exact absolute address printed by worktree add")
+    func resolvesCanonicalAbsoluteAddress() throws {
+        let path = "/tmp/repo/.worktrees/carp-1681-coverage"
+        let stateDir = try makeTempStateWithWorktree(
+            branch: "unified-coverage-metric",
+            path: path
+        )
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+
+        #expect(WorktreeNameLookup.resolvePath(name: path, stateDirectory: stateDir) == path)
+        let resolved = try CLIEnv.resolveAddress(path, stateDirectory: stateDir)
+        #expect(resolved.path == path)
+        #expect(resolved.paneID == nil)
+    }
+
+    @Test("Rejects a short alias that matches more than one worktree")
+    func ambiguousShortNameRequiresAbsolutePath() throws {
+        let stateDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: stateDir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+
+        var state = AppState()
+        state.addRepo(RepoEntry(
+            path: "/tmp/repo-a",
+            displayName: "repo-a",
+            worktrees: [
+                WorktreeEntry(
+                    path: "/tmp/repo-a/.worktrees/shared",
+                    branch: "first"
+                ),
+            ]
+        ))
+        state.addRepo(RepoEntry(
+            path: "/tmp/repo-b",
+            displayName: "repo-b",
+            worktrees: [
+                WorktreeEntry(
+                    path: "/tmp/repo-b/.worktrees/second",
+                    branch: "shared"
+                ),
+            ]
+        ))
+        try state.save(to: stateDir)
+
+        #expect(
+            WorktreeNameLookup.resolvePathResult(
+                name: "shared",
+                stateDirectory: stateDir
+            ) == .ambiguous([
+                "/tmp/repo-a/.worktrees/shared",
+                "/tmp/repo-b/.worktrees/second",
+            ])
+        )
+
+        let stderr = CapturingTextSink()
+        #expect(throws: ExitCode.self) {
+            _ = try CLIEnv.resolveAddress(
+                "shared",
+                stderr: stderr,
+                stateDirectory: stateDir
+            )
+        }
+        #expect(stderr.text.contains("ambiguous worktree 'shared'"))
+        #expect(stderr.text.contains("/tmp/repo-a/.worktrees/shared"))
+        #expect(stderr.text.contains("/tmp/repo-b/.worktrees/second"))
+    }
+
+    @Test("Absolute path with a colon remains addressable")
+    func absolutePathContainingColonResolves() throws {
+        let path = "/tmp/Project: Next/.worktrees/carp-1681"
+        let stateDir = try makeTempStateWithWorktree(
+            branch: "unified-coverage",
+            path: path
+        )
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+
+        let resolved = try CLIEnv.resolveAddress(path + ":2", stateDirectory: stateDir)
+        #expect(resolved.path == path)
+        #expect(resolved.paneID == 2)
     }
 }
 

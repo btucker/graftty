@@ -45,6 +45,7 @@ struct ZmxSpawnConfigurationTests {
 
         #expect(config.env["ZDOTDIR"] == "\(ghosttyResourcesDir)/shell-integration/zsh")
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == AgentHookInstaller.zshInitDirectory(rootDirectory: agentHooksRoot).path)
+        #expect(config.shellReadySignalAvailable)
     }
 
     @Test func enabledHooksPrependHookBinToSanitizedPath() throws {
@@ -120,6 +121,7 @@ struct ZmxSpawnConfigurationTests {
 
         #expect(config.env["ZDOTDIR"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+        #expect(!config.shellReadySignalAvailable)
     }
 
     @Test func missingGhosttyResourcesReplaceInheritedZshIntegrationEnv() throws {
@@ -137,6 +139,7 @@ struct ZmxSpawnConfigurationTests {
 
         #expect(config.env["ZDOTDIR"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+        #expect(!config.shellReadySignalAvailable)
     }
 
     @Test func zmxSessionIsStrippedFromSpawnEnvironment() throws {

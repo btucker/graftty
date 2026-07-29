@@ -77,6 +77,39 @@ struct CodexAppServerClientTests {
         #expect(try methods(in: requests).contains("turn/start"))
     }
 
+    @Test("""
+    @spec TEAM-12.4: When a Codex app-server has one loaded root thread and one or more loaded subagent threads for the same worktree cwd, automatic team-message delivery shall use `thread/read` metadata to target the root thread. Spawned subagents are identified by `parentThreadId`; other subagent kinds are identified by their `source`. If more than one root thread matches, delivery shall remain ambiguous and shall not start a turn.
+    """)
+    func rootThreadWinsWhenSubagentsShareItsCWD() async throws {
+        let fake = try makeFakeProxy(
+            threads: ["root", "review-cli", "review-lifecycle", "review-tests", "guardian"],
+            cwd: "/repo/.worktrees/alice",
+            parentThreadIDByThread: [
+                "review-cli": "root",
+                "review-lifecycle": "root",
+                "review-tests": "root",
+            ],
+            subagentSourceThreadIDs: ["guardian"]
+        )
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        let result = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/repo/.worktrees/alice",
+            message: "CI failed"
+        )
+
+        #expect(result.threadID == "root")
+        let turnStart = try #require(
+            fake.recordedRequests().first { request in
+                request["method"] as? String == "turn/start"
+            }
+        )
+        let params = try #require(turnStart["params"] as? [String: Any])
+        #expect(params["threadId"] as? String == "root")
+    }
+
     @Test("Multiple loaded threads with the same cwd throw without starting a turn.")
     func duplicateMatchingCWDThrowsWithoutStartingTurn() async throws {
         let fake = try makeFakeProxy(
@@ -391,6 +424,8 @@ struct CodexAppServerClientTests {
         threads: [String],
         cwd: String,
         cwdByThread: [String: String] = [:],
+        parentThreadIDByThread: [String: String] = [:],
+        subagentSourceThreadIDs: [String] = [],
         turnStartResponse: TurnStartResponse = .accepted,
         loadedListResponseID: Int = 2,
         notificationBeforeLoadedListResponse: Bool = false,
@@ -408,6 +443,8 @@ struct CodexAppServerClientTests {
         let handshake = dir.appendingPathComponent("handshake.txt")
         let threadPagesJSON = try jsonLine(threadPages ?? [threads])
         let cwdByThreadJSON = try jsonLine(cwdByThread)
+        let parentThreadIDByThreadJSON = try jsonLine(parentThreadIDByThread)
+        let subagentSourceThreadIDsJSON = try jsonLine(subagentSourceThreadIDs)
         let turnResponseKind: String
         let turnErrorMessage: String
         switch turnStartResponse {
@@ -511,6 +548,12 @@ struct CodexAppServerClientTests {
         cwd_by_thread = JSON.parse(<<'GRAFTTY_JSON')
         \(cwdByThreadJSON)
         GRAFTTY_JSON
+        parent_thread_id_by_thread = JSON.parse(<<'GRAFTTY_JSON')
+        \(parentThreadIDByThreadJSON)
+        GRAFTTY_JSON
+        subagent_source_thread_ids = JSON.parse(<<'GRAFTTY_JSON')
+        \(subagentSourceThreadIDsJSON)
+        GRAFTTY_JSON
         default_cwd = '\(shellSingleQuoted(cwd))'
         turn_response_kind = '\(turnResponseKind)'
         turn_error_message = '\(shellSingleQuoted(turnErrorMessage))'
@@ -535,7 +578,10 @@ struct CodexAppServerClientTests {
             write_text(JSON.generate({ id: response_id, result: result }))
           when 'thread/read'
             thread_id = request.dig('params', 'threadId')
-            \(writeThreadReadResponse)(JSON.generate({ id: request['id'], result: { thread: { cwd: cwd_by_thread.fetch(thread_id, default_cwd) } } }))
+            thread = { cwd: cwd_by_thread.fetch(thread_id, default_cwd) }
+            thread[:parentThreadId] = parent_thread_id_by_thread[thread_id] if parent_thread_id_by_thread.key?(thread_id)
+            thread[:source] = { subAgent: { other: 'test' } } if subagent_source_thread_ids.include?(thread_id)
+            \(writeThreadReadResponse)(JSON.generate({ id: request['id'], result: { thread: thread } }))
         \(afterThreadRead)
         \(closeStdinAfterThreadRead)
           when 'turn/start'

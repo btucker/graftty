@@ -20,6 +20,11 @@ public final class SocketServer: @unchecked Sendable {
     /// dispatch queue as `onMessage`; dispatch to the main actor inside
     /// the handler if your state requires it.
     public var onRequest: ((NotificationMessage) -> ResponseMessage?)?
+    /// Async request variant used when a handler needs to await work without
+    /// blocking the main actor (for example a bounded zmx subprocess). When
+    /// present it takes precedence over `onRequest`.
+    public var onAsyncRequest:
+        (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage?)?
 
     /// Upper bound on how long the socket worker waits for an `onRequest`
     /// handler (which runs on the main queue) to return. If the main
@@ -139,35 +144,54 @@ public final class SocketServer: @unchecked Sendable {
             // Request/response path: if a handler is registered, run it on
             // the main actor and block the socket-queue worker on the
             // result so the reply is written before we close the fd.
-            if let onRequest {
+            if let onAsyncRequest {
+                let semaphore = DispatchSemaphore(value: 0)
+                let responseBox = ResponseBox()
+                Task { @MainActor in
+                    responseBox.value = await onAsyncRequest(message)
+                    semaphore.signal()
+                }
+                writeResponseAfterWaiting(
+                    fd: fd,
+                    semaphore: semaphore,
+                    responseBox: responseBox
+                )
+            } else if let onRequest {
                 let semaphore = DispatchSemaphore(value: 0)
                 let responseBox = ResponseBox()
                 DispatchQueue.main.async {
                     responseBox.value = onRequest(message)
                     semaphore.signal()
                 }
-                // Cap the wait at onRequestTimeout so a stalled main
-                // queue can't pin this serial socket queue and block
-                // every subsequent client behind it. On timeout, we
-                // drop the response (the closure may still complete
-                // later — its signal() goes into the retained
-                // semaphore harmlessly).
-                let waitResult = semaphore.wait(timeout: .now() + onRequestTimeout)
-                if waitResult == .success,
-                   let response = responseBox.value,
-                   let encoded = try? JSONEncoder().encode(response) {
-                    var payload = encoded
-                    payload.append(0x0A) // '\n'
-                    // Errors are logged-and-dropped: the socket worker
-                    // queue has no useful escalation path for a per-
-                    // client write failure past this point.
-                    payload.withUnsafeBytes { buf in
-                        guard let base = buf.baseAddress?
-                            .assumingMemoryBound(to: UInt8.self) else { return }
-                        try? SocketIO.writeAll(fd: fd, bytes: base, count: buf.count)
-                    }
-                }
+                writeResponseAfterWaiting(
+                    fd: fd,
+                    semaphore: semaphore,
+                    responseBox: responseBox
+                )
             }
+        }
+    }
+
+    private func writeResponseAfterWaiting(
+        fd: Int32,
+        semaphore: DispatchSemaphore,
+        responseBox: ResponseBox
+    ) {
+        // Cap the wait so a stalled handler cannot pin the serial socket
+        // worker. A late task writes only to the retained box and signals a
+        // semaphore nobody is waiting on.
+        let waitResult = semaphore.wait(timeout: .now() + onRequestTimeout)
+        guard waitResult == .success,
+              let response = responseBox.value,
+              let encoded = try? JSONEncoder().encode(response) else {
+            return
+        }
+        var payload = encoded
+        payload.append(0x0A) // '\n'
+        payload.withUnsafeBytes { buf in
+            guard let base = buf.baseAddress?
+                .assumingMemoryBound(to: UInt8.self) else { return }
+            try? SocketIO.writeAll(fd: fd, bytes: base, count: buf.count)
         }
     }
 }

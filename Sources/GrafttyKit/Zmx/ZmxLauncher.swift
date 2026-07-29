@@ -8,6 +8,22 @@ import Foundation
 /// public surface is small and synchronous; use `kill` from a background
 /// queue if calling from the UI thread (see TerminalManager).
 public final class ZmxLauncher: Sendable {
+    public enum SendError: Swift.Error, Equatable, LocalizedError {
+        case unavailable
+        case timedOut
+        case failed(exitCode: Int32, message: String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "zmx executable is unavailable"
+            case .timedOut:
+                return "zmx send timed out"
+            case .failed(_, let message):
+                return message.isEmpty ? "zmx send failed" : message
+            }
+        }
+    }
 
     /// URL to the `zmx` binary. May point to a path that does not exist;
     /// callers should consult `isAvailable` before assuming usability.
@@ -203,6 +219,34 @@ public final class ZmxLauncher: Sendable {
             env: subprocessEnv(from: ProcessInfo.processInfo.environment),
             timeout: 2.0
         )
+    }
+
+    /// Writes raw bytes to a live zmx session without requiring an attached
+    /// Graftty surface. This is the recovery path for a persisted pane whose
+    /// daemon survived surface eviction or app-state reconstruction.
+    public func send(
+        sessionName: String,
+        text: String,
+        timeout: TimeInterval = 2.0
+    ) throws {
+        guard isAvailable else { throw SendError.unavailable }
+        let result: (stdout: String, stderr: String, exitCode: Int32)
+        do {
+            result = try ZmxRunner.captureAll(
+                executable: executable,
+                args: ["send", sessionName, text],
+                env: subprocessEnv(from: ProcessInfo.processInfo.environment),
+                timeout: timeout
+            )
+        } catch ZmxRunner.Error.timedOut {
+            throw SendError.timedOut
+        }
+        guard result.exitCode == 0 else {
+            throw SendError.failed(
+                exitCode: result.exitCode,
+                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
     }
 
     /// `zmx list --short`. Returns the set of session names known to

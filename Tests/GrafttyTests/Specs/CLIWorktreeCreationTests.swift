@@ -7,7 +7,7 @@ import GrafttyKit
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
     @Test("""
-    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
@@ -34,7 +34,8 @@ struct CLIWorktreeCreationTests {
             callerWorktree: "/repo/.worktrees/caller",
             names: names,
             agentRuntime: nil,
-            resolvedPrompt: nil
+            resolvedPrompt: nil,
+            operationID: "create-review"
         )
 
         guard case let .createWorktree(
@@ -45,7 +46,8 @@ struct CLIWorktreeCreationTests {
             base,
             _,
             _,
-            _
+            _,
+            operationID
         ) = request else {
             Issue.record("expected createWorktree request")
             return
@@ -55,6 +57,26 @@ struct CLIWorktreeCreationTests {
         #expect(branchName == "review-branch")
         #expect(existing == false)
         #expect(base == "HEAD~2")
+        #expect(operationID == "create-review")
+    }
+
+    @Test("Capability probes retry a transient transport timeout")
+    func capabilityProbeRetriesTimeout() throws {
+        var attempts = 0
+        try WorktreeCapability.require(
+            .worktreeCreateIdempotencyCapability,
+            unsupportedMessage: "unsupported",
+            verificationMessage: "unverified",
+            retryTransportFailuresUntil: Date().addingTimeInterval(1),
+            send: { _ in
+                attempts += 1
+                if attempts == 1 { throw CLIError.socketTimeout }
+                return .ok
+            },
+            sleep: { _ in }
+        )
+
+        #expect(attempts == 2)
     }
 
     @Test("Existing Git refs are preserved while the worktree directory name is normalized")
@@ -330,6 +352,28 @@ struct CLIWorktreeCreationTests {
         #expect(ready?.state == .ready)
         #expect(ready?.messageAddress == "/repo/.worktrees/fix-auth")
         #expect(ready?.worktreePath == "/repo/.worktrees/fix-auth")
+    }
+
+    @MainActor
+    @Test("""
+    @spec AGENT-5.8: Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
+    """)
+    func duplicateCreationOperationReturnsOriginalStatus() {
+        let store = CLIWorktreeCreationStore()
+        let first = store.begin(
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth",
+            operationID: "client-create-123"
+        )
+        let retry = store.begin(
+            worktreePath: "/repo/.worktrees/should-not-be-created",
+            messageAddress: "/repo/.worktrees/should-not-be-created",
+            operationID: "client-create-123"
+        )
+
+        #expect(retry == first)
+        #expect(retry.worktreePath == "/repo/.worktrees/fix-auth")
+        #expect(retry.state == .pending)
     }
 
     @MainActor

@@ -27,9 +27,31 @@ enum AddWorktreeFlow {
     /// Host-managed zmx panes normally wait for their AppKit view's first
     /// settled layout before attaching. Background creation has no guarantee
     /// that a view will ever mount, so each caller must choose deliberately.
-    enum TerminalStartTiming {
+    enum TerminalStartTiming: Equatable {
         case afterViewLayout
         case immediately
+    }
+
+    enum CreationEntryPoint {
+        case nativeSidebar
+        case cli
+        case web
+    }
+
+    /// CLI creation has no mounted view and must start the backend as part of
+    /// creation. Native creation deliberately waits for the selected view's
+    /// first nonzero layout so zmx replay is parsed at the settled grid size.
+    /// The web client attaches to the returned zmx session itself, so its
+    /// hidden Mac surface stays deferred too.
+    static func terminalStartTiming(
+        for entryPoint: CreationEntryPoint
+    ) -> TerminalStartTiming {
+        switch entryPoint {
+        case .cli:
+            return .immediately
+        case .nativeSidebar, .web:
+            return .afterViewLayout
+        }
     }
 
     /// The worktree name slots into `<repo>/.worktrees/<name>` and must
@@ -276,13 +298,23 @@ enum AddWorktreeFlow {
         // choice rather than inferred from `initialCommand`: a plain
         // `graftty worktree add <name>` still promises to start a shell.
         //
-        // Native sheet creation chooses `.afterViewLayout` so TERM-11.10 can
-        // defer the attach until the selected pane has its real AppKit layout.
         if terminalStartTiming == .immediately,
            !firstHandle.startForBackgroundLaunch() {
             terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
             return .failure(.discoveryFailed("failed to start terminal backend"))
+        }
+        if initialCommand != nil {
+            let accepted = await terminalManager.waitForExplicitInitialInputDelivery(
+                for: firstLeaf
+            )
+            guard accepted else {
+                terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
+                return .failure(.discoveryFailed(
+                    "terminal shell did not become ready to accept the launch command"
+                ))
+            }
         }
         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
         terminalManager.surfaceBudget.noteCreated(
@@ -329,10 +361,7 @@ enum AddWorktreeFlow {
             statsStore: statsStore,
             terminalManager: terminalManager,
             teamEventDispatcher: teamEventDispatcher,
-            // The web client establishes its own zmx attachment from the
-            // returned session name. Keep the hidden Mac surface deferred so
-            // it does not claim display ownership ahead of that client.
-            terminalStartTiming: .afterViewLayout
+            terminalStartTiming: terminalStartTiming(for: .web)
         )
     }
 
