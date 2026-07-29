@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyKit
+import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 
@@ -172,6 +173,21 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         }
     }
 
+    func bindSurfaceSync(
+        currentWindowSize: @escaping () -> PtyProcess.WindowSize?,
+        requestRefresh: @escaping () -> Void
+    ) {
+        bindSurfaceSync(
+            currentGridSize: {
+                currentWindowSize().map { (cols: $0.cols, rows: $0.rows) }
+            },
+            requestRefresh: requestRefresh
+        )
+    }
+
+    /// The remote transport currently forwards the authoritative grid only.
+    /// Retain this overload for focused backend tests and grid-only callers
+    /// while SurfaceHandle supplies a full cell-and-pixel snapshot.
     func bindSurfaceSync(
         currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
         requestRefresh: @escaping () -> Void

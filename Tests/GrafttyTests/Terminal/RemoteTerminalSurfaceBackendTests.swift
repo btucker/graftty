@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyKit
+import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 import NIOConcurrencyHelpers
@@ -175,7 +176,14 @@ struct RemoteTerminalSurfaceBackendTests {
             backend.surfaceWasFreed()
         }
         backend.bindSurfaceSync(
-            currentGridSize: { (cols: 120, rows: 40) },
+            currentWindowSize: {
+                PtyProcess.WindowSize(
+                    cols: 120,
+                    rows: 40,
+                    xpixel: 1_200,
+                    ypixel: 800
+                )
+            },
             requestRefresh: {}
         )
         try backend.start(surface: fakeSurface())

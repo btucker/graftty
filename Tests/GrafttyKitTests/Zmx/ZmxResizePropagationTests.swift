@@ -40,14 +40,39 @@ struct ZmxResizePropagationTests {
         let pid: pid_t
         let masterFd: Int32
 
-        /// Aggressively tear down: SIGKILL the attach client directly
-        /// (no wait, no subprocess kill-by-session — this test doesn't
-        /// care whether the daemon gets cleaned up, only that we don't
-        /// block here. Leftover zmx daemons get reaped by launchd at
-        /// session end; the scoped ZMX_DIR keeps their state isolated
-        /// from other tests).
+        func write(_ text: String) {
+            text.utf8CString.withUnsafeBufferPointer { bytes in
+                _ = Darwin.write(masterFd, bytes.baseAddress, bytes.count - 1)
+            }
+        }
+
+        func waitForOutput(_ marker: String, timeout: TimeInterval = 5) -> String {
+            let deadline = Date().addingTimeInterval(timeout)
+            var output = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while Date() < deadline {
+                let count = buffer.withUnsafeMutableBufferPointer {
+                    Darwin.read(masterFd, $0.baseAddress, $0.count)
+                }
+                if count > 0 {
+                    output.append(contentsOf: buffer[0..<count])
+                    if String(decoding: output, as: UTF8.self).contains(marker) {
+                        break
+                    }
+                } else if count < 0, errno != EAGAIN, errno != EWOULDBLOCK {
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            return String(decoding: output, as: UTF8.self)
+        }
+
+        /// Aggressively tear down: SIGKILL the attach client directly,
+        /// reap it, and leave session cleanup to the scoped launcher.
         func terminate() {
             _ = Darwin.kill(pid, SIGKILL)
+            var status: Int32 = 0
+            while Darwin.waitpid(pid, &status, 0) == -1, errno == EINTR {}
             Darwin.close(masterFd)
         }
     }
@@ -81,6 +106,8 @@ struct ZmxResizePropagationTests {
         sessionName: String,
         cols: UInt16,
         rows: UInt16,
+        xpixel: UInt16 = 0,
+        ypixel: UInt16 = 0,
         resetSignalMask: Bool = true
     ) throws -> PtyAttach {
         let env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
@@ -88,7 +115,12 @@ struct ZmxResizePropagationTests {
         let spawned = try PtyProcess.spawn(
             argv: launcher.attachArgv(sessionName: sessionName, userShell: "/bin/sh"),
             env: env,
-            initialSize: (cols: cols, rows: rows),
+            initialWindowSize: PtyProcess.WindowSize(
+                cols: cols,
+                rows: rows,
+                xpixel: xpixel,
+                ypixel: ypixel
+            ),
             resetSignalMask: resetSignalMask
         )
 
@@ -150,6 +182,15 @@ struct ZmxResizePropagationTests {
         "(default): resize rows=\(rows) cols=\(cols)"
     }
 
+    private static func resizeNeedle(
+        rows: UInt16,
+        cols: UInt16,
+        xpixel: UInt16,
+        ypixel: UInt16
+    ) -> String {
+        "\(resizeNeedle(rows: rows, cols: cols)) xpixel=\(xpixel) ypixel=\(ypixel)"
+    }
+
     /// Wait until the daemon has fully processed the startup Init → setLeader
     /// → Resize round-trip (indicated by `resize rows=<initial> cols=<initial>`
     /// appearing in the session log). At that point the attach client is in
@@ -190,7 +231,9 @@ struct ZmxResizePropagationTests {
     /// output woke the loop. That matched the user-visible symptom where
     /// a just-reattached Claude Code pane kept the old dimensions until
     /// the user typed.
-    @Test(.timeLimit(.minutes(1)))
+    @Test("""
+    @spec ZMX-9.1: When the bundled `zmx attach` client receives a PTY resize event while idle, it shall forward the new grid without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
+    """, .timeLimit(.minutes(1)))
     func resizeIsPropagatedWithoutUserInput() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
@@ -240,6 +283,78 @@ struct ZmxResizePropagationTests {
                 zmx's poll-race window. Full log:
                 \(log)
                 """
+            )
+        }
+    }
+
+    @Test("""
+    @spec ZMX-9.2: When the bundled Graftty `zmx` client and daemon negotiate pixel-size support, the client shall send pixel metadata immediately before the unchanged legacy 4-byte row/column Resize message. When only the outer PTY's pixel dimensions change, the new pixels shall reach the daemon's inner PTY without requiring a grid change, while the vendoring compatibility gate shall continue to accept old-daemon/new-client and new-daemon/old-client attachments.
+    """, .timeLimit(.minutes(1)))
+    func negotiatedPixelOnlyResizeIsPropagated() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: session) }
+            let attach = try Self.spawnAttachWithInitialSize(
+                launcher: launcher,
+                sessionName: session,
+                cols: Self.initialCols,
+                rows: Self.initialRows,
+                xpixel: 960,
+                ypixel: 576
+            )
+            defer { attach.terminate() }
+
+            try Self.waitForSteadyState(
+                launcher: launcher,
+                sessionName: session,
+                initialCols: Self.initialCols,
+                initialRows: Self.initialRows
+            )
+
+            let resized = PtyProcess.WindowSize(
+                cols: Self.initialCols,
+                rows: Self.initialRows,
+                xpixel: 1_280,
+                ypixel: 720
+            )
+            try PtyProcess.resize(masterFD: attach.masterFd, windowSize: resized)
+
+            let needle = Self.resizeNeedle(
+                rows: resized.rows,
+                cols: resized.cols,
+                xpixel: resized.xpixel,
+                ypixel: resized.ypixel
+            )
+            let log = Self.waitForLogContains(
+                launcher: launcher,
+                sessionName: session,
+                needle: needle,
+                timeout: 2.0
+            )
+
+            #expect(
+                log.contains(needle),
+                """
+                daemon session log never showed negotiated pixel-only resize \
+                `\(needle)` within 2s. Full log:
+                \(log)
+                """
+            )
+
+            // The daemon logs the requested size after an unchecked ioctl.
+            // Query from a child of the inner shell so this test proves the
+            // PTY adopted the dimensions rather than merely logging them.
+            let innerMarker = "INNER_WINDOW:\(resized.rows):\(resized.cols):"
+                + "\(resized.xpixel):\(resized.ypixel)"
+            attach.write(
+                "python3 -c \"import fcntl,struct,termios;"
+                    + "r,c,x,y=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));"
+                    + "print(f'INNER_WINDOW:{r}:{c}:{x}:{y}')\"\n"
+            )
+            let output = attach.waitForOutput(innerMarker)
+            #expect(
+                output.contains(innerMarker),
+                "inner PTY did not adopt the negotiated pixel resize; output=\(output)"
             )
         }
     }

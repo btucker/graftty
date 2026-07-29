@@ -3,7 +3,10 @@ import Foundation
 import Darwin
 @testable import GrafttyKit
 
-@Suite("PtyProcess — PTY allocation + fork/exec")
+/// `.serialized` because `PtyProcess.spawn` uses raw `fork(2)`. Concurrent
+/// forks from Swift Testing tasks can deadlock a child in process-global
+/// runtime state before `execve`.
+@Suite("PtyProcess — PTY allocation + fork/exec", .serialized)
 struct PtyProcessTests {
 
     /// Read from the master fd until `stop` returns true or the deadline
@@ -82,6 +85,38 @@ struct PtyProcessTests {
         _ = waitpid(spawn.pid, &status, 0)
         #expect(String(data: collected, encoding: .utf8)?.contains("13 42") == true,
                 "expected '13 42' in output; got \(collected.count) bytes: \(String(data: collected, encoding: .utf8) ?? "<non-utf8>")")
+    }
+
+    @Test func fullWindowSizeAppliesCellAndPixelDimensions() throws {
+        let initial = PtyProcess.WindowSize(
+            cols: 120,
+            rows: 40,
+            xpixel: 1_440,
+            ypixel: 960
+        )
+        let spawn = try PtyProcess.spawn(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            initialWindowSize: initial
+        )
+        defer {
+            kill(spawn.pid, SIGTERM)
+            close(spawn.masterFD)
+            var status: Int32 = 0
+            _ = waitpid(spawn.pid, &status, 0)
+        }
+
+        #expect(PtyProcess.currentWindowSize(masterFD: spawn.masterFD) == initial)
+
+        let pixelOnlyResize = PtyProcess.WindowSize(
+            cols: 120,
+            rows: 40,
+            xpixel: 1_800,
+            ypixel: 1_200
+        )
+        try PtyProcess.resize(masterFD: spawn.masterFD, windowSize: pixelOnlyResize)
+
+        #expect(PtyProcess.currentWindowSize(masterFD: spawn.masterFD) == pixelOnlyResize)
     }
 
     @Test("""

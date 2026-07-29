@@ -110,7 +110,7 @@
     "ZMX.6": "Pass-through Guarantees",
     "ZMX.7": "Session-Loss Recovery",
     "ZMX.8": "Manual Restart",
-    "ZMX.9": "Idle Resize",
+    "ZMX.9": "Resize Protocol",
     "DIST.1": "Build Bundle",
     "DIST.2": "Release Automation",
     "DIST.3": "Homebrew Cask",

@@ -173,7 +173,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     }
 
     func bindSurfaceSync(
-        currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
+        currentWindowSize: @escaping () -> PtyProcess.WindowSize?,
         requestRefresh: @escaping () -> Void
     ) {
         bindSurfaceSyncCount += 1

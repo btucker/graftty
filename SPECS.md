@@ -890,9 +890,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree`, `focusedPaneSlotID`, and `primaryPaneSlotID` so re-opening recreates the same layout and startup ownership at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
 
-### ZMX-9.x — Idle Resize
+### ZMX-9.x — Resize Protocol
 
-**ZMX-9.1** The bundled `zmx attach` client shall forward PTY resize events while idle, without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
+**ZMX-9.1** When the bundled `zmx attach` client receives a PTY resize event while idle, it shall forward the new grid without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
+
+**ZMX-9.2** When the bundled Graftty `zmx` client and daemon negotiate pixel-size support, the client shall send pixel metadata immediately before the unchanged legacy 4-byte row/column Resize message. When only the outer PTY's pixel dimensions change, the new pixels shall reach the daemon's inner PTY without requiring a grid change, while the vendoring compatibility gate shall continue to accept old-daemon/new-client and new-daemon/old-client attachments.
+
+**ZMX-9.3** When native libghostty reports a resize, Graftty shall forward both the cell grid and pixel dimensions to the outer `zmx attach` PTY. When only the pixel dimensions change, Graftty shall not deduplicate the update, including across the trailing-edge resize coalescer.
 
 ## DIST — Distribution
 

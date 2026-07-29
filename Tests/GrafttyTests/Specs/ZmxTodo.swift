@@ -68,8 +68,4 @@ struct ZmxTodo {
 """, .disabled("not yet implemented"))
     func zmx_8_1() async throws { }
 
-    @Test("""
-@spec ZMX-9.1: The bundled `zmx attach` client shall forward PTY resize events while idle, without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
-""", .disabled("not yet implemented"))
-    func zmx_9_1() async throws { }
 }
