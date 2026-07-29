@@ -21,6 +21,24 @@ import Darwin
 /// interact with the child. The caller is responsible for closing
 /// the master fd and reaping the child (`waitpid`).
 public enum PtyProcess {
+    public struct WindowSize: Sendable, Equatable {
+        public let cols: UInt16
+        public let rows: UInt16
+        public let xpixel: UInt16
+        public let ypixel: UInt16
+
+        public init(
+            cols: UInt16,
+            rows: UInt16,
+            xpixel: UInt16 = 0,
+            ypixel: UInt16 = 0
+        ) {
+            self.cols = cols
+            self.rows = rows
+            self.xpixel = xpixel
+            self.ypixel = ypixel
+        }
+    }
 
     public struct Spawned {
         public let masterFD: Int32
@@ -34,6 +52,7 @@ public enum PtyProcess {
         case ptsnameFailed
         case forkFailed(errno: Int32)
         case execFailed(errno: Int32)
+        case resizeFailed(errno: Int32)
     }
 
     /// Spawn `argv[0]` with `argv[1...]` as arguments and `env` as
@@ -54,6 +73,27 @@ public enum PtyProcess {
         env: [String: String],
         currentDirectory: URL? = nil,
         initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        resetSignalMask: Bool = true
+    ) throws -> Spawned {
+        try spawn(
+            argv: argv,
+            env: env,
+            currentDirectory: currentDirectory,
+            initialWindowSize: initialSize.map {
+                WindowSize(cols: $0.cols, rows: $0.rows)
+            },
+            resetSignalMask: resetSignalMask
+        )
+    }
+
+    /// Full winsize variant used by the native Ghostty surface, which knows
+    /// both the cell grid and the backing pixel dimensions. The legacy
+    /// `initialSize` overload remains rows/columns-only for web/SSH callers.
+    public static func spawn(
+        argv: [String],
+        env: [String: String],
+        currentDirectory: URL? = nil,
+        initialWindowSize: WindowSize?,
         resetSignalMask: Bool = true
     ) throws -> Spawned {
         precondition(!argv.isEmpty, "argv must not be empty")
@@ -89,12 +129,12 @@ public enum PtyProcess {
             throw Error.ptsnameFailed
         }
 
-        if let size = initialSize {
+        if let size = initialWindowSize {
             var ws = winsize(
                 ws_row: size.rows,
                 ws_col: size.cols,
-                ws_xpixel: 0,
-                ws_ypixel: 0
+                ws_xpixel: size.xpixel,
+                ws_ypixel: size.ypixel
             )
             _ = ioctl(master, UInt(TIOCSWINSZ), &ws)
         }
@@ -202,10 +242,24 @@ public enum PtyProcess {
     /// Apply a terminal size change to the PTY. The shell on the slave
     /// side will receive SIGWINCH.
     public static func resize(masterFD: Int32, cols: UInt16, rows: UInt16) throws {
-        var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
+        try resize(
+            masterFD: masterFD,
+            windowSize: WindowSize(cols: cols, rows: rows)
+        )
+    }
+
+    /// Apply the complete terminal grid and pixel dimensions. Pixel fields
+    /// are UInt16 because that is the kernel's `struct winsize` wire shape.
+    public static func resize(masterFD: Int32, windowSize: WindowSize) throws {
+        var ws = winsize(
+            ws_row: windowSize.rows,
+            ws_col: windowSize.cols,
+            ws_xpixel: windowSize.xpixel,
+            ws_ypixel: windowSize.ypixel
+        )
         let rc = ioctl(masterFD, UInt(TIOCSWINSZ), &ws)
         if rc != 0 {
-            throw Error.execFailed(errno: errno)  // repurposing; cleaner to add a dedicated case if this becomes common
+            throw Error.resizeFailed(errno: errno)
         }
     }
 
@@ -214,9 +268,21 @@ public enum PtyProcess {
     /// rendering to match. Returns nil when the ioctl fails (typically
     /// means the fd is closed).
     public static func currentSize(masterFD: Int32) -> (cols: UInt16, rows: UInt16)? {
+        guard let size = currentWindowSize(masterFD: masterFD) else { return nil }
+        return (cols: size.cols, rows: size.rows)
+    }
+
+    /// Read the PTY's complete winsize, including the pixel metadata zmx
+    /// forwards to applications using terminal graphics protocols.
+    public static func currentWindowSize(masterFD: Int32) -> WindowSize? {
         var ws = winsize()
         let rc = ioctl(masterFD, UInt(TIOCGWINSZ), &ws)
         if rc != 0 { return nil }
-        return (cols: ws.ws_col, rows: ws.ws_row)
+        return WindowSize(
+            cols: ws.ws_col,
+            rows: ws.ws_row,
+            xpixel: ws.ws_xpixel,
+            ypixel: ws.ws_ypixel
+        )
     }
 }

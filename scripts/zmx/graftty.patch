@@ -1,0 +1,241 @@
+diff --git a/src/ipc.zig b/src/ipc.zig
+index 27dddb7..f8908fa 100644
+--- a/src/ipc.zig
++++ b/src/ipc.zig
+@@ -22,8 +22,10 @@ pub const Tag = enum(u8) {
+     LabelSet = 15,
+     LabelClear = 16,
+     LabelData = 17,
++    Capabilities = 18,
++    PixelSize = 19,
+     // Non-exhaustive: this enum comes off the wire via bytesToValue and
+-    // @enumFromInt, so out-of-range values (14-255) are representable
++    // @enumFromInt, so out-of-range values (20-255) are representable
+     // rather than UB. Switches must handle `_` (unknown tag).
+     _,
+ };
+@@ -42,11 +44,39 @@ pub const Header = packed struct {
+ pub const Resize = packed struct {
+     rows: u16,
+     cols: u16,
++};
++
++pub const PixelSize = packed struct {
++    xpixel: u16 = 0,
++    ypixel: u16 = 0,
++};
++
++pub const Capabilities = packed struct {
++    bits: u64 = 0,
++
++    pub const pixel_size: u64 = 1 << 0;
++
++    pub fn supportsPixelSize(self: Capabilities) bool {
++        return self.bits & pixel_size != 0;
++    }
++};
++
++pub const TerminalSize = struct {
++    rows: u16,
++    cols: u16,
+     xpixel: u16 = 0,
+     ypixel: u16 = 0,
++
++    pub fn resize(self: TerminalSize) Resize {
++        return .{ .rows = self.rows, .cols = self.cols };
++    }
++
++    pub fn pixelSize(self: TerminalSize) PixelSize {
++        return .{ .xpixel = self.xpixel, .ypixel = self.ypixel };
++    }
+ };
+
+-pub fn getTerminalSize(fd: i32) Resize {
++pub fn getTerminalSize(fd: i32) TerminalSize {
+     var ws: cross.c.struct_winsize = undefined;
+     if (cross.c.ioctl(fd, cross.c.TIOCGWINSZ, &ws) == 0 and ws.ws_row > 0 and ws.ws_col > 0) {
+         return .{ .rows = ws.ws_row, .cols = ws.ws_col, .xpixel = ws.ws_xpixel, .ypixel = ws.ws_ypixel };
+@@ -54,6 +84,18 @@ pub fn getTerminalSize(fd: i32) Resize {
+     return .{ .rows = 24, .cols = 120 };
+ }
+
++test "Graftty wire extensions preserve legacy resize size" {
++    try std.testing.expectEqual(@as(usize, 4), @sizeOf(Resize));
++    try std.testing.expectEqual(@as(usize, 4), @sizeOf(PixelSize));
++    try std.testing.expectEqual(@as(usize, 8), @sizeOf(Capabilities));
++    try std.testing.expectEqual(@as(u8, 18), @intFromEnum(Tag.Capabilities));
++    try std.testing.expectEqual(@as(u8, 19), @intFromEnum(Tag.PixelSize));
++
++    const capabilities = Capabilities{ .bits = Capabilities.pixel_size };
++    try std.testing.expect(capabilities.supportsPixelSize());
++    try std.testing.expect(!(Capabilities{}).supportsPixelSize());
++}
++
+ pub const MAX_CMD_LEN = 256;
+ pub const MAX_CWD_LEN = 256;
+
+diff --git a/src/main.zig b/src/main.zig
+index 9d3d4d7..4e28ea9 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -504,6 +504,7 @@ const Client = struct {
+     alloc: std.mem.Allocator,
+     socket_fd: i32,
+     has_pending_output: bool = false,
++    pixel_size: ipc.PixelSize = .{},
+     read_buf: ipc.SocketBuffer,
+     write_buf: std.ArrayList(u8),
+
+@@ -1076,6 +1077,15 @@ const Daemon = struct {
+     ) !void {
+         if (payload.len != @sizeOf(ipc.Resize)) return;
+
++        const capabilities = ipc.Capabilities{ .bits = ipc.Capabilities.pixel_size };
++        try ipc.appendMessage(
++            self.alloc,
++            &client.write_buf,
++            .Capabilities,
++            std.mem.asBytes(&capabilities),
++        );
++        client.has_pending_output = true;
++
+         // Serialize terminal state BEFORE resize to capture correct cursor position.
+         // Resizing triggers reflow which can move the cursor, and the shell's
+         // SIGWINCH-triggered redraw will run after our snapshot is sent.
+@@ -1115,8 +1125,8 @@ const Daemon = struct {
+             var ws: cross.c.struct_winsize = .{
+                 .ws_row = resize.rows,
+                 .ws_col = resize.cols,
+-                .ws_xpixel = resize.xpixel,
+-                .ws_ypixel = resize.ypixel,
++                .ws_xpixel = client.pixel_size.xpixel,
++                .ws_ypixel = client.pixel_size.ypixel,
+             };
+             _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
+             // Disable prompt_redraw before resize. The daemon's internal terminal
+@@ -1136,10 +1146,18 @@ const Daemon = struct {
+             self.has_had_client = true;
+             self.has_terminal_client = true;
+
+-            std.log.debug("init resize rows={d} cols={d}", .{ resize.rows, resize.cols });
++            std.log.debug(
++                "init resize rows={d} cols={d} xpixel={d} ypixel={d}",
++                .{ resize.rows, resize.cols, client.pixel_size.xpixel, client.pixel_size.ypixel },
++            );
+         }
+     }
+
++    pub fn handlePixelSize(_: *Daemon, client: *Client, payload: []const u8) void {
++        if (payload.len != @sizeOf(ipc.PixelSize)) return;
++        client.pixel_size = std.mem.bytesToValue(ipc.PixelSize, payload);
++    }
++
+     pub fn handleResize(
+         self: *Daemon,
+         client: *Client,
+@@ -1158,8 +1176,8 @@ const Daemon = struct {
+         var ws: cross.c.struct_winsize = .{
+             .ws_row = resize.rows,
+             .ws_col = resize.cols,
+-            .ws_xpixel = resize.xpixel,
+-            .ws_ypixel = resize.ypixel,
++            .ws_xpixel = client.pixel_size.xpixel,
++            .ws_ypixel = client.pixel_size.ypixel,
+         };
+         _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
+         // Disable prompt_redraw before resize (same rationale as handleInit).
+@@ -1171,7 +1189,10 @@ const Daemon = struct {
+             .rows = resize.rows,
+         };
+         try term.resize(self.alloc, opts);
+-        std.log.debug("resize rows={d} cols={d}", .{ resize.rows, resize.cols });
++        std.log.debug(
++            "resize rows={d} cols={d} xpixel={d} ypixel={d}",
++            .{ resize.rows, resize.cols, client.pixel_size.xpixel, client.pixel_size.ypixel },
++        );
+     }
+
+     pub fn handleDetach(self: *Daemon, client: *Client, i: usize) void {
+@@ -2630,6 +2651,10 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+     const alloc = std.heap.c_allocator;
+     defer posix.close(client_sock_fd);
+
++    var sigwinch_mask = posix.sigemptyset();
++    posix.sigaddset(&sigwinch_mask, posix.SIG.WINCH);
++    posix.sigprocmask(posix.SIG.UNBLOCK, &sigwinch_mask, null);
++
+     try openSignalPipe();
+     installWakeHandler(posix.SIG.WINCH);
+
+@@ -2644,7 +2669,9 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+
+     // Send init message with terminal size (buffered)
+     const size = ipc.getTerminalSize(posix.STDOUT_FILENO);
+-    try ipc.appendMessage(alloc, &sock_write_buf, .Init, std.mem.asBytes(&size));
++    const initial_resize = size.resize();
++    try ipc.appendMessage(alloc, &sock_write_buf, .Init, std.mem.asBytes(&initial_resize));
++    var supports_pixel_size = false;
+
+     var poll_fds = try std.ArrayList(posix.pollfd).initCapacity(alloc, 4);
+     defer poll_fds.deinit(alloc);
+@@ -2699,7 +2726,7 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+         if (poll_fds.items[2].revents & posix.POLL.IN != 0) {
+             drainSignalPipe();
+             const next_size = ipc.getTerminalSize(posix.STDOUT_FILENO);
+-            try ipc.appendMessage(alloc, &sock_write_buf, .Resize, std.mem.asBytes(&next_size));
++            try appendTerminalSize(alloc, &sock_write_buf, next_size, supports_pixel_size);
+         }
+
+         // Handle stdin -> socket (Input)
+@@ -2755,12 +2782,12 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+                         // daemon is asking for the client's window size usually in response
+                         // to this client being set as leader.
+                         const next_size = ipc.getTerminalSize(posix.STDOUT_FILENO);
+-                        try ipc.appendMessage(
+-                            alloc,
+-                            &sock_write_buf,
+-                            .Resize,
+-                            std.mem.asBytes(&next_size),
+-                        );
++                        try appendTerminalSize(alloc, &sock_write_buf, next_size, supports_pixel_size);
++                    },
++                    .Capabilities => {
++                        if (msg.payload.len != @sizeOf(ipc.Capabilities)) continue;
++                        const capabilities = std.mem.bytesToValue(ipc.Capabilities, msg.payload);
++                        supports_pixel_size = capabilities.supportsPixelSize();
+                     },
+                     .Switch => {
+                         std.log.info("switch session", .{});
+@@ -2805,6 +2832,20 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+     }
+ }
+
++fn appendTerminalSize(
++    alloc: std.mem.Allocator,
++    write_buf: *std.ArrayList(u8),
++    size: ipc.TerminalSize,
++    supports_pixel_size: bool,
++) !void {
++    if (supports_pixel_size) {
++        const pixels = size.pixelSize();
++        try ipc.appendMessage(alloc, write_buf, .PixelSize, std.mem.asBytes(&pixels));
++    }
++    const resize = size.resize();
++    try ipc.appendMessage(alloc, write_buf, .Resize, std.mem.asBytes(&resize));
++}
++
+ /// dameonLoop is what the daemon runs to send and receive ipc commands from its corresponding
+ /// clients.  It uses poll() as its non-blocking mechanism.
+ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
+@@ -3061,9 +3102,10 @@ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
+                         .LabelGet => try daemon.handleLabelGet(client),
+                         .LabelSet => try daemon.handleLabelSet(client, msg.payload),
+                         .LabelClear => try daemon.handleLabelClear(client),
++                        .PixelSize => daemon.handlePixelSize(client, msg.payload),
+                         .History => try daemon.handleHistory(client, &term, msg.payload),
+                         .Run => try daemon.handleRun(client, msg.payload),
+-                        .Ack, .TaskComplete, .LabelData => {},
++                        .Ack, .TaskComplete, .LabelData, .Capabilities => {},
+                         .Write => try daemon.handleWrite(client, msg.payload),
+                         _ => std.log.warn(
+                             "ignoring unknown IPC tag={d}",

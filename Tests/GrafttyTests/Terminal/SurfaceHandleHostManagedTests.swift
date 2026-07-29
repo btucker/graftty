@@ -169,7 +169,9 @@ struct SurfaceHandleHostManagedTests {
                 kind: .mac
             ),
             sessionFactory: { _, _, initialSize in
-                spawnedAt = initialSize.map(RecordedGrid.init)
+                spawnedAt = initialSize.map {
+                    RecordedGrid(cols: $0.cols, rows: $0.rows)
+                }
                 return session
             }
         )
@@ -508,7 +510,7 @@ struct SurfaceHandleHostManagedTests {
     @spec MEM-1.7: When a previously-evicted pane is re-attached via the rehydration path, the application shall spawn its outer `zmx attach` PTY with `initialSize` equal to the captured grid size, so the underlying shell PTY winsize remains stable across the evict / re-attach cycle.
     """)
     func initialGridSizePropagatesThroughBackendFactory() throws {
-        var observedInitialSize: (cols: UInt16, rows: UInt16)?
+        var observedInitialSize: PtyProcess.WindowSize?
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
 
@@ -529,6 +531,8 @@ struct SurfaceHandleHostManagedTests {
         #expect(handle != nil)
         #expect(observedInitialSize?.cols == 132)
         #expect(observedInitialSize?.rows == 43)
+        #expect(observedInitialSize?.xpixel == 1_584)
+        #expect(observedInitialSize?.ypixel == 688)
     }
 
     @Test("""

@@ -47,10 +47,10 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     /// flight. The view wraps `ghostty_surface_key` for `keyDown`/`keyUp`
     /// events in this scope; display ownership still decides PTY writes.
     func withUserInput(_ body: () -> Void)
-    /// Binds closures that let the backend query the live grid size and
+    /// Binds closures that let the backend query the live window size and
     /// request a repaint without linking against libghostty (TERM-11.3).
     func bindSurfaceSync(
-        currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
+        currentWindowSize: @escaping () -> PtyProcess.WindowSize?,
         requestRefresh: @escaping () -> Void
     )
     /// The owning NSView received its first nonzero frame (TERM-11.1).
@@ -174,7 +174,7 @@ final class SurfaceHandle {
         hostManagedBackend: SurfaceHandleZmxBackend? = nil,
         zmxBackendFactory: (
             ZmxSpawnConfiguration,
-            (cols: UInt16, rows: UInt16)?,
+            PtyProcess.WindowSize?,
             @escaping () -> Bool,
             HostManagedZmxOwnership?
         ) -> SurfaceHandleZmxBackend = { spawn, initialSize, hasRemoteClient, ownership in
@@ -214,7 +214,14 @@ final class SurfaceHandle {
         let backend = hostManagedBackend ?? zmxSpawnConfiguration.map { spawn in
             zmxBackendFactory(
                 spawn,
-                initialGridSize.map { ($0.columns, $0.rows) },
+                initialGridSize.map {
+                    PtyProcess.WindowSize(
+                        cols: $0.columns,
+                        rows: $0.rows,
+                        xpixel: UInt16(clamping: $0.width_px),
+                        ypixel: UInt16(clamping: $0.height_px)
+                    )
+                },
                 { remoteAttachmentRegistry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false },
                 zmxOwnership
             )
@@ -359,7 +366,7 @@ final class SurfaceHandle {
         surfaceView.surface = newSurface
 
         if let backend {
-            // TERM-11.3: let the backend query the live grid and request
+            // TERM-11.3: let the backend query the live window and request
             // repaints without linking libghostty. These closures run on
             // whatever thread triggers a flush (libghostty IO, IPC, main) —
             // see bindSurfaceSync's contract. Weak self (legal here: every
@@ -368,11 +375,16 @@ final class SurfaceHandle {
             // a no-op; the backend's closed-lifecycle gate already covers
             // the surface pointer's validity.
             backend.bindSurfaceSync(
-                currentGridSize: { [weak self] in
+                currentWindowSize: { [weak self] in
                     guard let self else { return nil }
                     let size = self.queryGridSize()
                     guard size.columns > 0, size.rows > 0 else { return nil }
-                    return (cols: size.columns, rows: size.rows)
+                    return PtyProcess.WindowSize(
+                        cols: size.columns,
+                        rows: size.rows,
+                        xpixel: UInt16(clamping: size.width_px),
+                        ypixel: UInt16(clamping: size.height_px)
+                    )
                 },
                 requestRefresh: { [weak self] in
                     self?.refresh()
