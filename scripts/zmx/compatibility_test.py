@@ -149,6 +149,11 @@ def list_sessions(binary: Path, env: dict[str, str]) -> set[str]:
         timeout=3,
         check=False,
     )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "no stderr"
+        raise RuntimeError(
+            f"{binary} list failed with exit {result.returncode}: {detail}"
+        )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
@@ -159,20 +164,32 @@ def wait_for_session(
     timeout: float = 8.0,
 ) -> None:
     deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
     while time.monotonic() < deadline:
-        if session in list_sessions(binary, env):
-            return
+        try:
+            sessions = list_sessions(binary, env)
+            last_error = None
+            if session in sessions:
+                return
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            last_error = error
         time.sleep(0.05)
-    raise AssertionError(f"session {session!r} never appeared")
+    error = AssertionError(f"session {session!r} never appeared")
+    if last_error is not None:
+        raise error from last_error
+    raise error
 
 
 def kill_session(
+    daemon_binary: Path,
     candidate: Path,
     legacy: Path,
     env: dict[str, str],
     session: str,
 ) -> None:
-    for binary in (candidate, legacy):
+    last_probe_error: Exception | None = None
+    binaries = tuple(dict.fromkeys((daemon_binary, candidate, legacy)))
+    for binary in binaries:
         try:
             subprocess.run(
                 [str(binary), "kill", "--force", session],
@@ -185,19 +202,28 @@ def kill_session(
         except subprocess.TimeoutExpired:
             continue
         try:
-            if session not in list_sessions(binary, env):
+            # Only the CLI that created the daemon is authoritative about
+            # whether its session still exists. A cross-version client may
+            # successfully return an empty list because it cannot interpret
+            # the daemon, which is not proof that cleanup succeeded.
+            if session not in list_sessions(daemon_binary, env):
                 return
-        except subprocess.TimeoutExpired:
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            last_probe_error = error
             continue
-    raise RuntimeError(
+    cleanup_error = RuntimeError(
         f"could not stop zmx session {session!r}; preserving {env['ZMX_DIR']} for cleanup"
     )
+    if last_probe_error is not None:
+        raise cleanup_error from last_probe_error
+    raise cleanup_error
 
 
 def cleanup_case(
     directory: Path,
     env: dict[str, str],
     session: str,
+    daemon_binary: Path,
     candidate: Path,
     legacy: Path,
     *attaches: Attach | None,
@@ -212,7 +238,7 @@ def cleanup_case(
             errors.append(error)
 
     try:
-        kill_session(candidate, legacy, env, session)
+        kill_session(daemon_binary, candidate, legacy, env, session)
     except Exception as error:
         errors.append(error)
     else:
@@ -234,8 +260,8 @@ def prepare_shell(attach: Attach) -> None:
     # satisfy the wait before the shell has actually executed it.
     attach.write("printf '__SHELL_%s__\\n' READY\n")
     attach.wait_for("__SHELL_READY__")
-    attach.write("stty -echo\n")
-    time.sleep(0.1)
+    attach.write("stty -echo; printf '__NOECHO_%s__\\n' READY\n")
+    attach.wait_for("__NOECHO_READY__")
     attach.clear_output()
 
 
@@ -291,7 +317,16 @@ def old_daemon_new_client(legacy: Path, candidate: Path) -> None:
         if "unknown IPC tag=18" in logs or "unknown IPC tag=19" in logs:
             raise AssertionError("new client sent negotiated extension tags to an old daemon")
     finally:
-        cleanup_case(directory, env, session, candidate, legacy, first, second)
+        cleanup_case(
+            directory,
+            env,
+            session,
+            legacy,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
 
 
 def new_daemon_old_client(legacy: Path, candidate: Path) -> None:
@@ -332,7 +367,16 @@ def new_daemon_old_client(legacy: Path, candidate: Path) -> None:
         time.sleep(0.2)
         assert_grid(second, 39, 112, "NEW_GRID")
     finally:
-        cleanup_case(directory, env, session, candidate, legacy, first, second)
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
 
 
 def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
@@ -363,7 +407,15 @@ def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
         attach.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
         attach.wait_for("PIXELS:31:101:1515:929")
     finally:
-        cleanup_case(directory, env, session, candidate, legacy, attach)
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            attach,
+        )
 
 
 def main() -> None:

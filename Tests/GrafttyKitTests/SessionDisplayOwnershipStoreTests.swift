@@ -417,6 +417,89 @@ struct SessionDisplayOwnershipStoreTests {
         #expect(acceptedOwner.snapshot.epoch == initial.snapshot.epoch)
     }
 
+    @Test("""
+    @spec OWN-1.2: When the current display owner reports a resize whose grid equals the authoritative grid, the application shall validate the owner and epoch without advancing the ownership revision or notifying observers.
+    """)
+    func sameGridOwnerResizeValidatesWithoutPublishingANoOp() throws {
+        let store = SessionDisplayOwnershipStore()
+        let originalOwner = DisplayClientID("mac-1")
+        let newerOwner = DisplayClientID("mac-2")
+        let grid = try DisplayGrid(cols: 100, rows: 30)
+        let changedGrid = try DisplayGrid(cols: 120, rows: 40)
+
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: originalOwner,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: grid
+        )
+        let originalClaim = store.claimOwner(
+            sessionName: sessionName,
+            clientID: originalOwner,
+            kind: .mac,
+            grid: grid
+        )
+        #expect(originalClaim.accepted)
+
+        final class Box: @unchecked Sendable {
+            var snapshots: [DisplayOwnershipSnapshot] = []
+        }
+        let box = Box()
+        let token = store.addObserver { box.snapshots.append($0) }
+        defer { token.cancel() }
+
+        let noOp = store.ownerResize(
+            sessionName: sessionName,
+            clientID: originalOwner,
+            epoch: originalClaim.snapshot.epoch,
+            grid: grid
+        )
+
+        #expect(noOp.accepted)
+        #expect(noOp.snapshot.revision == originalClaim.snapshot.revision)
+        #expect(box.snapshots.isEmpty)
+
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: newerOwner,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: grid
+        )
+        let takeover = store.claimOwner(
+            sessionName: sessionName,
+            clientID: newerOwner,
+            kind: .mac,
+            grid: grid
+        )
+        #expect(takeover.accepted)
+        #expect(box.snapshots.count == 1)
+
+        let staleNoOp = store.ownerResize(
+            sessionName: sessionName,
+            clientID: originalOwner,
+            epoch: originalClaim.snapshot.epoch,
+            grid: grid
+        )
+        #expect(!staleNoOp.accepted)
+        #expect(staleNoOp.snapshot.revision == takeover.snapshot.revision)
+        #expect(box.snapshots.count == 1)
+
+        let changed = store.ownerResize(
+            sessionName: sessionName,
+            clientID: newerOwner,
+            epoch: takeover.snapshot.epoch,
+            grid: changedGrid
+        )
+        #expect(changed.accepted)
+        #expect(changed.snapshot.revision == takeover.snapshot.revision + 1)
+        #expect(box.snapshots.count == 2)
+        #expect(box.snapshots.last?.grid == changedGrid)
+    }
+
     @Test
     func staleResizeFromOldEpochIsRejectedAfterTakeover() throws {
         let store = SessionDisplayOwnershipStore()

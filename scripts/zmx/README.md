@@ -29,3 +29,6 @@ the patched Zig source, builds both macOS architectures in `ReleaseSafe`, makes
 a universal binary, checks the reported version, and exercises old/new
 client-daemon compatibility. It stages and verifies the replacement files
 before renaming them into `Resources/zmx-binary`.
+
+For a quick check of the compatibility harness's process-lifecycle helpers
+without rebuilding zmx, run `python3 scripts/test_zmx_compatibility.py`.
