@@ -1,9 +1,10 @@
 import CryptoKit
 import Foundation
+import GrafttyProtocol
 import Testing
+
 @testable import Graftty
 @testable import GrafttyKit
-import GrafttyProtocol
 
 @Suite("RemoteMacHostPairingCoordinator")
 struct RemoteMacHostPairingCoordinatorTests {
@@ -36,7 +37,7 @@ struct RemoteMacHostPairingCoordinatorTests {
             hostDeviceID: RemoteDeviceID(value: "host-mac"),
             hostKind: .mac,
             hostDisplayName: "Host Mac",
-            pairingURLProvider: { URL(string: "https://tailnet.example.com/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://tailnet.example.com/v2/pairing")! }
         )
         let server = HostPairingServer(session: session)
         let coordinator = RemoteMacHostPairingCoordinator(
@@ -81,7 +82,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         let result = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         )
 
         guard case .success(let payload) = result else {
@@ -100,7 +101,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         guard case .success(let payload) = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         ) else {
             Issue.record("Expected begin to succeed")
             return
@@ -135,7 +136,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         guard case .success(let payload) = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         ) else {
             Issue.record("Expected begin to succeed")
             return
@@ -169,7 +170,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         guard case .success(let payload) = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         ) else {
             Issue.record("Expected begin to succeed")
             return
@@ -205,7 +206,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         guard case .success(let payload) = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         ) else {
             Issue.record("Expected begin to succeed")
             return
@@ -249,7 +250,7 @@ struct RemoteMacHostPairingCoordinatorTests {
 
         guard case .success(let payload) = await fx.coordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local:9999/v2/pairing")!
         ) else {
             Issue.record("Expected begin to succeed")
             return
@@ -280,7 +281,7 @@ struct RemoteMacHostPairingCoordinatorTests {
     func secondBeginWhileActiveReturnsBusyWithoutRestarting() async throws {
         let fx = try makeFixture()
         defer { fx.cleanup() }
-        let lanBaseURL = URL(string: "http://host.local:9999/v1/pairing")!
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
 
         guard case .success(let firstPayload) = await fx.coordinator.beginPairing(
             validFor: 300,

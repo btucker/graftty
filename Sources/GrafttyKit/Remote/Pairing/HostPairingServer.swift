@@ -55,9 +55,17 @@ public actor HostPairingServer {
     /// call. Today, host UI must call `tick()` periodically — otherwise
     /// the long-poll only resolves when the HTTP client times out.
     @discardableResult
-    public func start(validFor: TimeInterval = PairingProtocolDefaults.sessionValidity) throws -> PairingPayload {
+    public func start(
+        validFor: TimeInterval = PairingProtocolDefaults.sessionValidity,
+        pairingURL: URL? = nil,
+        connectionRoutes: [RemoteConnectionRoute]? = nil
+    ) throws -> PairingPayload {
         resumeWaiters(with: .cancelled)
-        let payload = try session.startPairing(validFor: validFor)
+        let payload = try session.startPairing(
+            validFor: validFor,
+            pairingURL: pairingURL,
+            connectionRoutes: connectionRoutes
+        )
         activeNonce = payload.nonce
         return payload
     }
@@ -109,11 +117,11 @@ public actor HostPairingServer {
 
     // MARK: - HTTP-facing API
 
-    /// Handles `POST /v1/pairing/introduce`.
+    /// Handles `POST /v2/pairing/introduce`.
     public func handleIntroduce(
         _ request: PairingIntroduceRequest
     ) -> Result<PairingIntroduceResponse, PairingErrorResponse> {
-        guard request.version == 1 else {
+        guard request.version == RemoteAccessProtocol.version else {
             return .failure(PairingErrorResponse(
                 code: .unsupportedVersion,
                 error: "unsupported pairing protocol version: \(request.version)"
@@ -176,12 +184,12 @@ public actor HostPairingServer {
         ))
     }
 
-    /// Handles `POST /v1/pairing/await-outcome`. Suspends until the
+    /// Handles `POST /v2/pairing/await-outcome`. Suspends until the
     /// session reaches a terminal state.
     public func handleAwaitOutcome(
         _ request: PairingAwaitOutcomeRequest
     ) async -> Result<PairingOutcomeResponse, PairingErrorResponse> {
-        guard request.version == 1 else {
+        guard request.version == RemoteAccessProtocol.version else {
             return .failure(PairingErrorResponse(
                 code: .unsupportedVersion,
                 error: "unsupported pairing protocol version: \(request.version)"

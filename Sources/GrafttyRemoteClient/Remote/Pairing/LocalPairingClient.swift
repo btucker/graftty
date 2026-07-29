@@ -11,11 +11,10 @@ import GrafttyProtocol
 ///   2. POST `<pairingURL>/await-outcome` — long-poll for the host's
 ///      user-confirmation decision.
 ///
-/// REMOTE-1.2 (client side) is enforced inside `ClientPairingSession.confirm`,
-/// which verifies the received host public key derives to the same
-/// fingerprint pinned in the QR payload. If the host returns a different
-/// key the session throws `.fingerprintMismatch` and nothing is pinned —
-/// `runPairing` propagates that error to the caller.
+/// REMOTE-1.2 (client side) is enforced immediately after the introduce
+/// response and again inside `ClientPairingSession.confirm`. A host key that
+/// does not match the pairing payload is rejected before either side can
+/// confirm trust.
 public actor LocalPairingClient {
 
     // MARK: Types
@@ -92,7 +91,7 @@ public actor LocalPairingClient {
     ///
     /// `baseURL` is the remote access root such as `http://studio.local:9443`.
     /// The host responds with a `PairingPayload` whose `pairingURL` points at
-    /// the `/v1/pairing` route base used by `introduce` and
+    /// the `/v2/pairing` route base used by `introduce` and
     /// `awaitOutcomeAndConfirm`.
     public func beginPairing(baseURL: URL) async throws -> PairingPayload {
         guard let url = Self.beginPairingURL(from: baseURL) else {
@@ -119,12 +118,12 @@ public actor LocalPairingClient {
             payload: payload,
             clientPublicKey: clientPublicKey
         )
+        try session.validateHostPublicKey(introduceResponse.hostPublicKey)
 
         let transcript = RemotePairingTranscript(
             hostPublicKey: introduceResponse.hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: introduceResponse.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
@@ -138,7 +137,7 @@ public actor LocalPairingClient {
         let payload: PairingPayload
         let hostPublicKey: RemoteIdentityPublicKey
         switch session.state {
-        case let .awaitingHostConfirmation(transcript, _, pendingPayload):
+        case .awaitingHostConfirmation(let transcript, _, let pendingPayload):
             payload = pendingPayload
             hostPublicKey = transcript.hostPublicKey
         default:
@@ -171,10 +170,10 @@ public actor LocalPairingClient {
 
     private static func beginPairingURL(from baseURL: URL) -> URL? {
         let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if path.hasSuffix("v1/pairing") {
+        if path.hasSuffix("v2/pairing") {
             return baseURL.appendingAPIPath("begin")
         }
-        return baseURL.appendingAPIPath("v1/pairing/begin")
+        return baseURL.appendingAPIPath("v2/pairing/begin")
     }
 
     private func postIntroduce(

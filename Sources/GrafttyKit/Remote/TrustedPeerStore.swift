@@ -27,6 +27,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     private static let fileName = "trusted-peers.json"
 
     private struct Envelope: Codable {
+        var version: Int
         var peers: [TrustedPeer]
     }
 
@@ -118,7 +119,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         let envelope = try _load()
         return envelope.peers.sorted { lhs, rhs in
             switch (lhs.lastSeenAt, rhs.lastSeenAt) {
-            case let (.some(l), .some(r)):
+            case (.some(let l), .some(let r)):
                 return l > r
             case (.some, .none):
                 // lhs was seen; rhs was not — lhs ranks higher
@@ -146,12 +147,16 @@ public final class TrustedPeerStore: @unchecked Sendable {
     private func _load() throws -> Envelope {
         let fileURL = directory.appendingPathComponent(Self.fileName)
         guard let data = try? Data(contentsOf: fileURL) else {
-            return Envelope(peers: [])
+            return Envelope(version: RemoteAccessProtocol.version,peers: [])
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            return try decoder.decode(Envelope.self, from: data)
+            let envelope = try decoder.decode(Envelope.self, from: data)
+            guard envelope.version == RemoteAccessProtocol.version else {
+                return Envelope(version: RemoteAccessProtocol.version, peers: [])
+            }
+            return envelope
         } catch {
             // Corrupt file: back it up and return an empty envelope so callers can recover.
             // Best effort: if the rename fails (permissions, etc.) we still return empty
@@ -159,7 +164,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
             let ms = Int(Date().timeIntervalSince1970 * 1000)
             let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
             try? FileManager.default.moveItem(at: fileURL, to: backupURL)
-            return Envelope(peers: [])
+            return Envelope(version: RemoteAccessProtocol.version,peers: [])
         }
     }
 

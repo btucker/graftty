@@ -31,7 +31,7 @@ public struct LANRemoteAccessRateLimit: Sendable, Equatable {
 }
 
 public enum LANSignalingOfferResult: Sendable {
-    case success(SignalingAnswer)
+    case authenticatedSuccess(AuthenticatedSignalingAnswer)
     case invalid(String)
     case unavailable(String)
     case hostBusy(String)
@@ -42,12 +42,17 @@ public actor LANRemoteAccessRouteHandler {
     public typealias BeginPairing = @Sendable (TimeInterval, URL) async -> Result<PairingPayload, PairingErrorResponse>
     public typealias IntroduceHandler = @Sendable (PairingIntroduceRequest) async -> Result<PairingIntroduceResponse, PairingErrorResponse>
     public typealias AwaitOutcomeHandler = @Sendable (PairingAwaitOutcomeRequest) async -> Result<PairingOutcomeResponse, PairingErrorResponse>
-    public typealias SignalingOfferHandler = @Sendable (SignalingOffer) async -> LANSignalingOfferResult
+    public typealias SignalingChallengeHandler =
+        @Sendable (SignalingChallengeRequest) async -> Result<
+            SignalingChallengeResponse, PairingErrorResponse
+        >
+    public typealias SignalingOfferHandler = @Sendable (AuthenticatedSignalingOffer) async -> LANSignalingOfferResult
 
     private enum RateLimitBucket: Hashable {
         case pairingBootstrap
         case pairingIntroduce
         case pairingAwaitOutcome
+        case rtcChallenge
         case rtcSignaling
     }
 
@@ -63,6 +68,7 @@ public actor LANRemoteAccessRouteHandler {
     private let beginPairing: BeginPairing
     private let handleIntroduce: IntroduceHandler
     private let handleAwaitOutcome: AwaitOutcomeHandler
+    private let handleSignalingChallenge: SignalingChallengeHandler
     private let handleSignalingOffer: SignalingOfferHandler
 
     private var recentLimitedRequests: [RateLimitKey: [Date]] = [:]
@@ -76,6 +82,7 @@ public actor LANRemoteAccessRouteHandler {
         beginPairing: @escaping BeginPairing,
         handleIntroduce: @escaping IntroduceHandler,
         handleAwaitOutcome: @escaping AwaitOutcomeHandler,
+        handleSignalingChallenge: @escaping SignalingChallengeHandler,
         handleSignalingOffer: @escaping SignalingOfferHandler
     ) {
         self.lanBaseURLProvider = lanBaseURLProvider
@@ -85,6 +92,7 @@ public actor LANRemoteAccessRouteHandler {
         self.beginPairing = beginPairing
         self.handleIntroduce = handleIntroduce
         self.handleAwaitOutcome = handleAwaitOutcome
+        self.handleSignalingChallenge = handleSignalingChallenge
         self.handleSignalingOffer = handleSignalingOffer
     }
 
@@ -96,7 +104,7 @@ public actor LANRemoteAccessRouteHandler {
         source: String = "unknown"
     ) async -> LANRemoteAccessResponse {
         switch path {
-        case "/v1/pairing/begin":
+        case "/v2/pairing/begin":
             guard method == .POST else {
                 return Self.errorResponse(
                     status: 405,
@@ -124,7 +132,7 @@ public actor LANRemoteAccessRouteHandler {
             let result = await beginPairing(validFor, pairingRouteBase)
             return Self.pairingResultResponse(result, successStatus: 200)
 
-        case "/v1/pairing/introduce":
+        case "/v2/pairing/introduce":
             guard method == .POST else {
                 return Self.errorResponse(
                     status: 405,
@@ -148,7 +156,7 @@ public actor LANRemoteAccessRouteHandler {
             let result = await handleIntroduce(request)
             return Self.pairingResultResponse(result, successStatus: 200)
 
-        case "/v1/pairing/await-outcome":
+        case "/v2/pairing/await-outcome":
             guard method == .POST else {
                 return Self.errorResponse(
                     status: 405,
@@ -172,7 +180,20 @@ public actor LANRemoteAccessRouteHandler {
             let result = await handleAwaitOutcome(request)
             return Self.pairingResultResponse(result, successStatus: 200)
 
-        case "/v1/rtc/offer":
+        case "/v2/rtc/challenge":
+            guard method == .POST else {
+                return Self.errorResponse(
+                    status: 405,
+                    code: .wrongSessionState,
+                    message: "method not allowed"
+                )
+            }
+            guard permitLimitedRequest(in: .rtcChallenge, source: source) else {
+                return Self.rateLimitedResponse()
+            }
+            return await handleRTCChallenge(body: body)
+
+        case "/v2/rtc/offer":
             guard method == .POST else {
                 return Self.errorResponse(
                     status: 405,
@@ -185,6 +206,13 @@ public actor LANRemoteAccessRouteHandler {
             }
             return await handleRTCOffer(body: body)
 
+        case "/v1/rtc/offer":
+            return Self.errorResponse(
+                status: 426,
+                code: .unsupportedVersion,
+                message: "protocol v2 and a new pairing are required"
+            )
+
         default:
             return Self.errorResponse(
                 status: 404,
@@ -194,20 +222,37 @@ public actor LANRemoteAccessRouteHandler {
         }
     }
 
-    private func handleRTCOffer(body: Data) async -> LANRemoteAccessResponse {
-        let offer: SignalingOffer
+    private func handleRTCChallenge(body: Data) async -> LANRemoteAccessResponse {
+        let request: SignalingChallengeRequest
         do {
-            offer = try Self.decoder.decode(SignalingOffer.self, from: body)
+            request = try Self.decoder.decode(SignalingChallengeRequest.self, from: body)
         } catch {
             return Self.errorResponse(
                 status: 400,
-                code: .internalError,
+                code: .authenticationFailed,
+                message: "malformed signaling challenge request"
+            )
+        }
+        return Self.pairingResultResponse(
+            await handleSignalingChallenge(request),
+            successStatus: 200
+        )
+    }
+
+    private func handleRTCOffer(body: Data) async -> LANRemoteAccessResponse {
+        let offer: AuthenticatedSignalingOffer
+        do {
+            offer = try Self.decoder.decode(AuthenticatedSignalingOffer.self, from: body)
+        } catch {
+            return Self.errorResponse(
+                status: 400,
+                code: .authenticationFailed,
                 message: "malformed signaling offer: \(error.localizedDescription)"
             )
         }
 
         switch await handleSignalingOffer(offer) {
-        case .success(let answer):
+        case .authenticatedSuccess(let answer):
             return Self.jsonResponse(status: 200, value: answer)
         case .invalid(let message):
             return Self.errorResponse(status: 400, code: .internalError, message: message)
@@ -261,14 +306,14 @@ public actor LANRemoteAccessRouteHandler {
         components.query = nil
         components.fragment = nil
         let path = components.path
-        if path == "/v1/pairing" {
+        if path == PairingRoutes.basePath {
             return components.url ?? baseURL
         }
         let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         if trimmed.isEmpty {
-            components.path = "/v1/pairing"
+            components.path = PairingRoutes.basePath
         } else {
-            components.path = "/" + trimmed + "/v1/pairing"
+            components.path = "/" + trimmed + PairingRoutes.basePath
         }
         return components.url ?? baseURL
     }
@@ -306,7 +351,13 @@ public actor LANRemoteAccessRouteHandler {
             return 429
         case .hostBusy:
             return 503
-        case .unsupportedVersion, .unknownNonce, .noActiveSession, .sessionExpired, .internalError:
+        case .authenticationFailed:
+            return 401
+        case .replayDetected:
+            return 409
+        case .unsupportedVersion:
+            return 426
+        case .unknownNonce, .noActiveSession, .sessionExpired, .internalError:
             return 400
         }
     }

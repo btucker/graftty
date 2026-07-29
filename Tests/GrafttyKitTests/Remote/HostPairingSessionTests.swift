@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("HostPairingSession Tests")
 struct HostPairingSessionTests {
@@ -27,7 +28,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
     }
 
@@ -71,7 +72,7 @@ struct HostPairingSessionTests {
         let payload = try session.startPairing()
 
         #expect(payload.hostPublicKeyFingerprint == expectedFingerprint)
-        #expect(payload.version == 1)
+        #expect(payload.version == RemoteAccessProtocol.version)
 
         if case .awaitingClient(_, _) = session.state {
             // expected
@@ -102,7 +103,7 @@ struct HostPairingSessionTests {
             clientDisplayName: "My iPhone"
         )
 
-        guard case .pendingConfirmation(_, _, _, _, let transcript, let hostCode, _) = session.state else {
+        guard case .pendingConfirmation(_, _, _, _, _, let hostCode, _) = session.state else {
             Issue.record("Expected pendingConfirmation, got \(session.state)")
             return
         }
@@ -114,8 +115,7 @@ struct HostPairingSessionTests {
         let clientTranscript = RemotePairingTranscript(
             hostPublicKey: hostPubKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: transcript.expiry
+            payload: payload
         )
         let clientCode = clientTranscript.verificationCode()
 
@@ -396,7 +396,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
 
         _ = try session.startPairing(validFor: 300)
@@ -435,7 +435,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
 
         _ = try session.startPairing(validFor: 300)

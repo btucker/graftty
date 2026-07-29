@@ -24,11 +24,6 @@ struct IosTodo {
     func ios_1_4() async throws { }
 
     @Test("""
-@spec IOS-2.3: The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each host record shall carry `{id, label, baseURL, lastUsedAt, addedAt}`. Keychain was initially specified here, but a saved host contains no secret (just URL, label, and timestamps), and iOS-simulator Keychain access requires a signing context that ad-hoc-signed Xcode builds without a `DEVELOPMENT_TEAM` cannot obtain (every `SecItemAdd` returns `errSecMissingEntitlement`, -34018). File storage works identically on simulator and device and upgrades cleanly to a per-field Keychain split when we later persist a secret (e.g., a bearer token).
-""", .disabled("not yet implemented"))
-    func ios_2_3() async throws { }
-
-    @Test("""
 @spec IOS-2.4: For compatibility with older mobile clients, the macOS application's Web Access settings may continue to render its Web Base URL as a scannable QR code alongside the copy/open actions (`WEB-1.12`). Current GrafttyMobile onboarding shall use authenticated device pairing (`IOS-2.1`) and shall not require Web Access.
 """, .disabled("not yet implemented"))
     func ios_2_4() async throws { }

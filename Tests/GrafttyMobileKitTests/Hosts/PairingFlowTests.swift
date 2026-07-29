@@ -193,7 +193,7 @@ struct PairDeviceFlowViewBuildModelTests {
             ),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
-            pairingURL: URL(string: "http://mac.local:8800/v1/pairing")!
+            pairingURL: URL(string: "http://mac.local:8800/v2/pairing")!
         )
     }
 
@@ -288,7 +288,8 @@ struct PairDeviceFlowModelTests {
         let clientPublicKey: RemoteIdentityPublicKey
     }
 
-    private func makeFixtures(dir: URL, stub: StubTransport, webBaseURL: URL? = nil) async throws -> Fixtures {
+    private func makeFixtures(dir: URL, stub: StubTransport,
+            routes: [RemoteConnectionRoute] = []) async throws -> Fixtures {
         let identityStore = ClientIdentityStore(directory: dir)
         let pinnedStore = PinnedHostStore(directory: dir)
 
@@ -308,8 +309,8 @@ struct PairDeviceFlowModelTests {
             hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPub),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
-            pairingURL: URL(string: "http://host.local:8800/v1/pairing")!,
-            webBaseURL: webBaseURL
+            pairingURL: URL(string: "http://host.local:8800/v2/pairing")!,
+                routes: routes
         )
 
         let session = ClientPairingSession(
@@ -479,14 +480,18 @@ struct PairDeviceFlowModelTests {
         #expect(pinnedList.contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
 
-    @Test("A legacy QR payload carrying webBaseURL remains compatible")
-    func usesWebBaseURLWhenPresent() async throws {
+    @Test("A pairing payload can select a Tailscale native route")
+    func usesTailscaleRouteWhenPresent() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let webBaseURL = URL(string: "https://host.tailnet.ts.net/")!
+        let tailscaleRoute = RemoteConnectionRoute(
+                kind: .tailscaleDNS,
+                baseURL: URL(string: "http://host.tailnet.ts.net:8800/")!
+            )
         let stub = StubTransport()
-        let fx = try await makeFixtures(dir: dir, stub: stub, webBaseURL: webBaseURL)
+        let fx = try await makeFixtures(dir: dir, stub: stub,
+                routes: [tailscaleRoute])
         try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .confirmed)
 
         await fx.model.run()
@@ -495,7 +500,8 @@ struct PairDeviceFlowModelTests {
             Issue.record("Expected .success, got \(String(describing: fx.model.state))")
             return
         }
-        #expect(host.baseURL == webBaseURL)
+        #expect(host.baseURL == tailscaleRoute.baseURL)
+            #expect(host.routes == [tailscaleRoute])
         #expect(addressUnconfirmed == false)
     }
 
@@ -547,18 +553,16 @@ struct PairDeviceFlowModelTests {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Whole-second precision: `RemotePairingTranscript.verificationCode()`
-        // truncates `expiry` to whole seconds, and so does the iso8601 wire
-        // round-trip below — using a sub-second `Date()` here could make the
-        // independently-computed transcript disagree with the one built
-        // from the (JSON round-tripped) introduce response by up to 1s.
-        let introduceExpiry = Date(timeIntervalSince1970: Date().addingTimeInterval(300).timeIntervalSince1970.rounded(.down))
-
         let stub = StubTransport()
         let fx = try await makeFixtures(dir: dir, stub: stub)
         await stub.setResponse(
             for: "introduce",
-            body: try jsonData(PairingIntroduceResponse(hostPublicKey: fx.hostPublicKey, expiry: introduceExpiry))
+            body: try jsonData(
+                PairingIntroduceResponse(
+                    hostPublicKey: fx.hostPublicKey,
+                    expiry: fx.payload.expiry
+                )
+            )
         )
         // Hold `/await-outcome` open so the model parks in
         // `.awaitingConfirmation` instead of racing straight to `.success` —
@@ -578,8 +582,7 @@ struct PairDeviceFlowModelTests {
         let expectedTranscript = RemotePairingTranscript(
             hostPublicKey: fx.hostPublicKey,
             clientPublicKey: fx.clientPublicKey,
-            nonce: fx.payload.nonce,
-            expiry: introduceExpiry
+            payload: fx.payload
         )
         #expect(code == expectedTranscript.verificationCode().display)
         #expect(hostDisplayName == fx.payload.hostDisplayName)
@@ -605,13 +608,16 @@ struct PairDeviceFlowModelTests {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let introduceExpiry = Date(timeIntervalSince1970: Date().addingTimeInterval(300).timeIntervalSince1970.rounded(.down))
-
         let stub = StubTransport()
         let fx = try await makeFixtures(dir: dir, stub: stub)
         await stub.setResponse(
             for: "introduce",
-            body: try jsonData(PairingIntroduceResponse(hostPublicKey: fx.hostPublicKey, expiry: introduceExpiry))
+            body: try jsonData(
+                PairingIntroduceResponse(
+                    hostPublicKey: fx.hostPublicKey,
+                    expiry: fx.payload.expiry
+                )
+            )
         )
         await stub.gate("await-outcome")
 

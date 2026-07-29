@@ -93,8 +93,10 @@ public final class HostStore {
             var existing = next[idx]
             existing.label = host.label
             existing.baseURL = host.baseURL
+            existing.routes = host.routes
             existing.lastUsedAt = host.lastUsedAt ?? Date()
             existing.remoteDeviceID = deviceID
+            existing.pairingProtocolVersion = host.pairingProtocolVersion
             next[idx] = existing
             canonical = existing
         } else if let idx = next.firstIndex(where: {
@@ -104,12 +106,15 @@ public final class HostStore {
             var existing = next[idx]
             existing.label = host.label
             existing.baseURL = host.baseURL
+            existing.routes = host.routes.isEmpty ? existing.routes : host.routes
             existing.lastUsedAt = Date()
             // Adopt the incoming remoteDeviceID (e.g. from a fresh pairing
             // ceremony) but fall back to the prior value when the incoming
             // host doesn't carry one (a manual/plain-URL rescan), so a
             // rescan can never erase an identity a prior pairing recorded.
             existing.remoteDeviceID = host.remoteDeviceID ?? existing.remoteDeviceID
+            existing.pairingProtocolVersion =
+                host.pairingProtocolVersion ?? existing.pairingProtocolVersion
             next[idx] = existing
             canonical = existing
         } else if let idx = next.firstIndex(where: { $0.id == host.id }) {
@@ -198,7 +203,12 @@ public final class HostStore {
         guard let data = try? Data(contentsOf: url),
               let list = try? JSONDecoder().decode([Host].self, from: data)
         else { return [] }
-        return list
+        // Protocol v2 deliberately invalidates every prior pairing while
+        // preserving manual/unpaired host records.
+        return list.filter {
+            $0.remoteDeviceID == nil
+                || $0.pairingProtocolVersion == RemoteAccessProtocol.version
+        }
     }
 
     private func sorted(_ list: [Host]) -> [Host] {

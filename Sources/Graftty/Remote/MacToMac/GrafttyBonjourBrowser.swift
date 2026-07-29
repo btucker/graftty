@@ -212,6 +212,7 @@ final class GrafttyBonjourBrowser: NSObject {
             label: candidate.label,
             fingerprint: candidate.fingerprint,
             lastKnownBaseURL: candidate.baseURL,
+            routes: [RemoteConnectionRoute(kind: .lan, baseURL: candidate.baseURL)],
             addedAt: existing?.addedAt ?? candidate.discoveredAt,
             lastUsedAt: existing?.lastUsedAt,
             lastDiscoveredAt: candidate.discoveredAt

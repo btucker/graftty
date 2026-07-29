@@ -46,12 +46,10 @@ public final class HostPairingCoordinator: ObservableObject {
     private let deviceIDStore: HostDeviceIDStore
     private let hostDisplayName: String
     private let admission: HostPairingAdmission
-    // `@MainActor`-isolated (not merely `@Sendable`) so the Mac settings UI
-    // can capture `WebServerController` — a `@MainActor`-isolated,
-    // non-`Sendable` class — directly. `beginPairing()` runs on this same
-    // actor, so invoking the provider there is a same-actor call, not a
-    // hop.
-    private let webBaseURLProvider: @MainActor @Sendable () -> URL?
+
+    private let remoteAccessRoutesProvider:
+        @MainActor @Sendable (URL) async -> [RemoteConnectionRoute]
+    private var remoteAccessStartupError: String?
 
     // MARK: Session plumbing
 
@@ -93,14 +91,17 @@ public final class HostPairingCoordinator: ObservableObject {
         trustedPeerStore: TrustedPeerStore,
         deviceIDStore: HostDeviceIDStore,
         hostDisplayName: String,
-        webBaseURLProvider: @escaping @MainActor @Sendable () -> URL?
+        remoteAccessRoutesProvider:
+            @escaping @MainActor @Sendable (URL) async -> [RemoteConnectionRoute] = {
+            await RemoteAccessRouteDiscovery.routes(lanBaseURL: $0)
+        }
     ) {
         self.init(
             identityStore: identityStore,
             trustedPeerStore: trustedPeerStore,
             deviceIDStore: deviceIDStore,
             hostDisplayName: hostDisplayName,
-            webBaseURLProvider: webBaseURLProvider,
+            remoteAccessRoutesProvider: remoteAccessRoutesProvider,
             admission: HostPairingAdmission()
         )
     }
@@ -110,22 +111,32 @@ public final class HostPairingCoordinator: ObservableObject {
         trustedPeerStore: TrustedPeerStore,
         deviceIDStore: HostDeviceIDStore,
         hostDisplayName: String,
-        webBaseURLProvider: @escaping @MainActor @Sendable () -> URL?,
+        remoteAccessRoutesProvider:
+            @escaping @MainActor @Sendable (URL) async -> [RemoteConnectionRoute],
         admission: HostPairingAdmission
     ) {
         self.identityStore = identityStore
         self.trustedPeerStore = trustedPeerStore
         self.deviceIDStore = deviceIDStore
         self.hostDisplayName = hostDisplayName
-        self.webBaseURLProvider = webBaseURLProvider
+        self.remoteAccessRoutesProvider = remoteAccessRoutesProvider
         self.admission = admission
     }
 
     // MARK: - UI actions
 
+    /// Keeps the pairing ceremony from advertising a stable access listener
+    /// that failed to bind during app startup.
+    func setRemoteAccessStartupError(_ message: String?) {
+        remoteAccessStartupError = message
+        if case .idle = state {
+            lastError = message
+        }
+    }
+
     /// Starts a pairing ceremony: brings up the LAN listener, builds a
     /// fresh session whose QR payload advertises
-    /// `http://<primaryLANIPv4>:<boundPort>/v1/pairing`, publishes the
+    /// `http://<primaryLANIPv4>:<boundPort>/v2/pairing`, publishes the
     /// payload, and starts the 1s tick task that drives expiry and
     /// terminal-state cleanup. Any previously active pairing is ended
     /// first. Failures land in `lastError`.
@@ -137,6 +148,10 @@ public final class HostPairingCoordinator: ObservableObject {
         await endPairing()
         let myGeneration = sessionGeneration
         lastError = nil
+        if let remoteAccessStartupError {
+            lastError = remoteAccessStartupError
+            return
+        }
         guard let lease = admission.acquire() else {
             lastError = "Another pairing session is already active."
             return
@@ -158,14 +173,22 @@ public final class HostPairingCoordinator: ObservableObject {
             // provider — both strictly sequential on this actor, so no
             // lock is needed.
             var pairingURL = URL(string: "http://127.0.0.1\(PairingRoutes.basePath)")!
+            let remoteAccessHost = LANAddress.primaryIPv4() ?? "127.0.0.1"
+            guard let lanRemoteAccessURL = Self.remoteAccessURL(host: remoteAccessHost) else {
+                throw CoordinatorError.pairingURLConstructionFailed(
+                    host: remoteAccessHost,
+                    port: RemoteAccessProtocol.pairedAccessPort
+                )
+            }
+            let connectionRoutes = await remoteAccessRoutesProvider(lanRemoteAccessURL)
             let session = HostPairingSession(
                 identityStore: identityStore,
                 peerStore: trustedPeerStore,
                 hostDeviceID: hostDeviceID,
                 hostKind: .mac,
                 hostDisplayName: hostDisplayName,
-                webBaseURL: webBaseURLProvider(),
-                pairingURLProvider: { pairingURL }
+                pairingURLProvider: { pairingURL },
+                connectionRoutesProvider: { connectionRoutes }
             )
             let server = HostPairingServer(session: session)
             let http = PairingHTTPServer(pairingServer: server)
@@ -216,6 +239,14 @@ public final class HostPairingCoordinator: ObservableObject {
             releaseAdmission(lease)
             lastError = "\(error)"
         }
+    }
+
+    private static func remoteAccessURL(host: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = RemoteAccessProtocol.pairedAccessPort
+        return components.url
     }
 
     /// User confirmed the verification code: persists the introduced

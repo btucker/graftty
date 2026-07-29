@@ -1,7 +1,7 @@
 import Foundation
+import GrafttyProtocol
 import NIO
 import NIOHTTP1
-import GrafttyProtocol
 
 // MARK: - PairingHTTPServer
 
@@ -87,8 +87,8 @@ public actor PairingHTTPServer {
     // MARK: - Lifecycle
 
     /// Binds a plaintext HTTP/1.1 listener. Returns the bound port (pass
-    /// port 0 for ephemeral). Serves ONLY `POST /v1/pairing/introduce`
-    /// and `POST /v1/pairing/await-outcome`; every other request gets a
+    /// port 0 for ephemeral). Serves ONLY `POST /v2/pairing/introduce`
+    /// and `POST /v2/pairing/await-outcome`; every other request gets a
     /// 404 (unknown path) or 405 (wrong method on a pairing route).
     ///
     /// Throws `LifecycleError.alreadyStarted` if the server is already

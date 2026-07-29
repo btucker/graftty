@@ -1,7 +1,8 @@
-import Testing
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import Testing
+
 @testable import Graftty
 
 // MARK: - PairingCountdownFormatter
@@ -63,7 +64,7 @@ struct PairingSectionDisplayMappingTests {
             hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPublicKey),
             nonce: RemotePairingNonce(bytes: Data(repeating: 0x01, count: 16)),
             expiry: expiry,
-            pairingURL: URL(string: "http://127.0.0.1:8080/v1/pairing")!
+            pairingURL: URL(string: "http://127.0.0.1:8080/v2/pairing")!
         )
     }
 
@@ -89,11 +90,11 @@ struct PairingSectionDisplayMappingTests {
 
     @Test("pendingConfirmation surfaces the client's display name, kind, and verification code")
     func pendingConfirmationSurfacesClientDetails() {
+        let expiry = Date(timeIntervalSince1970: 2000)
         let transcript = RemotePairingTranscript(
             hostPublicKey: Self.hostPublicKey,
             clientPublicKey: Self.clientPublicKey,
-            nonce: RemotePairingNonce(bytes: Data(repeating: 0x02, count: 16)),
-            expiry: Date(timeIntervalSince1970: 2000)
+            payload: Self.makePayload(expiry: expiry)
         )
         let code = transcript.verificationCode()
         let state = HostPairingSessionState.pendingConfirmation(
@@ -103,7 +104,7 @@ struct PairingSectionDisplayMappingTests {
             clientDisplayName: "Ben's iPhone",
             transcript: transcript,
             verificationCode: code,
-            expiry: Date(timeIntervalSince1970: 2000)
+            expiry: expiry
         )
         #expect(
             PairingSectionDisplay.mapping(for: state)

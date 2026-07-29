@@ -23,16 +23,25 @@ struct RemoteMacConnectionLoopbackTests {
     )
     func terminalRoundTripThroughLANSignalingAndHostAgent() async throws {
         let clientDeviceID = RemoteDeviceID(value: "mac-loopback-client")
+        let hostDeviceID = RemoteDeviceID(value: "mac-loopback-host")
         let clientKey = Curve25519.Signing.PrivateKey()
-        let hostKey = Curve25519.Signing.PrivateKey()
-        let hostFingerprint = RemoteIdentityFingerprint(
-            of: try RemoteIdentityPublicKey(
-                rawRepresentation: hostKey.publicKey.rawRepresentation
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "graftty-mac-webrtc-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hostIdentityStore = HostIdentityStore(
+            directory: directory.appendingPathComponent(
+                "host-identity",
+                isDirectory: true
             )
         )
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-mac-webrtc-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let hostKey = try hostIdentityStore.generateAndPersist()
+        let hostPublicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: hostKey.publicKey.rawRepresentation
+        )
+        let hostFingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
 
         let trustedPeerStore = TrustedPeerStore(
             directory: directory.appendingPathComponent("trusted-peers", isDirectory: true)
@@ -62,17 +71,50 @@ struct RemoteMacConnectionLoopbackTests {
             paneControlMutator: { _ in .ok },
             displayOwnershipStore: SessionDisplayOwnershipStore()
         )
+        let signalingServer = AuthenticatedSignalingServer(
+            identityStore: hostIdentityStore,
+            peerStore: trustedPeerStore,
+            hostDeviceID: hostDeviceID,
+            routesProvider: { [] }
+        )
         let routeHandler = LANRemoteAccessRouteHandler(
             lanBaseURLProvider: { URL(string: "http://127.0.0.1")! },
             beginPairing: { _, _ in Self.unusedPairingResult() },
             handleIntroduce: { _ in Self.unusedIntroduceResult() },
             handleAwaitOutcome: { _ in Self.unusedOutcomeResult() },
+            handleSignalingChallenge: { request in
+                await signalingServer.issueChallenge(request)
+            },
             handleSignalingOffer: { offer in
+                let verified: AuthenticatedSignalingServer.VerifiedOffer
+                switch await signalingServer.authenticateOffer(offer) {
+                case .success(.new(let value)):
+                    verified = value
+                case .success(.pending):
+                    switch await signalingServer.awaitAnswer(for: offer) {
+                    case .success(let answer):
+                        return .authenticatedSuccess(answer)
+                    case .failure(let error):
+                        return .unavailable(error.error)
+                    }
+                case .success(.cached(let answer)):
+                    return .authenticatedSuccess(answer)
+                case .failure(let error):
+                    return .invalid(error.error)
+                }
                 do {
                     let answer = try await hostAgent.acceptOffer(
                         RTCSessionDescription(type: .offer, sdp: offer.sdp)
                     )
-                    return .success(SignalingAnswer(sdp: answer.sdp))
+                    switch await signalingServer.makeAnswer(
+                        sdp: answer.sdp,
+                        for: verified
+                    ) {
+                    case .success(let signedAnswer):
+                        return .authenticatedSuccess(signedAnswer)
+                    case .failure(let error):
+                        return .internalFailure(error.error)
+                    }
                 } catch WebRTCHostAgent.HostError.busy {
                     return .hostBusy("host already has an active connection")
                 } catch {
@@ -98,15 +140,21 @@ struct RemoteMacConnectionLoopbackTests {
         var terminal: TerminalSessionClient?
         do {
             let offer = try await connection.createOffer()
-            let answer = try await SignalingClient().exchange(
-                baseURL: URL(string: "http://127.0.0.1:\(port)")!,
-                offer: SignalingOffer(
-                    clientDeviceID: clientDeviceID.value,
-                    sdp: offer.sdp
-                )
+            let answer = try await SignalingClient().authenticatedExchange(
+                routes: [
+                    RemoteConnectionRoute(
+                        kind: .lan,
+                        baseURL: URL(string: "http://127.0.0.1:\(port)")!
+                    )
+                ],
+                hostDeviceID: hostDeviceID,
+                hostPublicKey: hostPublicKey,
+                clientDeviceID: clientDeviceID,
+                clientKey: clientKey,
+                sdp: offer.sdp
             )
             try await connection.applyAnswer(
-                RTCSessionDescription(type: .answer, sdp: answer.sdp)
+                RTCSessionDescription(type: .answer, sdp: answer.answer.sdp)
             )
 
             let openedTerminal = try await connection.openTerminalSession(

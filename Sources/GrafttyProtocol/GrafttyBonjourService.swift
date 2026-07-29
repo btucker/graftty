@@ -3,7 +3,7 @@ import Foundation
 public enum GrafttyBonjourService {
     public static let serviceType = "_graftty._tcp."
     public static let domain = "local."
-    public static let discoveryVersion = "1"
+    public static let discoveryVersion = "2"
 
     public enum PairingStatus: String, Codable, Sendable, Hashable {
         case required

@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import GrafttyProtocol
 import Testing
+
 @testable import GrafttyKit
 
 @Suite("LANRemoteAccessServer", .serialized)
@@ -22,15 +23,53 @@ struct LANRemoteAccessServerTests {
         #expect(port != server.config.port)
     }
 
-    @Test("default production config binds to a LAN-reachable host")
-    func defaultConfigUsesLANReachableBindHost() {
+    @Test("default production config uses the stable dual-stack listener")
+    func defaultConfigUsesStableDualStackListener() {
         let config = LANRemoteAccessServer.Config()
 
-        #expect(config.port == 0)
-        #expect(config.bindHost == "0.0.0.0" || config.bindHost == "::")
+        #expect(config.port == RemoteAccessProtocol.pairedAccessPort)
+        #expect(config.bindHost == "::")
     }
 
-    @Test("POST /v1/pairing/begin returns JSON through a real socket")
+    @Test("""
+    @spec REMOTE-2.4: Native paired-device access shall use one stable dual-stack \
+    HTTP listener on port 8800 for LAN, MagicDNS, and Tailscale-IP routes. \
+    Browser Web Access shall remain an independent HTTPS service and shall not \
+    be used for native signaling.
+    """)
+    func wildcardListenerIsDualStack() throws {
+        let server = Self.makeServer(
+            config: .init(port: 0, bindHost: "::")
+        )
+        try server.start()
+        defer { server.stop() }
+        let port = try #require(server.listeningPort)
+
+        #expect(Self.canConnectToLocalhost(port: port))
+        #expect(Self.canConnectToIPv6Loopback(port: port))
+    }
+
+    @Test("a stopped stable listener can be rebound on the same port")
+    func stoppedListenerCanRebindSamePort() throws {
+        let first = Self.makeServer(
+            config: .init(port: 0, bindHost: "::")
+        )
+        try first.start()
+        let port = try #require(first.listeningPort)
+        first.stop()
+
+        let rebound = Self.makeServer(
+            config: .init(port: port, bindHost: "::")
+        )
+        try rebound.start()
+        defer { rebound.stop() }
+
+        #expect(rebound.listeningPort == port)
+        #expect(Self.canConnectToLocalhost(port: port))
+        #expect(Self.canConnectToIPv6Loopback(port: port))
+    }
+
+    @Test("POST /v2/pairing/begin returns JSON through a real socket")
     func postPairingBeginReturnsJSONThroughSocket() async throws {
         let server = Self.makeServer()
         try server.start()
@@ -40,7 +79,7 @@ struct LANRemoteAccessServerTests {
             return
         }
 
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/begin")!)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/begin")!)
         request.httpMethod = "POST"
 
         let (data, response) = try await URLSession.shared.upload(for: request, from: Data())
@@ -53,10 +92,10 @@ struct LANRemoteAccessServerTests {
         #expect(http.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
         let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: data)
         #expect(payload.hostDisplayName == "Test Mac")
-        #expect(payload.pairingURL == URL(string: "http://host.local:9999/v1/pairing")!)
+        #expect(payload.pairingURL == URL(string: "http://host.local:9999/v2/pairing")!)
     }
 
-    @Test("POST /v1/pairing/begin uses request Host header for pairing URL")
+    @Test("POST /v2/pairing/begin uses request Host header for pairing URL")
     func postPairingBeginUsesRequestHostHeader() throws {
         let server = Self.makeServer()
         try server.start()
@@ -67,7 +106,7 @@ struct LANRemoteAccessServerTests {
         }
 
         let request = """
-        POST /v1/pairing/begin HTTP/1.1\r
+        POST /v2/pairing/begin HTTP/1.1\r
         Host: bonjour-host.local:\(port)\r
         Content-Length: 0\r
         \r
@@ -78,7 +117,7 @@ struct LANRemoteAccessServerTests {
         let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: Data(body.utf8))
 
         #expect(response.contains("200 OK"))
-        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:\(port)/v1/pairing")!)
+        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:\(port)/v2/pairing")!)
     }
 
     @Test("GET /repos returns 404 rather than serving legacy web routes")
@@ -113,7 +152,7 @@ struct LANRemoteAccessServerTests {
             Issue.record("server did not report a listening port")
             return
         }
-        let url = URL(string: "http://127.0.0.1:\(port)/v1/pairing/begin")!
+        let url = URL(string: "http://127.0.0.1:\(port)/v2/pairing/begin")!
 
         var first = URLRequest(url: url)
         first.httpMethod = "POST"
@@ -146,8 +185,11 @@ struct LANRemoteAccessServerTests {
             Issue.record("server did not report a listening port")
             return
         }
-        let url = URL(string: "http://127.0.0.1:\(port)/v1/rtc/offer")!
-        let body = try JSONEncoder.iso8601().encode(SignalingOffer(clientDeviceID: "client", sdp: "v=0\n"))
+        let url = URL(string: "http://127.0.0.1:\(port)/v2/rtc/challenge")!
+        let body = try JSONEncoder.iso8601().encode(
+            SignalingChallengeRequest(clientDeviceID: RemoteDeviceID(value: "client-v2"),
+                clientNonce: Data(repeating: 0x11, count: 32),
+                signingKey: Curve25519.Signing.PrivateKey()))
 
         var first = URLRequest(url: url)
         first.httpMethod = "POST"
@@ -157,7 +199,7 @@ struct LANRemoteAccessServerTests {
             Issue.record("first response was not HTTPURLResponse")
             return
         }
-        #expect(firstHTTP.statusCode == 200)
+        #expect(firstHTTP.statusCode != 429)
 
         var second = URLRequest(url: url)
         second.httpMethod = "POST"
@@ -185,7 +227,7 @@ struct LANRemoteAccessServerTests {
             return
         }
 
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/rtc/offer")!)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/rtc/offer")!)
         request.httpMethod = "POST"
         let (data, response) = try await URLSession.shared.upload(for: request, from: Data("too large".utf8))
         guard let http = response as? HTTPURLResponse else {
@@ -217,12 +259,12 @@ struct LANRemoteAccessServerTests {
         }
 
         let request = """
-        POST /v1/pairing/begin HTTP/1.1\r
+        POST /v2/pairing/begin HTTP/1.1\r
         Host: 127.0.0.1:\(port)\r
         Content-Length: 0\r
         Connection: keep-alive\r
         \r
-        POST /v1/pairing/begin HTTP/1.1\r
+        POST /v2/pairing/begin HTTP/1.1\r
         Host: 127.0.0.1:\(port)\r
         Content-Length: 0\r
         Connection: keep-alive\r
@@ -260,6 +302,9 @@ struct LANRemoteAccessServerTests {
             handleAwaitOutcome: { request in
                 await fixture.server.handleAwaitOutcome(request)
             },
+            handleSignalingChallenge: { _ in
+                .failure(PairingErrorResponse(code: .authenticationFailed, error: "not exercised"))
+            },
             handleSignalingOffer: { _ in
                 .hostBusy("not exercised")
             }
@@ -276,7 +321,7 @@ struct LANRemoteAccessServerTests {
 
         let body = try JSONEncoder.iso8601().encode(PairingAwaitOutcomeRequest(nonce: payload.nonce))
         let requestTask = Task {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/await-outcome")!)
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/await-outcome")!)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             _ = try? await URLSession.shared.upload(for: request, from: body)
@@ -350,8 +395,11 @@ struct LANRemoteAccessServerTests {
             handleAwaitOutcome: { _ in
                 .failure(PairingErrorResponse(code: .noActiveSession, error: "not exercised"))
             },
+            handleSignalingChallenge: { _ in
+                .failure(PairingErrorResponse(code: .authenticationFailed, error: "not exercised"))
+            },
             handleSignalingOffer: { _ in
-                .success(SignalingAnswer(sdp: "v=0\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\n"))
+                .invalid("not exercised")
             }
         )
     }
@@ -392,7 +440,7 @@ struct LANRemoteAccessServerTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
         return HostPairingFixture(dir: dir, server: HostPairingServer(session: session))
     }
@@ -436,6 +484,35 @@ struct LANRemoteAccessServerTests {
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 connect(descriptor, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
+    }
+
+    private static func canConnectToIPv6Loopback(port: Int) -> Bool {
+        let descriptor = socket(AF_INET6, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = in_port_t(port).bigEndian
+        let parsed = "::1".withCString {
+            inet_pton(AF_INET6, $0, &address.sin6_addr)
+        }
+        guard parsed == 1 else { return false }
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(
+                to: sockaddr.self,
+                capacity: 1
+            ) { sockaddrPointer in
+                connect(
+                    descriptor,
+                    sockaddrPointer,
+                    socklen_t(MemoryLayout<sockaddr_in6>.size)
+                )
             }
         }
         return result == 0

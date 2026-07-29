@@ -97,9 +97,8 @@ public final class RemoteConnectionCoordinator {
 
     /// At most one in-flight negotiation `Task` per host. Concurrent
     /// callers for the same host await this same `Task` instead of
-    /// starting a second negotiation (and, downstream, a second
-    /// `POST /v1/rtc/offer` — which would hit `WebRTCHostAgent`'s own
-    /// `HostError.busy` guard on the host side).
+    /// starting a second negotiation (and, downstream, a second unique signed
+    /// offer that would hit `WebRTCHostAgent`'s busy guard on the host side).
     private var inFlightAttempts: [UUID: Attempt] = [:]
 
     /// Attempt ids (see `Attempt`) whose `invalidate(host:)` call landed
@@ -229,7 +228,8 @@ public final class RemoteConnectionCoordinator {
         if let live = liveConnections[host.id] {
             return live
         }
-        let route = routingBaseURL(for: host)
+        let routes = routingRoutes(for: host, pinnedHost: pinnedHost)
+        let route = routes.first?.baseURL ?? host.baseURL
         if let cooldown = failureCooldowns[host.id] {
             if cooldown.route == route, now() < cooldown.until {
                 return nil
@@ -245,7 +245,7 @@ public final class RemoteConnectionCoordinator {
             await self?.negotiate(
                 host: host,
                 pinnedHost: pinnedHost,
-                route: route,
+                routes: routes,
                 attemptID: attemptID
             )
         }
@@ -573,19 +573,20 @@ public final class RemoteConnectionCoordinator {
     private func negotiate(
         host: Host,
         pinnedHost: PinnedHost,
-        route: URL,
+        routes: [RemoteConnectionRoute],
         attemptID: UUID
     ) async -> RemoteHostConnection? {
+        let failureRoute = routes.first?.baseURL ?? host.baseURL
         // One-shot per attempt: cleared here regardless of outcome so a
         // FUTURE attempt for this host starts with a clean flag.
         defer { invalidatedAttempts.remove(attemptID) }
         guard let clientKey = try? identityStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client identity available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host, route: route)
+            return fail(host: host, route: failureRoute)
         }
         guard let clientDeviceID = try? deviceIDStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client device id available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host, route: route)
+            return fail(host: host, route: failureRoute)
         }
 
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
@@ -597,11 +598,25 @@ public final class RemoteConnectionCoordinator {
 
         do {
             let offer = try await connection.createOffer()
-            let answer = try await signaling.exchange(
-                baseURL: route,
-                offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offer.sdp)
+            let exchange = try await signaling.authenticatedExchange(
+                routes: routes,
+                hostDeviceID: pinnedHost.id,
+                hostPublicKey: pinnedHost.publicKey,
+                clientDeviceID: clientDeviceID,
+                clientKey: clientKey,
+                sdp: offer.sdp
             )
-            try await connection.applyAnswer(RTCSessionDescription(type: .answer, sdp: answer.sdp))
+            try await connection.applyAnswer(
+                RTCSessionDescription(
+                    type: .answer,
+                    sdp: exchange.answer.sdp
+                )
+            )
+            var refreshedPin = pinnedHost
+            refreshedPin.routes = exchange.answer.routes
+            refreshedPin.lastSuccessfulRoute = exchange.route
+            refreshedPin.lastConnectedAt = now()
+            try pinnedHostStore.update(refreshedPin)
         } catch {
             await connection.close()
             guard !invalidatedAttempts.contains(attemptID) else {
@@ -612,7 +627,7 @@ public final class RemoteConnectionCoordinator {
             // retried once the cooldown expires; never cached as a
             // PERMANENT failure.
             Self.logger.warning("negotiation with host \(host.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
-            return fail(host: host, route: route)
+            return fail(host: host, route: failureRoute)
         }
 
         // No `await` between this check and registration below — see
@@ -647,7 +662,7 @@ public final class RemoteConnectionCoordinator {
             guard !invalidatedAttempts.contains(attemptID) else {
                 return nil
             }
-            return fail(host: host, route: route)
+            return fail(host: host, route: failureRoute)
         }
 
         return connection
@@ -665,10 +680,30 @@ public final class RemoteConnectionCoordinator {
         return nil
     }
 
-    private func routingBaseURL(for host: Host) -> URL {
-        host.remoteDeviceID
-            .flatMap { discoveredBaseURLs[$0] }
-            ?? host.baseURL
+    private func routingRoutes(
+        for host: Host,
+        pinnedHost: PinnedHost
+    ) -> [RemoteConnectionRoute] {
+        var candidates: [RemoteConnectionRoute] = []
+        if let discovered = host.remoteDeviceID.flatMap({
+            discoveredBaseURLs[$0]
+        }) {
+            candidates.append(
+                RemoteConnectionRoute(kind: .lan, baseURL: discovered)
+            )
+        }
+        if let lastSuccessful = pinnedHost.lastSuccessfulRoute {
+            candidates.append(lastSuccessful)
+        }
+        candidates.append(contentsOf: pinnedHost.routes)
+        candidates.append(contentsOf: host.routes)
+        if candidates.isEmpty {
+            candidates.append(
+                RemoteConnectionRoute(kind: .lan, baseURL: host.baseURL)
+            )
+        }
+        var seen = Set<URL>()
+        return candidates.filter { seen.insert($0.baseURL).inserted }
     }
 
     private func discardPanesStore(

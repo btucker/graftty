@@ -269,17 +269,16 @@ final class AppServices {
 
     // MARK: - WebRTC (R4)
 
-    /// Mac-side WebRTC host agent. Accepts incoming offers from paired iPads
-    /// and opens SSH sessions over the resulting DataChannel. Constructed in
-    /// `GrafttyApp.init()` and wired to the `/v1/rtc/offer` signaling route
-    /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
+    /// Mac-side WebRTC host agent. Accepts authenticated offers from paired
+    /// clients and opens SSH sessions over the resulting DataChannel.
+    /// Retained here so it outlives the SwiftUI init cycle.
     var hostAgent: WebRTCHostAgent?
     /// Deletes only the prompt files found at startup after their grace
     /// period. Capturing that snapshot avoids pruning prompts owned by
     /// worktree operations created during this app process.
     private var agentPromptRecoveryTask: Task<Void, Never>?
 
-    /// Host-side LAN pairing consent coordinator. `/v1/pairing/*` and the
+    /// Host-side LAN pairing consent coordinator. `/v2/pairing/*` and the
     /// presented sheet share this instance; its process-wide admission is
     /// also shared with the Settings pairing listener.
     let hostPairingCoordinator: RemoteMacHostPairingCoordinator
@@ -288,6 +287,7 @@ final class AppServices {
     let remoteMacAccessEnabled: Bool
     private var lanRemoteAccessServer: LANRemoteAccessServer?
     private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
+    private var remoteAccessRouteRefreshTask: Task<Void, Never>?
 
     init(
         socketPath: String,
@@ -419,7 +419,7 @@ final class AppServices {
             hostDeviceID: localRemoteDeviceID(),
             hostKind: .mac,
             hostDisplayName: localHostDisplayName(),
-            pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
+            pairingURLProvider: { URL(string: "http://0.0.0.0\(PairingRoutes.basePath)")! }
         )
         return RemoteMacHostPairingCoordinator(
             server: HostPairingServer(session: session),
@@ -427,25 +427,71 @@ final class AppServices {
         )
     }
 
-    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) throws {
-        guard remoteMacAccessEnabled else { return }
+    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) async throws {
+        guard remoteMacAccessEnabled else {
+            throw RemoteMacAccessServiceError.disabled
+        }
         guard lanRemoteAccessServer == nil else { return }
+        guard let hostAgent else {
+            throw RemoteMacAccessServiceError.hostAgentUnavailable
+        }
 
         let endpoint = RemoteAccessEndpoint(
             host: Self.localLANHostName(),
-            port: 0
+            port: RemoteAccessProtocol.pairedAccessPort
+        )
+        endpoint.setRoutes(
+            await Self.remoteAccessRoutes(
+                lanBaseURL: endpoint.baseURL()
+            )
+        )
+        let identityStore = HostIdentityStore(
+            directory: HostIdentityStore.defaultDirectory
+        )
+        let peerStore = TrustedPeerStore(
+            directory: TrustedPeerStore.defaultDirectory
+        )
+        let signalingServer = AuthenticatedSignalingServer(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            hostDeviceID: Self.localRemoteDeviceID(),
+            routesProvider: { endpoint.routes() }
         )
         let routeHandler = RemoteMacAccessServices.makeLANRouteHandler(
             lanBaseURLProvider: { endpoint.baseURL() },
             hostPairingCoordinator: hostPairingCoordinator,
+            acceptSignalingChallenge: { request in
+                await signalingServer.issueChallenge(request)
+            },
             acceptSignalingOffer: { offer in
-                guard let hostAgent else {
-                    return .unavailable("WebRTC host agent is unavailable")
+                let verified: AuthenticatedSignalingServer.VerifiedOffer
+                switch await signalingServer.authenticateOffer(offer) {
+                case .success(.new(let value)):
+                    verified = value
+                case .success(.pending):
+                    switch await signalingServer.awaitAnswer(for: offer) {
+                    case .success(let answer):
+                        return .authenticatedSuccess(answer)
+                    case .failure(let error):
+                        return .unavailable(error.error)
+                    }
+                case .success(.cached(let answer)):
+                    return .authenticatedSuccess(answer)
+                case .failure(let error):
+                    return .invalid(error.error)
                 }
                 let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
                 do {
                     let answer = try await hostAgent.acceptOffer(rtcOffer)
-                    return .success(SignalingAnswer(sdp: answer.sdp))
+                    switch await signalingServer.makeAnswer(
+                        sdp: answer.sdp,
+                        for: verified
+                    ) {
+                    case .success(let signedAnswer):
+                        return .authenticatedSuccess(signedAnswer)
+                    case .failure(let error):
+                        return .internalFailure(error.error)
+                    }
                 } catch WebRTCHostAgent.HostError.busy {
                     return .hostBusy("host is already handling an offer")
                 } catch {
@@ -455,9 +501,16 @@ final class AppServices {
             }
         )
         let server = LANRemoteAccessServer(
-            config: .init(port: 0, bindHost: "0.0.0.0"),
+            config: .init(
+                port: RemoteAccessProtocol.pairedAccessPort,
+                bindHost: "::"
+            ),
             routeHandler: routeHandler
         )
+        // Resolve every throwing identity dependency before binding. If this
+        // fails after `server.start()`, the listener would not yet be retained
+        // by `lanRemoteAccessServer` and therefore could not be stopped.
+        let localHostFingerprint = try Self.localHostFingerprint()
         try server.start()
         guard let port = server.listeningPort else {
             server.stop()
@@ -469,7 +522,7 @@ final class AppServices {
             port: port,
             label: Self.localHostDisplayName(),
             deviceID: Self.localRemoteDeviceID(),
-            fingerprint: try Self.localHostFingerprint(),
+            fingerprint: localHostFingerprint,
             protocolVersion: GrafttyBonjourService.discoveryVersion,
             pairingStatus: .required
         )
@@ -482,18 +535,37 @@ final class AppServices {
 
         lanRemoteAccessServer = server
         bonjourAdvertiser = advertiser
-        NSLog("[Graftty] LAN remote access listening on 0.0.0.0:%d", port)
+        remoteAccessRouteRefreshTask?.cancel()
+        remoteAccessRouteRefreshTask = Task {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+                endpoint.setRoutes(
+                    await Self.remoteAccessRoutes(
+                        lanBaseURL: endpoint.baseURL()
+                    )
+                )
+            }
+        }
+        NSLog("[Graftty] paired remote access listening on [::]:%d", port)
     }
 
     func stopRemoteMacAccessServices() {
         remoteMacsModel.stopDiscovery()
+        remoteAccessRouteRefreshTask?.cancel()
+        remoteAccessRouteRefreshTask = nil
         bonjourAdvertiser?.stop()
         bonjourAdvertiser = nil
         lanRemoteAccessServer?.stop()
         lanRemoteAccessServer = nil
     }
 
-    private enum RemoteMacAccessServiceError: Error {
+    fileprivate enum RemoteMacAccessServiceError: Error {
+        case disabled
+        case hostAgentUnavailable
         case listenerPortUnavailable
     }
 
@@ -501,6 +573,7 @@ final class AppServices {
         private let lock = NSLock()
         private let host: String
         private var port: Int
+        private var advertisedRoutes: [RemoteConnectionRoute] = []
 
         init(host: String, port: Int) {
             self.host = host
@@ -513,6 +586,16 @@ final class AppServices {
             }
         }
 
+        func setRoutes(_ routes: [RemoteConnectionRoute]) {
+            lock.withLock {
+                advertisedRoutes = routes
+            }
+        }
+
+        func routes() -> [RemoteConnectionRoute] {
+            lock.withLock { advertisedRoutes }
+        }
+
         func baseURL() -> URL {
             lock.withLock {
                 var components = URLComponents()
@@ -522,6 +605,12 @@ final class AppServices {
                 return components.url ?? URL(string: "http://\(host):\(port)")!
             }
         }
+    }
+
+    private static func remoteAccessRoutes(
+        lanBaseURL: URL
+    ) async -> [RemoteConnectionRoute] {
+        await RemoteAccessRouteDiscovery.routes(lanBaseURL: lanBaseURL)
     }
 
     private static func remoteMacAccessEnabledDefault() -> Bool {
@@ -555,13 +644,12 @@ final class AppServices {
     }
 
     fileprivate static func localRemoteDeviceID() -> RemoteDeviceID {
-        let key = "remoteMac.localDeviceID"
-        if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
-            return RemoteDeviceID(value: value)
+        do {
+            return try HostDeviceIDStore.shared.loadOrGenerateAndPersist()
+        } catch {
+            assertionFailure("Failed to persist the local remote device ID: \(error)")
+            return RemoteDeviceID.generate()
         }
-        let value = UUID().uuidString
-        UserDefaults.standard.set(value, forKey: key)
-        return RemoteDeviceID(value: value)
     }
 
     fileprivate static func localHostDisplayName() -> String {
@@ -703,11 +791,10 @@ struct GrafttyApp: App {
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
-        // R4: Construct the Mac-side WebRTC host agent. The agent accepts
-        // incoming offers from paired iPads over `POST /v1/rtc/offer` and
-        // opens SSH sessions over the resulting DataChannel → zmx attach.
-        // The signaling handler is wired in startup() via
-        // `webController.setSignalingHandler(_:)` once @State is accessible.
+        // R4: Construct the Mac-side WebRTC host agent. The dedicated
+        // paired-access listener authenticates v2 offers with the device keys
+        // before passing them to this agent, which opens SSH sessions over the
+        // resulting DataChannel → zmx attach.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         self.trustedPeerStore = trustedPeerStore
@@ -718,19 +805,14 @@ struct GrafttyApp: App {
         // this coordinator. Reuses the SAME identity/trusted-peer stores as
         // `WebRTCHostAgent` above — a peer confirmed through the pairing UI
         // must be the same peer `WebRTCHostAgent.acceptOffer` later trusts.
-        // `webBaseURLProvider` is `@MainActor`-isolated (see
-        // `HostPairingCoordinator`) so it can read `webController`'s
-        // published state directly instead of needing a `Sendable` bridge.
+
         _hostPairingCoordinator = StateObject(wrappedValue: HostPairingCoordinator(
             identityStore: hostIdentityStore,
             trustedPeerStore: trustedPeerStore,
-            deviceIDStore: HostDeviceIDStore(directory: HostDeviceIDStore.defaultDirectory),
+            deviceIDStore: HostDeviceIDStore.shared,
             hostDisplayName: Host.current().localizedName ?? "Mac",
-            webBaseURLProvider: { [weak webController] in
-                guard let webController,
-                      case let .listening(_, port) = webController.status,
-                      let host = webController.serverHostname else { return nil }
-                return URL(string: WebURLComposer.baseURL(host: host, port: port))
+            remoteAccessRoutesProvider: {
+                await RemoteAccessRouteDiscovery.routes(lanBaseURL: $0)
             },
             admission: pairingAdmission
         ))
@@ -1948,11 +2030,11 @@ struct GrafttyApp: App {
             }
         }
 
-        // R5 Task 11: wire production panes-state + pane-control closures
-        // into the host agent. Must run BEFORE `setSignalingHandler` below
-        // so no incoming WebRTC offer can complete its data-channel handshake
-        // with the Task 9 stubs still in place — `installSSHHandler` reads
-        // the actor's stored closures synchronously when the DC opens.
+        // R5 Task 11: wire production panes-state + pane-control closures into
+        // the host agent before the paired-access listener starts, so no
+        // incoming WebRTC offer can complete its data-channel handshake with
+        // the Task 9 stubs still in place — `installSSHHandler` reads the
+        // actor's stored closures synchronously when the DC opens.
         //
         // `panesStateSubscribe`: emits initial snapshot, then polls
         // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
@@ -1969,6 +2051,9 @@ struct GrafttyApp: App {
         // the same `splitPane` / `closePane` static methods the Mac sidebar
         // context menu drives. `swap` returns `unsupported` — no native
         // implementation exists yet; tracked as a post-R5 follow-up.
+        hostPairingCoordinator.setRemoteAccessStartupError(
+            "Paired access is still starting. Try again in a moment."
+        )
         if let hostAgent = services.hostAgent {
             let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
                 // Initial snapshot fires synchronously so the first frame
@@ -2531,14 +2616,9 @@ struct GrafttyApp: App {
                 }
             }
 
-            // Await the setters BEFORE registering the signaling handler.
-            // Spawning a Task does NOT enqueue onto the actor — only the
-            // Task body's `await` does. A simultaneous HTTP offer could
-            // otherwise race the setter Task and reach `installSSHHandler`
-            // with the stub closures still in place. Install the signaling
-            // handler inside the Task body, after both setters complete,
-            // so no offer can fire before the production closures are live.
-            let controller = webController
+            // Configure SSH channel handlers before starting the dedicated
+            // paired-access listener. Browser Web Access deliberately has no
+            // native signaling route.
             Task { @MainActor in
                 await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
                 await hostAgent.setPanesStateV2Subscribe(panesStateV2Subscribe)
@@ -2546,35 +2626,37 @@ struct GrafttyApp: App {
                 await hostAgent.setWorktreeManagementMutator(
                     worktreeManagementMutator
                 )
-                // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
-                // The signalingHandler closure bridges between the HTTP layer's
-                // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
-                // RTCSessionDescription. If hostAgent construction failed at init
-                // time (e.g. keystore error), the closure is not installed and
-                // the endpoint responds 503.
-                controller.setSignalingHandler { offer in
-                    let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
-                    do {
-                        let answer = try await hostAgent.acceptOffer(rtcOffer)
-                        return .success(SignalingAnswer(sdp: answer.sdp))
-                    } catch WebRTCHostAgent.HostError.busy {
-                        return .unavailable("host is already handling an offer")
-                    } catch {
-                        NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                        return Self.signalingOutcome(forAcceptOfferFailure: error)
-                    }
-                }
                 do {
-                    try services.startRemoteMacAccessServices(hostAgent: hostAgent)
+                    try await services.startRemoteMacAccessServices(
+                        hostAgent: hostAgent
+                    )
+                    hostPairingCoordinator.setRemoteAccessStartupError(nil)
                 } catch {
-                    NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
+                    hostPairingCoordinator.setRemoteAccessStartupError(
+                        Self.remoteAccessStartupMessage(for: error)
+                    )
+                    NSLog(
+                        "[Graftty] failed to start LAN remote access services: %@",
+                        String(describing: error)
+                    )
                 }
             }
         } else {
-            do {
-                try services.startRemoteMacAccessServices(hostAgent: nil)
-            } catch {
-                NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
+            Task { @MainActor in
+                do {
+                    try await services.startRemoteMacAccessServices(
+                        hostAgent: nil
+                    )
+                    hostPairingCoordinator.setRemoteAccessStartupError(nil)
+                } catch {
+                    hostPairingCoordinator.setRemoteAccessStartupError(
+                        Self.remoteAccessStartupMessage(for: error)
+                    )
+                    NSLog(
+                        "[Graftty] failed to start LAN remote access services: %@",
+                        String(describing: error)
+                    )
+                }
             }
         }
 
@@ -2603,23 +2685,22 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Maps an error thrown by `WebRTCHostAgent.acceptOffer` to the HTTP
-    /// outcome the `/v1/rtc/offer` signaling endpoint returns. Extracted
-    /// from the `setSignalingHandler` closure in `startup()` so the
-    /// mapping is unit-testable without booting the whole app.
-    ///
-    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
-    /// arrives while a prior negotiation is still in flight — maps to
-    /// `.unavailable` (503) rather than the `.internalFailure` (500)
-    /// catch-all: a busy host is a transient, retryable condition, and
-    /// `RemoteConnectionCoordinator` treats a 503 as "fall back to /ws,
-    /// try again later" without marking the host permanently bad. Every
-    /// other `acceptOffer` failure stays `.internalFailure`.
-    nonisolated static func signalingOutcome(forAcceptOfferFailure error: Error) -> WebServer.SignalingHandlerOutcome {
-        if case WebRTCHostAgent.HostError.busy = error {
-            return .unavailable("host is busy with another remote connection")
+    private static func remoteAccessStartupMessage(for error: Error) -> String {
+        if let serviceError = error as? AppServices.RemoteMacAccessServiceError {
+            switch serviceError {
+            case .disabled:
+                return "Paired-device access is disabled in this Graftty configuration."
+            case .hostAgentUnavailable:
+                return "Paired-device access is unavailable because WebRTC could not start."
+            case .listenerPortUnavailable:
+                break
+            }
         }
-        return .internalFailure("acceptOffer failed: \(error)")
+        return """
+        Paired-device access could not start on port \
+        \(RemoteAccessProtocol.pairedAccessPort). Quit the other process using \
+        that port, then restart Graftty. (\(error))
+        """
     }
 
     actor CodexAppServerInboxObserverDeliveryState {
@@ -3778,7 +3859,7 @@ struct GrafttyApp: App {
                 )
                 let pane: PaneSlotID?
                 switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
-                case let .pane(slot): pane = slot
+                case .pane(let slot): pane = slot
                 case .worktree: pane = nil
                 }
                 appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
@@ -3829,7 +3910,7 @@ struct GrafttyApp: App {
     ) -> PaneSlotID? {
         switch AgentStopAttentionTarget.resolve(
             worktree: worktree, paneSessionName: paneSessionName) {
-        case let .pane(slot): return slot
+        case .pane(let slot): return slot
         case .worktree: return worktree.firstPane
         }
     }
@@ -4473,7 +4554,6 @@ struct GrafttyApp: App {
         }
     }
 
-
     /// Static navigate used by the `onGotoSplit` callback (triggered from
     /// libghostty keybinds). Uses `SplitTree.spatialNeighbor` (`TERM-7.3`)
     /// so `.down` genuinely means "the pane spatially below," not "the
@@ -4837,13 +4917,13 @@ struct GrafttyApp: App {
 
     private func handleGhosttyCommand(_ command: GhosttyCommandRegistry.Entry) {
         switch command.kind {
-        case let .split(direction):
+        case .split(let direction):
             handleSplit(paneSplit(for: direction))
         case .closePane:
             handleClosePane()
-        case let .focusPane(direction):
+        case .focusPane(let direction):
             handleNavigate(navigationDirection(for: direction))
-        case let .focusPaneByOrder(forward):
+        case .focusPaneByOrder(let forward):
             handleNavigateTreeOrder(forward: forward)
         case .unsupported:
             handleUnsupportedGhosttyAction(command.action)
@@ -5073,7 +5153,8 @@ struct GrafttyApp: App {
     }
 }
 
-private extension PaneControlRequest {
+ extension PaneControlRequest {
+    fileprivate
     var primaryTarget: String? {
         switch self {
         case .split(let target, _), .close(let target),
@@ -5085,7 +5166,8 @@ private extension PaneControlRequest {
     }
 }
 
-private extension WorktreeManagementRequest {
+ extension WorktreeManagementRequest {
+    fileprivate
     var targetsRelayedResource: Bool {
         switch self {
         case .hostPresentation, .listRepositories:
@@ -5383,7 +5465,7 @@ private func paneLayoutNode(
     liveness: [String: AgentLiveness]
 ) -> PaneLayoutNode {
     switch node {
-    case let .leaf(id):
+    case .leaf(let id):
         let sessionName = paneSessions[id].map(ZmxLauncher.sessionName(for:))
         return .leaf(
             sessionName: sessionName ?? "",
@@ -5395,7 +5477,7 @@ private func paneLayoutNode(
             attentionSource: paneAttention[id]?.source,
             attentionTimestamp: paneAttention[id]?.timestamp
         )
-    case let .split(s):
+    case .split(let s):
         return .split(
             direction: s.direction == .horizontal ? .horizontal : .vertical,
             ratio: s.ratio,

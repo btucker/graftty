@@ -1316,7 +1316,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-2.2** When Bonjour discovery is unavailable, GrafttyMobile shall accept a manually entered HTTP(S) LAN address only as the bootstrap for the same authenticated device-pairing ceremony; it shall never save the address as an unpaired host.
 
-**IOS-2.3** The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each host record shall carry `{id, label, baseURL, lastUsedAt, addedAt}`. Keychain was initially specified here, but a saved host contains no secret (just URL, label, and timestamps), and iOS-simulator Keychain access requires a signing context that ad-hoc-signed Xcode builds without a `DEVELOPMENT_TEAM` cannot obtain (every `SecItemAdd` returns `errSecMissingEntitlement`, -34018). File storage works identically on simulator and device and upgrades cleanly to a per-field Keychain split when we later persist a secret (e.g., a bearer token).
+**IOS-2.3** The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each paired host record shall carry its stable device ID, protocol version, advertised routes, and last-known routing hint in addition to its UI identity and timestamps. The full pinned host public key shall remain in `PinnedHostStore`.
 
 **IOS-2.4** For compatibility with older mobile clients, the macOS application's Web Access settings may continue to render its Web Base URL as a scannable QR code alongside the copy/open actions (`WEB-1.12`). Current GrafttyMobile onboarding shall use authenticated device pairing (`IOS-2.1`) and shall not require Web Access.
 
@@ -1828,7 +1828,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
-**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
+**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.") func confirmPersistsIntroducedPeer() async throws { try await withFixture { fx in await fx.coordinator.beginPairing() let payload = try #require(fx.coordinator.payload) let port = try #require(payload.pairingURL.port) let status = try await self.postIntroduce(nonce: payload.nonce, port: port) #expect(status == 200) // The coordinator's tick task surfaces the introduce as // .pendingConfirmation on its next 1s tick. try await self.waitUntil { if case .pendingConfirmation = fx.coordinator.state { return true } return false } await fx.coordinator.confirm() guard case .confirmed(let trustedPeer) = fx.coordinator.state else { Issue.record("Expected .confirmed after confirm(), got \(fx.coordinator.state)") return } #expect(trustedPeer.id == RemoteDeviceID(value: "client-123")) let persisted = try fx.peerStore.get(id: RemoteDeviceID(value: "client-123")) #expect(persisted != nil) #expect(persisted?.displayName == "Client iPhone") } } // MARK: - error handling @Test("beginPairing clears any previous error by setting lastError to nil at the start of a new attempt") func beginPairingClearsLastError() async throws { try await withFixture { fx in // Start a pairing that succeeds, so lastError is nil await fx.coordinator.beginPairing() #expect(fx.coordinator.lastError == nil) await fx.coordinator.endPairing() // Call beginPairing again; lastError should remain nil // (verifying that line 99 clears it at the start) await fx.coordinator.beginPairing() #expect(fx.coordinator.lastError == nil, "lastError should be cleared on new beginPairing") } } @Test(
 
 **REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
 
@@ -1844,9 +1844,25 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.10** When `ClientDeviceIDStore` cannot read or persist a client device identity, `PairDeviceFlowView.buildModel` shall return nil so the view can present a failed state whose Retry re-attempts model construction, rather than an indefinite connecting spinner.
 
+**REMOTE-1.11** On the protocol-v2 upgrade, the application shall discard every pre-v2 trusted peer, pinned host, paired saved-host, and Remote-Mac record and require a new pairing ceremony, while preserving host/client identity keys and manual unpaired mobile host records.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
+
+**REMOTE-2.2** Before allocating WebRTC resources, the paired-access listener shall verify a signed challenge request from a currently trusted client, return a short-lived host-signed challenge, bind that challenge to at most one unique signed SDP offer, and return a cached answer for exact offer retries.
+
+**REMOTE-2.3** The client shall verify the challenge and signaling answer with the full host public key pinned during pairing; a missing, expired, mismatched, or invalid signature shall fail closed without trying an unauthenticated signaling endpoint.
+
+**REMOTE-2.4** Native paired-device access shall use one stable dual-stack HTTP listener on port 8800 for LAN, MagicDNS, and Tailscale-IP routes. Browser Web Access shall remain an independent HTTPS service and shall not be used for native signaling.
+
+**REMOTE-2.5** When connecting to a paired host, the client shall race authenticated challenge probes across trusted routes, construct exactly one signed SDP offer, retry that same offer across remaining routes after a transport failure, and persist the winning route plus routes refreshed in the signed answer.
+
+**REMOTE-2.6** Tailscale route discovery and refresh shall not depend on Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route available; later recovery shall restore MagicDNS and Tailscale-IP routes.
+
+**REMOTE-2.7** If the stable paired-access listener cannot bind, Settings shall show a clear error and shall not begin a pairing ceremony that advertises the unavailable listener.
+
+**REMOTE-2.8** Production native connections shall reject the protocol-v1 signaling route and shall use the paired identity keys on both LAN and Tailscale.
 
 ### REMOTE-3.x — Revocation
 
@@ -1946,9 +1962,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.3** When a discovered Remote Mac service disappears, the application shall remove its transient candidate instead of continuing to present stale reachability.
 
-**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, and signaling base URL.
+**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, protocol version, and advertised LAN/Tailscale routes.
 
-**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall exchange a WebRTC offer at its last known LAN base URL, apply the answer, and open the remote pane-state/control environment.
+**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall complete the authenticated route race and signed WebRTC offer/answer exchange, apply the answer, and open the remote pane-state and pane-control environment.
 
 **REMOTE-12.6** While connection setup or a live connection already exists for a Remote Mac identity, repeated connect requests shall reuse that one connection rather than dial another transport.
 

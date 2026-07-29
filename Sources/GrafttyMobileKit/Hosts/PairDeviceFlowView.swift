@@ -166,14 +166,17 @@ public final class PairDeviceFlowModel {
     // MARK: - Host construction
 
     static func makeHost(payload: PairingPayload, pinnedHost: PinnedHost) -> Host {
-        // New Bonjour-initiated pairing payloads have no `webBaseURL`; their
-        // pairing URL is rooted at the durable (for this host process) LAN
-        // pairing/signaling listener. Older QR payloads retain their Web
-        // Access URL as a compatibility path.
-        let baseURL = payload.webBaseURL ?? pairingBaseURL(payload.pairingURL)
+        let routes = payload.routes.isEmpty
+            ? [RemoteConnectionRoute(
+                kind: .lan,
+                baseURL: pairingBaseURL(payload.pairingURL)
+            )]
+            : payload.routes
+        let baseURL = routes[0].baseURL
         return Host(
             label: payload.hostDisplayName,
             baseURL: baseURL,
+            routes: routes,
             remoteDeviceID: payload.hostDeviceID
         )
     }

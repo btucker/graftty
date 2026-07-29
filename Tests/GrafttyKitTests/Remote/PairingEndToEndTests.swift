@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 /// Host-side integration coverage for the full device-pairing ceremony,
 /// driven end-to-end over real loopback HTTP in a single process.
@@ -53,7 +54,7 @@ struct PairingEndToEndTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "E2E Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
         let pairingServer = HostPairingServer(session: session)
         let httpServer = PairingHTTPServer(pairingServer: pairingServer)
@@ -97,7 +98,7 @@ struct PairingEndToEndTests {
             clientDisplayName: "E2E Test iPhone"
         )
         let (introduceStatus, introduceData) = try await Self.post(
-            "/v1/pairing/introduce",
+            "/v2/pairing/introduce",
             port: port,
             body: introduceRequest
         )
@@ -129,14 +130,13 @@ struct PairingEndToEndTests {
         let independentTranscript = RemotePairingTranscript(
             hostPublicKey: introduceResponse.hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: introduceResponse.expiry
+            payload: payload
         )
         #expect(independentTranscript.verificationCode() == stateVerificationCode)
 
         // ---- await-outcome long-poll, synchronized via pendingWaiterCount ----
         async let outcomeCall = Self.post(
-            "/v1/pairing/await-outcome",
+            "/v2/pairing/await-outcome",
             port: port,
             body: PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )

@@ -98,6 +98,8 @@ final class RemoteMacConnectionRegistry {
 
     typealias ConnectionFactory = @MainActor @Sendable (RemoteMac, RemoteMacIdentity) async throws -> Entry
     typealias IdentityProvider = @MainActor @Sendable () throws -> Curve25519.Signing.PrivateKey
+    typealias PinnedHostProvider = @Sendable (RemoteDeviceID) -> PinnedHost?
+    typealias PinnedHostUpdater = @Sendable (PinnedHost) throws -> Void
     typealias HostConnectionFactory = @MainActor @Sendable (
         Curve25519.Signing.PrivateKey,
         RemoteIdentityFingerprint
@@ -126,6 +128,8 @@ final class RemoteMacConnectionRegistry {
     private let legacyFactory: ConnectionFactory?
     private let identityProvider: IdentityProvider
     private let clientDeviceID: RemoteDeviceID
+    private let pinnedHostProvider: PinnedHostProvider?
+    private let pinnedHostUpdater: PinnedHostUpdater?
     private let signalingClient: SignalingClient
     private let connectionFactory: HostConnectionFactory
     private let paneEnvironmentBuilder: PaneEnvironmentBuilder
@@ -139,11 +143,14 @@ final class RemoteMacConnectionRegistry {
 
     init(factory: ConnectionFactory? = nil) {
         let identityStore = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
+        let pinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
         self.legacyFactory = factory
         self.identityProvider = {
             try identityStore.loadOrGenerateAndPersist()
         }
         self.clientDeviceID = Self.defaultClientDeviceID()
+        self.pinnedHostProvider = { try? pinnedHostStore.get(id: $0) }
+        self.pinnedHostUpdater = { try pinnedHostStore.update($0) }
         self.signalingClient = SignalingClient()
         self.connectionFactory = { clientKey, expectedHostFingerprint in
             LiveRemoteMacHostConnection(
@@ -168,6 +175,8 @@ final class RemoteMacConnectionRegistry {
     init(
         identityProvider: @escaping IdentityProvider,
         clientDeviceID: RemoteDeviceID,
+        pinnedHostProvider: PinnedHostProvider? = nil,
+        pinnedHostUpdater: PinnedHostUpdater? = nil,
         signalingClient: SignalingClient,
         connectionFactory: @escaping HostConnectionFactory,
         paneEnvironmentBuilder: @escaping PaneEnvironmentBuilder,
@@ -177,6 +186,8 @@ final class RemoteMacConnectionRegistry {
         self.legacyFactory = nil
         self.identityProvider = identityProvider
         self.clientDeviceID = clientDeviceID
+        self.pinnedHostProvider = pinnedHostProvider
+        self.pinnedHostUpdater = pinnedHostUpdater
         self.signalingClient = signalingClient
         self.connectionFactory = connectionFactory
         self.paneEnvironmentBuilder = paneEnvironmentBuilder
@@ -321,14 +332,50 @@ final class RemoteMacConnectionRegistry {
 
         var paneEnvironment: RemoteMacPaneEnvironment?
         do {
+            var refreshedPinnedHost: PinnedHost?
             let offerSDP = try await connection.createOfferSDP()
             try ensureCurrentAttempt(attemptID, identity: identity)
-            let answer = try await signalingClient.exchange(
-                baseURL: baseURL,
-                offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offerSDP)
-            )
+            let answerSDP: String
+            if let pinnedHostProvider {
+                guard let pinnedHost = pinnedHostProvider(remoteMac.id) else {
+                    throw ConnectionError.notConnected(identity)
+                }
+                var routes: [RemoteConnectionRoute] = []
+                if let lastSuccessful = remoteMac.lastSuccessfulRoute {
+                    routes.append(lastSuccessful)
+                }
+                routes.append(contentsOf: remoteMac.routes)
+                routes.append(contentsOf: pinnedHost.routes)
+                if routes.isEmpty {
+                    routes.append(RemoteConnectionRoute(kind: .lan, baseURL: baseURL))
+                }
+                let exchange = try await signalingClient.authenticatedExchange(
+                    routes: routes,
+                    hostDeviceID: remoteMac.id,
+                    hostPublicKey: pinnedHost.publicKey,
+                    clientDeviceID: clientDeviceID,
+                    clientKey: clientKey,
+                    sdp: offerSDP
+                )
+                var refreshed = pinnedHost
+                refreshed.routes = exchange.answer.routes
+                refreshed.lastSuccessfulRoute = exchange.route
+                refreshed.lastConnectedAt = now()
+                refreshedPinnedHost = refreshed
+                answerSDP = exchange.answer.sdp
+            } else {
+                // Internal test seam. Production always supplies a pin provider.
+                let answer = try await signalingClient.exchange(
+                    baseURL: baseURL,
+                    offer: SignalingOffer(
+                        clientDeviceID: clientDeviceID.value,
+                        sdp: offerSDP
+                    )
+                )
+                answerSDP = answer.sdp
+            }
             try ensureCurrentAttempt(attemptID, identity: identity)
-            try await connection.applyAnswerSDP(answer.sdp)
+            try await connection.applyAnswerSDP(answerSDP)
             try ensureCurrentAttempt(attemptID, identity: identity)
             let environment = await paneEnvironmentBuilder(
                 connection,
@@ -351,6 +398,9 @@ final class RemoteMacConnectionRegistry {
             try ensureCurrentAttempt(attemptID, identity: identity)
             guard !environment.isEmpty else {
                 throw ConnectionError.paneEnvironmentUnavailable(identity)
+            }
+            if let refreshedPinnedHost {
+                try pinnedHostUpdater?(refreshedPinnedHost)
             }
 
             return Entry(
@@ -446,13 +496,12 @@ final class RemoteMacConnectionRegistry {
     }
 
     private static func defaultClientDeviceID() -> RemoteDeviceID {
-        let key = "remoteMac.localDeviceID"
-        if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
-            return RemoteDeviceID(value: value)
+        do {
+            return try HostDeviceIDStore.shared.loadOrGenerateAndPersist()
+        } catch {
+            assertionFailure("Failed to persist the local remote device ID: \(error)")
+            return RemoteDeviceID.generate()
         }
-        let value = UUID().uuidString
-        UserDefaults.standard.set(value, forKey: key)
-        return RemoteDeviceID(value: value)
     }
 }
 

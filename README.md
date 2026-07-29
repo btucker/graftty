@@ -29,11 +29,12 @@ check manually from `Graftty → Check for Updates…`.
 
 ## Remote Macs
 
-Graftty can connect two Macs on the same local network so you can use one
-Mac's existing worktrees and persistent terminal sessions from the other.
-This is terminal access, not screen sharing. Both Macs run the normal
-Graftty app; no separate server, Tailscale connection, or system SSH setup
-is required.
+Graftty can connect two Macs so you can use one Mac's existing worktrees
+and persistent terminal sessions from the other. Pairing starts on the
+local network; after that, the same key-authenticated connection works
+over either LAN or Tailscale. This is terminal access, not screen sharing.
+Both Macs run the normal Graftty app; no separate server or system SSH
+setup is required.
 
 ### Pair two Macs
 
@@ -49,25 +50,30 @@ while it is running. To add another Mac:
    Accept the request on the host Mac and confirm it on the client only
    when the codes match.
 
-The client saves the paired Mac by its stable device ID and public-key
-fingerprint, not by its changeable hostname or IP address. Only paired Macs
-become persistent sidebar rows; nearby, unpaired Bonjour results remain
-inside the Add Remote Mac sheet.
+The client saves the paired Mac by its stable device ID, full public key,
+and signed LAN/Tailscale routes—not by one changeable hostname or IP address.
+Only paired Macs become persistent sidebar rows; nearby, unpaired Bonjour
+results remain inside the Add Remote Mac sheet.
 
 Select a saved Mac to connect on demand. Once connected, its worktrees and
 panes appear beneath it in the sidebar. Selecting a remote pane opens an
 interactive terminal attached to that pane's persistent `zmx` session.
 Graftty keeps one client connection per saved Mac and carries terminal,
-pane-list, and pane-control traffic through an encrypted
-WebRTC DataChannel with mutually authenticated SSH inside it.
+pane-list, and pane-control traffic through an encrypted WebRTC DataChannel
+with mutually authenticated SSH inside it. When several saved routes are
+available, Graftty probes them concurrently and uses the first route that
+proves possession of the paired host key.
 
 ### Trust, revocation, and recovery
 
 Bonjour discovery is only an address hint—it does not establish trust.
 Pairing exchanges public identity keys, requires approval on the host, and
 uses the matching verification code to prevent an untrusted LAN peer from
-silently adding itself. The LAN listener exposes only pairing and WebRTC
-signaling routes and rate-limits unauthenticated requests.
+silently adding itself. The dedicated paired-access listener runs on port
+8800 over LAN and Tailscale and exposes only pairing and signaling routes.
+Every signaling challenge, WebRTC offer, and answer is signed with the keys
+established during pairing; captured challenges are short-lived and
+single-use.
 
 Every later connection verifies the host's SSH key against the fingerprint
 pinned during pairing. If the key does not match, Graftty fails closed and
@@ -82,11 +88,13 @@ The current host accepts one active incoming remote connection at a time;
 another client receives a retryable “host busy” failure without displacing
 the active connection.
 
-If a Mac does not appear, confirm that both apps are running on the same
-LAN, Local Network permission is enabled for Graftty, and the network
-allows Bonjour/mDNS. Corporate and guest networks often block peer
-discovery or device-to-device traffic; use the manual LAN URL when one is
-available. Remote Macs are currently local-network only.
+If a Mac does not appear during initial pairing, confirm that both apps are
+running on the same LAN, Local Network permission is enabled for Graftty,
+and the network allows Bonjour/mDNS. Corporate and guest networks often
+block peer discovery or device-to-device traffic; use the manual LAN URL
+when one is available. For later remote connections, both devices must be
+online in the same tailnet and the host must still be reachable on port
+8800.
 
 ## Agent teams
 

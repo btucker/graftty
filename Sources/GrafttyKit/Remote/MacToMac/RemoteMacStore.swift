@@ -48,6 +48,9 @@ public final class RemoteMacStore {
             let existing = next[idx]
             updated.addedAt = existing.addedAt
             updated.lastKnownBaseURL = remoteMac.lastKnownBaseURL ?? existing.lastKnownBaseURL
+            updated.routes = remoteMac.routes.isEmpty ? existing.routes : remoteMac.routes
+            updated.lastSuccessfulRoute =
+                remoteMac.lastSuccessfulRoute ?? existing.lastSuccessfulRoute
             updated.lastUsedAt = remoteMac.lastUsedAt ?? existing.lastUsedAt
             updated.lastDiscoveredAt = remoteMac.lastDiscoveredAt ?? existing.lastDiscoveredAt
             next[idx] = updated
@@ -111,7 +114,9 @@ public final class RemoteMacStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            return try decoder.decode([RemoteMac].self, from: data)
+            return try decoder.decode([RemoteMac].self, from: data).filter {
+                $0.pairingProtocolVersion == RemoteAccessProtocol.version
+            }
         } catch {
             // Preserve the unreadable source before returning a recoverable
             // empty model. A later pairing/save can now create a fresh file

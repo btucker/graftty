@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyRemoteClient
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyRemoteClient
 
 @Suite("LocalPairingClient Tests")
 struct LocalPairingClientTests {
@@ -45,7 +46,7 @@ struct LocalPairingClientTests {
             hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPub),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
-            pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host.local:8800/v2/pairing")!
         )
 
         let session = ClientPairingSession(
@@ -180,8 +181,8 @@ struct LocalPairingClientTests {
 
         let recordedBeforeConfirm = await stub.recordedRequests
         #expect(recordedBeforeConfirm.map { $0.url?.path } == [
-            "/v1/pairing/begin",
-            "/v1/pairing/introduce",
+                "/v2/pairing/begin",
+                "/v2/pairing/introduce",
         ])
         #expect(
             recordedBeforeConfirm[0].timeoutInterval
@@ -190,8 +191,7 @@ struct LocalPairingClientTests {
         #expect(code == RemotePairingTranscript(
             hostPublicKey: fx.hostPublicKey,
             clientPublicKey: fx.clientPublicKey,
-            nonce: fx.payload.nonce,
-            expiry: fx.payload.expiry
+            payload: fx.payload
         ).verificationCode())
         #expect(try fx.pinnedStore.list().isEmpty)
 
@@ -200,9 +200,9 @@ struct LocalPairingClientTests {
         #expect(pinned.id == fx.payload.hostDeviceID)
         let recordedAfterConfirm = await stub.recordedRequests
         #expect(recordedAfterConfirm.map { $0.url?.path } == [
-            "/v1/pairing/begin",
-            "/v1/pairing/introduce",
-            "/v1/pairing/await-outcome",
+                "/v2/pairing/begin",
+                "/v2/pairing/introduce",
+                "/v2/pairing/await-outcome",
         ])
         #expect(try fx.pinnedStore.list().contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
@@ -245,10 +245,10 @@ struct LocalPairingClientTests {
             transport: await stub.makeTransport()
         )
 
-        _ = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800/v1/pairing")!)
+        _ = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800/v2/pairing")!)
 
         let recorded = await stub.recordedRequests
-        #expect(recorded.map { $0.url?.path } == ["/v1/pairing/begin"])
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/begin"])
     }
 
     // MARK: - Fingerprint mismatch (REMOTE-1.2 client side enforcement at the wire)
@@ -276,12 +276,11 @@ struct LocalPairingClientTests {
             _ = try await client.runPairing(payload: fx.payload)
             Issue.record("Expected fingerprintMismatch")
         } catch ClientPairingSession.Error.fingerprintMismatch {
-            // REMOTE-1.2 protection fired inside session.confirm
+            // Expected before the confirmation long-poll begins.
         }
 
-        // The protection that matters: no host was persisted, even though
-        // await-outcome returned `.confirmed`. The fingerprint check is
-        // the gating step inside ClientPairingSession.confirm.
+        let recorded = await stub.recordedRequests
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/introduce"])
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.isEmpty)
     }
@@ -434,7 +433,7 @@ struct LocalPairingClientTests {
 
     // MARK: - Request shape
 
-    @Test("introduce request body carries nonce + client identity + version 1")
+    @Test("introduce request body carries nonce, client identity, and protocol version")
     func introduceRequestBody() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -454,7 +453,7 @@ struct LocalPairingClientTests {
         let introduceReq = recorded.first { $0.url?.path.hasSuffix("/introduce") == true }
         let body = try #require(introduceReq?.httpBody)
         let decoded = try JSONDecoder.iso8601().decode(PairingIntroduceRequest.self, from: body)
-        #expect(decoded.version == 1)
+        #expect(decoded.version == RemoteAccessProtocol.version)
         #expect(decoded.nonce == fx.payload.nonce)
         #expect(decoded.clientPublicKey == fx.clientPublicKey)
         #expect(decoded.clientDeviceID == fx.session.clientDeviceID)

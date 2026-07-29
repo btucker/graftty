@@ -1,7 +1,8 @@
-import Testing
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import Testing
+
 @testable import Graftty
 
 @MainActor
@@ -10,7 +11,7 @@ struct HostPairingCoordinatorTests {
 
     // MARK: Helpers
 
-    private nonisolated static let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+    private nonisolated static let tailscaleURL = URL(string: "http://mac.tail1234.ts.net:\(RemoteAccessProtocol.pairedAccessPort)")!
     private static let encoder = JSONEncoder.iso8601()
 
     private struct Fixture {
@@ -37,7 +38,11 @@ struct HostPairingCoordinatorTests {
             trustedPeerStore: peerStore,
             deviceIDStore: HostDeviceIDStore(directory: dir),
             hostDisplayName: "Test Mac",
-            webBaseURLProvider: { Self.webBaseURL },
+            remoteAccessRoutesProvider: { lanURL in
+                [
+                    RemoteConnectionRoute(kind: .lan, baseURL: lanURL),
+                    RemoteConnectionRoute(kind: .tailscaleDNS, baseURL: Self.tailscaleURL),
+                ] },
             admission: resolvedAdmission
         )
         return Fixture(dir: dir, coordinator: coordinator, peerStore: peerStore)
@@ -71,7 +76,7 @@ struct HostPairingCoordinatorTests {
     /// loopback (the listener binds 0.0.0.0, so the LAN-IP payload URL's
     /// port is reachable via 127.0.0.1).
     private func postIntroduce(nonce: RemotePairingNonce, port: Int) async throws -> Int {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/introduce")!)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/introduce")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try Self.encoder.encode(makeIntroduceRequest(nonce: nonce))
@@ -98,7 +103,8 @@ struct HostPairingCoordinatorTests {
 
     // MARK: - beginPairing
 
-    @Test("beginPairing publishes a payload whose pairingURL points at the bound listener's /v1/pairing route and whose webBaseURL comes from the provider")
+    @Test(
+        "beginPairing publishes the bound /v2/pairing route and native LAN/Tailscale connection routes")
     func beginPairingPublishesPayload() async throws {
         try await withFixture { fx in
             await fx.coordinator.beginPairing()
@@ -106,8 +112,12 @@ struct HostPairingCoordinatorTests {
             #expect(fx.coordinator.lastError == nil)
             let payload = try #require(fx.coordinator.payload)
             #expect(payload.pairingURL.scheme == "http")
-            #expect(payload.pairingURL.path == "/v1/pairing")
-            #expect(payload.webBaseURL == Self.webBaseURL)
+            #expect(payload.pairingURL.path == "/v2/pairing")
+            #expect(payload.routes.contains {
+                    $0.kind == .tailscaleDNS
+                        && $0.baseURL.host == Self.tailscaleURL.host
+                        && $0.baseURL.port == RemoteAccessProtocol.pairedAccessPort
+                })
             guard case .awaitingClient = fx.coordinator.state else {
                 Issue.record("Expected .awaitingClient after beginPairing, got \(fx.coordinator.state)")
                 return
@@ -118,6 +128,24 @@ struct HostPairingCoordinatorTests {
             let port = try #require(payload.pairingURL.port)
             let status = try await self.postIntroduce(nonce: payload.nonce, port: port)
             #expect(status == 200)
+        }
+    }
+
+    @Test("""
+    @spec REMOTE-2.7: If the stable paired-access listener cannot bind, \
+    Settings shall show a clear error and shall not begin a pairing ceremony \
+    that advertises the unavailable listener.
+    """)
+    func listenerStartupFailurePreventsPairing() async throws {
+        try await withFixture { fx in
+            let message = "Paired-device access could not start on port 8800."
+            fx.coordinator.setRemoteAccessStartupError(message)
+
+            await fx.coordinator.beginPairing()
+
+            #expect(fx.coordinator.payload == nil)
+            #expect(fx.coordinator.lastError == message)
+            #expect(fx.coordinator.state == .idle)
         }
     }
 
@@ -185,7 +213,7 @@ struct HostPairingCoordinatorTests {
             hostDeviceID: RemoteDeviceID(value: "host-mac"),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "http://host.local/v1/pairing")! }
+            pairingURLProvider: { URL(string: "http://host.local/v2/pairing")! }
         )
         let lanServer = HostPairingServer(session: lanSession)
         let lanCoordinator = RemoteMacHostPairingCoordinator(
@@ -198,7 +226,7 @@ struct HostPairingCoordinatorTests {
 
         let blocked = await lanCoordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local/v2/pairing")!
         )
         guard case .failure(let error) = blocked else {
             Issue.record("Expected LAN pairing to be rejected while Settings pairing is active")
@@ -212,7 +240,7 @@ struct HostPairingCoordinatorTests {
         await fx.coordinator.endPairing()
         let admitted = await lanCoordinator.beginPairing(
             validFor: 300,
-            lanBaseURL: URL(string: "http://host.local/v1/pairing")!
+            lanBaseURL: URL(string: "http://host.local/v2/pairing")!
         )
         guard case .success = admitted else {
             Issue.record("Expected LAN pairing after Settings released admission")

@@ -251,7 +251,7 @@ final class RemoteMacsModel: ObservableObject {
         let identity: RemoteMacIdentity
         var splitWorktreePath: String?
         switch request {
-        case let .split(target, direction):
+        case .split(let target, let direction):
             guard let route = relayRouter.resolvePane(target) else { return nil }
             identity = route.identity
             splitWorktreePath = route.worktreePath
@@ -260,7 +260,7 @@ final class RemoteMacsModel: ObservableObject {
             guard let route = relayRouter.resolvePane(target) else { return nil }
             identity = route.identity
             translated = .close(target: route.sessionName)
-        case let .swap(source, target):
+        case .swap(let source, let target):
             guard let sourceRoute = relayRouter.resolvePane(source),
                   let targetRoute = relayRouter.resolvePane(target),
                   sourceRoute.identity == targetRoute.identity,
@@ -276,7 +276,7 @@ final class RemoteMacsModel: ObservableObject {
             guard let route = relayRouter.resolvePane(target) else { return nil }
             identity = route.identity
             translated = .equalize(target: route.sessionName)
-        case let .resize(target, direction, amount, viewportExtent):
+        case .resize(let target, let direction, let amount, let viewportExtent):
             guard let route = relayRouter.resolvePane(target) else { return nil }
             identity = route.identity
             translated = .resize(
@@ -542,7 +542,7 @@ final class RemoteMacsModel: ObservableObject {
         case .listRepositories:
             return .repositories(await promotedRepositoriesForRelay())
 
-        case let .create(repositoryID, worktreeName, branchName, existingSource):
+        case .create(let repositoryID, let worktreeName, let branchName, let existingSource):
             guard let route = relayRouter.resolveRepository(repositoryID) else {
                 return nil
             }
@@ -556,7 +556,7 @@ final class RemoteMacsModel: ObservableObject {
                         existingSource: existingSource
                     )
                 )
-                guard case let .created(worktreeID, paneID) = response else {
+                guard case .created(let worktreeID, let paneID) = response else {
                     return response
                 }
                 let promoted = relayRouter.registerCreatedWorktree(
@@ -590,7 +590,7 @@ final class RemoteMacsModel: ObservableObject {
                 request: .open(worktreeID: route.path)
             )
 
-        case let .delete(worktreeID, force):
+        case .delete(let worktreeID, let force):
             guard let route = relayRouter.resolveWorktree(worktreeID) else {
                 return nil
             }
@@ -606,7 +606,7 @@ final class RemoteMacsModel: ObservableObject {
             }
             return response
 
-        case let .acknowledge(worktreeID, paneID):
+        case .acknowledge(let worktreeID, let paneID):
             guard let worktreeRoute = relayRouter.resolveWorktree(worktreeID)
             else { return nil }
             let downstreamPaneID: String?
@@ -938,7 +938,10 @@ final class RemoteMacsModel: ObservableObject {
             id: pinnedHost.id,
             label: pinnedHost.displayName,
             fingerprint: pinnedHost.fingerprint,
-            lastKnownBaseURL: Self.baseURL(fromPairingURL: pinnedHost.pairingURL),
+            lastKnownBaseURL: pinnedHost.routes.first?.baseURL
+                ?? Self.baseURL(fromPairingURL: pinnedHost.pairingURL),
+            routes: pinnedHost.routes,
+            lastSuccessfulRoute: pinnedHost.lastSuccessfulRoute,
             addedAt: pinnedHost.pinnedAt,
             lastUsedAt: pinnedHost.lastConnectedAt,
             lastDiscoveredAt: nil
@@ -976,7 +979,12 @@ final class RemoteMacsModel: ObservableObject {
 }
 
 enum RemoteMacAccessServices {
-    typealias SignalingOfferAcceptor = @Sendable (SignalingOffer) async -> LANSignalingOfferResult
+    typealias SignalingChallengeAcceptor =
+        @Sendable (
+            SignalingChallengeRequest
+        ) async -> Result<SignalingChallengeResponse, PairingErrorResponse>
+    typealias SignalingOfferAcceptor = @Sendable (
+            AuthenticatedSignalingOffer) async -> LANSignalingOfferResult
 
     /// Per-bucket cap on the unauthenticated LAN pairing/signaling endpoints.
     /// The server is reachable pre-trust on `0.0.0.0`, and a legitimate
@@ -989,6 +997,13 @@ enum RemoteMacAccessServices {
     static func makeLANRouteHandler(
         lanBaseURLProvider: @escaping @Sendable () -> URL,
         hostPairingCoordinator: RemoteMacHostPairingCoordinator,
+        acceptSignalingChallenge: @escaping SignalingChallengeAcceptor = { _ in
+            .failure(
+                PairingErrorResponse(
+                    code: .authenticationFailed,
+                    error: "not authenticated"
+                ))
+        },
         acceptSignalingOffer: @escaping SignalingOfferAcceptor
     ) -> LANRemoteAccessRouteHandler {
         LANRemoteAccessRouteHandler(
@@ -1006,6 +1021,7 @@ enum RemoteMacAccessServices {
             handleAwaitOutcome: { request in
                 await hostPairingCoordinator.handleAwaitOutcome(request)
             },
+            handleSignalingChallenge: acceptSignalingChallenge,
             handleSignalingOffer: acceptSignalingOffer
         )
     }

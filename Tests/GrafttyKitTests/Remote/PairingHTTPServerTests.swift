@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("PairingHTTPServer Tests")
 struct PairingHTTPServerTests {
@@ -39,7 +40,7 @@ struct PairingHTTPServerTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
         let pairingServer = HostPairingServer(session: session)
         let httpServer = PairingHTTPServer(pairingServer: pairingServer)
@@ -106,7 +107,7 @@ struct PairingHTTPServerTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
         let pairingServer = HostPairingServer(session: session)
         let httpServer = PairingHTTPServer(pairingServer: pairingServer)
@@ -158,12 +159,12 @@ struct PairingHTTPServerTests {
 
     // MARK: - introduce round trip
 
-    @Test("POST /v1/pairing/introduce with a valid request returns 200 and the host's public key")
+    @Test("POST /v2/pairing/introduce with a valid request returns 200 and the host's public key")
     func introduceRoundTrip() async throws {
         try await withFixture { fx in
             let payload = try await fx.pairingServer.start(validFor: 300)
             let (status, data) = try await self.post(
-                "/v1/pairing/introduce",
+                "/v2/pairing/introduce",
                 port: fx.port,
                 body: self.makeIntroduceRequest(nonce: payload.nonce)
             )
@@ -178,12 +179,12 @@ struct PairingHTTPServerTests {
 
     // MARK: - introduce with a fabricated nonce
 
-    @Test("POST /v1/pairing/introduce with an unknown nonce returns a non-2xx PairingErrorResponse")
+    @Test("POST /v2/pairing/introduce with an unknown nonce returns a non-2xx PairingErrorResponse")
     func introduceWrongNonce() async throws {
         try await withFixture { fx in
             _ = try await fx.pairingServer.start()
             let (status, data) = try await self.post(
-                "/v1/pairing/introduce",
+                "/v2/pairing/introduce",
                 port: fx.port,
                 body: self.makeIntroduceRequest(nonce: RemotePairingNonce.generate())
             )
@@ -195,19 +196,19 @@ struct PairingHTTPServerTests {
 
     // MARK: - await-outcome long-poll
 
-    @Test("POST /v1/pairing/await-outcome suspends until confirm() then returns outcome=confirmed")
+    @Test("POST /v2/pairing/await-outcome suspends until confirm() then returns outcome=confirmed")
     func awaitOutcomeResolvesOnConfirm() async throws {
         try await withFixture { fx in
             let payload = try await fx.pairingServer.start()
             let (introduceStatus, _) = try await self.post(
-                "/v1/pairing/introduce",
+                "/v2/pairing/introduce",
                 port: fx.port,
                 body: self.makeIntroduceRequest(nonce: payload.nonce)
             )
             #expect(introduceStatus == 200)
 
             async let outcomeCall = self.post(
-                "/v1/pairing/await-outcome",
+                "/v2/pairing/await-outcome",
                 port: fx.port,
                 body: PairingAwaitOutcomeRequest(nonce: payload.nonce)
             )
@@ -234,10 +235,10 @@ struct PairingHTTPServerTests {
 
     // MARK: - wrong method
 
-    @Test("GET /v1/pairing/introduce returns 405")
+    @Test("GET /v2/pairing/introduce returns 405")
     func getIs405() async throws {
         try await withFixture { fx in
-            let status = try await self.get("/v1/pairing/introduce", port: fx.port)
+            let status = try await self.get("/v2/pairing/introduce", port: fx.port)
             #expect(status == 405)
         }
     }
@@ -252,7 +253,7 @@ struct PairingHTTPServerTests {
             let port = fx.port
             await fx.httpServer.stop()
 
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/introduce")!)
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/introduce")!)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try Self.encoder.encode(

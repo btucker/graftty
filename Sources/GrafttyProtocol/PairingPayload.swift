@@ -11,7 +11,7 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
 
     // MARK: Properties
 
-    /// Protocol version. Must be 1 for this release.
+    /// Protocol version. Version 2 is a breaking trust-store boundary.
     public let version: Int
 
     /// The host's stable device identifier.
@@ -38,22 +38,17 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
     public let expiry: Date
 
     /// The local HTTPS endpoint the client should POST to (e.g.
-    /// `"https://hostname.local:8800/v1/pairing"`).
+    /// `"http://hostname.local:8800/v2/pairing"`).
     public let pairingURL: URL
 
-    /// The host's durable web base URL (wss/https over Tailscale),
-    /// carried in the QR so the mobile side can create a usable `Host`
-    /// record after pairing. Optional: `nil` when the host has no web
-    /// server running, and absent from payload JSON generated before
-    /// this field existed (synthesized Codable decodes it with
-    /// `decodeIfPresent` and omits the key when encoding `nil`, so the
-    /// wire shape stays version-1 compatible in both directions).
-    public let webBaseURL: URL?
+    /// Initial ways to reach the paired-access listener. The host returns a
+    /// freshly signed route list during every authenticated connection.
+    public let routes: [RemoteConnectionRoute]
 
     // MARK: Init
 
     public init(
-        version: Int = 1,
+        version: Int = RemoteAccessProtocol.version,
         hostDeviceID: RemoteDeviceID,
         hostKind: RemoteDeviceKind,
         hostDisplayName: String,
@@ -61,7 +56,7 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         nonce: RemotePairingNonce,
         expiry: Date,
         pairingURL: URL,
-        webBaseURL: URL? = nil
+        routes: [RemoteConnectionRoute] = []
     ) {
         self.version = version
         self.hostDeviceID = hostDeviceID
@@ -71,20 +66,20 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         self.nonce = nonce
         self.expiry = expiry
         self.pairingURL = pairingURL
-        self.webBaseURL = webBaseURL
+        self.routes = routes
     }
 
     // MARK: - QR encoding / decoding
 
     /// Prefix prepended to every QR string for parser robustness.
-    private static let qrPrefix = "GRAFTTY1:"
+    private static let qrPrefix = "GRAFTTY2:"
 
     /// Supported payload version.
-    private static let supportedVersion = 1
+    private static let supportedVersion = RemoteAccessProtocol.version
 
     /// Encodes the payload to a compact QR-safe string.
     ///
-    /// Format: `"GRAFTTY1:<base64url-no-padding(JSON)>"`.
+    /// Format: `"GRAFTTY2:<base64url-no-padding(JSON)>"`.
     /// The JSON is compact (`.sortedKeys`, no pretty printing) to keep QR
     /// modules small.
     public func qrEncoded() throws -> String {
@@ -141,12 +136,9 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
             throw DecodeError.insecureURL
         }
 
-        // `webBaseURL` gets the same scheme check as `pairingURL` when
-        // present: production only ever populates it via `WebURLComposer`
-        // (always https), so a non-http(s) value here can only come from a
-        // malicious or malformed QR payload.
-        if let webBaseURLScheme = payload.webBaseURL?.scheme?.lowercased() {
-            guard webBaseURLScheme == "http" || webBaseURLScheme == "https" else {
+        for route in payload.routes {
+            let routeScheme = route.baseURL.scheme?.lowercased()
+            guard routeScheme == "http" || routeScheme == "https" else {
                 throw DecodeError.insecureURL
             }
         }

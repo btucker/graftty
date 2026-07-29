@@ -75,8 +75,8 @@ public final class HostPairingSession: @unchecked Sendable {
             case (.noHostIdentity, .noHostIdentity): return true
             case (.expired, .expired): return true
             case (.nonceExpired, .nonceExpired): return true
-            case let (.wrongState(l), .wrongState(r)): return l == r
-            case let (.peerStoreFailed(l), .peerStoreFailed(r)): return l == r
+            case (.wrongState(let l), .wrongState(let r)): return l == r
+            case (.peerStoreFailed(let l), .peerStoreFailed(let r)): return l == r
             default: return false
             }
         }
@@ -91,8 +91,8 @@ public final class HostPairingSession: @unchecked Sendable {
     private let hostDeviceID: RemoteDeviceID
     private let hostKind: RemoteDeviceKind
     private let hostDisplayName: String
-    private let webBaseURL: URL?
     private let pairingURLProvider: () -> URL
+    private let connectionRoutesProvider: (() -> [RemoteConnectionRoute])?
 
     // MARK: State
 
@@ -115,8 +115,9 @@ public final class HostPairingSession: @unchecked Sendable {
         hostDeviceID: RemoteDeviceID,
         hostKind: RemoteDeviceKind,
         hostDisplayName: String,
-        webBaseURL: URL? = nil,
-        pairingURLProvider: @escaping () -> URL
+
+        pairingURLProvider: @escaping () -> URL,
+        connectionRoutesProvider: (() -> [RemoteConnectionRoute])? = nil
     ) {
         self.identityStore = identityStore
         self.peerStore = peerStore
@@ -125,8 +126,8 @@ public final class HostPairingSession: @unchecked Sendable {
         self.hostDeviceID = hostDeviceID
         self.hostKind = hostKind
         self.hostDisplayName = hostDisplayName
-        self.webBaseURL = webBaseURL
         self.pairingURLProvider = pairingURLProvider
+        self.connectionRoutesProvider = connectionRoutesProvider
     }
 
     // MARK: - Public API
@@ -140,7 +141,11 @@ public final class HostPairingSession: @unchecked Sendable {
     /// `.pendingConfirmation`), calling `startPairing` again abandons
     /// it and starts a fresh nonce. The prior nonce will be rejected
     /// by `receiveClientIdentity` when an old client connects.
-    public func startPairing(validFor: TimeInterval = PairingProtocolDefaults.sessionValidity) throws -> PairingPayload {
+    public func startPairing(
+        validFor: TimeInterval = PairingProtocolDefaults.sessionValidity,
+        pairingURL: URL? = nil,
+        connectionRoutes: [RemoteConnectionRoute]? = nil
+    ) throws -> PairingPayload {
         lock.lock()
         defer { lock.unlock() }
 
@@ -149,22 +154,47 @@ public final class HostPairingSession: @unchecked Sendable {
         }
 
         let nonce = nonceGenerator()
-        let expiry = now().addingTimeInterval(validFor)
+        let expiry = Date(
+            timeIntervalSince1970: Double(
+                Int64(now().addingTimeInterval(validFor).timeIntervalSince1970)
+            )
+        )
         let fingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
 
+        let pairingURL = pairingURL ?? pairingURLProvider()
         let payload = PairingPayload(
-            version: 1,
+            version: RemoteAccessProtocol.version,
             hostDeviceID: hostDeviceID,
             hostKind: hostKind,
             hostDisplayName: hostDisplayName,
             hostPublicKeyFingerprint: fingerprint,
             nonce: nonce,
             expiry: expiry,
-            pairingURL: pairingURLProvider(),
-            webBaseURL: webBaseURL
+            pairingURL: pairingURL,
+            routes: connectionRoutes ?? connectionRoutesProvider?() ?? [
+                RemoteConnectionRoute(
+                    kind: .lan,
+                    baseURL: Self.baseURL(fromPairingURL: pairingURL)
+                )
+            ]
         )
         _state = .awaitingClient(payload: payload, expiry: expiry)
         return payload
+    }
+
+    private static func baseURL(fromPairingURL pairingURL: URL) -> URL {
+        guard
+            var components = URLComponents(
+                url: pairingURL,
+                resolvingAgainstBaseURL: false
+            )
+        else {
+            return pairingURL
+        }
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url ?? pairingURL
     }
 
     /// Called when a client POSTs their identity to the host.
@@ -202,8 +232,7 @@ public final class HostPairingSession: @unchecked Sendable {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: expiry
+            payload: payload
         )
         let code = transcript.verificationCode()
 

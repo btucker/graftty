@@ -86,8 +86,7 @@ struct RemotePairingTranscriptTests {
         let alt = RemotePairingTranscript(
             hostPublicKey: altHostKey,
             clientPublicKey: base.clientPublicKey,
-            nonce: base.nonce,
-            expiry: base.expiry
+            payload: base.payload
         )
         #expect(base.verificationCode() != alt.verificationCode())
     }
@@ -99,8 +98,7 @@ struct RemotePairingTranscriptTests {
         let alt = RemotePairingTranscript(
             hostPublicKey: base.hostPublicKey,
             clientPublicKey: altClientKey,
-            nonce: base.nonce,
-            expiry: base.expiry
+            payload: base.payload
         )
         #expect(base.verificationCode() != alt.verificationCode())
     }
@@ -115,8 +113,7 @@ struct RemotePairingTranscriptTests {
         let alt = RemotePairingTranscript(
             hostPublicKey: base.hostPublicKey,
             clientPublicKey: base.clientPublicKey,
-            nonce: altNonce,
-            expiry: base.expiry
+            payload: Self.makePayload(nonce: altNonce)
         )
         #expect(base.verificationCode() != alt.verificationCode())
     }
@@ -128,8 +125,7 @@ struct RemotePairingTranscriptTests {
         let alt = RemotePairingTranscript(
             hostPublicKey: base.hostPublicKey,
             clientPublicKey: base.clientPublicKey,
-            nonce: base.nonce,
-            expiry: altExpiry
+            payload: Self.makePayload(expiry: altExpiry)
         )
         #expect(base.verificationCode() != alt.verificationCode())
     }
@@ -141,8 +137,7 @@ struct RemotePairingTranscriptTests {
         let slightlyLater = RemotePairingTranscript(
             hostPublicKey: base.hostPublicKey,
             clientPublicKey: base.clientPublicKey,
-            nonce: base.nonce,
-            expiry: base.expiry.addingTimeInterval(0.5)
+            payload: Self.makePayload(expiry: base.expiry.addingTimeInterval(0.5))
         )
         #expect(base.verificationCode() == slightlyLater.verificationCode())
         let encoder = JSONEncoder()
@@ -150,6 +145,38 @@ struct RemotePairingTranscriptTests {
         let baseJSON = try encoder.encode(base)
         let laterJSON = try encoder.encode(slightlyLater)
         #expect(baseJSON == laterJSON)
+    }
+
+    @Test("RemotePairingTranscript: verification code changes when persisted host metadata changes")
+    func verificationCodeChangesOnHostMetadataChange() {
+        let base = Self.makeTranscript()
+        let altered = RemotePairingTranscript(
+            hostPublicKey: base.hostPublicKey,
+            clientPublicKey: base.clientPublicKey,
+            payload: Self.makePayload(
+                hostDeviceID: RemoteDeviceID(value: "substituted-host"),
+                hostDisplayName: "Substituted Mac"
+            )
+        )
+
+        #expect(base.verificationCode() != altered.verificationCode())
+    }
+
+    @Test("RemotePairingTranscript: verification code changes when a connection route changes")
+    func verificationCodeChangesOnRouteChange() {
+        let base = Self.makeTranscript()
+        let altered = RemotePairingTranscript(
+            hostPublicKey: base.hostPublicKey,
+            clientPublicKey: base.clientPublicKey,
+            payload: Self.makePayload(routes: [
+                RemoteConnectionRoute(
+                    kind: .tailscaleDNS,
+                    baseURL: URL(string: "http://attacker.tailnet.ts.net:8800")!
+                )
+            ])
+        )
+
+        #expect(base.verificationCode() != altered.verificationCode())
     }
 
     @Test("RemotePairingTranscript: Codable round-trips")
@@ -166,13 +193,39 @@ struct RemotePairingTranscriptTests {
     private static func makeTranscript() -> RemotePairingTranscript {
         let hostKey = try! RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 0x01, count: 32))
         let clientKey = try! RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 0x02, count: 32))
-        let nonce = RemotePairingNonce(bytes: Data(repeating: 0x03, count: 16))
-        let expiry = Date(timeIntervalSince1970: 1_700_000_000)
         return RemotePairingTranscript(
             hostPublicKey: hostKey,
             clientPublicKey: clientKey,
+            payload: makePayload()
+        )
+    }
+
+    private static func makePayload(
+        nonce: RemotePairingNonce = RemotePairingNonce(
+            bytes: Data(repeating: 0x03, count: 16)
+        ),
+        expiry: Date = Date(timeIntervalSince1970: 1_700_000_000),
+        hostDeviceID: RemoteDeviceID = RemoteDeviceID(value: "host-1"),
+        hostDisplayName: String = "Studio Mac",
+        routes: [RemoteConnectionRoute] = [
+            RemoteConnectionRoute(
+                kind: .lan,
+                baseURL: URL(string: "http://studio.local:8800")!
+            )
+        ]
+    ) -> PairingPayload {
+        let hostKey = try! RemoteIdentityPublicKey(
+            rawRepresentation: Data(repeating: 0x01, count: 32)
+        )
+        return PairingPayload(
+            hostDeviceID: hostDeviceID,
+            hostKind: .mac,
+            hostDisplayName: hostDisplayName,
+            hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostKey),
             nonce: nonce,
-            expiry: expiry
+            expiry: expiry,
+            pairingURL: URL(string: "http://studio.local:8800/v2/pairing")!,
+            routes: routes
         )
     }
 }

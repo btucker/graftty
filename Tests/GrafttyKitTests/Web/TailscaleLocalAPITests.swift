@@ -54,6 +54,20 @@ struct TailscaleLocalAPIParsingTests {
         let status = try TailscaleLocalAPI.parseStatus(Data(raw.utf8))
         #expect(status.dnsName == nil)
     }
+
+    @Test func pairedAccessURLSupportsTailscaleIPv4() {
+        let url = RemoteAccessRouteDiscovery.remoteAccessURL(
+            host: "100.64.0.5"
+        )
+        #expect(url?.absoluteString == "http://100.64.0.5:8800")
+    }
+
+    @Test func pairedAccessURLBracketsTailscaleIPv6() {
+        let url = RemoteAccessRouteDiscovery.remoteAccessURL(
+            host: "fd7a:115c:a1e0::5"
+        )
+        #expect(url?.absoluteString == "http://[fd7a:115c:a1e0::5]:8800")
+    }
 }
 
 @Suite("""
