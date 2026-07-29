@@ -6,18 +6,34 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.3.3</title>
+            <sparkle:version>0.3.3</sparkle:version>
+            <sparkle:shortVersionString>0.3.3</sparkle:shortVersionString>
+            <pubDate>Wed, 29 Jul 2026 17:38:46 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.3.2 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5003381729" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/279" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/279/hovercard" href="https://github.com/btucker/graftty/pull/279">#279</a></li>
+<li>Update zmx with pixel-aware resize support by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4963617003" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/264" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/264/hovercard" href="https://github.com/btucker/graftty/pull/264">#264</a></li>
+<li>Fix zmx review findings by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5009959040" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/281" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/281/hovercard" href="https://github.com/btucker/graftty/pull/281">#281</a></li>
+<li>Fix worktree add lifecycle reporting and zmx recovery by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5010740892" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/282" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/282/hovercard" href="https://github.com/btucker/graftty/pull/282">#282</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.3.2...v0.3.3"><tt>v0.3.2...v0.3.3</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.3.3/Graftty-0.3.3.zip" length="31279160" type="application/octet-stream" sparkle:edSignature="mcC1REj1fmqmIfJQS/RevwE4MWNn2PLYTw0RZPAkozTU16Kmsx9NYEXkMEbrhU0FDaBLMuCnrWMLW/lT5pyzCA=="/>
+        </item>
+        <item>
             <title>Version 0.3.2</title>
             <sparkle:version>0.3.2</sparkle:version>
             <sparkle:shortVersionString>0.3.2</sparkle:shortVersionString>
             <pubDate>Tue, 28 Jul 2026 22:07:39 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.3.1 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5001408464" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/276" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/276/hovercard" href="https://github.com/btucker/graftty/pull/276">#276</a></li>
-<li>Fix default command fanout after zmx restart by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5001549539" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/277" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/277/hovercard" href="https://github.com/btucker/graftty/pull/277">#277</a></li>
-<li>Guard startup reflog resolution against iCloud-evicted .git files (GIT-3.20) by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5002177151" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/278" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/278/hovercard" href="https://github.com/btucker/graftty/pull/278">#278</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.3.1...v0.3.2"><tt>v0.3.1...v0.3.2</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.3.1 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5001408464" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/276" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/276/hovercard" href="https://github.com/btucker/graftty/pull/276"&gt;#276&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Fix default command fanout after zmx restart by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5001549539" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/277" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/277/hovercard" href="https://github.com/btucker/graftty/pull/277"&gt;#277&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Guard startup reflog resolution against iCloud-evicted .git files (GIT-3.20) by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5002177151" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/278" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/278/hovercard" href="https://github.com/btucker/graftty/pull/278"&gt;#278&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.3.1...v0.3.2"&gt;&lt;tt&gt;v0.3.1...v0.3.2&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.3.2/Graftty-0.3.2.zip" length="31028657" type="application/octet-stream" sparkle:edSignature="gSEtf1BzmkTB40HVOWj6IWvbos3z6nvI96j/K2I6+aocAaDd/PNEWISuC+U5u+QS1KZLt66Xr2RO7r3y17+0BA=="/>
         </item>
         <item>
