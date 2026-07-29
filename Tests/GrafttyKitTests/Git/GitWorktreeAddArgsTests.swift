@@ -58,6 +58,44 @@ struct GitWorktreeAddArgsTests {
         )
     }
 
+    @Test("""
+    @spec GIT-5.22: Worktrees created through GitWorktreeAdd shall allow Git's installed post-checkout hook to complete before the creation call returns, matching a direct `git worktree add`.
+    """)
+    func worktreeAddRunsPostCheckoutHook() async throws {
+        let root = try makeTempDir(prefix: "graftty-worktree-hook")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        let target = root.appendingPathComponent("hooked-worktree", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        #expect(try shellInRepo(
+            "git init -b main && git commit --allow-empty -m init",
+            at: repo
+        ) == 0)
+
+        let hook = repo
+            .appendingPathComponent(".git/hooks", isDirectory: true)
+            .appendingPathComponent("post-checkout")
+        try """
+        #!/bin/sh
+        printf 'post-checkout-ran\n' > .graftty-post-checkout-ran
+        """.write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hook.path
+        )
+
+        try await GitWorktreeAdd.add(
+            repoPath: repo.path,
+            worktreePath: target.path,
+            branch: .createNew(name: "hooked-worktree"),
+            startPoint: nil
+        )
+
+        let marker = target.appendingPathComponent(".graftty-post-checkout-ran")
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "post-checkout-ran\n")
+    }
+
     @Test("A worktree-local base such as HEAD resolves in the invoking worktree")
     func explicitHeadUsesInvokingWorktree() async throws {
         let root = try makeTempDir(prefix: "graftty-caller-relative-base")

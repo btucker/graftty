@@ -98,29 +98,50 @@ struct WorktreeAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
             throw ValidationError(error)
         }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        // Capability probes use the same two-second request transport as the
+        // mutation. Give transient app stalls a short bounded retry window,
+        // while preserving most of the caller's timeout for the real work.
+        let capabilityDeadline = min(
+            deadline,
+            Date().addingTimeInterval(5)
+        )
+        try WorktreeCapability.require(
+            .worktreeCreateIdempotencyCapability,
+            unsupportedMessage: "the running Graftty app does not support safe worktree-create retries; quit and relaunch the updated app, then retry",
+            verificationMessage: "could not verify safe worktree-create retries; quit and relaunch Graftty, then retry",
+            retryTransportFailuresUntil: capabilityDeadline
+        )
         let agentRuntime = agent.flatMap { TeamHookRuntime(rawValue: $0) }
         if agentRuntime != nil {
             try WorktreeCapability.require(
                 .agentPromptStagingCapability,
                 unsupportedMessage: "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
+                verificationMessage: "could not verify agent prompt staging support; quit and relaunch Graftty, then retry",
+                retryTransportFailuresUntil: capabilityDeadline
             )
         }
         if base != nil {
             try WorktreeCapability.require(
                 .worktreeBaseCapability,
                 unsupportedMessage: "the running Graftty app does not support worktree --base; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify worktree --base support; quit and relaunch Graftty, then retry"
+                verificationMessage: "could not verify worktree --base support; quit and relaunch Graftty, then retry",
+                retryTransportFailuresUntil: capabilityDeadline
             )
         }
         let callerWorktree = try CLIEnv.resolveWorktree()
-        var response = try CLIEnv.sendRequest(creationRequest(
-            callerWorktree: callerWorktree,
-            names: names,
-            agentRuntime: agentRuntime,
-            resolvedPrompt: resolvedPrompt
-        ))
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        let operationID = UUID().uuidString.lowercased()
+        var response = try Self.sendRequestRetryingTimeout(
+            creationRequest(
+                callerWorktree: callerWorktree,
+                names: names,
+                agentRuntime: agentRuntime,
+                resolvedPrompt: resolvedPrompt,
+                operationID: operationID
+            ),
+            operationID: operationID,
+            deadline: deadline
+        )
 
         while true {
             switch response {
@@ -134,8 +155,10 @@ struct WorktreeAdd: ParsableCommand {
                         throw ExitCode(1)
                     }
                     Thread.sleep(forTimeInterval: 0.1)
-                    response = try CLIEnv.sendRequest(
-                        .worktreeCreateStatus(operationID: operation.operationID)
+                    response = try Self.sendRequestRetryingTimeout(
+                        .worktreeCreateStatus(operationID: operation.operationID),
+                        operationID: operation.operationID,
+                        deadline: deadline
                     )
                 case .ready:
                     let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
@@ -184,7 +207,8 @@ struct WorktreeAdd: ParsableCommand {
         callerWorktree: String,
         names: (worktree: String, branch: String),
         agentRuntime: TeamHookRuntime?,
-        resolvedPrompt: String?
+        resolvedPrompt: String?,
+        operationID: String? = nil
     ) -> NotificationMessage {
         .createWorktree(
             callerWorktree: callerWorktree,
@@ -196,8 +220,37 @@ struct WorktreeAdd: ParsableCommand {
             // this bare fallback with its staged loader before starting Git.
             command: command ?? agentRuntime?.rawValue,
             agentRuntime: agentRuntime,
-            agentPrompt: resolvedPrompt
+            agentPrompt: resolvedPrompt,
+            operationID: operationID
         )
+    }
+
+    private static func sendRequestRetryingTimeout(
+        _ message: NotificationMessage,
+        operationID: String,
+        deadline: Date
+    ) throws -> ResponseMessage {
+        while true {
+            do {
+                return try SocketClient.sendExpectingResponse(message)
+            } catch let error as CLIError {
+                if case .socketTimeout = error, Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.1)
+                    continue
+                }
+                if case .socketTimeout = error {
+                    CLIEnv.printError(
+                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                    )
+                } else {
+                    CLIEnv.printError(error.description)
+                }
+                throw ExitCode(1)
+            } catch {
+                CLIEnv.printError("Decode error: \(error)")
+                throw ExitCode(1)
+            }
+        }
     }
 
 }
@@ -353,28 +406,48 @@ enum WorktreeRemoveTargetResolution: Equatable {
     case ambiguous([String])
 }
 
-private enum WorktreeCapability {
+enum WorktreeCapability {
     static func require(
         _ request: NotificationMessage,
         unsupportedMessage: String,
-        verificationMessage: String
+        verificationMessage: String,
+        retryTransportFailuresUntil deadline: Date? = nil,
+        send: (NotificationMessage) throws -> ResponseMessage = {
+            try SocketClient.sendExpectingResponse($0)
+        },
+        now: () -> Date = Date.init,
+        sleep: (TimeInterval) -> Void = Thread.sleep(forTimeInterval:)
     ) throws {
-        do {
-            guard case .ok = try SocketClient.sendExpectingResponse(
-                request
-            ) else {
-                throw CLIError.socketError("unexpected capability response")
+        while true {
+            let response: ResponseMessage
+            do {
+                response = try send(request)
+            } catch let error as CLIError {
+                switch error {
+                case .socketTimeout, .socketError:
+                    if let deadline, now() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    CLIEnv.printError(verificationMessage)
+                case .notInsideWorktree, .appNotRunning, .staleControlSocket,
+                     .socketPathTooLong:
+                    CLIEnv.printError(error.description)
+                }
+                throw ExitCode(1)
+            } catch {
+                CLIEnv.printError(verificationMessage)
+                throw ExitCode(1)
             }
-        } catch let error as CLIError {
-            switch error {
-            case .socketTimeout, .socketError:
+
+            switch response {
+            case .ok:
+                return
+            case .error:
                 CLIEnv.printError(unsupportedMessage)
-            case .notInsideWorktree, .appNotRunning, .staleControlSocket, .socketPathTooLong:
-                CLIEnv.printError(error.description)
+            default:
+                CLIEnv.printError(verificationMessage)
             }
-            throw ExitCode(1)
-        } catch {
-            CLIEnv.printError(verificationMessage)
             throw ExitCode(1)
         }
     }

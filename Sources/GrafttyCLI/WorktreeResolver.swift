@@ -40,16 +40,16 @@ enum WorktreeResolver {
         return state.worktree(forPath: path) != nil
     }
 
-    /// Resolve a worktree branch name (as printed by `graftty team list`)
-    /// to its persisted path. Returns nil for an unknown name. Reads the
-    /// same `state.json` `isTracked` does and delegates the matching to
-    /// `WorktreeNameLookup` so a name accepted by `graftty team msg` is
-    /// also accepted here.
+    /// Resolve a worktree's branch/member name, creation-time directory
+    /// name, or canonical absolute path to its persisted path. Reports
+    /// unknown and ambiguous short addresses distinctly. Reads the same
+    /// `state.json` `isTracked` does and delegates matching to
+    /// `WorktreeNameLookup`.
     static func resolveWorktreeName(
         _ name: String,
         stateDirectory: URL = AppState.defaultDirectory
-    ) -> String? {
-        WorktreeNameLookup.resolvePath(name: name, stateDirectory: stateDirectory)
+    ) -> WorktreeNameLookup.Resolution {
+        WorktreeNameLookup.resolvePathResult(name: name, stateDirectory: stateDirectory)
     }
 }
 

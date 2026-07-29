@@ -269,6 +269,42 @@ struct SocketIntegrationTests {
         #expect(panes[0].focused == true)
     }
 
+    @Test("Async request handler may suspend without blocking the main actor")
+    func serverWritesResponseFromAsyncRequestHandler() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-async-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let server = SocketServer(socketPath: socketPath)
+        server.onAsyncRequest = { message in
+            guard case .listPanes = message else {
+                return .error("unexpected")
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+            return .paneList([
+                PaneInfo(id: 1, title: "zmx", focused: true),
+            ])
+        }
+        try server.start()
+        defer { server.stop() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let response = try sendRequest(
+            socketPath: socketPath,
+            json: #"{"type":"list_panes","path":"/tmp/wt"}"#
+        )
+        #expect(
+            response == .paneList([
+                PaneInfo(id: 1, title: "zmx", focused: true),
+            ])
+        )
+    }
+
     @Test func serverOmitsResponseWhenOnRequestUnset() async throws {
         // Fire-and-forget path must still work — notify/clear don't expect replies.
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-fnf-\(UUID().uuidString.prefix(8))")
@@ -450,6 +486,53 @@ struct SocketIntegrationTests {
     }
 
     private struct MessageTimeoutError: Error {}
+
+    private func sendRequest(
+        socketPath: String,
+        json: String
+    ) throws -> ResponseMessage {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw POSIXError(.ENOTSOCK) }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        socketPath.withCString { ptr in
+            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
+                pathPtr.withMemoryRebound(
+                    to: CChar.self,
+                    capacity: 104
+                ) { destination in
+                    _ = strlcpy(destination, ptr, 104)
+                }
+            }
+        }
+        let connected = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.connect(
+                    fd,
+                    socketAddress,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
+            }
+        }
+        guard connected == 0 else { throw POSIXError(.ECONNREFUSED) }
+
+        let payload = json + "\n"
+        payload.withCString { ptr in
+            _ = Darwin.write(fd, ptr, strlen(ptr))
+        }
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let count = Darwin.read(fd, &buffer, buffer.count)
+        guard count > 0 else { throw POSIXError(.ECONNRESET) }
+        let line = String(decoding: buffer[0..<count], as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+        guard let line else { throw POSIXError(.EBADMSG) }
+        return try JSONDecoder().decode(ResponseMessage.self, from: Data(line.utf8))
+    }
 
     private func expectMessage(
         from stream: AsyncStream<NotificationMessage>,

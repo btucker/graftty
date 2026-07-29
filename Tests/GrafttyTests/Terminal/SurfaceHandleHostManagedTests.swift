@@ -10,7 +10,7 @@ import Testing
 @Suite("SurfaceHandle host-managed zmx cutover")
 struct SurfaceHandleHostManagedTests {
     @Test("""
-    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and the view's first layout settles (TERM-11.10). This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
     """)
     func zmxAvailableUsesHostManagedBackendWithoutCommandOrInitialInput() throws {
         let backend = FakeSurfaceHandleZmxBackend()
@@ -43,7 +43,7 @@ struct SurfaceHandleHostManagedTests {
     }
 
     @Test("""
-    @spec TERM-11.10: When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
+    @spec TERM-11.10: When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder. An explicit background workflow with no guaranteed mounted view may start the backend early and shall reconcile the live grid on first visibility per TERM-11.17.
     """)
     func zmxAttachSpawnDefersUntilFirstSettledLayout() throws {
         let backend = FakeSurfaceHandleZmxBackend()
@@ -102,6 +102,27 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.startCount == 1)
         #expect(backend.writes.count == 1)
         #expect(backend.markLayoutSettledCount == 1)
+    }
+
+    @Test("Background launch fails when spawn-time input is rejected")
+    func backgroundLaunchReportsRejectedInitialInput() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        backend.deliveryAccepted = false
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            extraInitialInput: "codex\r",
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+
+        #expect(!handle.startForBackgroundLaunch())
+        #expect(backend.closeCount == 1)
+        #expect(harness.processExitCalls.count == 1)
     }
 
     @Test("A commandless background launch starts its shell without mounting the view")
@@ -169,7 +190,9 @@ struct SurfaceHandleHostManagedTests {
                 kind: .mac
             ),
             sessionFactory: { _, _, initialSize in
-                spawnedAt = initialSize.map(RecordedGrid.init)
+                spawnedAt = initialSize.map {
+                    RecordedGrid(cols: $0.cols, rows: $0.rows)
+                }
                 return session
             }
         )
@@ -359,6 +382,26 @@ struct SurfaceHandleHostManagedTests {
         handle.typeText("abc")
 
         #expect(backend.writes == [Data("abc".utf8)])
+        #expect(harness.textWrites.isEmpty)
+    }
+
+    @Test("Acknowledged writes expose an ownership rejection")
+    func writeTextReturnsFalseWhenBackendRejectsDelivery() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        backend.deliveryAccepted = false
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+
+        #expect(!handle.writeText("abc", claimEngagement: false))
+        #expect(backend.writes.isEmpty)
         #expect(harness.textWrites.isEmpty)
     }
 

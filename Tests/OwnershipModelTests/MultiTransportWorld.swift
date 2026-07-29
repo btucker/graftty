@@ -255,7 +255,8 @@ struct MultiTransportWorld {
                 sessionName: sessionName,
                 argv: ["/tmp/zmx", "attach", sessionName],
                 env: ["ZMX_DIR": "/tmp/zmx-dir", "SHELL": "/bin/zsh"],
-                workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true)
+                workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true),
+                shellReadySignalAvailable: true
             ),
             ownership: ownership,
             scheduleCoalescedResize: { delay, fire in coalescer.schedule(delay, fire) },

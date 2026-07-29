@@ -48,10 +48,12 @@ public enum NotificationMessage: Sendable, Equatable {
         base: String?,
         command: String?,
         agentRuntime: TeamHookRuntime?,
-        agentPrompt: String?
+        agentPrompt: String?,
+        operationID: String?
     )
     case agentPromptStagingCapability
     case worktreeBaseCapability
+    case worktreeCreateIdempotencyCapability
     case worktreeCreateStatus(operationID: String)
     case removeWorktree(worktreePath: String, force: Bool)
     case worktreeRemoveCapability
@@ -160,7 +162,8 @@ extension NotificationMessage: Codable {
             let base,
             let command,
             let agentRuntime,
-            let agentPrompt
+            let agentPrompt,
+            let operationID
         ):
             try container.encode("create_worktree", forKey: .type)
             try container.encode(callerWorktree, forKey: .callerWorktree)
@@ -171,10 +174,13 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(command, forKey: .command)
             try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
             try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
+            try container.encodeIfPresent(operationID, forKey: .operationID)
         case .agentPromptStagingCapability:
             try container.encode("agent_prompt_staging_capability", forKey: .type)
         case .worktreeBaseCapability:
             try container.encode("worktree_base_capability", forKey: .type)
+        case .worktreeCreateIdempotencyCapability:
+            try container.encode("worktree_create_idempotency_capability", forKey: .type)
         case .worktreeCreateStatus(let operationID):
             try container.encode("worktree_create_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
@@ -276,12 +282,15 @@ extension NotificationMessage: Codable {
                 base: try container.decodeIfPresent(String.self, forKey: .base),
                 command: try container.decodeIfPresent(String.self, forKey: .command),
                 agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
-                agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt)
+                agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt),
+                operationID: try container.decodeIfPresent(String.self, forKey: .operationID)
             )
         case "agent_prompt_staging_capability":
             self = .agentPromptStagingCapability
         case "worktree_base_capability":
             self = .worktreeBaseCapability
+        case "worktree_create_idempotency_capability":
+            self = .worktreeCreateIdempotencyCapability
         case "worktree_create_status":
             self = .worktreeCreateStatus(
                 operationID: try container.decode(String.self, forKey: .operationID)

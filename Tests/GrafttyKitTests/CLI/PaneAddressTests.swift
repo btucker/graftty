@@ -32,6 +32,12 @@ import Testing
         #expect(PaneAddress.parse("a:b:1") == .invalid("a:b:1"))
     }
 
+    @Test func absolutePathMayContainColons() {
+        let path = "/tmp/Project: Next/.worktrees/fix"
+        #expect(PaneAddress.parse(path) == .namedWorktreeAnyPane(path))
+        #expect(PaneAddress.parse(path + ":2") == .namedWorktreeID(path, 2))
+    }
+
     @Test func zeroOrNegativeIDIsInvalid() throws {
         #expect(PaneAddress.parse("0") == .invalid("0"))
         #expect(PaneAddress.parse("-1") == .invalid("-1"))

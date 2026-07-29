@@ -7,6 +7,9 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
     public let argv: [String]
     public let env: [String: String]
     public let workingDirectory: URL
+    /// True when this spawn installs shell integration that emits the
+    /// first-PWD readiness signal consumed by `TerminalManager`.
+    public let shellReadySignalAvailable: Bool
 
     public static func make(
         launcher: ZmxLauncher,
@@ -96,7 +99,9 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             sessionName: sessionName,
             argv: argv,
             env: env,
-            workingDirectory: URL(fileURLWithPath: worktreePath, isDirectory: true)
+            workingDirectory: URL(fileURLWithPath: worktreePath, isDirectory: true),
+            shellReadySignalAvailable: shellBasename == "zsh"
+                && !(ghosttyResourcesDir?.isEmpty ?? true)
         )
     }
 

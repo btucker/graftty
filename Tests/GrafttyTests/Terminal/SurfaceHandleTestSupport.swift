@@ -132,6 +132,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var resyncVisibleGridCount = 0
     private(set) var takeControlCount = 0
     private(set) var userInputScopeCount = 0
+    var deliveryAccepted = true
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError
@@ -161,6 +162,15 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         // Tests don't assert on the engagement flag; forward to the
         // no-arg path so existing fixtures still see writes in `writes`.
         try write(data)
+    }
+
+    func writeWithDeliveryResult(
+        _ data: Data,
+        claimEngagement: Bool
+    ) throws -> Bool {
+        guard deliveryAccepted else { return false }
+        try write(data, claimEngagement: claimEngagement)
+        return true
     }
 
     func withProgrammaticInput(_ body: () -> Void) {

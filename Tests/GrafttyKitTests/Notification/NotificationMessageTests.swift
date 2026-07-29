@@ -288,7 +288,8 @@ struct NotificationMessageTests {
             base: "release/v2",
             command: "codex",
             agentRuntime: .codex,
-            agentPrompt: "Fix the auth tests"
+            agentPrompt: "Fix the auth tests",
+            operationID: "create-123"
         )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -300,6 +301,7 @@ struct NotificationMessageTests {
         #expect(json["command"] as? String == "codex")
         #expect(json["agent_runtime"] as? String == "codex")
         #expect(json["agent_prompt"] as? String == "Fix the auth tests")
+        #expect(json["operation_id"] as? String == "create-123")
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
     }
 
@@ -313,7 +315,8 @@ struct NotificationMessageTests {
             base: nil,
             command: "codex",
             agentRuntime: .codex,
-            agentPrompt: nil
+            agentPrompt: nil,
+            operationID: nil
         )
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == expected)
     }
@@ -331,7 +334,8 @@ struct NotificationMessageTests {
             base: nil,
             command: "codex",
             agentRuntime: .codex,
-            agentPrompt: prompt
+            agentPrompt: prompt,
+            operationID: "create-maximum-prompt"
         )
 
         #expect(try JSONEncoder().encode(request).count < 1 * 1_024 * 1_024)
@@ -352,6 +356,15 @@ struct NotificationMessageTests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 
         #expect(json["type"] as? String == "worktree_base_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
+    }
+
+    @Test func worktreeCreateIdempotencyCapabilityRequestRoundTrips() throws {
+        let request = NotificationMessage.worktreeCreateIdempotencyCapability
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "worktree_create_idempotency_capability")
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
     }
 

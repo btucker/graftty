@@ -64,8 +64,12 @@ struct HostManagedZmxBackendTests {
             1680,
             1200
         )
-        try followerBackend.write(Data("blocked".utf8), claimEngagement: false)
+        let accepted = try followerBackend.writeWithDeliveryResult(
+            Data("blocked".utf8),
+            claimEngagement: false
+        )
 
+        #expect(!accepted)
         #expect(follower.resizes().isEmpty)
         #expect(follower.writes().isEmpty)
         #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("mac-owner"))
@@ -1554,7 +1558,8 @@ struct HostManagedZmxBackendTests {
             sessionName: "graftty-test",
             argv: ["/tmp/zmx", "attach", "graftty-test"],
             env: ["ZMX_DIR": "/tmp/zmx-dir", "SHELL": "/bin/zsh"],
-            workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true)
+            workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true),
+            shellReadySignalAvailable: true
         )
     }
 
