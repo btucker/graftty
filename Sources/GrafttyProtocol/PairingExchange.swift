@@ -17,6 +17,11 @@ public enum PairingRoutes {
 
 /// Shared timing defaults for the local pairing ceremony.
 public enum PairingProtocolDefaults {
+    /// The LAN discovery bootstrap is a short request that only creates a
+    /// host-side ceremony. It must not inherit the multi-minute timeout
+    /// reserved for the user's confirmation long-poll.
+    public static let bootstrapRequestTimeout: TimeInterval = 10
+
     /// How long a QR-published pairing session stays valid before its
     /// nonce expires. Matches `HostPairingSession.startPairing`'s and
     /// `HostPairingServer.start`'s default `validFor`.

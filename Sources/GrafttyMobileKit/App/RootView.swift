@@ -16,7 +16,9 @@ public struct RootView: View {
     /// `SingleSessionView` and `IPadRootLayout` are handed the SAME
     /// instance so a host negotiated once from either surface is cached
     /// for the other.
-    @State private var coordinator = RemoteConnectionCoordinator()
+    @State private var coordinator = RemoteConnectionCoordinator(
+        connectionsAllowedInitially: false
+    )
     @State private var nearbyMacBrowser = NearbyMacBrowser()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -40,7 +42,13 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
-        .task { await gate.authenticate() }
+        .task {
+            await gate.authenticate()
+            updateConnectionAccess()
+        }
+        .onChange(of: gate.state) { _, _ in
+            updateConnectionAccess()
+        }
         .onAppear { nearbyMacBrowser.start() }
         .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
             coordinator.updateDiscoveryCandidates(candidates)
@@ -65,9 +73,10 @@ public struct RootView: View {
                 // the per-view `shouldTearDown` branches below still pause
                 // (client.stop() / previews.stopAll()) on `.inactive` per
                 // IOS-10.1, unchanged.
-                Task { await coordinator.invalidateAll() }
+                updateConnectionAccess()
             case .active:
                 gate.applicationWillEnterForeground()
+                updateConnectionAccess()
                 if gate.state == .locked {
                     Task { await gate.authenticate() }
                 }
@@ -75,6 +84,12 @@ public struct RootView: View {
                 break
             }
         }
+    }
+
+    private func updateConnectionAccess() {
+        coordinator.setConnectionsAllowed(
+            scenePhase != .background && gate.state == .unlocked
+        )
     }
 
     @ViewBuilder
@@ -478,7 +493,13 @@ struct SingleSessionView: View {
             .task(id: dialKey) {
                 await driveConnection()
             }
-            .task(id: step.host.id) {
+            .task(id: dialKey) {
+                guard LiveSessionReadiness.isActive(
+                    scene: scenePhase,
+                    gateUnlocked: gate.isUnlocked
+                ) else {
+                    return
+                }
                 // Fetch Mac config, then construct the per-host
                 // TerminalController with it baked into the init source.
                 // Doing it this way (vs. TerminalController.shared +
@@ -526,13 +547,11 @@ struct SingleSessionView: View {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
-            // The negotiated `RemoteHostConnection` itself is torn down at
-            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
-            // not here — this branch also fires on `.inactive` (IOS-10.1),
-            // where the shared connection must survive. IPAD-5.2's
-            // foreground rebuild re-negotiates via `verifyThenOpen` →
-            // `openTerminal` → the provider wired in below whenever
-            // `invalidateAll()` did evict it.
+            // RootView's coordinator access gate tears down the negotiated
+            // connection only on `.background`, not here — this branch also
+            // fires on `.inactive` (IOS-10.1), where the shared connection
+            // must survive. The foreground provider re-negotiates after a
+            // background eviction.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -621,7 +640,7 @@ struct SingleSessionView: View {
         } description: {
             Text("This pane was stopped while the app was in the background.")
         } actions: {
-            Button("Back to sessions", action: popToParent)
+            Button("Back to worktrees", action: popToParent)
                 .buttonStyle(.borderedProminent)
         }
         .background(.regularMaterial)
@@ -662,7 +681,7 @@ struct SingleSessionView: View {
             Button("Reconnect") { client.forceReconnectNow() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-            Button("Back") { popToParent() }
+            Button("Back to worktrees") { popToParent() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }

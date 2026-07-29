@@ -183,6 +183,10 @@ struct LocalPairingClientTests {
             "/v1/pairing/begin",
             "/v1/pairing/introduce",
         ])
+        #expect(
+            recordedBeforeConfirm[0].timeoutInterval
+                == PairingProtocolDefaults.bootstrapRequestTimeout
+        )
         #expect(code == RemotePairingTranscript(
             hostPublicKey: fx.hostPublicKey,
             clientPublicKey: fx.clientPublicKey,

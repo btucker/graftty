@@ -12,6 +12,7 @@ public struct WorktreeListContent: View {
     @State private var pendingForceDelete: PendingForceDelete?
     @State private var errorToast: String?
     @State private var errorToastTask: Task<Void, Never>?
+    @State private var refreshError: String?
     @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
     @State private var selectionIntentGeneration: UInt64 = 0
 
@@ -89,7 +90,7 @@ public struct WorktreeListContent: View {
         self.externalRefreshToken = externalRefreshToken
     }
 
-    private enum LoadState {
+    enum LoadState: Equatable {
         case loading
         case loaded([WorktreePanes])
         case error(String)
@@ -110,53 +111,66 @@ public struct WorktreeListContent: View {
                         .buttonStyle(.borderedProminent)
                 }
             case .loaded(let worktrees):
-                List {
-                    ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
-                        Section {
-                            ForEach(group.worktrees, id: \.path) { wt in
-                                WorktreeBlock(
-                                    worktree: wt,
-                                    theme: theme,
-                                    isActive: wt.path == selectedWorktreePath,
-                                    isOpening: openingWorktrees.contains(
-                                        OpeningWorktreeKey(
-                                            hostID: host.id,
-                                            path: wt.path
-                                        )
-                                    ),
-                                    focusedPaneId: focusedPaneId,
-                                    onSelect: {
-                                        beginSelectingWorktree(wt)
-                                    },
-                                    onSelectPane: { leaf in
-                                        selectionIntentGeneration &+= 1
-                                        onSelectPane(leaf)
-                                    }
-                                )
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    if let action = WorktreePickerGrouping.swipeAction(for: wt) {
-                                        Button(role: .destructive) {
-                                            pendingDelete = PendingDelete(worktree: wt, action: action)
-                                        } label: {
-                                            Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                VStack(spacing: 0) {
+                    if let refreshError {
+                        HStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text(refreshError)
+                                .font(.caption)
+                            Spacer()
+                            Button("Retry") { Task { await refresh() } }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.thinMaterial)
+                    }
+                    List {
+                        ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
+                            Section {
+                                ForEach(group.worktrees, id: \.path) { wt in
+                                    WorktreeBlock(
+                                        worktree: wt,
+                                        theme: theme,
+                                        isActive: wt.path == selectedWorktreePath,
+                                        isOpening: openingWorktrees.contains(
+                                            OpeningWorktreeKey(
+                                                hostID: host.id,
+                                                path: wt.path
+                                            )
+                                        ),
+                                        focusedPaneId: focusedPaneId,
+                                        onSelect: {
+                                            beginSelectingWorktree(wt)
+                                        },
+                                        onSelectPane: { leaf in
+                                            selectionIntentGeneration &+= 1
+                                            onSelectPane(leaf)
+                                        }
+                                    )
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                                            Button(role: .destructive) {
+                                                pendingDelete = PendingDelete(worktree: wt, action: action)
+                                            } label: {
+                                                Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                                            }
                                         }
                                     }
                                 }
+                            } header: {
+                                Text(group.title)
+                                    .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                             }
-                        } header: {
-                            Text(group.title)
-                                .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                         }
                     }
+                    // Mac-parity: `.sidebar` style + transparent scroll
+                    // content lets the enclosing iPad surface show through.
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
+                    .refreshable { await refresh() }
                 }
-                // Mac-parity: `.sidebar` style + transparent scroll content
-                // so the ghostty `sidebarBackground` painted by the
-                // enclosing `IPadRootLayout`'s `themedSidebarSurface`
-                // shows through. Without these, iOS overlays a grouped-
-                // list material that hides the themed background.
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-                .refreshable { await refresh() }
             }
         }
         .confirmationDialog(
@@ -278,6 +292,7 @@ public struct WorktreeListContent: View {
                     )
                     guard !Task.isCancelled else { return }
                     state = .loaded(list)
+                    refreshError = nil
                     onListChanged(list)
                 } catch is CancellationError {
                     return
@@ -292,6 +307,7 @@ public struct WorktreeListContent: View {
 
     private func load() async {
         state = .loading
+        refreshError = nil
         await refresh()
     }
 
@@ -303,16 +319,36 @@ public struct WorktreeListContent: View {
                 includeRemoteWorktrees: includeRemoteWorktrees
             )
             state = .loaded(list)
+            refreshError = nil
             onListChanged(list)
         } catch WorktreePanesFetcher.FetchError.forbidden {
-            state = .error("Not authorized — is this device on your tailnet?")
+            applyRefreshFailure("Not authorized — is this device on your tailnet?")
         } catch WorktreePanesFetcher.FetchError.http(let code) {
-            state = .error("HTTP \(code)")
+            applyRefreshFailure("HTTP \(code)")
         } catch WorktreePanesFetcher.FetchError.decode {
-            state = .error("The server sent a response this version can't read.")
+            applyRefreshFailure(
+                "The server sent a response this version can't read."
+            )
         } catch {
-            state = .error("Couldn't reach the server.")
+            applyRefreshFailure("Couldn't reach the server.")
         }
+    }
+
+    private func applyRefreshFailure(_ message: String) {
+        if case .loaded = state {
+            refreshError = message
+        }
+        state = Self.loadState(afterFailure: message, current: state)
+    }
+
+    static func loadState(
+        afterFailure message: String,
+        current: LoadState
+    ) -> LoadState {
+        if case .loaded = current {
+            return current
+        }
+        return .error(message)
     }
 
     private func fetchWorktrees(

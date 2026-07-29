@@ -11,6 +11,8 @@ public struct AddHostView: View {
     @State private var errorMessage: String?
     @State private var isStartingPairing = false
     @State private var pairingPayload: PairingPayload?
+    @State private var pairingBootstrapTask: Task<Void, Never>?
+    @State private var pairingBootstrapID: UUID?
 
     @Bindable private var browser: NearbyMacBrowser
     public let onSave: (Host) throws -> Void
@@ -39,6 +41,9 @@ public struct AddHostView: View {
             }
         }
         .task { browser.start() }
+        .onDisappear {
+            cancelPairingBootstrap()
+        }
     }
 
     private var pairingPicker: some View {
@@ -98,6 +103,7 @@ public struct AddHostView: View {
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .disabled(isStartingPairing)
                 Button("Pair") {
                     guard let baseURL = Self.manualPairingBaseURL(
                         manualAddress
@@ -123,10 +129,12 @@ public struct AddHostView: View {
         .navigationTitle("Pair a Mac")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") {
+                    cancelPairingBootstrap()
+                    dismiss()
+                }
             }
         }
-        .disabled(isStartingPairing)
         .overlay {
             if isStartingPairing {
                 ProgressView("Starting pairing…")
@@ -162,12 +170,24 @@ public struct AddHostView: View {
         guard !isStartingPairing else { return }
         isStartingPairing = true
         errorMessage = nil
-        Task {
-            defer { isStartingPairing = false }
+        let attemptID = UUID()
+        pairingBootstrapID = attemptID
+        let task = Task { @MainActor in
+            defer {
+                if pairingBootstrapID == attemptID {
+                    pairingBootstrapID = nil
+                    pairingBootstrapTask = nil
+                    isStartingPairing = false
+                }
+            }
             do {
                 let payload = try await PairDeviceFlowView.beginPairing(
                     baseURL: baseURL
                 )
+                guard !Task.isCancelled,
+                      pairingBootstrapID == attemptID else {
+                    return
+                }
                 if let expectedCandidate,
                    (
                        payload.hostDeviceID != expectedCandidate.deviceID
@@ -180,10 +200,22 @@ public struct AddHostView: View {
                     return
                 }
                 pairingPayload = payload
+            } catch LocalPairingClient.Error.cancelled {
+                // Dismissal is not a pairing failure to surface.
             } catch {
-                errorMessage = Self.message(for: error)
+                if !Task.isCancelled, pairingBootstrapID == attemptID {
+                    errorMessage = Self.message(for: error)
+                }
             }
         }
+        pairingBootstrapTask = task
+    }
+
+    private func cancelPairingBootstrap() {
+        pairingBootstrapID = nil
+        pairingBootstrapTask?.cancel()
+        pairingBootstrapTask = nil
+        isStartingPairing = false
     }
 
     private static func message(for error: Error) -> String {

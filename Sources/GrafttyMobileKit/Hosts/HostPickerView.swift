@@ -5,6 +5,7 @@ public struct HostPickerView: View {
     @Bindable var store: HostStore
     @Bindable var browser: NearbyMacBrowser
     @State private var showingAdd = false
+    @State private var forgetError: String?
     public let coordinator: RemoteConnectionCoordinator?
 
     /// When non-nil, tapping a saved-host row fires this callback instead of
@@ -58,8 +59,16 @@ public struct HostPickerView: View {
                     let removed = offsets.map { store.hosts[$0] }
                     for host in removed {
                         Task {
-                            try? await coordinator?.forget(host)
-                            try? store.delete(host.id)
+                            do {
+                                if let coordinator {
+                                    try await coordinator.forget(host)
+                                }
+                                try store.delete(host.id)
+                            } catch {
+                                forgetError =
+                                    "Couldn't forget \(host.label): "
+                                    + error.localizedDescription
+                            }
                         }
                     }
                 }
@@ -76,6 +85,17 @@ public struct HostPickerView: View {
         }
         .sheet(isPresented: $showingAdd) {
             AddHostView(browser: browser) { host in try store.add(host) }
+        }
+        .alert(
+            "Couldn't forget Mac",
+            isPresented: Binding(
+                get: { forgetError != nil },
+                set: { if !$0 { forgetError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(forgetError ?? "")
         }
         .task { await store.loadIfNeeded() }
     }

@@ -54,11 +54,6 @@ struct IosTodo {
     func ios_4_1() async throws { }
 
     @Test("""
-@spec IOS-4.2: When the authenticated paired connection or panes-state channel cannot be established, the application shall preserve any prior snapshot, render an error banner with a manual retry button, and never retry through the legacy Web Access endpoints.
-""", .disabled("not yet implemented"))
-    func ios_4_2() async throws { }
-
-    @Test("""
 @spec IOS-4.3: When the user selects a pane, the application shall open that pane's terminal subsystem over the mutually authenticated paired connection and attach its byte stream to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
 """, .disabled("not yet implemented"))
     func ios_4_3() async throws { }

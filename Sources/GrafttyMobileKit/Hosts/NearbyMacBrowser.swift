@@ -32,6 +32,76 @@ public struct NearbyMac: Identifiable, Hashable, Sendable {
     }
 }
 
+struct NearbyMacServiceKey: Hashable {
+    let name: String
+    let type: String
+    let domain: String
+
+    init(name: String, type: String, domain: String) {
+        self.name = name
+        self.type = type
+        self.domain = domain
+    }
+
+    init(_ service: NetService) {
+        self.init(
+            name: service.name,
+            type: service.type,
+            domain: service.domain
+        )
+    }
+}
+
+/// Tracks every resolved service separately, then publishes one most-recent
+/// routing hint per device identity. A candidate therefore survives until
+/// its final Bonjour service disappears, while a re-resolved service cannot
+/// leave its previous identity behind as a ghost row.
+struct NearbyMacCandidateRegistry {
+    private struct Entry {
+        let candidate: NearbyMac
+        let sequence: UInt64
+    }
+
+    private var entriesByService: [NearbyMacServiceKey: Entry] = [:]
+    private var nextSequence: UInt64 = 0
+
+    mutating func publish(
+        _ candidate: NearbyMac,
+        for service: NearbyMacServiceKey
+    ) {
+        nextSequence &+= 1
+        entriesByService[service] = Entry(
+            candidate: candidate,
+            sequence: nextSequence
+        )
+    }
+
+    mutating func remove(_ service: NearbyMacServiceKey) {
+        entriesByService[service] = nil
+    }
+
+    mutating func removeAll() {
+        entriesByService.removeAll()
+    }
+
+    var candidates: [NearbyMac] {
+        var latestByIdentity: [String: Entry] = [:]
+        for entry in entriesByService.values {
+            if let current = latestByIdentity[entry.candidate.id],
+               current.sequence > entry.sequence {
+                continue
+            }
+            latestByIdentity[entry.candidate.id] = entry
+        }
+        return latestByIdentity.values
+            .map(\.candidate)
+            .sorted {
+                $0.label.localizedCaseInsensitiveCompare($1.label)
+                    == .orderedAscending
+            }
+    }
+}
+
 /// Bonjour discovery shared by the picker and the app-level address refresh.
 /// `NetService` delivers delegate callbacks on the run loop where browsing
 /// started; production starts it from SwiftUI's main actor.
@@ -41,21 +111,9 @@ public final class NearbyMacBrowser: NSObject {
     public private(set) var isSearching = false
     public private(set) var errorMessage: String?
 
-    private struct ServiceKey: Hashable {
-        let name: String
-        let type: String
-        let domain: String
-
-        init(_ service: NetService) {
-            name = service.name
-            type = service.type
-            domain = service.domain
-        }
-    }
-
     private let browser: NetServiceBrowser
     private var resolving: [ObjectIdentifier: NetService] = [:]
-    private var candidateIDByService: [ServiceKey: String] = [:]
+    private var registry = NearbyMacCandidateRegistry()
 
     public override convenience init() {
         self.init(browser: NetServiceBrowser())
@@ -86,6 +144,8 @@ public final class NearbyMacBrowser: NSObject {
             service.delegate = nil
         }
         resolving.removeAll()
+        registry.removeAll()
+        candidates = []
     }
 
     static func candidate(
@@ -98,7 +158,12 @@ public final class NearbyMacBrowser: NSObject {
               let txtRecordData,
               let metadata = try? GrafttyBonjourService.decodeTXT(txtRecordData),
               metadata.version == GrafttyBonjourService.discoveryVersion,
-              metadata.protocolVersion == GrafttyBonjourService.discoveryVersion,
+              GrafttyBonjourService.isProtocolCompatible(
+                  advertisedProtocol: metadata.protocolVersion,
+                  supportedProtocolVersions: [
+                      GrafttyBonjourService.discoveryVersion
+                  ]
+              ),
               let hostName
         else {
             return nil
@@ -147,10 +212,8 @@ extension NearbyMacBrowser: NetServiceBrowserDelegate {
         didRemove service: NetService,
         moreComing: Bool
     ) {
-        let key = ServiceKey(service)
-        if let id = candidateIDByService.removeValue(forKey: key) {
-            candidates.removeAll { $0.id == id }
-        }
+        registry.remove(NearbyMacServiceKey(service))
+        candidates = registry.candidates
         forget(service)
     }
 
@@ -180,13 +243,8 @@ extension NearbyMacBrowser: NetServiceDelegate {
         ) else {
             return
         }
-        candidateIDByService[ServiceKey(sender)] = candidate.id
-        if let index = candidates.firstIndex(where: { $0.id == candidate.id }) {
-            candidates[index] = candidate
-        } else {
-            candidates.append(candidate)
-        }
-        candidates.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+        registry.publish(candidate, for: NearbyMacServiceKey(sender))
+        candidates = registry.candidates
     }
 
     public func netService(

@@ -66,6 +66,87 @@ struct NearbyMacBrowserCandidateTests {
             txtRecordData: txt
         ) == nil)
     }
+
+    @Test("A compatible advertised protocol range is accepted")
+    func compatibleProtocolRangeBecomesCandidate() throws {
+        let fingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(
+                rawRepresentation: Curve25519.Signing.PrivateKey()
+                    .publicKey.rawRepresentation
+            )
+        )
+        let txt = try GrafttyBonjourService.encodeTXT(.init(
+            deviceID: RemoteDeviceID(value: "mac-1"),
+            label: "Studio Mac",
+            fingerprint: fingerprint,
+            protocolVersion: "1-2",
+            pairingStatus: .required
+        ))
+
+        #expect(NearbyMacBrowser.candidate(
+            name: "Studio Mac",
+            hostName: "studio.local.",
+            port: 51_234,
+            txtRecordData: txt
+        ) != nil)
+    }
+
+    @Test("A candidate remains until its final service disappears")
+    func registryRetainsDuplicateIdentityAdvertisements() throws {
+        let candidate = try makeCandidate(deviceID: "mac-1")
+        let first = NearbyMacServiceKey(
+            name: "first",
+            type: "_graftty._tcp.",
+            domain: "local."
+        )
+        let second = NearbyMacServiceKey(
+            name: "second",
+            type: "_graftty._tcp.",
+            domain: "local."
+        )
+        var registry = NearbyMacCandidateRegistry()
+
+        registry.publish(candidate, for: first)
+        registry.publish(candidate, for: second)
+        registry.remove(first)
+        #expect(registry.candidates == [candidate])
+
+        registry.remove(second)
+        #expect(registry.candidates.isEmpty)
+    }
+
+    @Test("Re-resolving one service replaces its old identity")
+    func registryRemovesGhostCandidateAfterIdentityChange() throws {
+        let old = try makeCandidate(deviceID: "mac-1")
+        let replacement = try makeCandidate(deviceID: "mac-2")
+        let key = NearbyMacServiceKey(
+            name: "studio",
+            type: "_graftty._tcp.",
+            domain: "local."
+        )
+        var registry = NearbyMacCandidateRegistry()
+
+        registry.publish(old, for: key)
+        registry.publish(replacement, for: key)
+
+        #expect(registry.candidates == [replacement])
+    }
+
+    private func makeCandidate(deviceID: String) throws -> NearbyMac {
+        let fingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(
+                rawRepresentation: Curve25519.Signing.PrivateKey()
+                    .publicKey.rawRepresentation
+            )
+        )
+        return NearbyMac(
+            deviceID: RemoteDeviceID(value: deviceID),
+            label: deviceID,
+            fingerprint: fingerprint,
+            baseURL: URL(string: "http://\(deviceID).local:51234")!,
+            pairingStatus: .required
+        )
+    }
 }
 
 // MARK: - Pairing bootstrap address validation

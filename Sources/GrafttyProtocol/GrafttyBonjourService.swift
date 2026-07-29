@@ -126,7 +126,9 @@ public enum GrafttyBonjourService {
         return value
     }
 
-    private static func isProtocolCompatible(
+    /// Returns whether an advertised exact version or inclusive numeric
+    /// range overlaps the versions this client supports.
+    public static func isProtocolCompatible(
         advertisedProtocol: String,
         supportedProtocolVersions: Set<String>
     ) -> Bool {

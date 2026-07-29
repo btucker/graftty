@@ -1314,7 +1314,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-2.4** For compatibility with older mobile clients, the macOS application's Web Access settings may continue to render its Web Base URL as a scannable QR code alongside the copy/open actions (`WEB-1.12`). Current GrafttyMobile onboarding shall use authenticated device pairing (`IOS-2.1`) and shall not require Web Access.
 
-**IOS-2.5** `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No saved hosts yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+**IOS-2.5** `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No paired Macs yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
 
 **IOS-2.6** When a paired Mac is rediscovered after its LAN address or listener port changes, GrafttyMobile shall update the saved address by stable remote device identity without creating a duplicate row.
 
@@ -1356,7 +1356,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.13** When GrafttyMobile constructs a `TerminalController` from the Mac-provided Ghostty config (`IOS-4.7`), it shall not install libghostty-spm's built-in light/dark `TerminalTheme` overlay. UIKit trait changes may still report the phone's `.light` or `.dark` color scheme to libghostty, but the rendered config shall continue to use the Mac config's background, foreground, palette, and theme-derived colors rather than switching to GhosttyTerminal's default Alabaster/Afterglow themes.
 
-**IOS-4.14** When a worktree's pane layout is a single leaf, the worktree-detail screen shall render a static labeled tile rather than a live terminal preview, and shall not open a preview WebSocket for that pane.
+**IOS-4.14** When a worktree's pane layout is a single leaf, the worktree-detail screen shall render a static labeled tile rather than a live terminal preview, and shall not open a preview terminal channel for that pane.
 
 **IOS-4.15** When the fetched Ghostty config specifies a single `theme =` value (not a `light:X,dark:Y` pair), the application shall force `overrideUserInterfaceStyle` on the terminal container view to match that theme's appearance so that libghostty-spm's `traitCollectionDidChange` → `setColorScheme` path never substitutes the system-default appearance over the user's explicit choice.
 
@@ -1372,7 +1372,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.21** When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
 
-**IOS-4.22** When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
+**IOS-4.22** When the explicit legacy Web Access compatibility path constructs a session WebSocket URL, it shall advertise the display-client kind via a `client=ios` query parameter so older daemons classify the connection as `.ios`. Production paired-device sessions shall use the authenticated terminal subsystem and shall not select this compatibility path automatically (`IOS-4.28`).
 
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
@@ -1474,7 +1474,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-10.x
 
-**IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
+**IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active terminal channels and unmount live `TerminalPaneView` instances so libghostty's display link stops. Entering `.background` shall additionally suspend and invalidate every paired host connection; `.inactive` may retain the shared paired connection for prompt foreground recovery.
 
 **IOS-10.2** When `WorktreeDetailView` is active with a multi-leaf layout, the application shall create a live preview `SessionClient` for every leaf so each pane tile renders a real-time preview rather than a static title.
 
@@ -1524,7 +1524,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 
-**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
+**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 
 **IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
 
@@ -1648,7 +1648,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-9.x
 
-**IPAD-9.1** When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
+**IPAD-9.1** When iPad selects or refreshes a paired Mac, it shall consume the host-resolved Ghostty keybindings from the authenticated `hostPresentation` response, decode raw action-name keys for forward compatibility, and expose only known `GhosttyAction` chords through `GhosttyKeybindBridge`.
 
 **IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
 
@@ -1660,7 +1660,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.6** iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
 
-**IPAD-9.7** If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
+**IPAD-9.7** If authenticated `hostPresentation` is unavailable or cannot be decoded, iPad shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
 
 **IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
 

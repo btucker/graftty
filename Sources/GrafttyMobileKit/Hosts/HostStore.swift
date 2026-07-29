@@ -72,9 +72,17 @@ public final class HostStore {
         hasLoaded = true
     }
 
-    public func add(_ host: Host) throws {
+    /// Adds or merges `host` and returns the canonical persisted row.
+    ///
+    /// Merges preserve the existing row UUID so navigation state remains
+    /// stable across re-pairing and Bonjour address changes. Callers that
+    /// need to select the saved host must therefore use this return value,
+    /// not the transient incoming `host.id`.
+    @discardableResult
+    public func add(_ host: Host) throws -> Host {
         ensureLoaded()
         var next = hosts
+        let canonical: Host
         // A paired Mac is identified by its stable device ID, not its
         // hostname or listener port. Bonjour addresses legitimately change
         // after every host restart, while unrelated Macs can occasionally
@@ -88,6 +96,7 @@ public final class HostStore {
             existing.lastUsedAt = host.lastUsedAt ?? Date()
             existing.remoteDeviceID = deviceID
             next[idx] = existing
+            canonical = existing
         } else if let idx = next.firstIndex(where: {
             Self.sameURL($0.baseURL, host.baseURL)
                 && ($0.remoteDeviceID == nil || host.remoteDeviceID == nil)
@@ -102,12 +111,16 @@ public final class HostStore {
             // rescan can never erase an identity a prior pairing recorded.
             existing.remoteDeviceID = host.remoteDeviceID ?? existing.remoteDeviceID
             next[idx] = existing
+            canonical = existing
         } else if let idx = next.firstIndex(where: { $0.id == host.id }) {
             next[idx] = host
+            canonical = host
         } else {
             next.append(host)
+            canonical = host
         }
         try write(next)
+        return canonical
     }
 
     /// Refreshes the transient LAN routing hint for an already-paired Mac.

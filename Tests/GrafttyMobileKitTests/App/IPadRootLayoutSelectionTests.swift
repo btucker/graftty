@@ -32,7 +32,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
+@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 """)
     func ipad_1_2_hostHeaderRowState() {
         let appState = freshAppState()
@@ -885,6 +885,50 @@ struct IPadRootLayoutSelectionTests {
             .ghostty(.nextTab),
             .ghostty(.previousTab),
         ])
+    }
+
+    @Test("""
+@spec IPAD-9.1: When iPad selects or refreshes a paired Mac, it shall consume \
+the host-resolved Ghostty keybindings from the authenticated \
+`hostPresentation` response, decode raw action-name keys for forward \
+compatibility, and expose only known `GhosttyAction` chords through \
+`GhosttyKeybindBridge`.
+""")
+    func pairedPresentationProvidesHostKeybindings() {
+        let presentation = RemoteHostPresentation(
+            ghosttyConfig: "",
+            keybindings: GhosttyKeybindingsResponse(bindings: [
+                "new_split:right": ShortcutChord(
+                    key: "d",
+                    modifiers: [.command]
+                ),
+                "host_future_action": ShortcutChord(
+                    key: "x",
+                    modifiers: [.command]
+                ),
+            ])
+        )
+
+        let set = IPadRootLayout.keybindingSet(for: presentation)
+
+        #expect(set.source == .hostResolved)
+        #expect(
+            set.bridge[.newSplitRight]
+                == ShortcutChord(key: "d", modifiers: [.command])
+        )
+        #expect(set.bridge.allChords.count == 1)
+    }
+
+    @Test("""
+@spec IPAD-9.7: If authenticated `hostPresentation` is unavailable or cannot \
+be decoded, iPad shall fall back to the bundled Ghostty default keybindings \
+instead of an empty bridge.
+""")
+    func unavailablePairedPresentationUsesBundledDefaults() {
+        let set = IPadRootLayout.keybindingSet(for: nil)
+
+        #expect(set.source == .bundledFallback)
+        #expect(set.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test("""

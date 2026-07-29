@@ -193,35 +193,21 @@ func makeRemoteWorktreeSnapshotProvider(
 
 // MARK: - PaneEnvironment
 
-/// Bundles the iPad-only pane façades that ride the per-host
-/// `RemoteHostConnection`'s SSH session: a `WorktreePanesStore` for the
-/// sidebar's worktree+pane snapshot, and a `PaneControlClient` for typed
-/// `split`/`close`/`swap` RPCs. Since W3, both size classes negotiate a
-/// `RemoteHostConnection` for paired hosts, so either path could carry
-/// these channels; both fields are `nil` whenever `RootView`'s
-/// `RemoteConnectionCoordinator` has no live `RemoteHostConnection` for
-/// the host (unpaired, or negotiation failed) — the same authenticated
-/// transport requirement as fullscreen and preview terminal sessions.
-///
-/// iPad's detail toolbar consumes `paneControlClient` for split actions.
-/// `WorktreeListContent` consumes the paired panes-state subscription for
-/// its sidebar snapshot.
+/// Bundles the iPad-only pane-control façade riding the per-host
+/// `RemoteHostConnection`'s SSH session. The coordinator separately owns
+/// the one long-lived panes-state subscription consumed by
+/// `WorktreeListContent`; opening one here as well would duplicate every
+/// sidebar snapshot channel.
 public struct PaneEnvironment: Sendable {
-    public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?
 
-    public static let empty = PaneEnvironment(worktreePanesStore: nil, paneControlClient: nil)
+    public static let empty = PaneEnvironment(paneControlClient: nil)
 
-    public init(
-        worktreePanesStore: WorktreePanesStore?,
-        paneControlClient: PaneControlClient?
-    ) {
-        self.worktreePanesStore = worktreePanesStore
+    public init(paneControlClient: PaneControlClient?) {
         self.paneControlClient = paneControlClient
     }
 
     public func close() async {
-        await worktreePanesStore?.unsubscribe()
         await paneControlClient?.close()
     }
 }
@@ -229,62 +215,25 @@ public struct PaneEnvironment: Sendable {
 /// Constructs a `PaneEnvironment` over the supplied per-host
 /// `RemoteHostConnection`. Returns `.empty` when `remoteHost` is nil
 /// (host unpaired, or negotiation failed — either size class) or when
-/// either subsystem channel fails to open.
-///
-/// Construction shape: the channel client is built first with no-op
-/// callbacks (via `RemoteHostConnection.makePanesStateClient`), then the
-/// store is built around it as its driver, then `setCallbacks(...)`
-/// backfills the closures pointing at the store, and finally
-/// `store.subscribe()` performs the single SSH channel open. This avoids
-/// the chicken-and-egg "store needs the client at init, client needs the
-/// store in its callbacks" cycle without a placeholder-driver swap.
-/// The `pane-control` side is simpler — `PaneControlChannelClient` has
-/// no inbound callbacks at construction, so we build, wrap, and open in
-/// one chain.
+/// pane-control subsystem fails to open.
 public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> PaneEnvironment {
     guard let remoteHost else { return .empty }
-    var openedWorktreePanesStore: WorktreePanesStore?
     var openedPaneControlClient: PaneControlClient?
     do {
-        // Build panes-state side: client first (with no-op callbacks),
-        // then store, then backfill callbacks pointing at the store,
-        // then store.subscribe() opens the SSH channel exactly once.
-        let panesClient = try await remoteHost.makePanesStateClient(
-            onSnapshot: { _ in },
-            onClosed: { _ in }
-        )
-        let worktreePanesStore = WorktreePanesStore(driver: panesClient)
-        panesClient.setCallbacks(
-            onSnapshot: { [weak worktreePanesStore] snapshot in
-                await worktreePanesStore?.applySnapshot(snapshot)
-            },
-            onClosed: { [weak worktreePanesStore] reason in
-                await worktreePanesStore?.markClosed(reason: reason)
-            }
-        )
-        try await worktreePanesStore.subscribe()
-        openedWorktreePanesStore = worktreePanesStore
-
-        // Build pane-control side: build client, wrap, open via the
-        // PaneControlClient façade (which forwards to driver.open()).
         let controlChannel = try await remoteHost.makePaneControlClient()
         let paneControlClient = PaneControlClient(driver: controlChannel)
         try await paneControlClient.open()
         openedPaneControlClient = paneControlClient
 
-        return PaneEnvironment(
-            worktreePanesStore: worktreePanesStore,
-            paneControlClient: paneControlClient
-        )
+        return PaneEnvironment(paneControlClient: paneControlClient)
     } catch {
         await openedPaneControlClient?.close()
-        await openedWorktreePanesStore?.unsubscribe()
         return .empty
     }
 }
 #endif
 
-/// Re-dialing while locked would open WSes behind the lock overlay,
+/// Re-dialing while locked would open authenticated channels behind the lock,
 /// defeating the content-hiding guarantee. Takes a Bool rather than
 /// the full `BiometricGate` so this stays platform-agnostic and
 /// testable from `swift test` on macOS (where `BiometricGate` is

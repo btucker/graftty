@@ -21,7 +21,7 @@ struct LiveSessionReadinessTests {
     }
 
     @Test("""
-@spec IOS-10.1: While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
+@spec IOS-10.1: While `scenePhase` is `.inactive` or `.background`, the application shall tear down active terminal channels and unmount live `TerminalPaneView` instances so libghostty's display link stops. Entering `.background` shall additionally suspend and invalidate every paired host connection; `.inactive` may retain the shared paired connection for prompt foreground recovery.
 """)
     func shouldTearDownOnInactiveAndBackground() {
         #expect(!LiveSessionReadiness.shouldTearDown(scene: .active))

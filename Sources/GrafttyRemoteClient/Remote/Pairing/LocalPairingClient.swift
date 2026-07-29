@@ -98,7 +98,11 @@ public actor LocalPairingClient {
         guard let url = Self.beginPairingURL(from: baseURL) else {
             throw Error.malformedPairingURL
         }
-        return try await postJSON(url: url, body: EmptyBody())
+        return try await postJSON(
+            url: url,
+            body: EmptyBody(),
+            requestTimeout: PairingProtocolDefaults.bootstrapRequestTimeout
+        )
     }
 
     /// Sends this client's identity to the host and returns the verification
@@ -207,9 +211,13 @@ public actor LocalPairingClient {
 
     private func postJSON<Request: Encodable, Response: Decodable>(
         url: URL,
-        body: Request
+        body: Request,
+        requestTimeout: TimeInterval? = nil
     ) async throws -> Response {
         var request = URLRequest(url: url)
+        if let requestTimeout {
+            request.timeoutInterval = requestTimeout
+        }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

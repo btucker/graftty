@@ -193,7 +193,13 @@ public struct IPadRootLayout: View {
             set: { appState.sidebarWidth = $0 }
         ))
         .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
-        .task(id: selectedHost?.id) {
+        .task(id: HostPresentationRefreshKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            )
+        )) {
             await refreshHostPresentationState()
         }
         .task(id: PaneEnvironmentRefreshKey(
@@ -359,6 +365,14 @@ public struct IPadRootLayout: View {
 
     static func keybindingSetForStartingHostRefresh() -> MobileGhosttyKeybindingSet {
         .loading
+    }
+
+    static func keybindingSet(
+        for presentation: RemoteHostPresentation?
+    ) -> MobileGhosttyKeybindingSet {
+        presentation.map {
+            GhosttyKeybindingsFetcher.pairedPresentation($0.keybindings)
+        } ?? .bundledFallback
     }
 
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
@@ -1092,6 +1106,12 @@ public struct IPadRootLayout: View {
 
     @MainActor
     private func refreshHostPresentationState() async {
+        guard LiveSessionReadiness.isActive(
+            scene: scenePhase,
+            gateUnlocked: gate.isUnlocked
+        ) else {
+            return
+        }
         guard let host = selectedHost else {
             appState.theme = .fallback
             keybindingSet = Self.keybindingSetForStartingHostRefresh()
@@ -1105,9 +1125,7 @@ public struct IPadRootLayout: View {
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
 
-        let resolvedKeybindingSet = presentation.map {
-            GhosttyKeybindingsFetcher.pairedPresentation($0.keybindings)
-        } ?? .bundledFallback
+        let resolvedKeybindingSet = Self.keybindingSet(for: presentation)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         keybindingSet = resolvedKeybindingSet
@@ -1157,6 +1175,11 @@ public struct IPadRootLayout: View {
 }
 
 private struct PaneEnvironmentRefreshKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
+}
+
+private struct HostPresentationRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
 }
@@ -1226,10 +1249,13 @@ private struct HostMenu: View {
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
                 AddHostView(browser: browser) { host in
-                    try hostStore.add(host)
+                    let savedHost = try hostStore.add(host)
                     // Auto-select the freshly-added host so the sidebar
                     // immediately fetches its worktree list.
-                    IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
+                    IPadRootLayout.applyHostSwitch(
+                        appState: appState,
+                        to: savedHost.id
+                    )
                 }
             }
         }

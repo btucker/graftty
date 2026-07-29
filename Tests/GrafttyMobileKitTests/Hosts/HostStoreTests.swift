@@ -26,7 +26,7 @@ struct HostStoreTests {
     }
 
     @Test("""
-@spec IOS-2.5: `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No saved hosts yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+@spec IOS-2.5: `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No paired Macs yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
 """)
     func initDoesNotReadFromDisk() async throws {
         let url = tempStoreURL()
@@ -208,6 +208,52 @@ struct HostStoreTests {
         #expect(store.hosts.count == 1)
         #expect(store.hosts[0].label == "Studio")
         #expect(store.hosts[0].baseURL == URL(string: "http://mac.local:52000"))
+    }
+
+    @Test("Re-pair returns the canonical stable-device row")
+    func addReturnsCanonicalRowWhenMergingByDeviceIdentity() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let deviceID = RemoteDeviceID(value: "host-1")
+        let original = Host(
+            label: "Old",
+            baseURL: URL(string: "http://mac.local:51000")!,
+            remoteDeviceID: deviceID
+        )
+        try store.add(original)
+        let incoming = Host(
+            label: "Studio",
+            baseURL: URL(string: "http://mac.local:52000")!,
+            remoteDeviceID: deviceID
+        )
+
+        let saved = try store.add(incoming)
+
+        #expect(saved.id == original.id)
+        #expect(saved.id != incoming.id)
+        #expect(saved.label == "Studio")
+        #expect(saved.baseURL == incoming.baseURL)
+        #expect(store.hosts == [saved])
+    }
+
+    @Test("Pairing a legacy URL row returns its canonical UUID")
+    func addReturnsCanonicalRowWhenMigratingLegacyURL() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let baseURL = URL(string: "http://mac.local:51000")!
+        let legacy = Host(label: "Legacy", baseURL: baseURL)
+        try store.add(legacy)
+        let incoming = Host(
+            label: "Studio",
+            baseURL: baseURL,
+            remoteDeviceID: RemoteDeviceID(value: "host-1")
+        )
+
+        let saved = try store.add(incoming)
+
+        #expect(saved.id == legacy.id)
+        #expect(saved.remoteDeviceID == incoming.remoteDeviceID)
+        #expect(store.hosts == [saved])
     }
 }
 #endif

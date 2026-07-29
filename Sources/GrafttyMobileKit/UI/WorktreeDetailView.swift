@@ -84,12 +84,10 @@ public struct WorktreeDetailView: View {
     private func driveLifecycle() async {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
-            // The negotiated `RemoteHostConnection` itself is torn down at
-            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
-            // not here — this branch also fires on `.inactive`, where the
-            // shared connection must survive. The pool's own clients
-            // re-resolve a fresh connection per dial (below) once
-            // `invalidateAll()` has evicted it.
+            // RootView's coordinator access gate tears down the negotiated
+            // connection only on `.background`, not here — this branch also
+            // fires on `.inactive`, where the shared connection must survive.
+            // The pool re-resolves a fresh connection after backgrounding.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }

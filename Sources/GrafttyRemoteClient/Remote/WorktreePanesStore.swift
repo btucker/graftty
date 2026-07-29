@@ -12,6 +12,10 @@ import GrafttyProtocol
 /// need to change.
 public actor WorktreePanesStore {
 
+    public enum SubscriptionError: Error, Equatable {
+        case closedDuringOpen(reason: String)
+    }
+
     public enum ConnectionState: Sendable, Equatable {
         case idle
         case subscribed
@@ -32,7 +36,15 @@ public actor WorktreePanesStore {
 
     public func subscribe() async throws {
         try await driver.open()
-        self.connectionState = .subscribed
+        switch connectionState {
+        case .idle:
+            connectionState = .subscribed
+        case .subscribed:
+            break
+        case .closed(let reason):
+            driver.close()
+            throw SubscriptionError.closedDuringOpen(reason: reason)
+        }
     }
 
     public func unsubscribe() async {

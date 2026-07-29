@@ -70,7 +70,11 @@ public final class RemoteConnectionCoordinator {
         let task: Task<WorktreePanesStore?, Never>
     }
     private var panesStoreAttempts: [UUID: PanesAttempt] = [:]
-    private var presentations: [UUID: RemoteHostPresentation] = [:]
+    private struct CachedPresentation {
+        let connectionIdentity: ObjectIdentifier
+        let value: RemoteHostPresentation
+    }
+    private var presentations: [UUID: CachedPresentation] = [:]
     /// Current Bonjour routing hints keyed by paired device identity. These
     /// are intentionally process-local and replace stale persisted listener
     /// ports without changing the trust key.
@@ -110,15 +114,11 @@ public final class RemoteConnectionCoordinator {
     /// observes the same `nil` outcome — closing the connection instead
     /// of resurrecting one the app already asked to tear down.
     ///
-    /// Chosen behavior: let the in-flight negotiation finish, then evict
-    /// (rather than cancelling its `Task`). `negotiate`'s own awaits —
-    /// `signaling.exchange`, `connection.createOffer`/`applyAnswer` —
-    /// have no cooperative-cancellation checkpoints of their own, so an
-    /// actual `Task.cancel()` would either no-op or require threading
-    /// `Task.isCancelled` checks through WebRTC/SSH setup code that
-    /// doesn't have them today. Letting it finish and closing the result
-    /// is simple, correct, and doesn't leave a half-negotiated
-    /// `RTCPeerConnection` in an undefined state.
+    /// Invalidation removes the attempt from the dedup slot immediately
+    /// and requests cancellation, allowing a foreground rebuild to start a
+    /// fresh dial. The attempt id remains here until the old task exits so
+    /// cancellation-unaware WebRTC work still closes its result instead of
+    /// registering a connection or imposing a failure cooldown.
     private var invalidatedAttempts: Set<UUID> = []
 
     /// How long `connection(for:)` fast-nils a host WITHOUT negotiating
@@ -135,7 +135,19 @@ public final class RemoteConnectionCoordinator {
     /// Cooldown expiry per host, populated only on a FAILED negotiation
     /// (never on success, and never for the "invalidated mid-flight"
     /// outcome, which is an intentional teardown rather than a failure).
-    private var cooldownUntil: [UUID: Date] = [:]
+    private struct FailureCooldown {
+        let route: URL
+        let until: Date
+    }
+    private var failureCooldowns: [UUID: FailureCooldown] = [:]
+
+    /// A lock/background transition is a transport capability boundary, not
+    /// merely a visual overlay. `desiredConnectionsAllowed` records the
+    /// latest scene/auth state while `connectionsAllowed` stays false until
+    /// any asynchronous teardown has completed.
+    private var desiredConnectionsAllowed: Bool
+    private var connectionsAllowed: Bool
+    private var connectionTeardownTask: Task<Void, Never>?
 
     private static let logger = Logger(
         subsystem: "com.quotably.graftty",
@@ -162,7 +174,8 @@ public final class RemoteConnectionCoordinator {
         directory: URL = ClientIdentityStore.defaultDirectory,
         signaling: SignalingClient = SignalingClient(),
         connectionFactory: ((Curve25519.Signing.PrivateKey, RemoteIdentityFingerprint) -> RemoteHostConnection)? = nil,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        connectionsAllowedInitially: Bool = true
     ) {
         let stores = ClientRemoteStores(directory: directory)
         self.identityStore = stores.identityStore
@@ -173,6 +186,29 @@ public final class RemoteConnectionCoordinator {
             RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
         }
         self.now = now
+        self.desiredConnectionsAllowed = connectionsAllowedInitially
+        self.connectionsAllowed = connectionsAllowedInitially
+    }
+
+    /// Enables or suspends all coordinator consumers. Suspension takes
+    /// effect synchronously so polling/list/presentation tasks cannot redial
+    /// while the existing channels are being closed. A resume waits for that
+    /// teardown to finish before allowing a fresh negotiation.
+    public func setConnectionsAllowed(_ allowed: Bool) {
+        guard desiredConnectionsAllowed != allowed else { return }
+        desiredConnectionsAllowed = allowed
+
+        if !allowed {
+            connectionsAllowed = false
+            guard connectionTeardownTask == nil else { return }
+            connectionTeardownTask = Task { [weak self] in
+                guard let self else { return }
+                await self.invalidateAll()
+                self.finishConnectionTeardown()
+            }
+        } else if connectionTeardownTask == nil {
+            connectionsAllowed = true
+        }
     }
 
     /// Returns a live connection for `host`, negotiating one if none
@@ -183,13 +219,22 @@ public final class RemoteConnectionCoordinator {
     /// reason. Callers surface authenticated-connection unavailability and
     /// never treat nil as permission to downgrade to an unpaired transport.
     public func connection(for host: Host) async -> RemoteHostConnection? {
+        guard desiredConnectionsAllowed else { return nil }
+        if let connectionTeardownTask {
+            await connectionTeardownTask.value
+        }
+        guard connectionsAllowed else { return nil }
         guard let pinnedHost = pinnedHost(for: host) else { return nil }
 
         if let live = liveConnections[host.id] {
             return live
         }
-        if let until = cooldownUntil[host.id], now() < until {
-            return nil
+        let route = routingBaseURL(for: host)
+        if let cooldown = failureCooldowns[host.id] {
+            if cooldown.route == route, now() < cooldown.until {
+                return nil
+            }
+            failureCooldowns[host.id] = nil
         }
         if let inFlight = inFlightAttempts[host.id] {
             return await inFlight.task.value
@@ -197,7 +242,12 @@ public final class RemoteConnectionCoordinator {
 
         let attemptID = UUID()
         let task = Task<RemoteHostConnection?, Never> { [weak self] in
-            await self?.negotiate(host: host, pinnedHost: pinnedHost, attemptID: attemptID)
+            await self?.negotiate(
+                host: host,
+                pinnedHost: pinnedHost,
+                route: route,
+                attemptID: attemptID
+            )
         }
         inFlightAttempts[host.id] = Attempt(id: attemptID, task: task)
         let result = await task.value
@@ -227,12 +277,12 @@ public final class RemoteConnectionCoordinator {
     ///
     /// If a negotiation for `host` is still in flight (IPAD-5.1 fired
     /// mid-`IPAD-5.2` rebuild), there is no live connection to remove
-    /// yet — instead this marks that attempt in `invalidatedAttempts` so
-    /// `negotiate(host:pinnedHost:attemptID:)` self-evicts the moment
-    /// that negotiation finishes, rather than silently registering a
-    /// connection the app already asked to tear down.
+    /// yet — instead this marks and cancels that attempt, removes it from
+    /// the dedup slot so a later foreground request can dial immediately,
+    /// and makes `negotiate(host:pinnedHost:attemptID:)` self-evict if
+    /// cancellation-unaware work still reaches completion.
     public func invalidate(host: Host) async {
-        cooldownUntil[host.id] = nil
+        failureCooldowns[host.id] = nil
         presentations[host.id] = nil
         panesStoreAttempts[host.id]?.task.cancel()
         panesStoreAttempts[host.id] = nil
@@ -240,6 +290,8 @@ public final class RemoteConnectionCoordinator {
         await panesStore?.unsubscribe()
         if let inFlight = inFlightAttempts[host.id] {
             invalidatedAttempts.insert(inFlight.id)
+            inFlight.task.cancel()
+            inFlightAttempts[host.id] = nil
         }
         guard let connection = liveConnections.removeValue(forKey: host.id) else { return }
         // Detach the observer BEFORE closing: this is an intentional,
@@ -266,7 +318,7 @@ public final class RemoteConnectionCoordinator {
     /// on background) — nothing survives into the background, and
     /// foreground re-negotiates every host from a clean slate.
     public func invalidateAll() async {
-        cooldownUntil.removeAll()
+        failureCooldowns.removeAll()
         presentations.removeAll()
         for attempt in panesStoreAttempts.values {
             attempt.task.cancel()
@@ -281,6 +333,8 @@ public final class RemoteConnectionCoordinator {
         for hostID in hostIDs {
             if let inFlight = inFlightAttempts[hostID] {
                 invalidatedAttempts.insert(inFlight.id)
+                inFlight.task.cancel()
+                inFlightAttempts[hostID] = nil
             }
             guard let connection = liveConnections.removeValue(forKey: hostID) else { continue }
             // See `invalidate(host:)`'s identical detach-before-close
@@ -338,18 +392,15 @@ public final class RemoteConnectionCoordinator {
         )
         let deadline = Date().addingTimeInterval(10)
         while !Task.isCancelled {
+            if case .closed = await store.connectionState {
+                await discardPanesStore(store, hostID: host.id)
+                throw ConnectionError.paneChannelClosed
+            }
             if await store.hasReceivedSnapshot {
                 return await store.current
             }
-            if case .closed = await store.connectionState {
-                if let current = panesStores[host.id],
-                   ObjectIdentifier(current) == ObjectIdentifier(store) {
-                    panesStores[host.id] = nil
-                }
-                await store.unsubscribe()
-                throw ConnectionError.paneChannelClosed
-            }
             if Date() >= deadline {
+                await discardPanesStore(store, hostID: host.id)
                 throw ConnectionError.paneSnapshotTimedOut
             }
             try await Task.sleep(for: .milliseconds(25))
@@ -368,6 +419,13 @@ public final class RemoteConnectionCoordinator {
         guard let connection = await connection(for: host) else {
             throw ConnectionError.unavailable
         }
+        return try await sendWorktreeManagement(request, over: connection)
+    }
+
+    private func sendWorktreeManagement(
+        _ request: WorktreeManagementRequest,
+        over connection: RemoteHostConnection
+    ) async throws -> WorktreeManagementResponse {
         let client = try await connection.openWorktreeManagementChannel()
         defer { client.close() }
         return try await client.send(request)
@@ -375,16 +433,30 @@ public final class RemoteConnectionCoordinator {
 
     public func presentation(for host: Host) async
         -> RemoteHostPresentation? {
-        if let cached = presentations[host.id] {
-            return cached
+        guard isPaired(host),
+              let connection = await connection(for: host) else {
+            return nil
+        }
+        let connectionIdentity = ObjectIdentifier(connection)
+        if let cached = presentations[host.id],
+           cached.connectionIdentity == connectionIdentity {
+            return cached.value
         }
         guard let response = try? await sendWorktreeManagement(
             .hostPresentation,
-            to: host
+            over: connection
         ), case .hostPresentation(let presentation) = response else {
             return nil
         }
-        presentations[host.id] = presentation
+        guard connectionsAllowed,
+              let current = liveConnections[host.id],
+              ObjectIdentifier(current) == connectionIdentity else {
+            return nil
+        }
+        presentations[host.id] = CachedPresentation(
+            connectionIdentity: connectionIdentity,
+            value: presentation
+        )
         return presentation
     }
 
@@ -394,6 +466,7 @@ public final class RemoteConnectionCoordinator {
     public func forget(_ host: Host) async throws {
         await invalidate(host: host)
         guard let deviceID = host.remoteDeviceID else { return }
+        discoveredBaseURLs[deviceID] = nil
         do {
             try pinnedHostStore.remove(id: deviceID)
         } catch PinnedHostStore.Error.notFound {
@@ -497,17 +570,22 @@ public final class RemoteConnectionCoordinator {
     /// re-verifying — closes the connection, starts this host's failure
     /// cooldown, and returns `nil` without leaving anything in the
     /// registry, so the host is free to retry once the cooldown expires.
-    private func negotiate(host: Host, pinnedHost: PinnedHost, attemptID: UUID) async -> RemoteHostConnection? {
+    private func negotiate(
+        host: Host,
+        pinnedHost: PinnedHost,
+        route: URL,
+        attemptID: UUID
+    ) async -> RemoteHostConnection? {
         // One-shot per attempt: cleared here regardless of outcome so a
         // FUTURE attempt for this host starts with a clean flag.
         defer { invalidatedAttempts.remove(attemptID) }
         guard let clientKey = try? identityStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client identity available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host)
+            return fail(host: host, route: route)
         }
         guard let clientDeviceID = try? deviceIDStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client device id available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host)
+            return fail(host: host, route: route)
         }
 
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
@@ -520,20 +598,21 @@ public final class RemoteConnectionCoordinator {
         do {
             let offer = try await connection.createOffer()
             let answer = try await signaling.exchange(
-                baseURL: host.remoteDeviceID
-                    .flatMap { discoveredBaseURLs[$0] }
-                    ?? host.baseURL,
+                baseURL: route,
                 offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offer.sdp)
             )
             try await connection.applyAnswer(RTCSessionDescription(type: .answer, sdp: answer.sdp))
         } catch {
+            await connection.close()
+            guard !invalidatedAttempts.contains(attemptID) else {
+                return nil
+            }
             // A 503 (host busy) surfaces here as `SignalingClient.Error.http`
             // like any other non-2xx response — logged, cooled down, and
             // retried once the cooldown expires; never cached as a
             // PERMANENT failure.
             Self.logger.warning("negotiation with host \(host.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
-            await connection.close()
-            return fail(host: host)
+            return fail(host: host, route: route)
         }
 
         // No `await` between this check and registration below — see
@@ -565,7 +644,10 @@ public final class RemoteConnectionCoordinator {
         if state.isTerminal {
             evict(hostID: host.id, connectionIdentity: connectionIdentity)
             await connection.close()
-            return fail(host: host)
+            guard !invalidatedAttempts.contains(attemptID) else {
+                return nil
+            }
+            return fail(host: host, route: route)
         }
 
         return connection
@@ -575,9 +657,36 @@ public final class RemoteConnectionCoordinator {
     /// — the common tail of every FAILURE exit from `negotiate`. Not
     /// called for the "invalidated mid-flight" exit, which is an
     /// intentional teardown rather than a failure (see call site).
-    private func fail(host: Host) -> RemoteHostConnection? {
-        cooldownUntil[host.id] = now().addingTimeInterval(Self.failureCooldown)
+    private func fail(host: Host, route: URL) -> RemoteHostConnection? {
+        failureCooldowns[host.id] = FailureCooldown(
+            route: route,
+            until: now().addingTimeInterval(Self.failureCooldown)
+        )
         return nil
+    }
+
+    private func routingBaseURL(for host: Host) -> URL {
+        host.remoteDeviceID
+            .flatMap { discoveredBaseURLs[$0] }
+            ?? host.baseURL
+    }
+
+    private func discardPanesStore(
+        _ store: WorktreePanesStore,
+        hostID: UUID
+    ) async {
+        if let current = panesStores[hostID],
+           ObjectIdentifier(current) == ObjectIdentifier(store) {
+            panesStores[hostID] = nil
+        }
+        await store.unsubscribe()
+    }
+
+    private func finishConnectionTeardown() {
+        connectionTeardownTask = nil
+        if desiredConnectionsAllowed {
+            connectionsAllowed = true
+        }
     }
 
     /// Removes `hostID`'s live connection if — and only if — it is still
