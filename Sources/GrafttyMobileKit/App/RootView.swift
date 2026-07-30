@@ -201,6 +201,7 @@ struct SessionStep: Hashable {
 final class TerminalContainerBox {
     weak var view: TerminalInputContainerView?
     func cancelActiveSelectionIfAny() { view?.cancelActiveSelectionIfAny() }
+    func fitTerminalToCurrentSize() { view?.terminalView.fitToSize() }
 }
 
 /// Fullscreen terminal view for one session. Owns the authenticated terminal
@@ -345,6 +346,13 @@ struct SingleSessionView: View {
         keyboardAllowed: Bool
     ) -> Bool {
         !wasOwner && isOwner && keyboardAllowed
+    }
+
+    static func shouldSynchronizeViewportOnOwnerTransition(
+        wasOwner: Bool,
+        isOwner: Bool
+    ) -> Bool {
+        !wasOwner && isOwner
     }
 
     /// Terminal theme background, parsed from the Mac-resolved ghostty config.
@@ -915,6 +923,25 @@ struct SingleSessionView: View {
                 )
             }
             .onChange(of: client.isOwner) { wasOwner, isOwner in
+                if Self.shouldSynchronizeViewportOnOwnerTransition(
+                    wasOwner: wasOwner,
+                    isOwner: isOwner
+                ) {
+                    // Ownership may arrive while the surface still has the
+                    // follower-fit font. Restore the owner font synchronously,
+                    // then explicitly ask Ghostty for its resulting grid on
+                    // the next runloop. Relying on a later incidental layout
+                    // leaves the remote PTY at the previous owner's size until
+                    // the user types or shows the keyboard.
+                    reconcileFontOverride(
+                        client: client,
+                        controller: controller,
+                        containerWidth: containerSize.width
+                    )
+                    DispatchQueue.main.async { [paneContainerBox] in
+                        paneContainerBox.fitTerminalToCurrentSize()
+                    }
+                }
                 if Self.shouldFocusKeyboardOnOwnerTransition(
                     wasOwner: wasOwner,
                     isOwner: isOwner,
@@ -928,14 +955,11 @@ struct SingleSessionView: View {
     /// @spec IOS-6.10
     /// Owner promotion restores the base config font: while a follower,
     /// the auto-fit override shrinks the font to match the authoritative
-    /// (often desktop-width) grid, and carrying that tiny font into
-    /// ownership would leave the session at the previous owner's width
-    /// until some later incidental layout tick. Restoring the config font
-    /// re-lays the pane out at an iOS-natural grid, and the resulting
-    /// owner resize snaps the session width immediately. While owner with
-    /// no override active, the reconciler leaves the font alone so
-    /// libghostty's pinch-to-zoom (IOS-6.8) keeps adjusting from that
-    /// baseline without interference.
+    /// (often desktop-width) grid. The owner-transition handler then
+    /// explicitly synchronizes Ghostty's metrics on the next runloop so
+    /// the resulting owner resize cannot wait for keyboard input.
+    /// While owner with no override active, the reconciler leaves the
+    /// font alone so pinch-to-zoom keeps adjusting from that baseline.
     private func reconcileFontOverride(
         client: SessionClient,
         controller: TerminalController,

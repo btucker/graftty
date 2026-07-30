@@ -177,7 +177,7 @@ struct TerminalWidthLayoutTests {
 }
 
 @Suite("""
-@spec IOS-6.10: When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
+@spec IOS-6.10: When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
 """)
 struct OwnerFontOverrideRestorationTests {
     @Test

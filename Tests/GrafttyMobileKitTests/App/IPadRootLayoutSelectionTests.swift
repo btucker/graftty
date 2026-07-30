@@ -1346,5 +1346,23 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
             keyboardAllowed: true
         ))
     }
+
+    /// IOS-6.10: owner promotion must explicitly ask the mounted Ghostty
+    /// surface to publish its post-font-restore grid. Otherwise the PTY can
+    /// retain the previous owner's dimensions until the next key press.
+    func testOwnerTransitionSynchronizesViewportWithoutWaitingForInput() {
+        XCTAssertTrue(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: false,
+            isOwner: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: true,
+            isOwner: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: false,
+            isOwner: false
+        ))
+    }
 }
 #endif
