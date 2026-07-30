@@ -79,7 +79,8 @@ struct ZmxHistorySubprocessReader: ZmxHistoryReader {
         let result = try ZmxRunner.captureAll(
             executable: launcher.executable,
             args: ["history", sessionName],
-            env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
+            env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+            timeout: 1.0
         )
         guard result.exitCode == 0 else {
             let trimmed = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -96,13 +97,11 @@ struct ZmxHistorySubprocessReader: ZmxHistoryReader {
     }
 }
 
-/// Seam for `handleSendPane`: production binds to a thin wrapper over
-/// `SurfaceHandle.typeText` / `SurfaceHandle.pressReturn`. Tests inject
-/// a recording stub so we can assert keystroke ordering without
+/// Seam for `handleSendPane`: production binds to the acknowledged
+/// `SurfaceHandle.writeText` path. Tests inject a recording stub without
 /// driving a libghostty surface.
 protocol PaneInputSink: AnyObject {
-    func typeText(_ text: String)
-    func pressReturn()
+    func send(text: String, pressEnter: Bool) -> Bool
 }
 
 private final class SurfaceHandlePaneInputSink: PaneInputSink {
@@ -110,12 +109,27 @@ private final class SurfaceHandlePaneInputSink: PaneInputSink {
     init(handle: SurfaceHandle) { self.handle = handle }
     /// Send-pane IPC is programmatic input arriving from another
     /// process — leave the IOS-12.1 silent gate closed so the next
-    /// human keystroke at the target pane is what engages. Both the
-    /// text write and the synthesized Return must opt out: the Return
-    /// path also flows back through the zmx receive callback and
-    /// would otherwise flip the gate.
-    func typeText(_ text: String) { handle.typeText(text, claimEngagement: false) }
-    func pressReturn() { handle.pressReturn(claimEngagement: false) }
+    /// human keystroke at the target pane is what engages.
+    func send(text: String, pressEnter: Bool) -> Bool {
+        handle.writeText(
+            text + (pressEnter ? "\r" : ""),
+            claimEngagement: false
+        )
+    }
+}
+
+/// Fallback for a pane whose persisted zmx daemon is live but whose
+/// in-memory Ghostty surface is absent.
+protocol ZmxPaneInputWriter: Sendable {
+    func send(sessionName: String, text: String) throws
+}
+
+private struct ZmxPaneInputSubprocessWriter: ZmxPaneInputWriter {
+    let launcher: ZmxLauncher
+
+    func send(sessionName: String, text: String) throws {
+        try launcher.send(sessionName: sessionName, text: text, timeout: 1.0)
+    }
 }
 
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
@@ -1469,21 +1483,19 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
-        services.socketServer.onRequest = { message in
-            MainActor.assumeIsolated {
-                Self.handlePaneRequest(
-                    message,
-                    appState: binding,
-                    terminalManager: tm,
-                    teamInbox: teamInbox,
-                    teamEventDispatcher: teamEventDispatcher,
-                    worktreeMonitor: services.worktreeMonitor,
-                    statsStore: services.statsStore,
-                    prStatusStore: services.prStatusStore,
-                    worktreeCreations: services.cliWorktreeCreations,
-                    worktreeRemovals: services.cliWorktreeRemovals
-                )
-            }
+        services.socketServer.onAsyncRequest = { message in
+            await Self.handlePaneRequest(
+                message,
+                appState: binding,
+                terminalManager: tm,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher,
+                worktreeMonitor: services.worktreeMonitor,
+                statsStore: services.statsStore,
+                prStatusStore: services.prStatusStore,
+                worktreeCreations: services.cliWorktreeCreations,
+                worktreeRemovals: services.cliWorktreeRemovals
+            )
         }
 
         let remoteBranchStore = services.remoteBranchStore
@@ -3339,6 +3351,7 @@ struct GrafttyApp: App {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
+             .worktreeCreateIdempotencyCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
              .worktreeRemoveStatus:
             // Request-style messages are handled by handlePaneRequest via
@@ -3363,7 +3376,7 @@ struct GrafttyApp: App {
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore
-    ) -> ResponseMessage? {
+    ) async -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
@@ -3377,14 +3390,30 @@ struct GrafttyApp: App {
             guard let launcher = terminalManager.zmxLauncher else {
                 return .error("zmx unavailable")
             }
+            guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+                return .error("not tracked")
+            }
+            guard wt.state == .running else {
+                return .error("worktree not running")
+            }
+            guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
+                return .error("no pane with id \(index) in this worktree")
+            }
+            guard let sessionID = wt.paneSessions[terminalID] else {
+                return .error("pane has no session")
+            }
             let reader = ZmxHistorySubprocessReader(launcher: launcher)
-            return handleShowPane(
-                path: path, index: index, lines: lines,
-                appState: appState, terminalManager: terminalManager,
-                reader: reader
-            )
+            let sessionName = ZmxLauncher.sessionName(for: sessionID)
+            return await Task.detached(priority: .utility) {
+                do {
+                    let body = try reader.history(sessionName: sessionName)
+                    return .paneShow(ScrollbackTail.tail(body, lines: lines))
+                } catch {
+                    return .error("zmx history failed: \(error.localizedDescription)")
+                }
+            }.value
         case .sendPane(let path, let index, let text, let pressEnter):
-            return handleSendPane(
+            return await handleSendPane(
                 path: path, index: index, text: text, pressEnter: pressEnter,
                 appState: appState, terminalManager: terminalManager
             )
@@ -3463,6 +3492,8 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeBaseCapability:
             return .ok
+        case .worktreeCreateIdempotencyCapability:
+            return .ok
         case .worktreeRemoveCapability:
             return .ok
         case .createWorktree(
@@ -3473,7 +3504,8 @@ struct GrafttyApp: App {
             let base,
             let command,
             let agentRuntime,
-            let agentPrompt
+            let agentPrompt,
+            let operationID
         ):
             return beginCLIWorktreeCreation(
                 callerPath: callerPath,
@@ -3484,6 +3516,7 @@ struct GrafttyApp: App {
                 command: command,
                 agentRuntime: agentRuntime,
                 agentPrompt: agentPrompt,
+                operationID: operationID,
                 appState: appState,
                 terminalManager: terminalManager,
                 teamEventDispatcher: teamEventDispatcher,
@@ -3599,6 +3632,7 @@ struct GrafttyApp: App {
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
+        operationID: String?,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
@@ -3606,6 +3640,10 @@ struct GrafttyApp: App {
         statsStore: WorktreeStatsStore,
         worktreeCreations: CLIWorktreeCreationStore
     ) -> ResponseMessage {
+        if let operationID,
+           let existing = worktreeCreations.status(operationID: operationID) {
+            return .worktreeCreate(existing)
+        }
         if let error = CLIWorktreeCreationPolicy.validationError(
             agentRuntime: agentRuntime,
             teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
@@ -3669,7 +3707,8 @@ struct GrafttyApp: App {
         let status = worktreeCreations.begin(
             worktreePath: worktreePath,
             messageAddress: worktreePath,
-            stagedPromptFile: launch.promptFile
+            stagedPromptFile: launch.promptFile,
+            operationID: operationID
         )
         let initialCommand = launch.command.flatMap { value in
             value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
@@ -3687,7 +3726,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 teamEventDispatcher: teamEventDispatcher,
                 initialCommand: initialCommand,
-                terminalStartTiming: .immediately
+                terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli)
             )
             switch result {
             case .success:
@@ -4135,7 +4174,7 @@ struct GrafttyApp: App {
         pressEnter: Bool,
         appState: Binding<AppState>,
         terminalManager: TerminalManager
-    ) -> ResponseMessage {
+    ) async -> ResponseMessage {
         guard let wt = appState.wrappedValue.worktree(forPath: path) else {
             return .error("not tracked")
         }
@@ -4145,18 +4184,34 @@ struct GrafttyApp: App {
         guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        guard let handle = terminalManager.handle(for: terminalID) else {
-            return .error("pane has no surface")
+        if let handle = terminalManager.handle(for: terminalID) {
+            return handleSendPane_forTesting(
+                text: text,
+                pressEnter: pressEnter,
+                sink: SurfaceHandlePaneInputSink(handle: handle)
+            )
         }
-        return handleSendPane_forTesting(
-            text: text,
-            pressEnter: pressEnter,
-            sink: SurfaceHandlePaneInputSink(handle: handle)
-        )
+
+        guard let sessionID = wt.paneSessions[terminalID] else {
+            return .error("pane has no session")
+        }
+        guard let launcher = terminalManager.zmxLauncher else {
+            return .error("pane has no surface and zmx is unavailable")
+        }
+        let sessionName = ZmxLauncher.sessionName(for: sessionID)
+        let writer = ZmxPaneInputSubprocessWriter(launcher: launcher)
+        return await Task.detached(priority: .utility) {
+            handleSendPaneWithoutSurface_forTesting(
+                text: text,
+                pressEnter: pressEnter,
+                sessionName: sessionName,
+                writer: writer
+            )
+        }.value
     }
 
-    /// Test seam: lets the spec test exercise the typeText/pressReturn
-    /// ordering without driving a libghostty surface. Production callers
+    /// Test seam: lets the spec test exercise acknowledged delivery without
+    /// driving a libghostty surface. Production callers
     /// go through `handleSendPane` which performs worktree/pane validation
     /// before constructing a `SurfaceHandlePaneInputSink`.
     @MainActor
@@ -4165,9 +4220,27 @@ struct GrafttyApp: App {
         pressEnter: Bool,
         sink: PaneInputSink
     ) -> ResponseMessage {
-        sink.typeText(text)
-        if pressEnter { sink.pressReturn() }
+        guard sink.send(text: text, pressEnter: pressEnter) else {
+            return .error("pane input was not accepted")
+        }
         return .ok
+    }
+
+    nonisolated internal static func handleSendPaneWithoutSurface_forTesting(
+        text: String,
+        pressEnter: Bool,
+        sessionName: String,
+        writer: ZmxPaneInputWriter
+    ) -> ResponseMessage {
+        do {
+            try writer.send(
+                sessionName: sessionName,
+                text: text + (pressEnter ? "\r" : "")
+            )
+            return .ok
+        } catch {
+            return .error("zmx send failed: \(error.localizedDescription)")
+        }
     }
 
     private func splitFocusedPane(direction: SplitDirection) {

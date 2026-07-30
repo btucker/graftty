@@ -602,7 +602,14 @@ struct MainWindow: View {
             }
         }
         terminalManager.setFocus(terminalID)
-        makePaneFirstResponder(terminalID)
+        makePaneFirstResponder(
+            terminalID,
+            when: {
+                appState.selectedWorktreePath == worktreePath
+                    && appState.worktree(forPath: worktreePath)?.firstPane
+                        == terminalID
+            }
+        )
     }
 
     private func selectWorktree(_ path: String) {
@@ -717,7 +724,13 @@ struct MainWindow: View {
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
            let target = wt.firstPane {
-            makePaneFirstResponder(target)
+            makePaneFirstResponder(
+                target,
+                when: {
+                    appState.selectedWorktreePath == path
+                        && appState.worktree(forPath: path)?.firstPane == target
+                }
+            )
         }
 
         // PR-7.5: sidebar selection is an on-demand refresh trigger.
@@ -2543,12 +2556,43 @@ struct MainWindow: View {
         when shouldFocus: (() -> Bool)? = nil,
         onFocused: (() -> Void)? = nil
     ) {
+        attemptMakePaneFirstResponder(
+            terminalID,
+            when: shouldFocus,
+            onFocused: onFocused,
+            attemptsRemaining: 20
+        )
+    }
+
+    /// SwiftUI can take more than one run-loop turn to mount a newly selected
+    /// worktree's terminal. Retry for a bounded interval, and only force the
+    /// deferred zmx attach after AppKit has supplied a real grid. The normal
+    /// layout notifier usually wins; `startForBackgroundLaunch` is one-shot
+    /// and acts as a fallback for the UI-add path that previously left a
+    /// mounted pane with no live session.
+    private func attemptMakePaneFirstResponder(
+        _ terminalID: PaneSlotID,
+        when shouldFocus: (() -> Bool)?,
+        onFocused: (() -> Void)?,
+        attemptsRemaining: Int
+    ) {
         let tm = terminalManager
-        DispatchQueue.main.async {
-            guard !NSApp.isHidden,
-                  shouldFocus?() ?? true,
-                  let view = tm.view(for: terminalID),
-                  let window = view.window else { return }
+        DispatchQueue.main.asyncAfter(deadline: attemptsRemaining == 20 ? .now() : .now() + 0.05) {
+            guard !NSApp.isHidden, shouldFocus?() ?? true else { return }
+            guard let view = tm.view(for: terminalID),
+                  let window = view.window,
+                  view.bounds.width > 0,
+                  view.bounds.height > 0 else {
+                guard attemptsRemaining > 1 else { return }
+                attemptMakePaneFirstResponder(
+                    terminalID,
+                    when: shouldFocus,
+                    onFocused: onFocused,
+                    attemptsRemaining: attemptsRemaining - 1
+                )
+                return
+            }
+            _ = tm.handle(for: terminalID)?.startForBackgroundLaunch()
             tm.setVisible(true, for: terminalID)
             guard window.makeFirstResponder(view) else { return }
             onFocused?()
@@ -2613,7 +2657,7 @@ struct MainWindow: View {
                 statsStore: statsStore,
                 terminalManager: terminalManager,
                 teamEventDispatcher: dispatcher,
-                terminalStartTiming: .afterViewLayout
+                terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .nativeSidebar)
             )
             switch result {
             case .failure(let err):

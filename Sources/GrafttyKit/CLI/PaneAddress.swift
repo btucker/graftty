@@ -25,6 +25,19 @@ public enum PaneAddress: Equatable, Sendable {
             return id >= 1 ? .currentWorktreeID(id) : .invalid(raw)
         }
 
+        // An absolute path can contain colons in any parent component. Only
+        // the final colon is eligible for the optional pane suffix.
+        if NSString(string: raw).isAbsolutePath {
+            if let separator = raw.lastIndex(of: ":") {
+                let name = String(raw[..<separator])
+                let idString = String(raw[raw.index(after: separator)...])
+                if !name.isEmpty, let id = Int(idString), id >= 1 {
+                    return .namedWorktreeID(name, id)
+                }
+            }
+            return .namedWorktreeAnyPane(raw)
+        }
+
         // Otherwise: <name> or <name>:<id>.
         let parts = raw.split(separator: ":", omittingEmptySubsequences: false)
         switch parts.count {

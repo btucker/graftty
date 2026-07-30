@@ -63,11 +63,16 @@ final class CLIWorktreeCreationStore {
         worktreePath: String,
         messageAddress: String,
         stagedPromptFile: URL? = nil,
+        operationID: String? = nil,
         now: Date = Date()
     ) -> WorktreeCreateStatus {
         prune(now: now)
+        let operationID = operationID ?? UUID().uuidString.lowercased()
+        if let existing = records[operationID]?.status {
+            return existing
+        }
         let status = WorktreeCreateStatus(
-            operationID: UUID().uuidString.lowercased(),
+            operationID: operationID,
             state: .pending,
             worktreePath: worktreePath,
             messageAddress: messageAddress

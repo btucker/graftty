@@ -206,4 +206,70 @@ struct TerminalManagerMetadataTests {
             manager.paneID(forSessionName: "graftty-dddddddd") == nil
         )
     }
+
+    @Test("Explicit worktree launch waits for first shell-ready signal and is delivered once")
+    func explicitLaunchWaitsForFirstShellReadySignal() async throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let terminalID = PaneSlotID()
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: terminalID,
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            hostManagedBackend: backend
+        ))
+        manager.insertSurfaceForTesting(handle, for: terminalID)
+        manager.queueInitialInputUntilShellReadyForTesting(
+            "claude -- task\r",
+            for: terminalID
+        )
+
+        #expect(handle.startForBackgroundLaunch())
+        #expect(backend.writes.isEmpty)
+
+        let delivery = Task { @MainActor in
+            await manager.waitForExplicitInitialInputDelivery(
+                for: terminalID,
+                timeout: 1
+            )
+        }
+        await Task.yield()
+        #expect(backend.writes.isEmpty)
+
+        manager.shellBecameReady(for: terminalID)
+        #expect(await delivery.value)
+        #expect(backend.writes == [Data("claude -- task\r".utf8)])
+
+        manager.shellBecameReady(for: terminalID)
+        #expect(backend.writes.count == 1)
+    }
+
+    @Test("Initial input only waits when the configured shell can emit readiness")
+    func initialInputReadinessGateMatchesSpawnConfiguration() {
+        let unsupported = testSurfaceHandleSpawnConfiguration()
+        let supported = ZmxSpawnConfiguration(
+            sessionName: unsupported.sessionName,
+            argv: unsupported.argv,
+            env: unsupported.env,
+            workingDirectory: unsupported.workingDirectory,
+            shellReadySignalAvailable: true
+        )
+
+        #expect(!TerminalManager.shouldWaitForShellReady(
+            extraInitialInput: "claude\r",
+            configuration: unsupported
+        ))
+        #expect(TerminalManager.shouldWaitForShellReady(
+            extraInitialInput: "claude\r",
+            configuration: supported
+        ))
+        #expect(!TerminalManager.shouldWaitForShellReady(
+            extraInitialInput: nil,
+            configuration: supported
+        ))
+    }
 }

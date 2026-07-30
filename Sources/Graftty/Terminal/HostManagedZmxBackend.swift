@@ -497,7 +497,18 @@ final class HostManagedZmxBackend {
     ///   distinguishing programmatic bytes from real key dispatches, but
     ///   display ownership is now the only write authority.
     func write(_ data: Data, claimEngagement: Bool = true) throws {
-        guard !data.isEmpty else { return }
+        _ = try writeWithDeliveryResult(data, claimEngagement: claimEngagement)
+    }
+
+    /// Forward bytes and report whether they were accepted for delivery.
+    /// A follower-side ownership rejection is deliberately non-throwing for
+    /// interactive input, but lifecycle callers need to distinguish it from
+    /// a successful write before reporting that a prompt was delivered.
+    func writeWithDeliveryResult(
+        _ data: Data,
+        claimEngagement: Bool = true
+    ) throws -> Bool {
+        guard !data.isEmpty else { return true }
 
         // TERM-11.12: queue instead of throwing while the session hasn't
         // started — under the deferred attach (TERM-11.10), `pane add
@@ -512,7 +523,7 @@ final class HostManagedZmxBackend {
             pendingWrites.append((data, claimEngagement))
             lock.unlock()
             Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes QUEUED (pre-start)")
-            return
+            return true
         case .running:
             lock.unlock()
         }
@@ -528,10 +539,11 @@ final class HostManagedZmxBackend {
         }
         guard allowed else {
             Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes BLOCKED (follower)")
-            return
+            return false
         }
         let currentSession = try activeSession()
         try currentSession.write(data)
+        return true
     }
 
     /// Runs `body` with the programmatic-input flag raised. Any bytes that

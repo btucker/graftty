@@ -294,7 +294,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.9** While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.
 
-**TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
+**TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder. An explicit background workflow with no guaranteed mounted view may start the backend early and shall reconcile the live grid on first visibility per TERM-11.17.
 
 **TERM-11.11** A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, not short-circuiting on an in-sync comparison against the optimistic last-forwarded record — a same-size forward is a kernel no-op (no SIGWINCH) so it never churns the TUI, while a Mac/daemon size divergence is always corrected on the next show instead of being hidden by a false in-sync check. The failure case that makes the optimistic record unsafe to trust is exercised by `TERM-11.15`.
 
@@ -474,6 +474,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.20** While the user is in existing-branch mode, the BranchPicker's branch list shall reserve a fixed vertical height regardless of the parent view's proposed height, so the list never collapses to zero when nested inside a `Grid` cell whose row height is driven by sibling cells' intrinsic content.
 
+**GIT-5.21** CLI worktree creation shall start the first terminal backend before reporting success because no terminal view is guaranteed to mount. Native sidebar creation shall select the completed worktree and defer its first zmx attach until the terminal view has a nonzero AppKit layout, with a bounded focus retry as a fallback if the normal layout callback is missed. Web creation shall leave the hidden Mac surface deferred because the web client attaches to the returned zmx session itself.
+
+**GIT-5.22** Worktrees created through GitWorktreeAdd shall allow Git's installed post-checkout hook to complete before the creation call returns, matching a direct `git worktree add`.
+
 ## ATTN — Attention Notification System
 
 ### ATTN-1.x — CLI Tool
@@ -508,9 +512,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.15** When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.
 
-**ATTN-1.16** When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.
+**ATTN-1.16** When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY and, unless `--no-enter` is set, additionally send Return so TUI consumers in raw mode (Codex, Claude) treat the input as committed. When Graftty's in-memory surface is absent but the pane still has a zmx session, it shall send the same bytes through `zmx send` instead of reporting `pane has no surface`.
 
-**ATTN-1.17** When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by branch name (using the same lookup `graftty team msg` uses, against the `team list` registry) and operate on that worktree regardless of the caller's current working directory; an unknown name shall produce a stderr error and a non-zero exit.
+**ATTN-1.17** When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by its branch/member name, its creation-time directory name, or its canonical absolute path and operate on that worktree regardless of the caller's current working directory; an unknown address shall produce a stderr error and a non-zero exit.
 
 **ATTN-1.18** When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
 
@@ -834,7 +838,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-4.x — Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and the view's first layout settles (TERM-11.10). This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 
@@ -1798,6 +1802,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-12.3** On application launch, the immediate retry of preexisting unread messages shall refresh automatic-delivery liveness after restoring pane-session metadata, so a live background Codex agent is not delayed until the periodic presence retry.
 
+**TEAM-12.4** When a Codex app-server has one loaded root thread and one or more loaded subagent threads for the same worktree cwd, automatic team-message delivery shall use `thread/read` metadata to target the root thread. Spawned subagents are identified by `parentThreadId`; other subagent kinds are identified by their `source`. If more than one root thread matches, delivery shall remain ambiguous and shall not start a turn.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
@@ -2094,7 +2100,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
@@ -2107,6 +2113,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.6** When `graftty worktree add <name> --base <ref>` is invoked for a new branch, the application shall create that branch from the exact locally available Git-resolvable revision without fetching, reject `--base` with `--existing`, and document the option in CLI help and the built-in team session template. Before mutation, the application shall resolve the ref to an immutable commit ID in the worktree that invoked the CLI, so worktree-local revisions such as `HEAD`, `@`, `HEAD~1`, and reflog selectors do not accidentally resolve against the repository's main checkout.
 
 **AGENT-5.7** `graftty worktree remove <worktree>` shall resolve a tracked worktree name, absolute path, or `.` for the current worktree; reject ambiguous names and the repository's main checkout; and route removal through the same application flow as the native Delete Worktree action so successful removal tears down its panes, removes it from the UI and per-path stores, emits team departure state, and preserves its Git branch. A normal removal shall fail when Git reports modified, staged, or untracked files, include `git status --short` in the CLI error, and instruct the user to rerun with `--force`; `--force` shall mirror the UI's Force Delete action. The CLI shall poll an asynchronous operation status so slow removal does not exceed the control socket request timeout.
+
+**AGENT-5.8** Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
 
 ## CLI — CLI
 

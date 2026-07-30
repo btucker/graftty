@@ -94,6 +94,50 @@ struct ZmxNativeHostManagedIntegrationTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func detachedLiveSessionAcceptsSendAndExposesHistory() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let lhs = Int.random(in: 100_000...400_000)
+            let rhs = Int.random(in: 100_000...400_000)
+            let marker = "DETACHED_RESULT_\(lhs + rhs)"
+            let attach = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            var attachRunning = true
+            defer {
+                if attachRunning { attach.terminate() }
+                launcher.kill(sessionName: session)
+            }
+
+            try Self.waitForAttachReady(attach)
+            attach.terminate(signal: SIGTERM)
+            attachRunning = false
+            try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
+
+            try launcher.send(
+                sessionName: session,
+                // The expected marker is computed by the shell and is not
+                // present in the echoed command line. This prevents history
+                // from satisfying the assertion before zmx actually
+                // delivers and executes the input.
+                text: "printf 'DETACHED_RESULT_%s\\n' \"$((\(lhs) + \(rhs)))\"\r"
+            )
+
+            let history = try Self.waitForHistory(
+                launcher: launcher,
+                sessionName: session,
+                marker: marker,
+                timeout: 5.0
+            )
+            #expect(
+                history.contains(marker),
+                "zmx history did not expose input sent to detached session; got: \(history)"
+            )
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func reattachRestoresMarker() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
@@ -299,6 +343,32 @@ struct ZmxNativeHostManagedIntegrationTests {
             code: 4,
             userInfo: [NSLocalizedDescriptionKey: "session \(name) still listed after \(timeout)s; sessions: \(sessions)"]
         )
+    }
+
+    static func waitForHistory(
+        launcher: ZmxLauncher,
+        sessionName: String,
+        marker: String,
+        timeout: TimeInterval
+    ) throws -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = ""
+        while Date() < deadline {
+            let result = try ZmxRunner.captureAll(
+                executable: launcher.executable,
+                args: ["history", sessionName],
+                env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+                timeout: 2.0
+            )
+            if result.exitCode == 0 {
+                latest = result.stdout
+                if latest.contains(marker) {
+                    return latest
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return latest
     }
 
     static func readUntil(

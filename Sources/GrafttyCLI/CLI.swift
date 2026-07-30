@@ -145,9 +145,21 @@ struct Notify: ParsableCommand {
     }
 
     private func resolveTargetWorktreePath() throws -> String {
-        if let worktree,
-           let path = WorktreeResolver.resolveWorktreeName(worktree, stateDirectory: AppState.defaultDirectory) {
-            return path
+        if let worktree {
+            switch WorktreeResolver.resolveWorktreeName(
+                worktree,
+                stateDirectory: AppState.defaultDirectory
+            ) {
+            case .found(let path):
+                return path
+            case .notFound:
+                throw ValidationError("unknown worktree '\(worktree)'")
+            case .ambiguous(let paths):
+                throw ValidationError(
+                    "ambiguous worktree '\(worktree)'; use an absolute path: "
+                        + paths.joined(separator: ", ")
+                )
+            }
         }
         return try CLIEnv.resolveWorktree()
     }
@@ -163,7 +175,8 @@ struct Pane: ParsableCommand {
           <worktree>        named worktree's only pane (errors if multiple)
           <worktree>:<id>   named worktree, pane <id>
 
-        Worktree names match what `graftty team list` prints.
+        Worktrees may also be addressed by the absolute path printed by
+        `graftty worktree add` or by that command's directory name.
         """,
         subcommands: [PaneList.self, PaneAdd.self, PaneClose.self, PaneShow.self, PaneSend.self]
     )
@@ -596,7 +609,8 @@ enum CLIEnv {
     /// `graftty pane *` subcommand to a `(worktree path, optional
     /// pane id)`. Empty / `<id>` forms resolve via the current PWD just
     /// like `resolveWorktree()`; `<wt>` / `<wt>:<id>` forms look up the
-    /// worktree by sanitized branch name in the persisted state. The
+    /// worktree by branch/member name, creation-time directory name, or
+    /// canonical absolute path in the persisted state. The
     /// missing-current-worktree, unknown-worktree, and invalid-address
     /// branches all surface a copy-pasteable next-step hint via the
     /// injected sink and throw `ExitCode(1)`.
@@ -638,10 +652,18 @@ enum CLIEnv {
         stderr: TextSink,
         stateDirectory: URL
     ) throws -> String {
-        guard let path = WorktreeResolver.resolveWorktreeName(name, stateDirectory: stateDirectory) else {
+        switch WorktreeResolver.resolveWorktreeName(name, stateDirectory: stateDirectory) {
+        case .found(let path):
+            return path
+        case .notFound:
             stderr.write("graftty: unknown worktree '\(name)'. Run 'graftty team list' to see registered worktrees.\n")
             throw ExitCode(1)
+        case .ambiguous(let paths):
+            stderr.write(
+                "graftty: ambiguous worktree '\(name)'. Use one of these absolute paths:\n"
+                    + paths.map { "  \($0)\n" }.joined()
+            )
+            throw ExitCode(1)
         }
-        return path
     }
 }
