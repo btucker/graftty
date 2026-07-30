@@ -1488,17 +1488,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-10.2** When `WorktreeDetailView` is active with a multi-leaf layout, the application shall create a live preview `SessionClient` for every leaf so each pane tile renders a real-time preview rather than a static title.
 
-**IOS-10.3** When a `SessionClient` has received no PTY bytes and processed no user input for ≥ `idleThreshold` (default 30s), the application shall transition its `renderActivity` to `.idle`.
-
-**IOS-10.4** While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
-
-**IOS-10.5** When a `SessionClient` is `.idle` and a new PTY byte is received, the application shall transition its `renderActivity` to `.active` and remount `TerminalPaneView` within one runloop tick.
-
-**IOS-10.6** When `SessionClient.live` is constructed with role `.preview`, the application shall set the client's `idleThreshold` shorter than the fullscreen default so off-input preview panes flip to the static-snapshot state and free libghostty's display link, while still letting fresh PTY bytes wake the live renderer per IOS-10.5.
-
-**IOS-10.7** Fullscreen mobile terminals shall not enter snapshot-idle mode by default. The snapshot optimization is safe for pane previews, but in fullscreen it unmounts `TerminalPaneView` while UIKit may still own the keyboard responder, collapsing the keyboard and risking libghostty teardown against an active view.
-
-**IOS-10.8** While a terminal session has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted.
+**IOS-10.8** While any terminal session, including a pane preview, has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted. Quiet-state optimization shall not free and remount a Ghostty surface because QuartzCore may still hold a pending Metal draw for that surface.
 
 **IOS-10.9** When output, input, or a touch arrives while a surface is render-reduced, the application shall restore full render pace immediately.
 

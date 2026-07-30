@@ -33,7 +33,7 @@ struct SessionRenderPaceTests {
     }
 
     @Test("""
-    @spec IOS-10.8: While a terminal session has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted.
+    @spec IOS-10.8: While any terminal session, including a pane preview, has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted. Quiet-state optimization shall not free and remount a Ghostty surface because QuartzCore may still hold a pending Metal draw for that surface.
     """)
     func quietSessionReducesRenderPace() async {
         let clock = VirtualClock()
@@ -45,6 +45,31 @@ struct SessionRenderPaceTests {
         await quiesce()
 
         #expect(client.renderPace == .reduced(interval: SessionClient.reducedRenderPaceInterval))
+    }
+
+    @Test("quiet pane previews use the mounted-surface render throttle")
+    func quietPreviewReducesRenderPace() async {
+        let clock = VirtualClock()
+        let client = SessionClient(
+            sessionName: "preview",
+            webSocketFactory: { IdleWS() },
+            clock: clock,
+            backoffSchedule: [1],
+            role: .preview
+        )
+        defer { client.stop() }
+        client.start()
+        await quiesce()
+
+        clock.advance(by: SessionClient.renderPaceQuietDelay + 0.1)
+        await quiesce()
+
+        #expect(
+            client.renderPace
+                == .reduced(
+                    interval: SessionClient.reducedRenderPaceInterval
+                )
+        )
     }
 
     @Test("""

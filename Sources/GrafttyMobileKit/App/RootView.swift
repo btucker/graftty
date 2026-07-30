@@ -852,14 +852,11 @@ struct SingleSessionView: View {
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
         if let controller, let client {
-            switch client.renderActivity {
-            case .active:
-                activeTerminal(client: client, controller: controller, containerSize: containerSize)
-            case .idle:
-                IdleSnapshotView(snapshot: client.idleSnapshot) {
-                    client.wakeRenderer()
-                }
-            }
+            activeTerminal(
+                client: client,
+                controller: controller,
+                containerSize: containerSize
+            )
         } else {
             // Mac-config fetch in flight, or client not yet assigned.
             loadingPlaceholder
@@ -892,7 +889,6 @@ struct SingleSessionView: View {
             renderPace: client.renderPace,
             onUserInteraction: { [weak client] in client?.wakeRenderer() },
             preferredInterfaceStyle: preferredStyle,
-            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
             // the application shall read `UIPasteboard.general.string` and, when
             // non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or

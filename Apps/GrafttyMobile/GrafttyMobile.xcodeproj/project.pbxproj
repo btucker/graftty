@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */; };
 		041BF9199FB26F040781E0F1 /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */; };
 		09E371CE9DA66BEB41B1DFAD /* AddWorktreeSheetViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
@@ -105,7 +104,6 @@
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
 		6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCapTests.swift; sourceTree = "<group>"; };
-		68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIdleRendererTests.swift; sourceTree = "<group>"; };
 		699F43C0FB75C3234C6AC7A2 /* PanePreviewFontSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontSizingTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		79B8AF262726BA932EB21841 /* LocalPairingClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPairingClientTests.swift; sourceTree = "<group>"; };
@@ -212,7 +210,6 @@
 				5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */,
 				89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */,
 				3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */,
-				68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */,
 				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
 				9BC9CD23B5D3CA7F71AF6EDC /* SessionRenderPaceTests.swift */,
 				340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */,
@@ -532,7 +529,6 @@
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
-				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,
 				0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */,
 				1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */,
 				480B794EC612E67A6073B77D /* SessionRenderPaceTests.swift in Sources */,

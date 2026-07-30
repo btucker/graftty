@@ -208,32 +208,11 @@ public final class SessionClient {
     /// @spec IOS-7.4
     public private(set) var connectionState: ConnectionState = .live
 
-    public enum RenderActivity: Equatable, Sendable {
-        case active
-        case idle
-    }
-
-    /// @spec IOS-10.3
-    public private(set) var renderActivity: RenderActivity = .active
-
     /// @spec IOS-10.8, IOS-10.9
     public private(set) var renderPace: TerminalRenderPace = .full
 
-    /// @spec IOS-10.4: While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
-    public private(set) var idleSnapshot: UIImage?
-
-    public func setIdleSnapshot(_ image: UIImage?) {
-        self.idleSnapshot = image
-    }
-
-    nonisolated internal let idleThreshold: TimeInterval
-    nonisolated internal let idleCheckInterval: TimeInterval
-
     @ObservationIgnored
     private var lastActivityAt: Date = .distantPast
-
-    @ObservationIgnored
-    private var idleWatchdogTask: Task<Void, Never>?
 
     @ObservationIgnored
     private var paceWatchdogTask: Task<Void, Never>?
@@ -259,8 +238,6 @@ public final class SessionClient {
         webSocketFactory: @Sendable @escaping () async throws -> WebSocketClient,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
-        idleThreshold: TimeInterval = SessionClient.fullscreenIdleThreshold,
-        idleCheckInterval: TimeInterval = 5,
         role: Role = .fullscreen,
         reclaimControlOnOwnerlessConnect: Bool = false
     ) {
@@ -268,8 +245,6 @@ public final class SessionClient {
         self.webSocketFactory = webSocketFactory
         self.clock = clock
         self.backoffSchedule = backoffSchedule
-        self.idleThreshold = idleThreshold
-        self.idleCheckInterval = idleCheckInterval
         self.role = role
         self.reclaimControlOnOwnerlessConnect = reclaimControlOnOwnerlessConnect
         self.lastActivityAt = clock.now
@@ -350,7 +325,6 @@ public final class SessionClient {
 
     public func start() {
         lastActivityAt = clock.now
-        startIdleWatchdog()
         startPaceWatchdog()
         // Eagerly install a Task that opens the first WS. Outbound
         // writes that fire between `start()` returning and the factory
@@ -474,47 +448,16 @@ public final class SessionClient {
     }
 
     @MainActor
-    private func startIdleWatchdog() {
-        idleWatchdogTask?.cancel()
-        guard idleThreshold.isFinite else {
-            idleWatchdogTask = nil
-            return
-        }
-        idleWatchdogTask = spawnQuietWatchdog(
-            threshold: idleThreshold,
-            shouldContinue: { $0.renderActivity == .active },
-            onQuiet: { $0.renderActivity = .idle }
-        )
-    }
-
-    @MainActor
     private func startPaceWatchdog() {
         paceWatchdogTask?.cancel()
-        paceWatchdogTask = spawnQuietWatchdog(
-            threshold: Self.renderPaceQuietDelay,
-            shouldContinue: { $0.renderPace == .full },
-            onQuiet: { $0.renderPace = .reduced(interval: Self.reducedRenderPaceInterval) }
-        )
-    }
-
-    /// Shared quiet-timer core for the idle/pace watchdogs: sleeps until
-    /// `threshold` seconds have elapsed since `lastActivityAt`, re-arming
-    /// after activity-driven wakeups, and fires `onQuiet` once the deadline
-    /// genuinely passes while `shouldContinue` still holds. The closures
-    /// receive the client instead of capturing it so the Task keeps only a
-    /// weak reference.
-    @MainActor
-    private func spawnQuietWatchdog(
-        threshold: TimeInterval,
-        shouldContinue: @escaping @MainActor (SessionClient) -> Bool,
-        onQuiet: @escaping @MainActor (SessionClient) -> Void
-    ) -> Task<Void, Never> {
-        Task { @MainActor [weak self] in
-            while let self, !self.stopped, shouldContinue(self) {
+        paceWatchdogTask = Task { @MainActor [weak self] in
+            while let self, !self.stopped, self.renderPace == .full {
                 let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
-                let remaining = threshold - elapsed
+                let remaining = Self.renderPaceQuietDelay - elapsed
                 if remaining <= 0 {
-                    onQuiet(self)
+                    self.renderPace = .reduced(
+                        interval: Self.reducedRenderPaceInterval
+                    )
                     return
                 }
                 do {
@@ -529,10 +472,6 @@ public final class SessionClient {
     @MainActor
     private func recordActivity() {
         lastActivityAt = clock.now
-        if renderActivity == .idle {
-            renderActivity = .active
-            startIdleWatchdog()
-        }
         if renderPace != .full {
             renderPace = .full
             startPaceWatchdog()
@@ -643,8 +582,6 @@ public final class SessionClient {
         receiveTask = nil
         currentWSReadyTask()?.cancel()
         setWSReadyTask(nil)
-        idleWatchdogTask?.cancel()
-        idleWatchdogTask = nil
         paceWatchdogTask?.cancel()
         paceWatchdogTask = nil
         clearPendingInput()
