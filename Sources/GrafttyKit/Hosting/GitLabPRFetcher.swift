@@ -1,20 +1,20 @@
 import Foundation
 import GrafttyProtocol
 
-/// Per-repo `glab mr list` fetcher. The listing call returns every
-/// MR for the repo plus `has_conflicts`. Pipeline status isn't in
-/// the list payload, so we fan out per-MR `glab mr view` requests
-/// in parallel for the branches the caller cares about.
+/// Per-repo `glab mr list` fetcher. Pipeline status isn't available
+/// from the listing and its conflict status can be stale, so we fan
+/// out per-MR raw REST requests through `glab api` in parallel for
+/// the branches the caller cares about.
 ///
 /// @spec PR-8.15
 public struct GitLabPRFetcher: PRFetcher {
     private let executor: CLIExecutor
     private let now: @Sendable () -> Date
 
-    /// Maximum number of `glab mr view` subprocesses in flight at
+    /// Maximum number of `glab api` subprocesses in flight at
     /// once. Bounded so a repo with many open MRs (or a slow
     /// `glab`) can't saturate file descriptors / process slots.
-    static let pipelineConcurrency = 6
+    static let detailConcurrency = 6
 
     public init(
         executor: CLIExecutor = CLIRunner(),
@@ -47,31 +47,35 @@ public struct GitLabPRFetcher: PRFetcher {
             }
         }
 
-        // Pipeline status is only in the per-MR view payload. Fetch
-        // in parallel, capped at `pipelineConcurrency` so a repo
-        // with many open MRs (or a slow `glab`) can't spawn dozens
-        // of subprocesses at once. Restricted to branches the
-        // caller cares about so a 100-MR repo with 5 worktrees
-        // fires 5 view calls, not 100.
-        let needsPipeline = primaryByBranch
+        // Pipeline and authoritative conflict status are only in
+        // the raw single-MR REST payload. `glab mr view -F json`
+        // serializes the CLI's client model, which omits the deprecated
+        // but still API-provided `merge_status` field. The list endpoint
+        // can return a stale `has_conflicts` value because it doesn't
+        // proactively recalculate merge status. Fetch details in parallel,
+        // capped at `detailConcurrency` so a repo with many open
+        // MRs (or a slow `glab`) can't spawn dozens of subprocesses
+        // at once. Restricted to branches the caller cares about so
+        // a 100-MR repo with 5 worktrees fires 5 detail calls, not 100.
+        let needsDetail = primaryByBranch
             .filter { branchesOfInterest.contains($0.key) && $0.value.state.lowercased() == "opened" }
             .map(\.value)
-        let pipelineByIID = await withTaskGroup(of: (Int, PRInfo.Checks).self) { group in
-            var iter = needsPipeline.makeIterator()
-            var out: [Int: PRInfo.Checks] = [:]
-            for _ in 0..<min(Self.pipelineConcurrency, needsPipeline.count) {
+        let detailByIID = await withTaskGroup(of: (Int, RawMRDetail?).self) { group in
+            var iter = needsDetail.makeIterator()
+            var out: [Int: RawMRDetail] = [:]
+            for _ in 0..<min(Self.detailConcurrency, needsDetail.count) {
                 guard let mr = iter.next() else { break }
                 group.addTask { [executor] in
-                    let checks = (try? await Self.fetchPipelineStatus(executor: executor, origin: origin, iid: mr.iid)) ?? .none
-                    return (mr.iid, checks)
+                    let detail = try? await Self.fetchMRDetail(executor: executor, origin: origin, iid: mr.iid)
+                    return (mr.iid, detail)
                 }
             }
-            while let (iid, checks) = await group.next() {
-                out[iid] = checks
+            while let (iid, detail) = await group.next() {
+                out[iid] = detail
                 if let mr = iter.next() {
                     group.addTask { [executor] in
-                        let checks = (try? await Self.fetchPipelineStatus(executor: executor, origin: origin, iid: mr.iid)) ?? .none
-                        return (mr.iid, checks)
+                        let detail = try? await Self.fetchMRDetail(executor: executor, origin: origin, iid: mr.iid)
+                        return (mr.iid, detail)
                     }
                 }
             }
@@ -81,15 +85,13 @@ public struct GitLabPRFetcher: PRFetcher {
         var byBranch: [String: PRInfo] = [:]
         for (branch, mr) in primaryByBranch {
             let state = Self.mapState(mr.state)!
-            let checks: PRInfo.Checks = state.isTerminal ? .none : (pipelineByIID[mr.iid] ?? .none)
-            let mergeable: PRInfo.Mergeable
-            if state.isTerminal {
-                mergeable = .unknown
-            } else if let conflict = mr.has_conflicts {
-                mergeable = conflict ? .conflicting : .mergeable
-            } else {
-                mergeable = .unknown
-            }
+            let detail = detailByIID[mr.iid]
+            let checks: PRInfo.Checks = state.isTerminal
+                ? .none
+                : detail?.head_pipeline.map { Self.mapStatus($0.status) } ?? .none
+            let mergeable = state.isTerminal
+                ? PRInfo.Mergeable.unknown
+                : Self.mapMergeable(detail)
             byBranch[branch] = PRInfo(
                 number: mr.iid,
                 // PR-5.5: strip BIDI-override scalars from the
@@ -116,11 +118,12 @@ public struct GitLabPRFetcher: PRFetcher {
         let source_branch: String
         let source_project_id: Int?
         let target_project_id: Int?
-        let has_conflicts: Bool?
     }
 
     private struct RawMRDetail: Decodable {
         let head_pipeline: RawPipeline?
+        let has_conflicts: Bool?
+        let merge_status: String?
     }
 
     private struct RawPipeline: Decodable {
@@ -129,9 +132,12 @@ public struct GitLabPRFetcher: PRFetcher {
     }
 
     private func listMRs(origin: HostingOrigin) async throws -> [RawMR] {
+        guard let repoURL = origin.webURL else {
+            throw URLError(.badURL)
+        }
         let args = [
             "mr", "list",
-            "--repo", origin.slug,
+            "--repo", repoURL.absoluteString,
             "--all",
             "--per-page", "100",
             "-F", "json",
@@ -146,15 +152,22 @@ public struct GitLabPRFetcher: PRFetcher {
         return try JSONDecoder().decode([RawMR].self, from: data)
     }
 
-    private static func fetchPipelineStatus(
+    private static func fetchMRDetail(
         executor: CLIExecutor,
         origin: HostingOrigin,
         iid: Int
-    ) async throws -> PRInfo.Checks {
+    ) async throws -> RawMRDetail {
+        var pathSegmentAllowed = CharacterSet.alphanumerics
+        pathSegmentAllowed.insert(charactersIn: "-._~")
+        guard let projectPath = origin.slug.addingPercentEncoding(
+            withAllowedCharacters: pathSegmentAllowed
+        ) else {
+            throw URLError(.badURL)
+        }
         let args = [
-            "mr", "view", String(iid),
-            "--repo", origin.slug,
-            "-F", "json",
+            "api",
+            "projects/\(projectPath)/merge_requests/\(iid)",
+            "--hostname", origin.host,
         ]
         let output = try await executor.run(
             command: "glab",
@@ -163,8 +176,7 @@ public struct GitLabPRFetcher: PRFetcher {
             timeout: GitLabPRFetcher.fetchTimeout
         )
         let data = Data(output.stdout.utf8)
-        let detail = try JSONDecoder().decode(RawMRDetail.self, from: data)
-        return detail.head_pipeline.map { mapStatus($0.status) } ?? .none
+        return try JSONDecoder().decode(RawMRDetail.self, from: data)
     }
 
     static func mapState(_ raw: String) -> PRInfo.State? {
@@ -174,6 +186,22 @@ public struct GitLabPRFetcher: PRFetcher {
         case "closed": return .closed
         default: return nil
         }
+    }
+
+    private static func mapMergeable(_ detail: RawMRDetail?) -> PRInfo.Mergeable {
+        guard let hasConflicts = detail?.has_conflicts else {
+            return .unknown
+        }
+        if hasConflicts {
+            return .conflicting
+        }
+        // GitLab documents `has_conflicts` as false for every merge status
+        // other than `cannot_be_merged`, including transient recomputation
+        // states such as `checking` and `unchecked`. Only pair false with
+        // `can_be_merged` to make a meaningful clean-merge conclusion.
+        return detail?.merge_status?.lowercased() == "can_be_merged"
+            ? .mergeable
+            : .unknown
     }
 
     private static func prefers(_ candidate: RawMR, over existing: RawMR) -> Bool {

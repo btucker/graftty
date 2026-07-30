@@ -26,7 +26,7 @@ public struct RepoPRSnapshot: Sendable, Equatable {
 /// `branchesOfInterest` is a hint: when a provider's list endpoint
 /// doesn't include CI status (GitLab `glab mr list` is the
 /// motivating case — pipeline status only ships in the per-MR
-/// `view` payload), the implementation may restrict secondary
+/// detail payload), the implementation may restrict secondary
 /// fetches to the provided branches so a repo with 100 MRs and 5
 /// worktrees doesn't trigger 100 pipeline calls per tick. GitHub's
 /// `gh pr list --json statusCheckRollup` already returns checks in
@@ -42,7 +42,7 @@ public protocol PRFetcher: Sendable {
 
 public extension PRFetcher {
     /// Subprocess timeout for the poll-driven host CLI calls (`gh pr
-    /// list`, `glab mr list`/`mr view`). Kept below the PR poller's 30s
+    /// list`, `glab mr list`/`glab api`). Kept below the PR poller's 30s
     /// in-flight cap (PR-8.17) so a wedged `gh`/`glab` is SIGTERMed and
     /// surfaces as a failure that feeds the backoff, instead of leaking a
     /// hung subprocess on every supersession.

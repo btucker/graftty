@@ -75,11 +75,6 @@ struct PrTodo {
     func pr_5_2() async throws { }
 
     @Test("""
-@spec PR-5.3: For GitLab origins, the application shall fetch merge requests via `glab mr list --repo <path> --source-branch <branch> --per-page 5 -F json` (appending `--merged` for the merged-state sweep; the default list is opened-only) and take the first result whose `source_project_id` equals its `target_project_id`. Pipeline status for an opened MR comes from a separate `glab mr view <iid> --repo <path> -F json` call and is derived from the returned `head_pipeline.status` — the MR list endpoint (backing `glab mr list`) does not populate `head_pipeline`, only the single-MR view does. glab's earlier string-valued `--state <opened|merged>` flag was removed upstream; invocations that still carry it fail with "Unknown flag: --state" and yield no MR at all, which is why the flag-based spelling above is load-bearing. The per-page bound is 5 (rather than 1) so a fork MR returned first by glab's default sort cannot crowd out a same-repo MR that the source/target project-id filter would otherwise accept — parity with the GitHub-side fork defense in `PR-5.1`. An MR whose project IDs cannot be verified (both fields absent in the response) is excluded rather than accepted, for the same reason the GitHub filter excludes PRs with a missing `headRepositoryOwner`. If the `mr view` pipeline-status call fails after `mr list` succeeded, the MR is still surfaced with `.none` checks rather than dropping the whole `PRInfo` — parity with `PR-5.4`.
-""", .disabled("not yet implemented"))
-    func pr_5_3() async throws { }
-
-    @Test("""
 @spec PR-6.1: A PR's overall check status shall roll up its individual check buckets as follows: any `fail` → `.failure`; any `pending` bucket or any in-flight state (`IN_PROGRESS`, `QUEUED`, `PENDING`) → `.pending`; all-`pass` → `.success`; anything else (including `skipping`, `cancel`, or unclassified) → `.none` (neutral).
 """, .disabled("not yet implemented"))
     func pr_6_1() async throws { }
