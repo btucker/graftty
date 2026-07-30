@@ -161,6 +161,149 @@ struct RemoteConnectionCoordinatorTests {
         #expect(counter.count == 1, "a call within the cooldown window must fast-nil WITHOUT negotiating again")
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func trustedRouteChangeBypassesCooldownForStaleAddress() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir
+        )
+        let counter = CallCounter()
+        let requestedURLs = URLRecorder()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                requestedURLs.append(request.url)
+                return Self.httpResponse(
+                    for: request,
+                    statusCode: 503,
+                    body: "host is busy"
+                )
+            }),
+            connectionFactory: { key, fingerprint in
+                counter.increment()
+                return RemoteHostConnection(
+                    clientKey: key,
+                    expectedHostFingerprint: fingerprint
+                )
+            }
+        )
+
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(counter.count == 1)
+
+        let deviceID = try #require(host.remoteDeviceID)
+        let pinned = try #require(
+            try PinnedHostStore(directory: dir).get(id: deviceID)
+        )
+        coordinator.updateDiscoveryCandidates([
+            NearbyMac(
+                deviceID: deviceID,
+                label: host.label,
+                fingerprint: pinned.fingerprint,
+                baseURL: URL(string: "http://host.local:52000")!,
+                pairingStatus: .required
+            )
+        ])
+
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(
+            counter.count == 2,
+            "a trusted route change must bypass the old route's cooldown"
+        )
+        #expect(requestedURLs.values.compactMap(\.port) == [9999, 52000])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func suspendedCoordinatorCannotNegotiateUntilAccessIsAllowed() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir
+        )
+        let counter = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                Self.httpResponse(
+                    for: request,
+                    statusCode: 503,
+                    body: "host is busy"
+                )
+            }),
+            connectionFactory: { key, fingerprint in
+                counter.increment()
+                return RemoteHostConnection(
+                    clientKey: key,
+                    expectedHostFingerprint: fingerprint
+                )
+            },
+            connectionsAllowedInitially: false
+        )
+
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(counter.count == 0)
+
+        coordinator.setConnectionsAllowed(true)
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(counter.count == 1)
+
+        coordinator.setConnectionsAllowed(false)
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(counter.count == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func rapidResumeStartsFreshAttemptInsteadOfReusingInvalidatedDial() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir
+        )
+        let counter = CallCounter()
+        let gate = Gate()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                await gate.wait()
+                return Self.httpResponse(
+                    for: request,
+                    statusCode: 503,
+                    body: "host is busy"
+                )
+            }),
+            connectionFactory: { key, fingerprint in
+                counter.increment()
+                return RemoteHostConnection(
+                    clientKey: key,
+                    expectedHostFingerprint: fingerprint
+                )
+            }
+        )
+
+        async let backgroundDial = coordinator.connection(for: host)
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(10)
+        ) {
+            await gate.enteredCount == 1
+        }
+
+        coordinator.setConnectionsAllowed(false)
+        coordinator.setConnectionsAllowed(true)
+        async let foregroundDial = coordinator.connection(for: host)
+
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(10)
+        ) {
+            await gate.enteredCount == 2
+        }
+        await gate.open()
+
+        #expect(await backgroundDial == nil)
+        #expect(await foregroundDial == nil)
+        #expect(
+            counter.count == 2,
+            "foreground must start fresh instead of inheriting the invalidated dial"
+        )
+    }
+
     @Test(.timeLimit(.minutes(2)))
     func invalidateClearsCooldownAllowingImmediateRetry() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
@@ -218,19 +361,36 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(2)))
     func successfulNegotiationLeavesNoCooldownForSubsequentRenegotiation() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
         let clock = MutableClock()
         let exchangeCount = CallCounter()
+        let authenticatedHost = Self.successTransport(
+            box: box,
+            host: host,
+            hostKey: hostKey
+        )
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { request, body in
-                exchangeCount.increment()
-                if exchangeCount.count == 1 {
-                    return try await Self.successTransport(box: box)(request, body)
+                if request.url?.path.hasSuffix(
+                    RemoteAccessProtocol.challengePath
+                ) == true {
+                    exchangeCount.increment()
+                    if exchangeCount.count > 1 {
+                        return Self.httpResponse(
+                            for: request,
+                            statusCode: 503,
+                            body: "host is busy"
+                        )
+                    }
                 }
-                return Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+                return try await authenticatedHost(request, body)
             }),
             connectionFactory: { key, fp in
                 counter.increment()
@@ -264,12 +424,22 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(2)))
     func terminalStateChangeEvictsFromRegistry() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
-            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            signaling: SignalingClient(
+                transport: Self.successTransport(
+                    box: box,
+                    host: host,
+                    hostKey: hostKey
+                )
+            ),
             connectionFactory: { key, fp in
                 counter.increment()
                 let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
@@ -319,32 +489,29 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(1)))
     func negotiationWhosePeerDiesImmediatelyIsNeverLeftRegisteredAsLive() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let box = ConnectionBox()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
-            signaling: SignalingClient(transport: { request, body in
-                let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
-                let answerer = TestAnswerer()
-                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
-                let rtcAnswer = try await answerer.accept(offer: rtcOffer)
-                if let connection = box.get() {
-                    await connection.bindIceCandidates(to: answerer)
-                    await answerer.bindIceCandidates(to: connection)
-                }
-                box.retain(answerer)
-                // Kill the far side shortly after standing up — races
-                // the client's own post-registration verify. See this
-                // test's doc comment for why this is best-effort, not a
-                // pinned reproduction.
-                Task {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    await answerer.close()
-                }
-                let answer = SignalingAnswer(sdp: rtcAnswer.sdp)
-                let data = try JSONEncoder().encode(answer)
-                return Self.httpResponseSuccess(for: request, data: data)
-            }),
+            signaling: SignalingClient(
+                transport: Self.successTransport(
+                    box: box,
+                    host: host,
+                    hostKey: hostKey,
+                    afterAnswererReady: { answerer in
+                        // Kill the far side shortly after standing up —
+                        // races the client's own post-registration verify.
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(200))
+                            await answerer.close()
+                        }
+                    }
+                )
+            ),
             connectionFactory: { key, fp in
                 let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
                 box.set(connection)
@@ -371,12 +538,22 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(2)))
     func invalidateClosesAndEvictsTheLiveConnection() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
-            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            signaling: SignalingClient(
+                transport: Self.successTransport(
+                    box: box,
+                    host: host,
+                    hostKey: hostKey
+                )
+            ),
             connectionFactory: { key, fp in
                 counter.increment()
                 let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
@@ -403,13 +580,38 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(2)))
     func invalidateAllEvictsEveryLiveConnection() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let hostA = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
-        let hostB = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKeyA = Curve25519.Signing.PrivateKey()
+        let hostKeyB = Curve25519.Signing.PrivateKey()
+        let hostA = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKeyA,
+            baseURL: URL(string: "https://host-a.local:9998")!
+        )
+        let hostB = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKeyB,
+            baseURL: URL(string: "https://host-b.local:9999")!
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
+        let transportA = Self.successTransport(
+            box: box,
+            host: hostA,
+            hostKey: hostKeyA
+        )
+        let transportB = Self.successTransport(
+            box: box,
+            host: hostB,
+            hostKey: hostKeyB
+        )
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
-            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            signaling: SignalingClient(transport: { request, body in
+                if request.url?.host == hostA.baseURL.host {
+                    return try await transportA(request, body)
+                }
+                return try await transportB(request, body)
+            }),
             connectionFactory: { key, fp in
                 counter.increment()
                 let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
@@ -444,15 +646,24 @@ struct RemoteConnectionCoordinatorTests {
     @Test(.timeLimit(.minutes(2)))
     func invalidateAllEvictsInFlightAttemptWithoutRegisteringItsResult() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
         let gate = Gate()
+        let authenticatedHost = Self.successTransport(
+            box: box,
+            host: host,
+            hostKey: hostKey
+        )
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { request, body in
                 await gate.wait()
-                return try await Self.successTransport(box: box)(request, body)
+                return try await authenticatedHost(request, body)
             }),
             connectionFactory: { key, fp in
                 counter.increment()
@@ -564,22 +775,32 @@ struct RemoteConnectionCoordinatorTests {
     /// Reproduces background→foreground→background flapping fast enough
     /// that `invalidate(host:)` lands WHILE a negotiation for the same
     /// host is still in flight: the negotiation is parked at `gate` (its
-    /// `signaling.exchange` call), `invalidate` fires before the gate is
+    /// `signaling.authenticatedExchange` call), `invalidate` fires before
+    /// the gate is
     /// released, and the chosen "let it finish, then evict" behavior
     /// means the negotiation's own result — even though it's a
     /// successful one — must never be registered as a live connection.
     @Test(.timeLimit(.minutes(2)))
     func invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
-        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(
+            directory: dir,
+            serverKey: hostKey
+        )
         let counter = CallCounter()
         let box = ConnectionBox()
         let gate = Gate()
+        let authenticatedHost = Self.successTransport(
+            box: box,
+            host: host,
+            hostKey: hostKey
+        )
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { request, body in
                 await gate.wait()
-                return try await Self.successTransport(box: box)(request, body)
+                return try await authenticatedHost(request, body)
             }),
             connectionFactory: { key, fp in
                 counter.increment()
@@ -668,17 +889,54 @@ struct RemoteConnectionCoordinatorTests {
         return (data, response)
     }
 
-    /// A `SignalingClient.Transport` that answers every offer with a real
-    /// in-process `TestAnswerer`, routing ICE candidates both ways via
-    /// `box`'s captured connection so the handshake reliably completes —
-    /// test-only plumbing (production has no ICE-candidate signaling
-    /// round-trip; both sides embed their full candidate set in the
-    /// initial SDP via non-trickle gathering, same as `WebRTCHostAgent
-    /// .acceptOffer`). `TestAnswerer` is retained for the connection's
+    /// A `SignalingClient.Transport` that speaks the signed v2 challenge /
+    /// offer / answer protocol and answers every offer with a real in-process
+    /// `TestAnswerer`. ICE candidates are routed both ways via `box`'s
+    /// captured connection. `TestAnswerer` is retained for the connection's
     /// lifetime via the closure's own capture.
-    private nonisolated static func successTransport(box: ConnectionBox) -> SignalingClient.Transport {
-        { request, body in
-            let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
+    private nonisolated static func successTransport(
+        box: ConnectionBox,
+        host: Host,
+        hostKey: Curve25519.Signing.PrivateKey,
+        afterAnswererReady: (@Sendable (TestAnswerer) -> Void)? = nil
+    ) -> SignalingClient.Transport {
+        let route = RemoteConnectionRoute(kind: .lan, baseURL: host.baseURL)
+        return { request, body in
+            guard let hostDeviceID = host.remoteDeviceID else {
+                throw Self.unreachable
+            }
+            if request.url?.path.hasSuffix(
+                RemoteAccessProtocol.challengePath
+            ) == true {
+                let probe = try JSONDecoder.iso8601().decode(
+                    SignalingChallengeRequest.self,
+                    from: body
+                )
+                let challenge = try SignalingChallengeResponse(
+                    hostDeviceID: hostDeviceID,
+                    clientDeviceID: probe.clientDeviceID,
+                    clientNonce: probe.clientNonce,
+                    hostNonce: Data(SHA256.hash(data: probe.clientNonce)),
+                    expiresAt: Date(
+                        timeIntervalSince1970:
+                            floor(Date().timeIntervalSince1970) + 60
+                    ),
+                    routes: [route],
+                    signingKey: hostKey
+                )
+                let data = try JSONEncoder.iso8601().encode(challenge)
+                return Self.httpResponseSuccess(for: request, data: data)
+            }
+
+            guard request.url?.path.hasSuffix(
+                RemoteAccessProtocol.offerPath
+            ) == true else {
+                throw Self.unreachable
+            }
+            let offer = try JSONDecoder.iso8601().decode(
+                AuthenticatedSignalingOffer.self,
+                from: body
+            )
             let answerer = TestAnswerer()
             let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
             let rtcAnswer = try await answerer.accept(offer: rtcOffer)
@@ -687,8 +945,14 @@ struct RemoteConnectionCoordinatorTests {
                 await answerer.bindIceCandidates(to: connection)
             }
             box.retain(answerer)
-            let answer = SignalingAnswer(sdp: rtcAnswer.sdp)
-            let data = try JSONEncoder().encode(answer)
+            afterAnswererReady?(answerer)
+            let answer = try AuthenticatedSignalingAnswer(
+                offer: offer,
+                sdp: rtcAnswer.sdp,
+                routes: [route],
+                signingKey: hostKey
+            )
+            let data = try JSONEncoder.iso8601().encode(answer)
             return Self.httpResponseSuccess(for: request, data: data)
         }
     }
@@ -743,7 +1007,8 @@ enum RemoteConnectionTestSupport {
     /// trusts pass it explicitly.
     static func makePairedHost(
         directory: URL,
-        serverKey: Curve25519.Signing.PrivateKey? = nil
+        serverKey: Curve25519.Signing.PrivateKey? = nil,
+        baseURL: URL = URL(string: "https://host.local:9999")!
     ) throws -> Host {
         let hostKey = serverKey ?? Curve25519.Signing.PrivateKey()
         let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
@@ -755,11 +1020,11 @@ enum RemoteConnectionTestSupport {
             publicKey: hostPublicKey,
             displayName: "Test host",
             pinnedAt: Date(),
-            pairingURL: URL(string: "https://host.local:9999")!
+            pairingURL: baseURL
         ))
         return Host(
             label: "Test host",
-            baseURL: URL(string: "https://host.local:9999")!,
+            baseURL: baseURL,
             remoteDeviceID: remoteDeviceID
         )
     }
@@ -806,6 +1071,24 @@ final class CallCounter: @unchecked Sendable {
     private var _count = 0
     func increment() { lock.lock(); _count += 1; lock.unlock() }
     var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+}
+
+private final class URLRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URL] = []
+
+    func append(_ url: URL?) {
+        guard let url else { return }
+        lock.lock()
+        recorded.append(url)
+        lock.unlock()
+    }
+
+    var values: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
 }
 
 /// Controllable clock for the failure-cooldown tests: `now()` — matching

@@ -27,6 +27,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     private static let fileName = "trusted-peers.json"
 
     private struct Envelope: Codable {
+        var version: Int
         var peers: [TrustedPeer]
     }
 
@@ -53,6 +54,25 @@ public final class TrustedPeerStore: @unchecked Sendable {
         guard !envelope.peers.contains(where: { $0.fingerprint == fingerprint }) else {
             throw Error.duplicateFingerprint
         }
+        envelope.peers.append(peer)
+        try _save(envelope)
+    }
+
+    /// Persists trust established by a completed verification-code ceremony.
+    ///
+    /// Repeating the same ceremony is idempotent, and a newly confirmed key
+    /// for the same stable device ID replaces the prior key. A fingerprint
+    /// already assigned to a *different* device ID remains an error.
+    public func upsertAfterPairing(_ peer: TrustedPeer) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var envelope = try _load()
+        guard !envelope.peers.contains(where: {
+            $0.id != peer.id && $0.fingerprint == peer.fingerprint
+        }) else {
+            throw Error.duplicateFingerprint
+        }
+        envelope.peers.removeAll { $0.id == peer.id }
         envelope.peers.append(peer)
         try _save(envelope)
     }
@@ -118,7 +138,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         let envelope = try _load()
         return envelope.peers.sorted { lhs, rhs in
             switch (lhs.lastSeenAt, rhs.lastSeenAt) {
-            case let (.some(l), .some(r)):
+            case (.some(let l), .some(let r)):
                 return l > r
             case (.some, .none):
                 // lhs was seen; rhs was not — lhs ranks higher
@@ -146,12 +166,16 @@ public final class TrustedPeerStore: @unchecked Sendable {
     private func _load() throws -> Envelope {
         let fileURL = directory.appendingPathComponent(Self.fileName)
         guard let data = try? Data(contentsOf: fileURL) else {
-            return Envelope(peers: [])
+            return Envelope(version: RemoteAccessProtocol.version,peers: [])
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            return try decoder.decode(Envelope.self, from: data)
+            let envelope = try decoder.decode(Envelope.self, from: data)
+            guard envelope.version == RemoteAccessProtocol.version else {
+                return Envelope(version: RemoteAccessProtocol.version, peers: [])
+            }
+            return envelope
         } catch {
             // Corrupt file: back it up and return an empty envelope so callers can recover.
             // Best effort: if the rename fails (permissions, etc.) we still return empty
@@ -159,7 +183,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
             let ms = Int(Date().timeIntervalSince1970 * 1000)
             let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
             try? FileManager.default.moveItem(at: fileURL, to: backupURL)
-            return Envelope(peers: [])
+            return Envelope(version: RemoteAccessProtocol.version,peers: [])
         }
     }
 

@@ -25,7 +25,7 @@ import WebRTC
 /// Host-side SSH stack is a fresh `LoopbackPeer` + `SSHNIOTransport` +
 /// `NIOSSHHandler` PER negotiation (mirroring what a real
 /// `WebRTCHostAgent` does — a completely new `RTCPeerConnection` and SSH
-/// handshake for every `POST /v1/rtc/offer`), with a SHARED counting
+/// handshake for every signed `POST /v2/rtc/offer`), with a SHARED counting
 /// userauth delegate across negotiations so the test can observe how
 /// many times the host completed userauth.
 @MainActor
@@ -60,6 +60,7 @@ struct RemoteConnectionReconnectTests {
 
         let serverKey = Curve25519.Signing.PrivateKey()
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: serverKey)
+        let hostDeviceID = try #require(host.remoteDeviceID)
 
         let userauthCounter = CallCounter()
         let box = ConnectionBox()
@@ -70,6 +71,8 @@ struct RemoteConnectionReconnectTests {
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: Self.hostSideSSHTransport(
+                hostDeviceID: hostDeviceID,
+                baseURL: host.baseURL,
                 serverKey: serverKey,
                 trustedClientFingerprint: clientFingerprint,
                 userauthCounter: userauthCounter,
@@ -161,7 +164,8 @@ struct RemoteConnectionReconnectTests {
     /// provider, and the `SessionClient` factory:
     ///
     ///   1. `SessionClient.start()` dials through the coordinator, which
-    ///      negotiates a real WebRTC connection via `signaling.exchange`
+    ///      negotiates a real WebRTC connection via
+    ///      `signaling.authenticatedExchange`
     ///      and completes a real SSH userauth (mirroring the negotiation
     ///      above) — negotiation #1.
     ///   2. The host-side echo handler grants this `SessionClient`
@@ -204,6 +208,7 @@ struct RemoteConnectionReconnectTests {
         )
         let serverKey = Curve25519.Signing.PrivateKey()
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: serverKey)
+        let hostDeviceID = try #require(host.remoteDeviceID)
 
         let userauthCounter = CallCounter()
         let negotiationCounter = CallCounter()
@@ -214,6 +219,8 @@ struct RemoteConnectionReconnectTests {
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: Self.hostSideSSHTransport(
+                hostDeviceID: hostDeviceID,
+                baseURL: host.baseURL,
                 serverKey: serverKey,
                 trustedClientFingerprint: clientFingerprint,
                 userauthCounter: userauthCounter,
@@ -319,11 +326,10 @@ struct RemoteConnectionReconnectTests {
 
     // MARK: - Host-side SSH transport stub
 
-    /// Fresh answerer + SSH server stack PER `signaling.exchange` call —
-    /// each invocation mirrors a completely new `POST /v1/rtc/offer` to
-    /// a real host agent. `userauthCounter` is shared across every
-    /// invocation so the test can observe a second full userauth on
-    /// reconnect.
+    /// Speaks the signed v2 challenge / offer / answer protocol. Every offer
+    /// creates a fresh answerer + SSH server stack, mirroring one request to
+    /// a real host agent. `userauthCounter` is shared across offers so the
+    /// test can observe a second full userauth on reconnect.
     ///
     /// `inboundChildChannelInitializer` defaults to `nil` (this suite's
     /// original reconnect test never opens a channel on top, so there's
@@ -331,6 +337,8 @@ struct RemoteConnectionReconnectTests {
     /// installs a terminal-echo handler so a `TerminalSessionClient`
     /// session channel has something real to open against.
     private nonisolated static func hostSideSSHTransport(
+        hostDeviceID: RemoteDeviceID,
+        baseURL: URL,
         serverKey: Curve25519.Signing.PrivateKey,
         trustedClientFingerprint: RemoteIdentityFingerprint,
         userauthCounter: CallCounter,
@@ -338,9 +346,41 @@ struct RemoteConnectionReconnectTests {
         trace: ServerTrace = ServerTrace(),
         inboundChildChannelInitializer: (@Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>)? = nil
     ) -> SignalingClient.Transport {
-        { request, body in
+        let route = RemoteConnectionRoute(kind: .lan, baseURL: baseURL)
+        return { request, body in
+            if request.url?.path.hasSuffix(
+                RemoteAccessProtocol.challengePath
+            ) == true {
+                let probe = try JSONDecoder.iso8601().decode(
+                    SignalingChallengeRequest.self,
+                    from: body
+                )
+                let challenge = try SignalingChallengeResponse(
+                    hostDeviceID: hostDeviceID,
+                    clientDeviceID: probe.clientDeviceID,
+                    clientNonce: probe.clientNonce,
+                    hostNonce: Data(SHA256.hash(data: probe.clientNonce)),
+                    expiresAt: Date(
+                        timeIntervalSince1970:
+                            floor(Date().timeIntervalSince1970) + 60
+                    ),
+                    routes: [route],
+                    signingKey: serverKey
+                )
+                let data = try JSONEncoder.iso8601().encode(challenge)
+                return Self.httpResponseSuccess(for: request, data: data)
+            }
+
+            guard request.url?.path.hasSuffix(
+                RemoteAccessProtocol.offerPath
+            ) == true else {
+                throw LoopbackError.unexpectedChannelType
+            }
             let negotiation = trace.beginNegotiation()
-            let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
+            let offer = try JSONDecoder.iso8601().decode(
+                AuthenticatedSignalingOffer.self,
+                from: body
+            )
             let answerer = LoopbackPeer(role: .answerer)
             let rtcAnswer = try await answerer.accept(offer: RTCSessionDescription(type: .offer, sdp: offer.sdp))
             if let connection = box.get() {
@@ -399,8 +439,13 @@ struct RemoteConnectionReconnectTests {
                 }
             }
 
-            let answer = SignalingAnswer(sdp: rtcAnswer.sdp)
-            let data = try JSONEncoder().encode(answer)
+            let answer = try AuthenticatedSignalingAnswer(
+                offer: offer,
+                sdp: rtcAnswer.sdp,
+                routes: [route],
+                signingKey: serverKey
+            )
+            let data = try JSONEncoder.iso8601().encode(answer)
             return Self.httpResponseSuccess(for: request, data: data)
         }
     }

@@ -7,8 +7,8 @@ import UIKit
 
 // MARK: - PairDeviceFlowModel
 
-/// Drives one pairing ceremony from a scanned QR payload through to a
-/// pinned host + saved `Host` record.
+/// Drives one pairing ceremony from a discovered or manually bootstrapped
+/// payload through to a pinned host + saved `Host` record.
 ///
 /// Kept separate from `PairDeviceFlowView` so the state machine is testable
 /// against a stubbed `LocalPairingClient.Transport` without instantiating
@@ -31,9 +31,9 @@ public final class PairDeviceFlowModel {
         /// confirm the verification code on the Mac.
         case awaitingConfirmation(code: String, hostDisplayName: String)
         /// Host confirmed; `host` is ready to hand to the caller's `onSave`.
-        /// `addressUnconfirmed` is true when the QR payload carried no
-        /// `webBaseURL` (the host's web server wasn't running at pairing
-        /// time), so the saved host's address is a best-effort guess.
+        /// `addressUnconfirmed` is retained for source compatibility with
+        /// the pre-device-pairing view. The LAN pairing payload now carries
+        /// the exact signaling listener, so new pairings always set it false.
         case success(host: Host, addressUnconfirmed: Bool)
         case denied
         case expired
@@ -114,7 +114,7 @@ public final class PairDeviceFlowModel {
         case .success(let pinnedHost):
             state = .success(
                 host: Self.makeHost(payload: payload, pinnedHost: pinnedHost),
-                addressUnconfirmed: payload.webBaseURL == nil
+                addressUnconfirmed: false
             )
         case .failure(LocalPairingClient.Error.denied):
             state = .denied
@@ -161,29 +161,41 @@ public final class PairDeviceFlowModel {
         wasCancelled = true
         pairingTask?.cancel()
         session.cancel()
+        let client = client
+        let payload = payload
+        Task {
+            await client.cancelPairing(payload: payload)
+        }
     }
 
     // MARK: - Host construction
 
-    /// Fallback web port used when the QR payload carries no `webBaseURL`
-    /// (the host's web server wasn't running at pairing time). Matches
-    /// `WebAccessSettings`'s default `WebAccessPort`.
-    static let fallbackWebPort = 8799
-
     static func makeHost(payload: PairingPayload, pinnedHost: PinnedHost) -> Host {
-        let baseURL = payload.webBaseURL ?? fallbackBaseURL(pairingURL: payload.pairingURL)
+        let routes = payload.routes.isEmpty
+            ? [RemoteConnectionRoute(
+                kind: .lan,
+                baseURL: pairingBaseURL(payload.pairingURL)
+            )]
+            : payload.routes
+        let baseURL = routes[0].baseURL
         return Host(
             label: payload.hostDisplayName,
             baseURL: baseURL,
+            routes: routes,
             remoteDeviceID: payload.hostDeviceID
         )
     }
 
-    private static func fallbackBaseURL(pairingURL: URL) -> URL {
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = pairingURL.host
-        components.port = fallbackWebPort
+    private static func pairingBaseURL(_ pairingURL: URL) -> URL {
+        guard var components = URLComponents(
+            url: pairingURL,
+            resolvingAgainstBaseURL: false
+        ) else {
+            return pairingURL
+        }
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
         return components.url ?? pairingURL
     }
 }
@@ -196,6 +208,7 @@ public struct PairDeviceFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model: PairDeviceFlowModel?
     @State private var saveError: String?
+    @State private var didSaveHost = false
     /// True when `buildModel` returned `nil` (e.g. `ClientDeviceIDStore`
     /// couldn't read/persist an identity). Tracked separately from `model`
     /// because a nil model is otherwise indistinguishable from "hasn't
@@ -248,11 +261,14 @@ public struct PairDeviceFlowView: View {
         buildFailed = false
         model = built
         await built.run()
+        if case .success(let host, _) = built.state {
+            save(host)
+        }
     }
 
     /// Retries from a `buildModel` failure — distinct from `onRetry`, which
-    /// backs out to the QR scanner. A broken `ClientDeviceIDStore` won't be
-    /// fixed by rescanning the same host's QR code, so this re-attempts
+    /// backs out to the nearby-Mac picker. A broken `ClientDeviceIDStore`
+    /// won't be fixed by rediscovering the same host, so this re-attempts
     /// `buildModel` in place instead.
     private func retryBuild() {
         buildFailed = false
@@ -274,7 +290,7 @@ public struct PairDeviceFlowView: View {
             case .denied:
                 retryView(message: "Pairing was denied on your Mac.", onRetry: onRetry)
             case .expired:
-                retryView(message: "The pairing code expired. Scan the QR code again.", onRetry: onRetry)
+                retryView(message: "The pairing code expired. Start pairing again.", onRetry: onRetry)
             case .cancelled:
                 retryView(message: "Pairing was cancelled.", onRetry: onRetry)
             case .failed(let message):
@@ -330,10 +346,20 @@ public struct PairDeviceFlowView: View {
     }
 
     private func finish(host: Host) {
+        if !didSaveHost {
+            save(host)
+        }
+        guard didSaveHost else { return }
+        dismiss()
+    }
+
+    private func save(_ host: Host) {
         do {
             try onSave(host)
-            dismiss()
+            didSaveHost = true
+            saveError = nil
         } catch {
+            didSaveHost = false
             saveError = "Couldn't save: \(error)"
         }
     }
@@ -366,6 +392,32 @@ public struct PairDeviceFlowView: View {
             transport: Self.productionTransport
         )
         return PairDeviceFlowModel(payload: payload, session: session, client: client)
+    }
+
+    /// Starts the Bonjour/manual-address pairing bootstrap and returns the
+    /// host-authenticated payload used by the existing ceremony view.
+    static func beginPairing(
+        baseURL: URL,
+        directory: URL = ClientIdentityStore.defaultDirectory
+    ) async throws -> PairingPayload {
+        let stores = ClientRemoteStores(directory: directory)
+        let clientDeviceID = try stores.deviceIDStore
+            .loadOrGenerateAndPersist()
+        let session = ClientPairingSession(
+            identityStore: stores.identityStore,
+            pinnedHostStore: stores.pinnedHostStore,
+            clientDeviceID: clientDeviceID,
+            clientKind: UIDevice.current.userInterfaceIdiom == .pad
+                ? .ipad
+                : .iphone,
+            clientDisplayName: UIDevice.current.name
+        )
+        let client = LocalPairingClient(
+            session: session,
+            identityStore: stores.identityStore,
+            transport: productionTransport
+        )
+        return try await client.beginPairing(baseURL: baseURL)
     }
 
     /// `nonisolated` because `PairDeviceFlowView: View` otherwise infers

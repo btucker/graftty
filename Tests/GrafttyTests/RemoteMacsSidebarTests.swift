@@ -1,10 +1,11 @@
-import Foundation
 import CryptoKit
-import Testing
-@testable import Graftty
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
 import GrafttyRemoteClient
+import Testing
+
+@testable import Graftty
+@testable import GrafttyKit
 
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
@@ -94,10 +95,10 @@ struct RemoteMacsSidebarTests {
             .remoteMac(identity),
             .worktree(identity, "/repo/.worktrees/feature"),
             .pane(identity, "/repo/.worktrees/feature", "graftty-left"),
-            .pane(identity, "/repo/.worktrees/feature", "graftty-right")
+            .pane(identity, "/repo/.worktrees/feature", "graftty-right"),
         ])
         #expect(projection.rows.map(\.title) == [
-            "Studio Mac", "feature", "editor", "agent"
+            "Studio Mac", "feature", "editor", "agent",
         ])
         #expect(projection.rows.map(\.level) == [.remoteMac, .worktree, .pane, .pane])
     }
@@ -134,7 +135,8 @@ struct RemoteMacsSidebarTests {
 
         #expect(projection.rows.first(where: { $0.id == .remoteMac(identity) })?.isSelected == false)
         #expect(projection.rows.first(where: { $0.id == .worktree(identity, worktreePath) })?.isSelected == false)
-        #expect(projection.rows.first(where: { $0.id == .pane(identity, worktreePath, "graftty-agent") })?.isSelected == true)
+        #expect(projection.rows.first(where: { $0.id == .pane(identity, worktreePath, "graftty-agent") })?
+            .isSelected == true)
     }
 
     @Test("stale selected remote pane falls back to remote worktree selection")
@@ -302,7 +304,7 @@ struct RemoteMacsSidebarTests {
             hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPublicKey),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
-            pairingURL: URL(string: "http://studio.local:9443/v1/pairing")!
+            pairingURL: URL(string: "http://studio.local:9443/v2/pairing")!
         )
         let transport = CancellablePairingTransport(
             payload: payload,
@@ -332,7 +334,7 @@ struct RemoteMacsSidebarTests {
         }
 
         let paths = await transport.recordedPaths
-        #expect(paths == ["/v1/pairing/begin"])
+        #expect(paths == ["/v2/pairing/begin"])
     }
 
     private func makeRemoteMac(
@@ -402,7 +404,8 @@ struct RemoteMacsSidebarTests {
     }
 }
 
-private extension Result {
+ extension Result {
+    fileprivate
     var isFailure: Bool {
         if case .failure = self { return true }
         return false
@@ -441,7 +444,7 @@ private actor CancellablePairingTransport {
     }
 
     func waitUntilBeginRequested() async {
-        if recordedPaths.contains("/v1/pairing/begin") { return }
+        if recordedPaths.contains("/v2/pairing/begin") { return }
         await withCheckedContinuation { continuation in
             beginObservedContinuation = continuation
         }

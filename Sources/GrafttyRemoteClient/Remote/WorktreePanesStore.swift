@@ -12,6 +12,10 @@ import GrafttyProtocol
 /// need to change.
 public actor WorktreePanesStore {
 
+    public enum SubscriptionError: Error, Equatable {
+        case closedDuringOpen(reason: String)
+    }
+
     public enum ConnectionState: Sendable, Equatable {
         case idle
         case subscribed
@@ -20,6 +24,9 @@ public actor WorktreePanesStore {
 
     public private(set) var current: [WorktreePanes] = []
     public private(set) var connectionState: ConnectionState = .idle
+    /// Distinguishes a legitimate first empty snapshot from "the SSH
+    /// subsystem is open but has not delivered its initial state yet."
+    public private(set) var hasReceivedSnapshot = false
 
     private let driver: PanesStateChannelDriver
 
@@ -29,7 +36,15 @@ public actor WorktreePanesStore {
 
     public func subscribe() async throws {
         try await driver.open()
-        self.connectionState = .subscribed
+        switch connectionState {
+        case .idle:
+            connectionState = .subscribed
+        case .subscribed:
+            break
+        case .closed(let reason):
+            driver.close()
+            throw SubscriptionError.closedDuringOpen(reason: reason)
+        }
     }
 
     public func unsubscribe() async {
@@ -42,6 +57,7 @@ public actor WorktreePanesStore {
     /// store (see Task 12 for production wiring; tests inject directly).
     public func applySnapshot(_ snapshot: [WorktreePanes]) {
         self.current = snapshot
+        self.hasReceivedSnapshot = true
     }
 
     /// Called by the channel driver's `onClosed` callback when the SSH

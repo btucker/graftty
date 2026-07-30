@@ -79,7 +79,7 @@ public struct PaneLayoutView: View {
 /// Leaf in the split tree — a tappable rounded rect with the pane title.
 /// When `client == nil` (single-pane worktrees skip the preview pool per
 /// IOS-4.14), renders a static centered title with no controller, no
-/// preview client, no WebSocket. Otherwise owns its own `TerminalController`,
+/// preview client, no terminal channel. Otherwise owns its own `TerminalController`,
 /// sized so the authoritative grid fits the tile width without an outer
 /// scaleEffect downscale (IOS-4.12).
 ///
@@ -155,28 +155,17 @@ private struct PaneTile: View {
     @ViewBuilder
     private func paneContent(client: SessionClient) -> some View {
         if let controller, controllerSourceConfig == baseConfig {
-            switch client.renderActivity {
-            case .active:
-                TerminalPaneView(
-                    session: client.session,
-                    controller: controller,
-                    renderPace: client.renderPace,
-                    onUserInteraction: { [weak client] in client?.wakeRenderer() },
-                    preferredInterfaceStyle: preferredInterfaceStyle,
-                    onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
-                )
-                    .allowsHitTesting(false)
-                    .overlay(Color.black.opacity(0.08))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-            case .idle:
-                IdleSnapshotView(snapshot: client.idleSnapshot) {
-                    client.wakeRenderer()
-                }
-                    .allowsHitTesting(false)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-            }
+            TerminalPaneView(
+                session: client.session,
+                controller: controller,
+                renderPace: client.renderPace,
+                onUserInteraction: { [weak client] in client?.wakeRenderer() },
+                preferredInterfaceStyle: preferredInterfaceStyle
+            )
+                .allowsHitTesting(false)
+                .overlay(Color.black.opacity(0.08))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
         } else {
             Color.black.overlay(ProgressView().tint(.white))
         }

@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("HostPairingServer Tests")
 struct HostPairingServerTests {
@@ -37,7 +38,7 @@ struct HostPairingServerTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
         return Fixture(
             dir: dir,
@@ -96,7 +97,7 @@ struct HostPairingServerTests {
         defer { fx.cleanup() }
 
         let payload = try await fx.server.start()
-        #expect(payload.version == 1)
+        #expect(payload.version == RemoteAccessProtocol.version)
     }
 
     // MARK: - handleIntroduce: happy path
@@ -128,14 +129,14 @@ struct HostPairingServerTests {
 
     // MARK: - handleIntroduce: unsupported version
 
-    @Test("handleIntroduce rejects non-1 versions")
+    @Test("handleIntroduce rejects obsolete versions")
     func handleIntroduceRejectsUnsupportedVersion() async throws {
         let fx = try makeFixture()
         defer { fx.cleanup() }
 
         let payload = try await fx.server.start()
         let request = PairingIntroduceRequest(
-            version: 2,
+            version: 1,
             nonce: payload.nonce,
             clientPublicKey: makeClientPublicKey(),
             clientDeviceID: RemoteDeviceID(value: "client-123"),
@@ -278,6 +279,28 @@ struct HostPairingServerTests {
             return
         }
         #expect(response.outcome == .cancelled)
+    }
+
+    @Test("handleCancel cancels only the matching active nonce")
+    func handleCancelRequiresActiveNonce() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+        let payload = try await fx.server.start()
+
+        let wrong = await fx.server.handleCancel(
+            PairingCancelRequest(nonce: .generate())
+        )
+        guard case .failure(let error) = wrong else {
+            Issue.record("Expected an unknown-nonce failure")
+            return
+        }
+        #expect(error.code == .unknownNonce)
+
+        let result = await fx.server.handleCancel(
+            PairingCancelRequest(nonce: payload.nonce)
+        )
+        #expect(result == .success(PairingOutcomeResponse(outcome: .cancelled)))
+        #expect(await fx.server.currentState() == .cancelled)
     }
 
     // MARK: - handleAwaitOutcome: already terminal

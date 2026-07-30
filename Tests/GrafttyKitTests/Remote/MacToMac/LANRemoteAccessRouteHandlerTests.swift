@@ -1,21 +1,27 @@
 import CryptoKit
 import Foundation
-import Testing
-@testable import GrafttyKit
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("LANRemoteAccessRouteHandler")
 struct LANRemoteAccessRouteHandlerTests {
 
     private actor OfferRecorder {
-        private(set) var offers: [SignalingOffer] = []
+        private(set) var offers: [AuthenticatedSignalingOffer] = []
 
-        func record(_ offer: SignalingOffer) {
+        func record(_ offer: AuthenticatedSignalingOffer) {
             offers.append(offer)
         }
     }
 
-    private static func makePayload(pairingURL: URL = URL(string: "https://tailnet.example.com/v1/pairing")!) throws -> PairingPayload {
+    private struct SignalingFixture {
+        let offer: AuthenticatedSignalingOffer
+        let answer: AuthenticatedSignalingAnswer
+    }
+
+    private static func makePayload(pairingURL: URL = URL(string: "https://tailnet.example.com/v2/pairing")!) throws -> PairingPayload {
         let publicKey = try RemoteIdentityPublicKey(
             rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
         )
@@ -52,8 +58,12 @@ struct LANRemoteAccessRouteHandlerTests {
                 return .failure(PairingErrorResponse(code: .internalError, error: "\(error)"))
             }
         },
-        handleSignalingOffer: @escaping @Sendable (SignalingOffer) async -> LANSignalingOfferResult = { _ in
-            .success(SignalingAnswer(sdp: "v=0\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\n"))
+        handleSignalingChallenge: @escaping LANRemoteAccessRouteHandler.SignalingChallengeHandler = { _ in
+            .failure(PairingErrorResponse(code: .authenticationFailed, error: "not exercised"))
+            },
+        handleSignalingOffer:
+            @escaping LANRemoteAccessRouteHandler.SignalingOfferHandler = { _ in
+                .invalid("not exercised")
         }
     ) -> LANRemoteAccessRouteHandler {
         LANRemoteAccessRouteHandler(
@@ -66,17 +76,18 @@ struct LANRemoteAccessRouteHandlerTests {
             handleAwaitOutcome: { _ in
                 .failure(PairingErrorResponse(code: .noActiveSession, error: "not exercised"))
             },
+            handleSignalingChallenge: handleSignalingChallenge,
             handleSignalingOffer: handleSignalingOffer
         )
     }
 
-    @Test("POST /v1/pairing/begin starts pairing and returns payload")
+    @Test("POST /v2/pairing/begin starts pairing and returns payload")
     func beginReturnsPayload() async throws {
         let handler = makeHandler()
 
         let response = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data()
         )
 
@@ -86,13 +97,13 @@ struct LANRemoteAccessRouteHandlerTests {
         #expect(payload.nonce.bytes.isEmpty == false)
     }
 
-    @Test("GET /v1/pairing/begin returns 405")
+    @Test("GET /v2/pairing/begin returns 405")
     func getBeginReturns405() async throws {
         let handler = makeHandler()
 
         let response = await handler.handle(
             method: .GET,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data()
         )
 
@@ -113,27 +124,49 @@ struct LANRemoteAccessRouteHandlerTests {
         }
     }
 
-    @Test("/v1/rtc/offer forwards to the injected signaling handler")
+    @Test("/v2/rtc/offer forwards an authenticated offer to the injected handler")
     func rtcOfferForwards() async throws {
+        let fixture = try Self.makeSignalingFixture()
         let recorder = OfferRecorder()
         let handler = makeHandler(handleSignalingOffer: { offer in
             await recorder.record(offer)
-            return .success(SignalingAnswer(sdp: "v=0\nanswer\n"))
+            return .authenticatedSuccess(fixture.answer)
         })
-        let request = SignalingOffer(clientDeviceID: "ios-device-abc", sdp: "v=0\noffer\n")
-        let body = try JSONEncoder.iso8601().encode(request)
+        let body = try JSONEncoder.iso8601().encode(fixture.offer)
 
         let response = await handler.handle(
             method: .POST,
-            path: "/v1/rtc/offer",
+            path: "/v2/rtc/offer",
             body: body
         )
 
         #expect(response.status == 200)
-        let answer = try JSONDecoder.iso8601().decode(SignalingAnswer.self, from: response.body)
+        let answer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingAnswer.self,
+            from: response.body
+        )
         #expect(answer.sdp.contains("answer"))
         let offers = await recorder.offers
-        #expect(offers == [request])
+        #expect(offers == [fixture.offer])
+    }
+
+    @Test("""
+    @spec REMOTE-2.8: Production native connections shall reject the \
+    protocol-v1 signaling route and shall use the paired identity keys on both \
+    LAN and Tailscale.
+    """)
+    func legacyRTCOfferIsRejected() async throws {
+        let handler = makeHandler()
+        let response = await handler.handle(
+            method: .POST,
+            path: "/v1/rtc/offer",
+            body: Data("{}".utf8)
+        )
+
+        #expect(response.status == 426)
+        let error = try JSONDecoder.iso8601().decode(
+            PairingErrorResponse.self, from: response.body)
+        #expect(error.code == .unsupportedVersion)
     }
 
     @Test("busy pairing returns a structured JSON error")
@@ -144,7 +177,7 @@ struct LANRemoteAccessRouteHandlerTests {
 
         let response = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data()
         )
 
@@ -153,43 +186,43 @@ struct LANRemoteAccessRouteHandlerTests {
         #expect(error.code == .pairingBusy)
     }
 
-    @Test("POST /v1/pairing/begin returns client-reachable LAN pairing route base")
+    @Test("POST /v2/pairing/begin returns client-reachable LAN pairing route base")
     func beginUsesLANPairingRouteBase() async throws {
         let handler = makeHandler(lanBaseURL: URL(string: "http://host.local:9999")!)
 
         let response = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data()
         )
 
         #expect(response.status == 200)
         let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: response.body)
-        #expect(payload.pairingURL == URL(string: "http://host.local:9999/v1/pairing")!)
+        #expect(payload.pairingURL == URL(string: "http://host.local:9999/v2/pairing")!)
         #expect(payload.pairingURL.host != "0.0.0.0")
         #expect(payload.pairingURL.host != "::")
         #expect(payload.pairingURL.host != "localhost")
         #expect(payload.pairingURL.scheme == "http")
-        #expect(payload.pairingURL.path == "/v1/pairing")
+        #expect(payload.pairingURL.path == "/v2/pairing")
     }
 
-    @Test("POST /v1/pairing/begin prefers request base URL over guessed host")
+    @Test("POST /v2/pairing/begin prefers request base URL over guessed host")
     func beginUsesRequestBaseURLWhenAvailable() async throws {
         let handler = makeHandler(lanBaseURL: URL(string: "http://wrong-host.local:9999")!)
 
         let response = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data(),
             requestBaseURL: URL(string: "http://bonjour-host.local:9443")!
         )
 
         #expect(response.status == 200)
         let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: response.body)
-        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:9443/v1/pairing")!)
+        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:9443/v2/pairing")!)
     }
 
-    @Test("POST /v1/pairing/begin rejects loopback LAN base URLs")
+    @Test("POST /v2/pairing/begin rejects loopback LAN base URLs")
     func beginRejectsLoopbackLANBaseURLs() async throws {
         for url in [
             URL(string: "http://127.0.0.1:9999")!,
@@ -200,7 +233,7 @@ struct LANRemoteAccessRouteHandlerTests {
 
             let response = await handler.handle(
                 method: .POST,
-                path: "/v1/pairing/begin",
+                path: "/v2/pairing/begin",
                 body: Data()
             )
 
@@ -214,8 +247,8 @@ struct LANRemoteAccessRouteHandlerTests {
     func repeatedPairingRequestsAreRateLimited() async throws {
         let handler = makeHandler(rateLimit: .init(maxRequests: 1, window: 60))
 
-        _ = await handler.handle(method: .POST, path: "/v1/pairing/begin", body: Data())
-        let response = await handler.handle(method: .POST, path: "/v1/pairing/begin", body: Data())
+        _ = await handler.handle(method: .POST, path: "/v2/pairing/begin", body: Data())
+        let response = await handler.handle(method: .POST, path: "/v2/pairing/begin", body: Data())
 
         #expect(response.status == 429)
         let error = try JSONDecoder.iso8601().decode(PairingErrorResponse.self, from: response.body)
@@ -225,10 +258,10 @@ struct LANRemoteAccessRouteHandlerTests {
     @Test("repeated RTC requests beyond the configured limit return structured rate-limit responses")
     func repeatedRTCRequestsAreRateLimited() async throws {
         let handler = makeHandler(rateLimit: .init(maxRequests: 1, window: 60))
-        let body = try JSONEncoder.iso8601().encode(SignalingOffer(clientDeviceID: "client", sdp: "v=0\n"))
+        let body = try JSONEncoder.iso8601().encode(Self.makeChallengeRequest())
 
-        _ = await handler.handle(method: .POST, path: "/v1/rtc/offer", body: body)
-        let response = await handler.handle(method: .POST, path: "/v1/rtc/offer", body: body)
+        _ = await handler.handle(method: .POST, path: "/v2/rtc/challenge", body: body)
+        let response = await handler.handle(method: .POST, path: "/v2/rtc/challenge", body: body)
 
         #expect(response.status == 429)
         let error = try JSONDecoder.iso8601().decode(PairingErrorResponse.self, from: response.body)
@@ -238,14 +271,14 @@ struct LANRemoteAccessRouteHandlerTests {
     @Test("rate limiting is bucketed by route category")
     func rateLimitingIsBucketedByRouteCategory() async throws {
         let handler = makeHandler(rateLimit: .init(maxRequests: 1, window: 60))
-        let body = try JSONEncoder.iso8601().encode(SignalingOffer(clientDeviceID: "client", sdp: "v=0\n"))
+        let body = try JSONEncoder.iso8601().encode(Self.makeChallengeRequest())
 
-        let beginResponse = await handler.handle(method: .POST, path: "/v1/pairing/begin", body: Data())
-        let rtcResponse = await handler.handle(method: .POST, path: "/v1/rtc/offer", body: body)
-        let secondRTCResponse = await handler.handle(method: .POST, path: "/v1/rtc/offer", body: body)
+        let beginResponse = await handler.handle(method: .POST, path: "/v2/pairing/begin", body: Data())
+        let rtcResponse = await handler.handle(method: .POST, path: "/v2/rtc/challenge", body: body)
+        let secondRTCResponse = await handler.handle(method: .POST, path: "/v2/rtc/challenge", body: body)
 
         #expect(beginResponse.status == 200)
-        #expect(rtcResponse.status == 200)
+        #expect(rtcResponse.status != 429)
         #expect(secondRTCResponse.status == 429)
     }
 
@@ -259,19 +292,19 @@ struct LANRemoteAccessRouteHandlerTests {
 
         let firstA = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data(),
             source: "192.168.1.10"
         )
         let secondA = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data(),
             source: "192.168.1.10"
         )
         let firstB = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data(),
             source: "192.168.1.11"
         )
@@ -289,17 +322,17 @@ struct LANRemoteAccessRouteHandlerTests {
 
         let introduceResponse = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/introduce",
+            path: "/v2/pairing/introduce",
             body: introduceBody
         )
         let awaitResponse = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/await-outcome",
+            path: "/v2/pairing/await-outcome",
             body: awaitBody
         )
         let secondAwaitResponse = await handler.handle(
             method: .POST,
-            path: "/v1/pairing/await-outcome",
+            path: "/v2/pairing/await-outcome",
             body: awaitBody
         )
 
@@ -310,15 +343,52 @@ struct LANRemoteAccessRouteHandlerTests {
 
     @Test("host WebRTC busy returns a structured 503 error")
     func hostBusyReturnsStructured503() async throws {
+        let fixture = try Self.makeSignalingFixture()
         let handler = makeHandler(handleSignalingOffer: { _ in
             .hostBusy("host is already handling an offer")
         })
-        let body = try JSONEncoder.iso8601().encode(SignalingOffer(clientDeviceID: "client", sdp: "v=0\n"))
+        let body = try JSONEncoder.iso8601().encode(fixture.offer)
 
-        let response = await handler.handle(method: .POST, path: "/v1/rtc/offer", body: body)
+        let response = await handler.handle(method: .POST, path: "/v2/rtc/offer", body: body)
 
         #expect(response.status == 503)
         let error = try JSONDecoder.iso8601().decode(PairingErrorResponse.self, from: response.body)
         #expect(error.code == .hostBusy)
+    }
+
+    private static func makeChallengeRequest() throws -> SignalingChallengeRequest {
+        try SignalingChallengeRequest(
+            clientDeviceID: RemoteDeviceID(value: "client-v2"),
+            clientNonce: Data(repeating: 0x11, count: 32),
+            signingKey: Curve25519.Signing.PrivateKey()
+        )
+}
+
+    private static func makeSignalingFixture() throws -> SignalingFixture {
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let challenge = try SignalingChallengeResponse(
+            hostDeviceID: RemoteDeviceID(value: "host-v2"),
+            clientDeviceID: RemoteDeviceID(value: "client-v2"),
+            clientNonce: Data(repeating: 0x11, count: 32),
+            hostNonce: Data(repeating: 0x22, count: 32),
+            expiresAt: Date(timeIntervalSince1970: 1_800_000_000),
+            routes: [],
+            signingKey: hostKey
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\noffer\n",
+            signingKey: clientKey
+        )
+        return SignalingFixture(
+            offer: offer,
+            answer: try AuthenticatedSignalingAnswer(
+                offer: offer,
+                sdp: "v=0\nanswer\n",
+                routes: [],
+                signingKey: hostKey
+            )
+        )
     }
 }

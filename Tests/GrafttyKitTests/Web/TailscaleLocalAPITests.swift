@@ -54,6 +54,44 @@ struct TailscaleLocalAPIParsingTests {
         let status = try TailscaleLocalAPI.parseStatus(Data(raw.utf8))
         #expect(status.dnsName == nil)
     }
+
+    @Test func pairedAccessURLSupportsTailscaleIPv4() {
+        let url = RemoteAccessRouteDiscovery.remoteAccessURL(
+            host: "100.64.0.5"
+        )
+        #expect(url?.absoluteString == "http://100.64.0.5:8800")
+    }
+
+    @Test func pairedAccessURLBracketsTailscaleIPv6() {
+        let url = RemoteAccessRouteDiscovery.remoteAccessURL(
+            host: "fd7a:115c:a1e0::5"
+        )
+        #expect(url?.absoluteString == "http://[fd7a:115c:a1e0::5]:8800")
+    }
+}
+
+@Suite("""
+@spec REMOTE-2.6: Tailscale route discovery and refresh shall not depend on \
+Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route \
+available; later recovery shall restore Tailscale-IP routes. Native clients \
+shall not advertise plaintext fully qualified MagicDNS routes that Apple \
+Transport Security rejects.
+""")
+struct RemoteAccessRouteDiscoveryTests {
+    @Test("native routes retain LAN and Tailscale IPs without plaintext DNS")
+    func nativeRoutesExcludePlaintextMagicDNS() {
+        let routes = RemoteAccessRouteDiscovery.nativeRoutes(
+            lanBaseURL: URL(string: "http://studio.local:8800")!,
+            tailscaleIPs: ["100.64.0.5", "fd7a:115c:a1e0::5"]
+        )
+
+        #expect(routes.map(\.kind) == [.lan, .tailscaleIP, .tailscaleIP])
+        #expect(routes.map(\.baseURL.absoluteString) == [
+            "http://studio.local:8800",
+            "http://100.64.0.5:8800",
+            "http://[fd7a:115c:a1e0::5]:8800",
+        ])
+    }
 }
 
 @Suite("""

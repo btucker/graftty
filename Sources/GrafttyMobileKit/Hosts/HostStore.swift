@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 import Observation
 
 /// CRUD store for saved hosts, persisted as a single JSON file in the
@@ -71,28 +72,81 @@ public final class HostStore {
         hasLoaded = true
     }
 
-    public func add(_ host: Host) throws {
+    /// Adds or merges `host` and returns the canonical persisted row.
+    ///
+    /// Merges preserve the existing row UUID so navigation state remains
+    /// stable across re-pairing and Bonjour address changes. Callers that
+    /// need to select the saved host must therefore use this return value,
+    /// not the transient incoming `host.id`.
+    @discardableResult
+    public func add(_ host: Host) throws -> Host {
         ensureLoaded()
         var next = hosts
-        // Dedupe by normalized baseURL first (belt-and-suspenders against
-        // the scanner firing twice before the Save sheet dismisses). If a
-        // host with the same URL exists, refresh its timestamp + label
-        // rather than inserting a duplicate under a new UUID.
-        if let idx = next.firstIndex(where: { Self.sameURL($0.baseURL, host.baseURL) }) {
+        let canonical: Host
+        // A paired Mac is identified by its stable device ID, not its
+        // hostname or listener port. Bonjour addresses legitimately change
+        // after every host restart, while unrelated Macs can occasionally
+        // reuse an address. URL dedupe remains only as a migration path for
+        // an old unpaired row being replaced by a newly paired record.
+        if let deviceID = host.remoteDeviceID,
+           let idx = next.firstIndex(where: { $0.remoteDeviceID == deviceID }) {
             var existing = next[idx]
             existing.label = host.label
+            existing.baseURL = host.baseURL
+            existing.routes = host.routes
+            existing.lastUsedAt = host.lastUsedAt ?? Date()
+            existing.remoteDeviceID = deviceID
+            existing.pairingProtocolVersion = host.pairingProtocolVersion
+            next[idx] = existing
+            canonical = existing
+        } else if let idx = next.firstIndex(where: {
+            Self.sameURL($0.baseURL, host.baseURL)
+                && ($0.remoteDeviceID == nil || host.remoteDeviceID == nil)
+        }) {
+            var existing = next[idx]
+            existing.label = host.label
+            existing.baseURL = host.baseURL
+            existing.routes = host.routes.isEmpty ? existing.routes : host.routes
             existing.lastUsedAt = Date()
             // Adopt the incoming remoteDeviceID (e.g. from a fresh pairing
             // ceremony) but fall back to the prior value when the incoming
             // host doesn't carry one (a manual/plain-URL rescan), so a
             // rescan can never erase an identity a prior pairing recorded.
             existing.remoteDeviceID = host.remoteDeviceID ?? existing.remoteDeviceID
+            existing.pairingProtocolVersion =
+                host.pairingProtocolVersion ?? existing.pairingProtocolVersion
             next[idx] = existing
+            canonical = existing
         } else if let idx = next.firstIndex(where: { $0.id == host.id }) {
             next[idx] = host
+            canonical = host
         } else {
             next.append(host)
+            canonical = host
         }
+        try write(next)
+        return canonical
+    }
+
+    /// Refreshes the transient LAN routing hint for an already-paired Mac.
+    /// Trust validation happens before this method is called; this store only
+    /// applies the identity-keyed persistence mutation.
+    public func refreshDiscoveredDevice(
+        id: RemoteDeviceID,
+        label: String,
+        baseURL: URL
+    ) throws {
+        ensureLoaded()
+        guard let index = hosts.firstIndex(where: { $0.remoteDeviceID == id })
+        else {
+            return
+        }
+        var next = hosts
+        var host = next[index]
+        guard host.label != label || host.baseURL != baseURL else { return }
+        host.label = label
+        host.baseURL = baseURL
+        next[index] = host
         try write(next)
     }
 
@@ -149,7 +203,12 @@ public final class HostStore {
         guard let data = try? Data(contentsOf: url),
               let list = try? JSONDecoder().decode([Host].self, from: data)
         else { return [] }
-        return list
+        // Protocol v2 deliberately invalidates every prior pairing while
+        // preserving manual/unpaired host records.
+        return list.filter {
+            $0.remoteDeviceID == nil
+                || $0.pairingProtocolVersion == RemoteAccessProtocol.version
+        }
     }
 
     private func sorted(_ list: [Host]) -> [Host] {

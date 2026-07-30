@@ -5,11 +5,21 @@ import GrafttyProtocol
 /// `HostPairingServer.start(validFor:)`, which otherwise restarts an
 /// active pairing session.
 public actor PairingBeginCoordinator {
+    public typealias RoutesProvider =
+        @Sendable (URL) async -> [RemoteConnectionRoute]
+
     private let server: HostPairingServer
+    private let routesProvider: RoutesProvider
     private var startInFlight = false
 
-    public init(server: HostPairingServer) {
+    public init(
+        server: HostPairingServer,
+        routesProvider: @escaping RoutesProvider = {
+            await RemoteAccessRouteDiscovery.routes(lanBaseURL: $0)
+        }
+    ) {
         self.server = server
+        self.routesProvider = routesProvider
     }
 
     public func startIfIdle(
@@ -29,8 +39,13 @@ public actor PairingBeginCoordinator {
         }
 
         do {
-            let payload = try await server.start(validFor: validFor)
-            return .success(Self.rewritePairingURL(in: payload, to: lanBaseURL))
+            let routes = await routesProvider(Self.baseURL(fromPairingURL: lanBaseURL))
+            let payload = try await server.start(
+                validFor: validFor,
+                pairingURL: lanBaseURL,
+                connectionRoutes: routes
+            )
+            return .success(payload)
         } catch {
             return .failure(PairingErrorResponse(
                 code: .internalError,
@@ -48,17 +63,19 @@ public actor PairingBeginCoordinator {
         }
     }
 
-    private static func rewritePairingURL(in payload: PairingPayload, to pairingURL: URL) -> PairingPayload {
-        PairingPayload(
-            version: payload.version,
-            hostDeviceID: payload.hostDeviceID,
-            hostKind: payload.hostKind,
-            hostDisplayName: payload.hostDisplayName,
-            hostPublicKeyFingerprint: payload.hostPublicKeyFingerprint,
-            nonce: payload.nonce,
-            expiry: payload.expiry,
-            pairingURL: pairingURL
-        )
+    private static func baseURL(fromPairingURL pairingURL: URL) -> URL {
+        guard
+            var components = URLComponents(
+                url: pairingURL,
+                resolvingAgainstBaseURL: false
+            )
+        else {
+            return pairingURL
+        }
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url ?? pairingURL
     }
 
     private static func busyError() -> PairingErrorResponse {

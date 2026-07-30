@@ -1,8 +1,9 @@
 import CryptoKit
 import Foundation
-import Testing
-@testable import GrafttyKit
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("PairingBeginCoordinator")
 struct PairingBeginCoordinatorTests {
@@ -31,13 +32,24 @@ struct PairingBeginCoordinatorTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://tailnet.example.com/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://tailnet.example.com/v2/pairing")! }
         )
         let server = HostPairingServer(session: session)
         return Fixture(
             dir: dir,
             server: server,
-            coordinator: PairingBeginCoordinator(server: server)
+            coordinator: PairingBeginCoordinator(
+                server: server,
+                routesProvider: {
+                    [
+                        RemoteConnectionRoute(kind: .lan, baseURL: $0),
+                        RemoteConnectionRoute(
+                            kind: .tailscaleDNS,
+                            baseURL: URL(string: "http://test-mac.tailnet.ts.net:8800")!
+                        )
+                    ]
+                }
+            )
         )
     }
 
@@ -46,19 +58,21 @@ struct PairingBeginCoordinatorTests {
         let fx = try makeFixture()
         defer { fx.cleanup() }
 
-        let lanBaseURL = URL(string: "http://host.local:9999/v1/pairing")!
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
         let result = await fx.coordinator.startIfIdle(validFor: 300, lanBaseURL: lanBaseURL)
 
         switch result {
         case .success(let payload):
-            #expect(payload.version == 1)
+            #expect(payload.version == RemoteAccessProtocol.version)
             #expect(payload.nonce.bytes.isEmpty == false)
             #expect(payload.pairingURL == lanBaseURL)
             if case .awaitingClient(let statePayload, _) = await fx.server.currentState() {
-                #expect(statePayload.nonce == payload.nonce)
+                #expect(statePayload == payload)
             } else {
                 Issue.record("Expected server to be awaiting a client")
             }
+            #expect(payload.routes.map(\.kind) == [.lan, .tailscaleDNS])
+            #expect(payload.routes.first?.baseURL == URL(string: "http://host.local:9999"))
         case .failure(let error):
             Issue.record("Expected payload, got \(String(describing: error.code)): \(error.error)")
         }
@@ -69,7 +83,7 @@ struct PairingBeginCoordinatorTests {
         let fx = try makeFixture()
         defer { fx.cleanup() }
 
-        let lanBaseURL = URL(string: "http://host.local:9999/v1/pairing")!
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
         guard case .success = await fx.coordinator.startIfIdle(validFor: 300, lanBaseURL: lanBaseURL) else {
             Issue.record("Expected first begin to succeed")
             return
@@ -88,7 +102,7 @@ struct PairingBeginCoordinatorTests {
         let fx = try makeFixture()
         defer { fx.cleanup() }
 
-        let lanBaseURL = URL(string: "http://host.local:9999/v1/pairing")!
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
         let results = await withTaskGroup(of: Result<PairingPayload, PairingErrorResponse>.self) { group in
             for _ in 0..<2 {
                 group.addTask {
@@ -124,7 +138,7 @@ struct PairingBeginCoordinatorTests {
         let fx = try makeFixture(now: { clock })
         defer { fx.cleanup() }
 
-        let lanBaseURL = URL(string: "http://host.local:9999/v1/pairing")!
+        let lanBaseURL = URL(string: "http://host.local:9999/v2/pairing")!
         guard case .success(let firstPayload) = await fx.coordinator.startIfIdle(
             validFor: 1,
             lanBaseURL: lanBaseURL

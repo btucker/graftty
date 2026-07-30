@@ -12,6 +12,7 @@ protocol AddRemoteMacPairingDriving: AnyObject {
 final class LocalAddRemoteMacPairingDriver: AddRemoteMacPairingDriving {
     private let session: ClientPairingSession
     private let client: LocalPairingClient
+    private var activePayload: PairingPayload?
 
     init(
         identityStore: ClientIdentityStore,
@@ -38,16 +39,25 @@ final class LocalAddRemoteMacPairingDriver: AddRemoteMacPairingDriving {
 
     func beginPairing(baseURL: URL) async throws -> RemoteVerificationCode {
         let payload = try await client.beginPairing(baseURL: baseURL)
+        activePayload = payload
         try Task.checkCancellation()
         return try await client.introduce(payload: payload)
     }
 
     func confirmPairing() async throws -> PinnedHost {
-        try await client.awaitOutcomeAndConfirm()
+        let host = try await client.awaitOutcomeAndConfirm()
+        activePayload = nil
+        return host
     }
 
     func cancelPairing() {
         session.cancel()
+        guard let payload = activePayload else { return }
+        activePayload = nil
+        let client = client
+        Task {
+            await client.cancelPairing(payload: payload)
+        }
     }
 }
 

@@ -32,7 +32,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
+@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 """)
     func ipad_1_2_hostHeaderRowState() {
         let appState = freshAppState()
@@ -344,7 +344,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (decoded from `GET /worktrees/panes`) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 """)
     func ipad_1_9_sharedRowContract() {
         // Smoke-check the shared accessor.
@@ -373,7 +373,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each `GET /worktrees/panes` snapshot.
+@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 """)
     func ipad_1_11_attentionDotWhenSidebarCollapsed() {
         let appState = freshAppState()
@@ -888,6 +888,50 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
+@spec IPAD-9.1: When iPad selects or refreshes a paired Mac, it shall consume \
+the host-resolved Ghostty keybindings from the authenticated \
+`hostPresentation` response, decode raw action-name keys for forward \
+compatibility, and expose only known `GhosttyAction` chords through \
+`GhosttyKeybindBridge`.
+""")
+    func pairedPresentationProvidesHostKeybindings() {
+        let presentation = RemoteHostPresentation(
+            ghosttyConfig: "",
+            keybindings: GhosttyKeybindingsResponse(bindings: [
+                "new_split:right": ShortcutChord(
+                    key: "d",
+                    modifiers: [.command]
+                ),
+                "host_future_action": ShortcutChord(
+                    key: "x",
+                    modifiers: [.command]
+                ),
+            ])
+        )
+
+        let set = IPadRootLayout.keybindingSet(for: presentation)
+
+        #expect(set.source == .hostResolved)
+        #expect(
+            set.bridge[.newSplitRight]
+                == ShortcutChord(key: "d", modifiers: [.command])
+        )
+        #expect(set.bridge.allChords.count == 1)
+    }
+
+    @Test("""
+@spec IPAD-9.7: If authenticated `hostPresentation` is unavailable or cannot \
+be decoded, iPad shall fall back to the bundled Ghostty default keybindings \
+instead of an empty bridge.
+""")
+    func unavailablePairedPresentationUsesBundledDefaults() {
+        let set = IPadRootLayout.keybindingSet(for: nil)
+
+        #expect(set.source == .bundledFallback)
+        #expect(set.bridge.allChords == GhosttyDefaultKeybinds.chords)
+    }
+
+    @Test("""
 @spec IPAD-9.4: Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
 """)
     func ipad_9_4_spatialNavigationHorizontalSplit() {
@@ -1078,7 +1122,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.17: When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
+@spec IPAD-1.17: When an authenticated panes-state snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 """)
     func ipad_1_17_stalePaneIdClearedWhenWorktreeStillPresent() {
         // Case 1: worktree still present, focused pane vanished, other
@@ -1300,6 +1344,24 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
             wasOwner: false,
             isOwner: false,
             keyboardAllowed: true
+        ))
+    }
+
+    /// IOS-6.10: owner promotion must explicitly ask the mounted Ghostty
+    /// surface to publish its post-font-restore grid. Otherwise the PTY can
+    /// retain the previous owner's dimensions until the next key press.
+    func testOwnerTransitionSynchronizesViewportWithoutWaitingForInput() {
+        XCTAssertTrue(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: false,
+            isOwner: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: true,
+            isOwner: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
+            wasOwner: false,
+            isOwner: false
         ))
     }
 }

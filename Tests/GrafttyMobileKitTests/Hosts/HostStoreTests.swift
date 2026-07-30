@@ -26,7 +26,7 @@ struct HostStoreTests {
     }
 
     @Test("""
-@spec IOS-2.5: `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No saved hosts yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+@spec IOS-2.5: `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No paired Macs yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
 """)
     func initDoesNotReadFromDisk() async throws {
         let url = tempStoreURL()
@@ -60,6 +60,33 @@ struct HostStoreTests {
         #expect(store.hosts.map(\.id).contains(added.id))
     }
 
+    @Test("""
+    @spec REMOTE-1.11: On the protocol-v2 upgrade, the application shall \
+    discard every pre-v2 trusted peer, pinned host, paired saved-host, and \
+    Remote-Mac record and require a new pairing ceremony, while preserving \
+    host/client identity keys and manual unpaired mobile host records.
+    """)
+    func protocolV1PairingsAreDiscardedButManualHostsSurvive() async throws {
+        let url = tempStoreURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let manual = Host(
+            label: "Manual",
+            baseURL: URL(string: "http://manual.local:8799")!
+        )
+        var legacyPairing = Host(
+            label: "Needs Re-pairing",
+            baseURL: URL(string: "http://paired.local:8800")!,
+            remoteDeviceID: RemoteDeviceID(value: "legacy-paired-mac")
+        )
+        legacyPairing.pairingProtocolVersion = 1
+        try JSONEncoder().encode([manual, legacyPairing]).write(to: url)
+
+        let store = HostStore(storeURL: url)
+        await store.loadIfNeeded()
+
+        #expect(store.hosts == [manual])
+    }
+
     /// `.task` can re-fire on view re-creation; the second load must
     /// not re-read the file.
     @Test
@@ -71,11 +98,33 @@ struct HostStoreTests {
         #expect(store.hasLoaded)
     }
 
-    @Test
+    @Test("""
+    @spec IOS-2.3: The application shall persist the saved-host list to a JSON \
+    file in `~/Library/Application Support/<bundleID>/hosts.json`, written \
+    atomically on each mutation. Each paired host record shall carry its stable \
+    device ID, protocol version, advertised routes, and last-known routing hint \
+    in addition to its UI identity and timestamps. The full pinned host public \
+    key shall remain in `PinnedHostStore`.
+    """)
     func addPersistsAcrossInstances() async throws {
         let url = tempStoreURL()
         defer { try? FileManager.default.removeItem(at: url) }
-        let h = Host(label: "mac", baseURL: URL(string: "http://mac.ts.net:8799/")!)
+        let routes = [
+            RemoteConnectionRoute(
+                kind: .lan,
+                baseURL: URL(string: "http://mac.local:8800")!
+            ),
+            RemoteConnectionRoute(
+                kind: .tailscaleDNS,
+                baseURL: URL(string: "http://mac.tailnet.ts.net:8800")!
+            ),
+        ]
+        let h = Host(
+            label: "mac",
+            baseURL: routes[1].baseURL,
+            routes: routes,
+            remoteDeviceID: RemoteDeviceID(value: "paired-mac")
+        )
         do {
             let store = HostStore(storeURL: url)
             try store.add(h)
@@ -86,6 +135,8 @@ struct HostStoreTests {
         await other.loadIfNeeded()
         #expect(other.hosts.count == 1)
         #expect(other.hosts.first == h)
+        #expect(other.hosts.first?.pairingProtocolVersion == RemoteAccessProtocol.version)
+        #expect(other.hosts.first?.routes == routes)
     }
 
     @Test
@@ -151,7 +202,7 @@ struct HostStoreTests {
     @Test("""
     @spec REMOTE-1.7: When `HostStore.add` merges a newly-paired host into an existing same-URL entry, the store shall adopt the incoming `remoteDeviceID` rather than discarding it.
     """)
-    func addMergesRemoteDeviceIDIntoExistingHostBySameURL() throws {
+    func addMergesRemoteDeviceIDIntoExistingHostBySameURL() async throws {
         let (store, url) = makeStore()
         defer { try? FileManager.default.removeItem(at: url) }
         let baseURL = URL(string: "http://mac.local:8799/")!
@@ -163,6 +214,12 @@ struct HostStoreTests {
 
         #expect(store.hosts.count == 1)
         #expect(store.hosts.first?.remoteDeviceID == deviceID)
+        #expect(store.hosts.first?.pairingProtocolVersion == RemoteAccessProtocol.version)
+
+        let reloaded = HostStore(storeURL: url)
+        await reloaded.loadIfNeeded()
+        #expect(reloaded.hosts.count == 1)
+        #expect(reloaded.hosts.first?.remoteDeviceID == deviceID)
     }
 
     /// The merge must be additive, not destructive: re-adding a host whose
@@ -182,6 +239,78 @@ struct HostStoreTests {
 
         #expect(store.hosts.count == 1)
         #expect(store.hosts.first?.remoteDeviceID == deviceID)
+    }
+
+    @Test("""
+    @spec IOS-2.6: When a paired Mac is rediscovered after its LAN address \
+    or listener port changes, GrafttyMobile shall update the saved address \
+    by stable remote device identity without creating a duplicate row.
+    """)
+    func rediscoveryUpdatesAddressByStableDeviceIdentity() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let deviceID = RemoteDeviceID(value: "host-1")
+        try store.add(Host(
+            label: "Old name",
+            baseURL: URL(string: "http://mac.local:51000")!,
+            remoteDeviceID: deviceID
+        ))
+
+        try store.refreshDiscoveredDevice(
+            id: deviceID,
+            label: "Studio",
+            baseURL: URL(string: "http://mac.local:52000")!
+        )
+
+        #expect(store.hosts.count == 1)
+        #expect(store.hosts[0].label == "Studio")
+        #expect(store.hosts[0].baseURL == URL(string: "http://mac.local:52000"))
+    }
+
+    @Test("Re-pair returns the canonical stable-device row")
+    func addReturnsCanonicalRowWhenMergingByDeviceIdentity() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let deviceID = RemoteDeviceID(value: "host-1")
+        let original = Host(
+            label: "Old",
+            baseURL: URL(string: "http://mac.local:51000")!,
+            remoteDeviceID: deviceID
+        )
+        try store.add(original)
+        let incoming = Host(
+            label: "Studio",
+            baseURL: URL(string: "http://mac.local:52000")!,
+            remoteDeviceID: deviceID
+        )
+
+        let saved = try store.add(incoming)
+
+        #expect(saved.id == original.id)
+        #expect(saved.id != incoming.id)
+        #expect(saved.label == "Studio")
+        #expect(saved.baseURL == incoming.baseURL)
+        #expect(store.hosts == [saved])
+    }
+
+    @Test("Pairing a legacy URL row returns its canonical UUID")
+    func addReturnsCanonicalRowWhenMigratingLegacyURL() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let baseURL = URL(string: "http://mac.local:51000")!
+        let legacy = Host(label: "Legacy", baseURL: baseURL)
+        try store.add(legacy)
+        let incoming = Host(
+            label: "Studio",
+            baseURL: baseURL,
+            remoteDeviceID: RemoteDeviceID(value: "host-1")
+        )
+
+        let saved = try store.add(incoming)
+
+        #expect(saved.id == legacy.id)
+        #expect(saved.remoteDeviceID == incoming.remoteDeviceID)
+        #expect(store.hosts == [saved])
     }
 }
 #endif

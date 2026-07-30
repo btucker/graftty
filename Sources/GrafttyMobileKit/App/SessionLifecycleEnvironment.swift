@@ -26,22 +26,12 @@ extension Optional where Wrapped == BiometricGate {
 }
 
 extension SessionClient {
-    /// @spec IOS-10.6
-    /// Preview-role clients use a tighter idle threshold so quiet panes
-    /// release their libghostty display link (via the IOS-10.4 static
-    /// snapshot) quickly. 10s gives bursty processes (build watchers,
-    /// log tailers ticking every few seconds) enough hysteresis to
-    /// stay live without churning surface tear-down + recreation.
-    public nonisolated static let previewIdleThreshold: TimeInterval = 10
-    public nonisolated static let fullscreenIdleThreshold: TimeInterval = .infinity
-
     /// Quiet window before a mounted surface's render pace drops to
-    /// `.reduced` (~1 fps). Distinct from `idleThreshold`, which
-    /// unmounts the surface entirely (previews only).
+    /// `.reduced` (~1 fps).
     public nonisolated static let renderPaceQuietDelay: TimeInterval = 5
     public nonisolated static let reducedRenderPaceInterval: TimeInterval = 1.0
 
-    /// One-stop factory for the WebSocket transport + `SessionClient`
+    /// One-stop factory for the terminal transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
     /// composition + WS construction + SessionClient binding.
@@ -59,8 +49,9 @@ extension SessionClient {
     /// `RemoteHostConnection` (fresh WebRTC + fresh SSH userauth) the
     /// next time the provider is asked. When the provider returns nil
     /// (no coordinator, host unpaired, or negotiation failed) the
-    /// factory falls back to a plain `URLSessionWebSocketClient`
-    /// pointed at `/ws`.
+    /// factory fails closed. The legacy `/ws` transport remains available
+    /// only through an explicit test/compatibility opt-in; production device
+    /// pairing never silently downgrades after authentication fails.
     ///
     /// `clock` / `backoffSchedule` default to `SessionClient`'s own
     /// `productionClock()` / `productionBackoffSchedule()` — the single
@@ -75,6 +66,8 @@ extension SessionClient {
         sessionName: String,
         role: Role = .fullscreen,
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
+        allowLegacyWebSocketFallback: Bool =
+            legacyWebSocketFallbackEnabledByDefault,
         reclaimControlOnOwnerlessConnect: Bool = false,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
@@ -89,62 +82,53 @@ extension SessionClient {
                     throw RemoteSessionTransportError
                         .relayRequiresPairedConnection
                 }
+                guard allowLegacyWebSocketFallback else {
+                    throw RemoteSessionTransportError
+                        .pairedConnectionUnavailable
+                }
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },
             clock: clock,
             backoffSchedule: backoffSchedule,
-            idleThreshold: role == .preview ? previewIdleThreshold : fullscreenIdleThreshold,
             role: role,
             reclaimControlOnOwnerlessConnect: reclaimControlOnOwnerlessConnect
         )
     }
+
+    /// Security-sensitive production default. Tests that specifically cover
+    /// the retired WebSocket transport must opt in at the call site.
+    public nonisolated static let legacyWebSocketFallbackEnabledByDefault =
+        false
 }
 
 enum RemoteSessionTransportError: LocalizedError, Equatable {
     case relayRequiresPairedConnection
+    case pairedConnectionUnavailable
 
     var errorDescription: String? {
         switch self {
         case .relayRequiresPairedConnection:
             return "Remote Mac panes require an active paired connection."
+        case .pairedConnectionUnavailable:
+            return "The authenticated connection to this paired Mac is unavailable."
         }
     }
 }
 
-/// Shared home for `/ws`-fallback observability: distinguishes routine
-/// unpaired usage (`.debug`, silent by default) from a paired host whose
-/// negotiation failed (`.warning`, visible in console) — see
-/// `makeRemoteConnectionProvider`, the single place that logs against
-/// this category now that both the fullscreen and preview-pool dial
-/// paths share one provider factory.
+/// Shared home for authenticated connection observability.
 private let remoteWiringLogger = Logger(
     subsystem: "com.quotably.graftty",
     category: "remote-wiring"
 )
 
-/// How loudly to log an `/ws` fallback (the provider built by
-/// `makeRemoteConnectionProvider` found no `RemoteHostConnection`).
-/// `true` only when there WAS a coordinator to ask AND the host is
-/// paired (per `RemoteConnectionCoordinator.isPaired(_:)` — the SAME
-/// two-part gate `connection(for:)` checks: a non-nil `remoteDeviceID`
-/// AND a matching `PinnedHostStore` entry, not just the former) — that
-/// combination means negotiation itself failed, a regression from the
-/// expected path. Every other combination (no coordinator, or a
-/// coordinator that correctly fast-nil'd an unpaired host) is routine
-/// `/ws` usage and stays quiet.
-func shouldLogFallbackLoudly(hasCoordinator: Bool, hostIsPaired: Bool) -> Bool {
-    hasCoordinator && hostIsPaired
-}
-
 /// Builds the `remoteConnectionProvider` closure `SessionClient.live`
 /// consults on every dial: asks `coordinator.connection(for: host)`
-/// FRESH every time it's invoked, logging once per fallback dial via
-/// `shouldLogFallbackLoudly` when that lookup comes back empty (no
-/// coordinator, unpaired host, or a failed negotiation). Shared by
+/// FRESH every time it's invoked. A nil result is terminal-transport
+/// unavailability, never permission to downgrade to `/ws`. Shared by
 /// `SingleSessionView` (fullscreen) and `WorktreeDetailView`'s preview
 /// pool so both surfaces get the same per-dial re-negotiation behavior
-/// AND the same fallback logging from one place — the preview pool was
+/// AND the same fail-closed logging from one place — the preview pool was
 /// previously silent on this path.
 ///
 /// Written as a free function with an explicit `if let` rather than
@@ -164,62 +148,60 @@ func makeRemoteConnectionProvider(
 ) -> @Sendable () async -> RemoteHostConnection? {
     { [weak coordinator] in
         guard let coordinator else {
-            remoteWiringLogger.debug(
-                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
+            remoteWiringLogger.error(
+                "no connection coordinator for paired host \(host.id, privacy: .public); refusing terminal session \(sessionName, privacy: .public)"
             )
             return nil
         }
         if let connection = await coordinator.connection(for: host) {
             return connection
         }
-        // isPaired is checked here — once per fallback, only on the
-        // path that already knows negotiation came back empty — not
-        // pre-resolved before every dial.
-        if shouldLogFallbackLoudly(hasCoordinator: true, hostIsPaired: await coordinator.isPaired(host)) {
-            remoteWiringLogger.warning(
-                "no RemoteHostConnection for paired host \(host.id, privacy: .public); falling back to /ws for session \(sessionName, privacy: .public)"
-            )
-        } else {
-            remoteWiringLogger.debug(
-                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
-            )
-        }
+        remoteWiringLogger.warning(
+            "authenticated connection unavailable for host \(host.id, privacy: .public); refusing terminal session \(sessionName, privacy: .public)"
+        )
         return nil
+    }
+}
+
+public typealias RemoteWorktreeSnapshotProvider =
+    @MainActor @Sendable (
+        RemoteWorktreeLoadProgress?
+    ) async throws -> [WorktreePanes]
+
+@MainActor
+func makeRemoteWorktreeSnapshotProvider(
+    coordinator: RemoteConnectionCoordinator?,
+    host: Host
+) -> RemoteWorktreeSnapshotProvider? {
+    guard let coordinator else { return nil }
+    return { [weak coordinator] onProgress in
+        guard let coordinator else {
+            throw RemoteConnectionCoordinator.ConnectionError.unavailable
+        }
+        return try await coordinator.worktreePanes(
+            for: host,
+            onProgress: onProgress
+        )
     }
 }
 
 // MARK: - PaneEnvironment
 
-/// Bundles the iPad-only pane façades that ride the per-host
-/// `RemoteHostConnection`'s SSH session: a `WorktreePanesStore` for the
-/// sidebar's worktree+pane snapshot, and a `PaneControlClient` for typed
-/// `split`/`close`/`swap` RPCs. Since W3, both size classes negotiate a
-/// `RemoteHostConnection` for paired hosts, so either path could carry
-/// these channels; both fields are `nil` whenever `RootView`'s
-/// `RemoteConnectionCoordinator` has no live `RemoteHostConnection` for
-/// the host (unpaired, or negotiation failed) — same fallback trigger as
-/// the fullscreen/preview `/ws` paths.
-///
-/// iPad's detail toolbar consumes `paneControlClient` for split actions.
-/// `WorktreeListContent` still polls `GET /worktrees/panes` over HTTP, so
-/// `worktreePanesStore` remains infrastructure for a future live snapshot
-/// consumer rather than the sidebar's current data source.
+/// Bundles the iPad-only pane-control façade riding the per-host
+/// `RemoteHostConnection`'s SSH session. The coordinator separately owns
+/// the one long-lived panes-state subscription consumed by
+/// `WorktreeListContent`; opening one here as well would duplicate every
+/// sidebar snapshot channel.
 public struct PaneEnvironment: Sendable {
-    public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?
 
-    public static let empty = PaneEnvironment(worktreePanesStore: nil, paneControlClient: nil)
+    public static let empty = PaneEnvironment(paneControlClient: nil)
 
-    public init(
-        worktreePanesStore: WorktreePanesStore?,
-        paneControlClient: PaneControlClient?
-    ) {
-        self.worktreePanesStore = worktreePanesStore
+    public init(paneControlClient: PaneControlClient?) {
         self.paneControlClient = paneControlClient
     }
 
     public func close() async {
-        await worktreePanesStore?.unsubscribe()
         await paneControlClient?.close()
     }
 }
@@ -227,62 +209,25 @@ public struct PaneEnvironment: Sendable {
 /// Constructs a `PaneEnvironment` over the supplied per-host
 /// `RemoteHostConnection`. Returns `.empty` when `remoteHost` is nil
 /// (host unpaired, or negotiation failed — either size class) or when
-/// either subsystem channel fails to open.
-///
-/// Construction shape: the channel client is built first with no-op
-/// callbacks (via `RemoteHostConnection.makePanesStateClient`), then the
-/// store is built around it as its driver, then `setCallbacks(...)`
-/// backfills the closures pointing at the store, and finally
-/// `store.subscribe()` performs the single SSH channel open. This avoids
-/// the chicken-and-egg "store needs the client at init, client needs the
-/// store in its callbacks" cycle without a placeholder-driver swap.
-/// The `pane-control` side is simpler — `PaneControlChannelClient` has
-/// no inbound callbacks at construction, so we build, wrap, and open in
-/// one chain.
+/// pane-control subsystem fails to open.
 public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> PaneEnvironment {
     guard let remoteHost else { return .empty }
-    var openedWorktreePanesStore: WorktreePanesStore?
     var openedPaneControlClient: PaneControlClient?
     do {
-        // Build panes-state side: client first (with no-op callbacks),
-        // then store, then backfill callbacks pointing at the store,
-        // then store.subscribe() opens the SSH channel exactly once.
-        let panesClient = try await remoteHost.makePanesStateClient(
-            onSnapshot: { _ in },
-            onClosed: { _ in }
-        )
-        let worktreePanesStore = WorktreePanesStore(driver: panesClient)
-        panesClient.setCallbacks(
-            onSnapshot: { [weak worktreePanesStore] snapshot in
-                await worktreePanesStore?.applySnapshot(snapshot)
-            },
-            onClosed: { [weak worktreePanesStore] reason in
-                await worktreePanesStore?.markClosed(reason: reason)
-            }
-        )
-        try await worktreePanesStore.subscribe()
-        openedWorktreePanesStore = worktreePanesStore
-
-        // Build pane-control side: build client, wrap, open via the
-        // PaneControlClient façade (which forwards to driver.open()).
         let controlChannel = try await remoteHost.makePaneControlClient()
         let paneControlClient = PaneControlClient(driver: controlChannel)
         try await paneControlClient.open()
         openedPaneControlClient = paneControlClient
 
-        return PaneEnvironment(
-            worktreePanesStore: worktreePanesStore,
-            paneControlClient: paneControlClient
-        )
+        return PaneEnvironment(paneControlClient: paneControlClient)
     } catch {
         await openedPaneControlClient?.close()
-        await openedWorktreePanesStore?.unsubscribe()
         return .empty
     }
 }
 #endif
 
-/// Re-dialing while locked would open WSes behind the lock overlay,
+/// Re-dialing while locked would open authenticated channels behind the lock,
 /// defeating the content-hiding guarantee. Takes a Bool rather than
 /// the full `BiometricGate` so this stays platform-agnostic and
 /// testable from `swift test` on macOS (where `BiometricGate` is
@@ -302,9 +247,9 @@ public enum LiveSessionReadiness {
     }
 }
 
-/// Rehydration decision after the post-foreground `/sessions` fetch.
+/// Rehydration decision after the post-foreground paired panes snapshot.
 /// A transport failure resolves to `.dial` so a transient network blip
-/// doesn't strand the user behind a non-retryable banner — WS-level
+/// doesn't strand the user behind a non-retryable banner — terminal-channel
 /// failure handling deals with the genuinely-broken case.
 public enum SessionRehydration {
     public enum Decision: Equatable {
@@ -314,11 +259,16 @@ public enum SessionRehydration {
 
     public static func decide(
         sessionName: String,
-        sessionsResult: Result<[SessionInfo], Error>
+        worktreesResult: Result<[WorktreePanes], Error>
     ) -> Decision {
-        switch sessionsResult {
-        case .success(let sessions):
-            return sessions.contains { $0.name == sessionName } ? .dial : .ended
+        switch worktreesResult {
+        case .success(let worktrees):
+            let stillExists = worktrees.contains { worktree in
+                worktree.layout?.leaves.contains {
+                    $0.sessionName == sessionName
+                } == true
+            }
+            return stillExists ? .dial : .ended
         case .failure:
             return .dial
         }

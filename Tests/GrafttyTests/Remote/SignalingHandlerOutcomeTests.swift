@@ -7,32 +7,15 @@ import GrafttyProtocol
 import WebRTC
 @testable import Graftty
 
-/// `GrafttyApp` wires `POST /v1/rtc/offer` to `WebRTCHostAgent.acceptOffer`
-/// via a closure that maps a thrown error to a `WebServer.SignalingHandlerOutcome`.
-/// `GrafttyApp.signalingOutcome(forAcceptOfferFailure:)` is that mapping,
-/// extracted so it's testable without booting the whole app — see
-/// `GrafttyApp.swift`'s `startup()` for the production call site.
+/// The authenticated paired-access listener maps `WebRTCHostAgent`'s busy
+/// error to a retryable response. The agent itself must reject that second
+/// offer before touching the active connection.
 @Suite("""
 @spec REMOTE-11.1: If the host receives a signaling offer while another \
 remote connection is active, then the application shall respond with a \
 retryable unavailable status and shall not tear down the active connection.
 """)
 struct SignalingHandlerOutcomeTests {
-
-    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
-    /// arrives while a negotiation is already in flight — must map to
-    /// `.unavailable` (503, retryable) rather than `.internalFailure`
-    /// (500), so `RemoteConnectionCoordinator` can tell "temporarily
-    /// busy" apart from a real server error and fall back to `/ws`
-    /// without marking the host permanently bad.
-    @Test
-    func busyErrorMapsToUnavailable() {
-        let outcome = GrafttyApp.signalingOutcome(forAcceptOfferFailure: WebRTCHostAgent.HostError.busy)
-        guard case .unavailable = outcome else {
-            Issue.record("expected .unavailable, got \(outcome)")
-            return
-        }
-    }
 
     /// `WebRTCHostAgent.acceptOffer`'s busy guard (`guard state == .idle
     /// || state == .closed else { throw HostError.busy }`) is the very
@@ -100,18 +83,5 @@ struct SignalingHandlerOutcomeTests {
             .appendingPathComponent("graftty-remote-11-1-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
-    }
-}
-
-@Suite("GrafttyApp.signalingOutcome(forAcceptOfferFailure:) — maps other acceptOffer failures to internalFailure.")
-struct SignalingHandlerOtherFailureTests {
-
-    @Test
-    func otherErrorsMapToInternalFailure() {
-        let outcome = GrafttyApp.signalingOutcome(forAcceptOfferFailure: WebRTCHostAgent.HostError.sdpGenerationFailed)
-        guard case .internalFailure = outcome else {
-            Issue.record("expected .internalFailure, got \(outcome)")
-            return
-        }
     }
 }

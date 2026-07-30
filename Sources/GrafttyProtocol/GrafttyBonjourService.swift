@@ -1,10 +1,9 @@
 import Foundation
-import GrafttyProtocol
 
 public enum GrafttyBonjourService {
     public static let serviceType = "_graftty._tcp."
     public static let domain = "local."
-    public static let discoveryVersion = "1"
+    public static let discoveryVersion = "2"
 
     public enum PairingStatus: String, Codable, Sendable, Hashable {
         case required
@@ -127,7 +126,9 @@ public enum GrafttyBonjourService {
         return value
     }
 
-    private static func isProtocolCompatible(
+    /// Returns whether an advertised exact version or inclusive numeric
+    /// range overlaps the versions this client supports.
+    public static func isProtocolCompatible(
         advertisedProtocol: String,
         supportedProtocolVersions: Set<String>
     ) -> Bool {

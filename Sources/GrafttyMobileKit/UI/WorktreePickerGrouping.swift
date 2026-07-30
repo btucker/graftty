@@ -18,7 +18,7 @@ public enum WorktreePickerGrouping {
 
     /// Group `list` by owning Mac + repository identity, preserving each key's
     /// first-occurrence order. This matches the order
-    /// `GET /worktrees/panes` ships entries in, which mirrors the Mac
+    /// The authenticated panes-state channel ships entries in Mac sidebar
     /// sidebar's `appState.repos` ordering — so the mobile picker
     /// looks "the same" as the desktop sidebar.
     public static func grouped(_ list: [WorktreePanes]) -> [Group] {

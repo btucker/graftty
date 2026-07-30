@@ -12,6 +12,12 @@ import GrafttyProtocol
 /// contexts: all access is serialised through an `NSLock`.
 public final class HostDeviceIDStore: @unchecked Sendable {
 
+    /// The single production store used by every Mac-side role. A Mac can
+    /// simultaneously be a host and a client of another Mac; both roles must
+    /// present the same device ID or a pairing created by one subsystem will
+    /// not authenticate in another.
+    public static let shared = HostDeviceIDStore(directory: defaultDirectory)
+
     // MARK: Storage layout
 
     private static let fileName = "host-device-id.json"

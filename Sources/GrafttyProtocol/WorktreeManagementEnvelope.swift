@@ -1,5 +1,22 @@
 import Foundation
 
+/// Host appearance and shortcut metadata that mobile clients previously
+/// fetched from unauthenticated Web Access HTTP routes. It now rides the
+/// mutually-authenticated worktree-management SSH subsystem with the rest of
+/// the mobile control plane.
+public struct RemoteHostPresentation: Codable, Sendable, Equatable {
+    public let ghosttyConfig: String
+    public let keybindings: GhosttyKeybindingsResponse
+
+    public init(
+        ghosttyConfig: String,
+        keybindings: GhosttyKeybindingsResponse
+    ) {
+        self.ghosttyConfig = ghosttyConfig
+        self.keybindings = keybindings
+    }
+}
+
 /// Repository and branch metadata used by both the native and Mobile
 /// Add Worktree flows. Identifiers are opaque round-trip tokens; clients
 /// must never infer filesystem paths from them.
@@ -79,6 +96,7 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
 
 /// Requests on `worktree-management@graftty.dev`.
 public enum WorktreeManagementRequest: Sendable, Equatable {
+    case hostPresentation
     case listRepositories
     case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?)
     case pullDefaultBranch(repositoryID: String)
@@ -96,6 +114,8 @@ extension WorktreeManagementRequest: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .hostPresentation:
+            try c.encode("host_presentation", forKey: .type)
         case .listRepositories:
             try c.encode("list_repositories", forKey: .type)
         case let .create(repositoryID, worktreeName, branchName, existingSource):
@@ -124,6 +144,8 @@ extension WorktreeManagementRequest: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "host_presentation":
+            self = .hostPresentation
         case "list_repositories":
             self = .listRepositories
         case "create":
@@ -165,6 +187,7 @@ extension WorktreeManagementRequest: Codable {
 }
 
 public enum WorktreeManagementResponse: Sendable, Equatable {
+    case hostPresentation(RemoteHostPresentation)
     case repositories([RemoteRepositoryInfo])
     case created(worktreeID: String, paneID: String)
     case deleted(dismissed: Bool)
@@ -174,13 +197,16 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
 
 extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, repositories, worktreeID, paneID, dismissed, code, message,
-             forceAllowed, shortStatus
+        case type, presentation, repositories, worktreeID, paneID, dismissed,
+             code, message, forceAllowed, shortStatus
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .hostPresentation(let presentation):
+            try c.encode("host_presentation", forKey: .type)
+            try c.encode(presentation, forKey: .presentation)
         case .repositories(let repositories):
             try c.encode("repositories", forKey: .type)
             try c.encode(repositories, forKey: .repositories)
@@ -205,6 +231,13 @@ extension WorktreeManagementResponse: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "host_presentation":
+            self = .hostPresentation(
+                try c.decode(
+                    RemoteHostPresentation.self,
+                    forKey: .presentation
+                )
+            )
         case "repositories":
             self = .repositories(
                 try c.decode([RemoteRepositoryInfo].self, forKey: .repositories)

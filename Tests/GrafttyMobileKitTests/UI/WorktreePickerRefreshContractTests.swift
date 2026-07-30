@@ -33,5 +33,26 @@ struct WorktreePickerRefreshContractTests {
             Issue.record("expected .failed, got \(outcome)")
         }
     }
+
+    @Test("""
+    @spec IOS-4.2: When the authenticated paired connection or panes-state \
+    channel cannot be established, the application shall preserve any prior \
+    snapshot, render an error banner with a manual retry button, and never \
+    retry through the legacy Web Access endpoints.
+    """)
+    func refreshFailurePreservesLastLoadedSnapshot() {
+        let snapshot = [WorktreePanes(
+            path: "/p/wt", displayName: "wt", repoDisplayName: "r",
+            displayBranch: "wt", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil
+        )]
+
+        let next = WorktreeListContent.loadState(
+            afterFailure: "offline",
+            current: .loaded(snapshot)
+        )
+
+        #expect(next == .loaded(snapshot))
+    }
 }
 #endif

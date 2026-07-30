@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("HostPairingSession Tests")
 struct HostPairingSessionTests {
@@ -27,7 +28,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
     }
 
@@ -71,7 +72,7 @@ struct HostPairingSessionTests {
         let payload = try session.startPairing()
 
         #expect(payload.hostPublicKeyFingerprint == expectedFingerprint)
-        #expect(payload.version == 1)
+        #expect(payload.version == RemoteAccessProtocol.version)
 
         if case .awaitingClient(_, _) = session.state {
             // expected
@@ -102,7 +103,7 @@ struct HostPairingSessionTests {
             clientDisplayName: "My iPhone"
         )
 
-        guard case .pendingConfirmation(_, _, _, _, let transcript, let hostCode, _) = session.state else {
+        guard case .pendingConfirmation(_, _, _, _, _, let hostCode, _) = session.state else {
             Issue.record("Expected pendingConfirmation, got \(session.state)")
             return
         }
@@ -114,8 +115,7 @@ struct HostPairingSessionTests {
         let clientTranscript = RemotePairingTranscript(
             hostPublicKey: hostPubKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: transcript.expiry
+            payload: payload
         )
         let clientCode = clientTranscript.verificationCode()
 
@@ -230,6 +230,33 @@ struct HostPairingSessionTests {
         } else {
             Issue.record("Expected .confirmed state")
         }
+    }
+
+    @Test("""
+    @spec REMOTE-1.3: When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
+    """)
+    func confirmPersistsIntroducedPeer() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let session = makeSession(
+            identityStore: identityStore,
+            peerStore: peerStore
+        )
+        _ = try session.startPairing()
+        let clientID = RemoteDeviceID(value: "persisted-client")
+        try session.receiveClientIdentity(
+            clientPublicKey: makeClientPublicKey(byte: 0x7A),
+            clientDeviceID: clientID,
+            clientKind: .iphone,
+            clientDisplayName: "Persisted Phone"
+        )
+
+        _ = try session.confirm()
+
+        #expect(try peerStore.get(id: clientID)?.displayName == "Persisted Phone")
     }
 
     // MARK: - deny() does not insert peer; state becomes .denied
@@ -396,7 +423,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
 
         _ = try session.startPairing(validFor: 300)
@@ -435,7 +462,7 @@ struct HostPairingSessionTests {
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
         )
 
         _ = try session.startPairing(validFor: 300)

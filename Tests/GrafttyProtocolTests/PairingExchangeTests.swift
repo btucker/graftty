@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import GrafttyProtocol
 
 @Suite("PairingExchange wire shape roundtrips")
@@ -35,7 +36,7 @@ struct PairingExchangeRoundtripTests {
         let decoded = try decoder.decode(PairingIntroduceRequest.self, from: data)
 
         #expect(decoded == request)
-        #expect(decoded.version == 1)
+        #expect(decoded.version == RemoteAccessProtocol.version)
     }
 
     // MARK: introduce response
@@ -64,7 +65,7 @@ struct PairingExchangeRoundtripTests {
         let data = try JSONEncoder().encode(request)
         let decoded = try JSONDecoder().decode(PairingAwaitOutcomeRequest.self, from: data)
         #expect(decoded == request)
-        #expect(decoded.version == 1)
+        #expect(decoded.version == RemoteAccessProtocol.version)
     }
 
     // MARK: outcome response (all cases)
@@ -83,7 +84,8 @@ struct PairingExchangeRoundtripTests {
         let codes: [PairingErrorResponse.Code] = [
             .unsupportedVersion, .unknownNonce, .noActiveSession,
             .sessionExpired, .wrongSessionState, .pairingBusy,
-            .rateLimited, .hostBusy, .internalError
+            .rateLimited, .hostBusy, .authenticationFailed,
+            .replayDetected, .internalError,
         ]
         for code in codes {
             let response = PairingErrorResponse(code: code, error: "human readable: \(code.rawValue)")

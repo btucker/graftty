@@ -849,6 +849,9 @@ public actor WebRTCHostAgent {
     static func defaultConfig() -> RTCConfiguration {
         let config = RTCConfiguration()
         config.iceServers = []
+        config.iceTransportPolicy = .all
+        config.candidateNetworkPolicy = .all
+        config.maxIPv6Networks = .max
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
         return config

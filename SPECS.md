@@ -960,8 +960,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
-**WEB-1.13** While the server is listening, the Settings pane shall render a 160 pt QR code inline beneath the Base URL row, encoding the Base URL so that an iOS client can scan it on first run to add a saved host. Alongside the QR, the pane shall render a one-sentence usage hint ("Scan with Graftty") so a reader who has never onboarded a phone before knows what the code is for. Hiding it behind a disclosure is rejected on discoverability grounds: a user who has Web Access on has almost certainly enabled it to onboard a phone, and the QR is the payoff for that action. When the server is not listening, the Base URL row (and therefore the QR) is not rendered at all, per the existing status-gated layout.
-
 **WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
 ### WEB-2.x — Authorization
@@ -1318,15 +1316,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-2.x — Discovery and host storage
 
-**IOS-2.1** The application shall provide a QR-code scanner (`AVFoundation`) that accepts any URL matching `^(http|https)://<host>(:\d+)?/?$` as a new saved host. A QR payload failing this parse shall keep the scanner open and present a non-dismissing toast `QR did not contain a Graftty URL`.
+**IOS-2.1** While adding a Mac, GrafttyMobile shall browse the shared `_graftty._tcp` device-pairing service, accept only protocol-compatible TXT records, and treat the resolved address as an untrusted routing hint until the user confirms the pairing verification code.
 
-**IOS-2.2** The application shall provide manual URL entry as an equivalent alternative to the QR scanner, reaching the same `HostStore.add(_:)` entry point.
+**IOS-2.2** When Bonjour discovery is unavailable, GrafttyMobile shall accept a manually entered HTTP(S) LAN address only as the bootstrap for the same authenticated device-pairing ceremony; it shall never save the address as an unpaired host.
 
-**IOS-2.3** The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each host record shall carry `{id, label, baseURL, lastUsedAt, addedAt}`. Keychain was initially specified here, but a saved host contains no secret (just URL, label, and timestamps), and iOS-simulator Keychain access requires a signing context that ad-hoc-signed Xcode builds without a `DEVELOPMENT_TEAM` cannot obtain (every `SecItemAdd` returns `errSecMissingEntitlement`, -34018). File storage works identically on simulator and device and upgrades cleanly to a per-field Keychain split when we later persist a secret (e.g., a bearer token).
+**IOS-2.3** The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each paired host record shall carry its stable device ID, protocol version, advertised routes, and last-known routing hint in addition to its UI identity and timestamps. The full pinned host public key shall remain in `PinnedHostStore`.
 
-**IOS-2.4** The macOS application's Settings pane shall render the current Base URL (as already composed by `WebURLComposer.baseURL(host:port:)`) as a scannable QR code alongside the existing copy/open actions (`WEB-1.12`). When the server status is not `.listening`, the QR-code area shall render a placeholder explaining why (e.g., "Tailscale unavailable").
+**IOS-2.4** For compatibility with older mobile clients, the macOS application's Web Access settings may continue to render its Web Base URL as a scannable QR code alongside the copy/open actions (`WEB-1.12`). Current GrafttyMobile onboarding shall use authenticated device pairing (`IOS-2.1`) and shall not require Web Access.
 
-**IOS-2.5** `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No saved hosts yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+**IOS-2.5** `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No paired Macs yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+
+**IOS-2.6** When a paired Mac is rediscovered after its LAN address or listener port changes, GrafttyMobile shall update the saved address by stable remote device identity without creating a duplicate row.
 
 ### IOS-3.x — Authentication
 
@@ -1340,19 +1340,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-4.x — Session fetching and rendering
 
-**IOS-4.1** When the user selects a saved host, the application shall issue `GET <baseURL>/worktrees/panes` and render the response as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). This differs from the web client's flat session list (`WEB-5.4`) because the mobile flow is drill-down — worktree → pane tree → single pane — rather than flat selection.
+**IOS-4.1** When the user selects a paired Mac, the application shall consume its authenticated panes-state channel and render the snapshot as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). The mobile flow remains drill-down — worktree → pane tree → single pane.
 
-**IOS-4.2** When `GET /sessions` returns a non-2xx status or a body that fails to decode as `[SessionInfo]`, the application shall render an error banner displaying the status code (or "malformed response") and a manual retry button. A 403 response shall instead render `Not authorized — is this device on your tailnet?` with a link that opens the Tailscale iOS app.
+**IOS-4.2** When the authenticated paired connection or panes-state channel cannot be established, the application shall preserve any prior snapshot, render an error banner with a manual retry button, and never retry through the legacy Web Access endpoints.
 
-**IOS-4.3** When the user selects a session, the application shall open a `URLSessionWebSocketTask` at `<ws-or-wss>://<host>:<port>/ws?session=<urlEncoded name>` and attach it to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
+**IOS-4.3** When the user selects a pane, the application shall open that pane's terminal subsystem over the mutually authenticated paired connection and attach its byte stream to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
 
-**IOS-4.4** On WebSocket open to an owner-aware Graftty server, the application shall send an initial `hello` control frame containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid (falling back to the authoritative grid or daemon fallback before first layout). Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
+**IOS-4.4** When the selected terminal transport supports owner-aware control frames, the application shall send an initial `hello` containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid. The authenticated terminal subsystem may use its direct resize protocol.
 
-**IOS-4.5** Server-sent binary WebSocket frames shall be forwarded to `InMemoryTerminalSession.receive(_:)` unmodified. User input emitted by libghostty via the `writeHandler` callback shall be sent as a binary WebSocket frame, mirroring `WEB-3.4` and `WEB-5.2`.
+**IOS-4.5** Binary bytes received from the authenticated terminal subsystem shall be forwarded to `InMemoryTerminalSession.receive(_:)` unmodified. User input emitted by libghostty via the `writeHandler` callback shall be sent back through the same authenticated terminal byte stream.
 
 **IOS-4.6** On subsequent fullscreen terminal resizes (viewport change, keyboard appearance, rotation), the application shall memoize the local viewport immediately. If and only if the current ownership snapshot confirms this iOS client as display owner, it shall send `ownerResize(clientID, epoch, cols, rows)`; follower, ownerless, and preview clients shall not resize the remote PTY. Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
 
-**IOS-4.7** When the user selects a saved host, the application shall issue `GET <baseURL>/ghostty-config` and, if the response is a non-empty 2xx body, pass it to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting any `TerminalPaneView`. A missing or empty response is a non-fatal condition — the client shall fall back to `libghostty-spm`'s default configuration. The endpoint is a concatenation of the user's on-disk Ghostty configs (`$XDG_CONFIG_HOME/ghostty/config`, then `~/Library/Application Support/com.mitchellh.ghostty/config`) in the same priority order the Mac app applies them at launch, so terminals render with the same fonts, theme, and colors as the desktop.
+**IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
 **IOS-4.8** While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. The user returns to the worktree detail via the system edge-swipe-back gesture rather than an explicit button.
 
@@ -1360,13 +1360,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.10** When the user selects a worktree from the picker (`IOS-4.1`), the application shall present a second screen rendering the worktree's pane split tree faithfully to the Mac sidebar's layout: each split respects its `direction` (horizontal/vertical) and `ratio`; each leaf is a tappable tile labelled with the pane's current title (or the session name when no title has been set yet). Tapping a tile pushes the fullscreen terminal for that session.
 
-**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 
 **IOS-4.12** While the worktree-detail screen is rendering live pane previews (`IOS-4.10`), each `PaneTile` shall own its own `TerminalController` whose font-size is computed dynamically from the tile's geometry (`tileWidth / authoritativeCols × monospaceAspect`) so the authoritative grid renders at scale 1 within the tile. The font is updated via `setTerminalConfiguration().fontSize(_)` whenever the tile width or authoritative column count changes — including device rotation, since landscape gives each tile a different width. The preview shall not apply a runtime `scaleEffect` driven by libghostty's reported `cellWidthPoints`: that value is shared with the fullscreen view (`IOS-4.11`), which renders at a much larger font, so a feedback-loop safety-net would oscillate or progressively shrink the preview when the user navigates between the tile and fullscreen. Preview legibility is sacrificed for fit: previews communicate pane shape and live activity, not readable text. The fullscreen view (`IOS-4.11`) keeps the iOS-scaled font as it remains the primary read surface.
 
 **IOS-4.13** When GrafttyMobile constructs a `TerminalController` from the Mac-provided Ghostty config (`IOS-4.7`), it shall not install libghostty-spm's built-in light/dark `TerminalTheme` overlay. UIKit trait changes may still report the phone's `.light` or `.dark` color scheme to libghostty, but the rendered config shall continue to use the Mac config's background, foreground, palette, and theme-derived colors rather than switching to GhosttyTerminal's default Alabaster/Afterglow themes.
 
-**IOS-4.14** When a worktree's pane layout is a single leaf, the worktree-detail screen shall render a static labeled tile rather than a live terminal preview, and shall not open a preview WebSocket for that pane.
+**IOS-4.14** When a worktree's pane layout is a single leaf, the worktree-detail screen shall render a static labeled tile rather than a live terminal preview, and shall not open a preview terminal channel for that pane.
 
 **IOS-4.15** When the fetched Ghostty config specifies a single `theme =` value (not a `light:X,dark:Y` pair), the application shall force `overrideUserInterfaceStyle` on the terminal container view to match that theme's appearance so that libghostty-spm's `traitCollectionDidChange` → `setColorScheme` path never substitutes the system-default appearance over the user's explicit choice.
 
@@ -1382,7 +1382,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.21** When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
 
-**IOS-4.22** When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
+**IOS-4.22** When the explicit legacy Web Access compatibility path constructs a session WebSocket URL, it shall advertise the display-client kind via a `client=ios` query parameter so older daemons classify the connection as `.ios`. Production paired-device sessions shall use the authenticated terminal subsystem and shall not select this compatibility path automatically (`IOS-4.28`).
 
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
@@ -1393,6 +1393,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
 
 **IOS-4.27** When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
+
+**IOS-4.28** When an authenticated connection to a paired Mac is unavailable, GrafttyMobile shall fail closed and shall not downgrade the terminal to the legacy unauthenticated `/ws` transport.
+
+**IOS-4.29** While the initial authenticated worktree load remains incomplete for at least 750 milliseconds, the application shall reveal the current connection stage and elapsed time. Loads that finish sooner shall keep the loading presentation compact.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -1420,7 +1424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is visible for the `UIViewRepresentable`-wrapped `UITerminalView` first responder, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. The application shall observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as explicit bottom padding so the terminal and the `IOS-6.1` control bar both remain above the keyboard.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
 
 **IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
@@ -1440,13 +1444,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-7.x — Lifecycle
 
-**IOS-7.1** When the application enters the background, it shall close every active `URLSessionWebSocketTask` with WebSocket close code 1000 (normal closure) and tear down every `InMemoryTerminalSession`. The server's response (SIGTERM to each `zmx attach` child per `WEB-4.5`) leaves the zmx daemon alive per `ZMX-4.4`, so reconnect picks up the same session.
+**IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel, invalidate each paired host connection, and tear down every `InMemoryTerminalSession`. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session.
 
-**IOS-7.2** When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall re-fetch `/sessions` for each host whose panes were previously active and then re-dial every pane whose session name is still present in the response, re-mounting its `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
+**IOS-7.2** When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall fetch a fresh authenticated panes-state snapshot for each paired Mac whose panes were previously active and re-dial every pane whose session name is still present, re-mounting its `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
 
-**IOS-7.3** When a previously active pane's session name is absent from the fresh `/sessions` response (e.g., the worktree was stopped on the Mac while the iOS app was backgrounded), the application shall mark that pane as `sessionEnded` with a non-retryable banner and shall not open a WebSocket for it. The banner shall offer "Back to sessions" as the only action.
+**IOS-7.3** When a previously active pane's session name is absent from the fresh authenticated panes-state snapshot (e.g., the worktree was stopped on the Mac while the iOS app was backgrounded), the application shall mark that pane as `sessionEnded` with a non-retryable banner and shall not open a terminal channel for it. The banner shall offer "Back to worktrees" as the only action.
 
-**IOS-7.4** On WebSocket failure (upgrade failure, read/write error, or close frame not initiated by the app) for a pane whose session name is still listed in `/sessions`, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to sessions" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
+**IOS-7.4** On authenticated terminal-channel failure for a pane whose session name is still present in the latest paired panes-state snapshot, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to worktrees" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -1460,15 +1464,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-9.x — Creating worktrees from the iOS client
 
-**IOS-9.1** The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by `POST /worktrees` (`WEB-7.2`): a repository picker populated from `GET /repos` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
+**IOS-9.1** The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by the authenticated `.createWorktree` request: a repository picker populated by `.listRepositories` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 
 **IOS-9.2** Both the worktree-name and branch-name fields shall sanitize input live with `WorktreeNameSanitizer` (same allowed set as the Mac sheet and the web client: `A-Z a-z 0-9 . _ - /`, consecutive disallowed chars collapsing to a single `-`). The branch field shall auto-mirror the worktree-name field until the user types a branch that differs, at which point the mirror breaks and further edits to the worktree field stop overwriting the branch. On submit, both fields shall be trimmed of leading/trailing whitespace plus `-` and `.` (matching the macOS sheet's `submitTrimSet` and the web client's `trimForSubmit`). The sheet's Create button shall be disabled while either field is empty after trim.
 
-**IOS-9.3** On submit, the application shall issue `POST <baseURL>/worktrees` with `{repoPath, worktreeName, branchName}` and handle the response per the server's status-code contract (`WEB-7.3` / `WEB-7.4`):
+**IOS-9.3** On submit, the application shall send `.createWorktree(repositoryID, worktreeName, branchName)` over the authenticated worktree-management channel and handle structured success or failure responses:
 
-**IOS-9.4** When `GET /repos` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent, same stance as `WEB-7.7`).
+**IOS-9.4** When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 
-**IOS-9.5** While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
+**IOS-9.5** While an authenticated `.createWorktree` request is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the request resolves (success or failure) all controls shall re-enable.
 
 **IOS-9.6** When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in an in-flight state (`.creating` / `.deleting`), the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for in-flight worktrees shall expose no swipe action.
 
@@ -1476,27 +1480,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.8** If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
 
-**IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the `GET /worktrees/panes` response rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
+**IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the authenticated panes-state snapshot rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
 **IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
 
 ### IOS-10.x
 
-**IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
+**IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active terminal channels and unmount live `TerminalPaneView` instances so libghostty's display link stops. Entering `.background` shall additionally suspend and invalidate every paired host connection; `.inactive` may retain the shared paired connection for prompt foreground recovery.
 
 **IOS-10.2** When `WorktreeDetailView` is active with a multi-leaf layout, the application shall create a live preview `SessionClient` for every leaf so each pane tile renders a real-time preview rather than a static title.
 
-**IOS-10.3** When a `SessionClient` has received no PTY bytes and processed no user input for ≥ `idleThreshold` (default 30s), the application shall transition its `renderActivity` to `.idle`.
-
-**IOS-10.4** While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
-
-**IOS-10.5** When a `SessionClient` is `.idle` and a new PTY byte is received, the application shall transition its `renderActivity` to `.active` and remount `TerminalPaneView` within one runloop tick.
-
-**IOS-10.6** When `SessionClient.live` is constructed with role `.preview`, the application shall set the client's `idleThreshold` shorter than the fullscreen default so off-input preview panes flip to the static-snapshot state and free libghostty's display link, while still letting fresh PTY bytes wake the live renderer per IOS-10.5.
-
-**IOS-10.7** Fullscreen mobile terminals shall not enter snapshot-idle mode by default. The snapshot optimization is safe for pane previews, but in fullscreen it unmounts `TerminalPaneView` while UIKit may still own the keyboard responder, collapsing the keyboard and risking libghostty teardown against an active view.
-
-**IOS-10.8** While a terminal session has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted.
+**IOS-10.8** While any terminal session, including a pane preview, has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted. Quiet-state optimization shall not free and remount a Ghostty surface because QuartzCore may still hold a pending Metal draw for that surface.
 
 **IOS-10.9** When output, input, or a touch arrives while a surface is render-reduced, the application shall restore full render pace immediately.
 
@@ -1532,7 +1526,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 
-**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
+**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 
 **IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
 
@@ -1546,11 +1540,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.8** While `IPadRootLayout` is presented, the application shall apply the shared `themedSidebarSurface(_:)` view modifier (defined in `GrafttyProtocol`) to the sidebar container so the host's ghostty `sidebarBackground` (a ±6% luminance shift of the terminal background) reads through a transparent `List`, and shall apply `.preferredColorScheme(theme.isDark ? .dark : .light)` to the layout so the system-rendered sidebar-toggle button picks contrast that matches the sidebar's text color. The Mac sidebar consumes the same `themedSidebarSurface` helper, single-sourcing the surface treatment.
 
-**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (decoded from `GET /worktrees/panes`) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 
 **IPAD-1.10** While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
 
-**IPAD-1.11** When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each `GET /worktrees/panes` snapshot.
+**IPAD-1.11** When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 
 **IPAD-1.12** While `IPadRootLayout` is presented, the sidebar shall render a 1pt trailing border at `appState.theme.foreground.opacity(0.15)` along its leading-of-detail edge so the column boundary reads as a thin divider, matching the Mac sidebar's automatic `NSSplitView` divider. The overlay ignores safe areas so the border runs the full sidebar height including under the nav bar and home indicator.
 
@@ -1562,7 +1556,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.16** While `IPadRootLayout` is presented, the worktree row whose `path == appState.selectedWorktreePath` shall render with a rounded-rectangle highlight at `theme.foreground.opacity(0.16)` spanning the worktree row and its pane rows (Mac-parity active-block treatment), and the pane row whose `leaf.sessionName == appState.focusedPaneId` shall use the brightest brightness bucket via `theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, …)` plus a bolded arrow + semibold title. Non-focused panes in the active worktree use the active-worktree bucket; panes in other worktrees use the inactive bucket.
 
-**IPAD-1.17** When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
+**IPAD-1.17** When an authenticated panes-state snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
 **IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
 
@@ -1656,7 +1650,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-9.x
 
-**IPAD-9.1** When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
+**IPAD-9.1** When iPad selects or refreshes a paired Mac, it shall consume the host-resolved Ghostty keybindings from the authenticated `hostPresentation` response, decode raw action-name keys for forward compatibility, and expose only known `GhosttyAction` chords through `GhosttyKeybindBridge`.
 
 **IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
 
@@ -1668,7 +1662,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.6** iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
 
-**IPAD-9.7** If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
+**IPAD-9.7** If authenticated `hostPresentation` is unavailable or cannot be decoded, iPad shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
 
 **IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
 
@@ -1834,8 +1828,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
 
-**REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
-
 **REMOTE-1.5** When a pairing completes with host confirmation, the client shall pin the host identity and record the host device identifier on the saved host entry.
 
 **REMOTE-1.6** When the user cancels a pairing ceremony while it is parked in .awaitingConfirmation, the client shall tear down the in-flight await-outcome request and pin nothing, even if a host confirmation for that ceremony arrives afterward.
@@ -1848,9 +1840,25 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.10** When `ClientDeviceIDStore` cannot read or persist a client device identity, `PairDeviceFlowView.buildModel` shall return nil so the view can present a failed state whose Retry re-attempts model construction, rather than an indefinite connecting spinner.
 
+**REMOTE-1.11** On the protocol-v2 upgrade, the application shall discard every pre-v2 trusted peer, pinned host, paired saved-host, and Remote-Mac record and require a new pairing ceremony, while preserving host/client identity keys and manual unpaired mobile host records.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
+
+**REMOTE-2.2** Before allocating WebRTC resources, the paired-access listener shall verify a signed challenge request from a currently trusted client, return a short-lived host-signed challenge, bind that challenge to at most one unique signed SDP offer, and return a cached answer for exact offer retries.
+
+**REMOTE-2.3** The client shall verify the challenge and signaling answer with the full host public key pinned during pairing; a missing, expired, mismatched, or invalid signature shall fail closed without trying an unauthenticated signaling endpoint.
+
+**REMOTE-2.4** Native paired-device access shall use one stable dual-stack HTTP listener on port 8800 for LAN and Tailscale-IP routes. Browser Web Access shall remain an independent HTTPS service and shall not be used for native signaling.
+
+**REMOTE-2.5** When connecting to a paired host, the client shall race authenticated challenge probes across trusted routes, construct exactly one signed SDP offer, race that same offer across the routes so one blackhole cannot exhaust the challenge, and persist the winning route plus routes refreshed in the signed answer.
+
+**REMOTE-2.6** Tailscale route discovery and refresh shall not depend on Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route available; later recovery shall restore Tailscale-IP routes. Native clients shall not advertise plaintext fully qualified MagicDNS routes that Apple Transport Security rejects.
+
+**REMOTE-2.7** If the stable paired-access listener cannot bind, Settings shall show a clear error and shall not begin a pairing ceremony that advertises the unavailable listener.
+
+**REMOTE-2.8** Production native connections shall reject the protocol-v1 signaling route and shall use the paired identity keys on both LAN and Tailscale.
 
 ### REMOTE-3.x — Revocation
 
@@ -1946,13 +1954,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
 
-**REMOTE-12.2** While any host pairing ceremony is active, the application shall reject attempts to start a second ceremony through another host pairing entry point without replacing the active session.
+**REMOTE-12.2** Once a client identity has been introduced, the host shall reject a second pairing bootstrap without replacing the active verification ceremony; an unintroduced bootstrap may be safely replaced.
 
 **REMOTE-12.3** When a discovered Remote Mac service disappears, the application shall remove its transient candidate instead of continuing to present stale reachability.
 
-**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, and signaling base URL.
+**REMOTE-12.4** When Mac-to-Mac pairing succeeds, the application shall persist a saved Remote Mac using the pinned host identity, fingerprint, display name, protocol version, and advertised LAN/Tailscale routes.
 
-**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall exchange a WebRTC offer at its last known LAN base URL, apply the answer, and open the remote pane-state/control environment.
+**REMOTE-12.5** When the user connects to a saved Remote Mac, the application shall complete the authenticated route race and signed WebRTC offer/answer exchange, apply the answer, and open the remote pane-state and pane-control environment.
 
 **REMOTE-12.6** While connection setup or a live connection already exists for a Remote Mac identity, repeated connect requests shall reuse that one connection rather than dial another transport.
 
@@ -1978,7 +1986,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
 
-**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip host presentation, repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
 
 **REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
 

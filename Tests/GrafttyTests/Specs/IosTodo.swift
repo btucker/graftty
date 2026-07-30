@@ -24,22 +24,7 @@ struct IosTodo {
     func ios_1_4() async throws { }
 
     @Test("""
-@spec IOS-2.1: The application shall provide a QR-code scanner (`AVFoundation`) that accepts any URL matching `^(http|https)://<host>(:\\d+)?/?$` as a new saved host. A QR payload failing this parse shall keep the scanner open and present a non-dismissing toast `QR did not contain a Graftty URL`.
-""", .disabled("not yet implemented"))
-    func ios_2_1() async throws { }
-
-    @Test("""
-@spec IOS-2.2: The application shall provide manual URL entry as an equivalent alternative to the QR scanner, reaching the same `HostStore.add(_:)` entry point.
-""", .disabled("not yet implemented"))
-    func ios_2_2() async throws { }
-
-    @Test("""
-@spec IOS-2.3: The application shall persist the saved-host list to a JSON file in `~/Library/Application Support/<bundleID>/hosts.json`, written atomically on each mutation. Each host record shall carry `{id, label, baseURL, lastUsedAt, addedAt}`. Keychain was initially specified here, but a saved host contains no secret (just URL, label, and timestamps), and iOS-simulator Keychain access requires a signing context that ad-hoc-signed Xcode builds without a `DEVELOPMENT_TEAM` cannot obtain (every `SecItemAdd` returns `errSecMissingEntitlement`, -34018). File storage works identically on simulator and device and upgrades cleanly to a per-field Keychain split when we later persist a secret (e.g., a bearer token).
-""", .disabled("not yet implemented"))
-    func ios_2_3() async throws { }
-
-    @Test("""
-@spec IOS-2.4: The macOS application's Settings pane shall render the current Base URL (as already composed by `WebURLComposer.baseURL(host:port:)`) as a scannable QR code alongside the existing copy/open actions (`WEB-1.12`). When the server status is not `.listening`, the QR-code area shall render a placeholder explaining why (e.g., "Tailscale unavailable").
+@spec IOS-2.4: For compatibility with older mobile clients, the macOS application's Web Access settings may continue to render its Web Base URL as a scannable QR code alongside the copy/open actions (`WEB-1.12`). Current GrafttyMobile onboarding shall use authenticated device pairing (`IOS-2.1`) and shall not require Web Access.
 """, .disabled("not yet implemented"))
     func ios_2_4() async throws { }
 
@@ -59,27 +44,22 @@ struct IosTodo {
     func ios_3_3() async throws { }
 
     @Test("""
-@spec IOS-4.1: When the user selects a saved host, the application shall issue `GET <baseURL>/worktrees/panes` and render the response as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). This differs from the web client's flat session list (`WEB-5.4`) because the mobile flow is drill-down — worktree → pane tree → single pane — rather than flat selection.
+@spec IOS-4.1: When the user selects a paired Mac, the application shall consume its authenticated panes-state channel and render the snapshot as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). The mobile flow remains drill-down — worktree → pane tree → single pane.
 """, .disabled("not yet implemented"))
     func ios_4_1() async throws { }
 
     @Test("""
-@spec IOS-4.2: When `GET /sessions` returns a non-2xx status or a body that fails to decode as `[SessionInfo]`, the application shall render an error banner displaying the status code (or "malformed response") and a manual retry button. A 403 response shall instead render `Not authorized — is this device on your tailnet?` with a link that opens the Tailscale iOS app.
-""", .disabled("not yet implemented"))
-    func ios_4_2() async throws { }
-
-    @Test("""
-@spec IOS-4.3: When the user selects a session, the application shall open a `URLSessionWebSocketTask` at `<ws-or-wss>://<host>:<port>/ws?session=<urlEncoded name>` and attach it to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
+@spec IOS-4.3: When the user selects a pane, the application shall open that pane's terminal subsystem over the mutually authenticated paired connection and attach its byte stream to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
 """, .disabled("not yet implemented"))
     func ios_4_3() async throws { }
 
     @Test("""
-@spec IOS-4.4: On WebSocket open to an owner-aware Graftty server, the application shall send an initial `hello` control frame containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid (falling back to the authoritative grid or daemon fallback before first layout). Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
+@spec IOS-4.4: When the selected terminal transport supports owner-aware control frames, the application shall send an initial `hello` containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid. The authenticated terminal subsystem may use its direct resize protocol.
 """, .disabled("not yet implemented"))
     func ios_4_4() async throws { }
 
     @Test("""
-@spec IOS-4.5: Server-sent binary WebSocket frames shall be forwarded to `InMemoryTerminalSession.receive(_:)` unmodified. User input emitted by libghostty via the `writeHandler` callback shall be sent as a binary WebSocket frame, mirroring `WEB-3.4` and `WEB-5.2`.
+@spec IOS-4.5: Binary bytes received from the authenticated terminal subsystem shall be forwarded to `InMemoryTerminalSession.receive(_:)` unmodified. User input emitted by libghostty via the `writeHandler` callback shall be sent back through the same authenticated terminal byte stream.
 """, .disabled("not yet implemented"))
     func ios_4_5() async throws { }
 
@@ -89,7 +69,7 @@ struct IosTodo {
     func ios_4_6() async throws { }
 
     @Test("""
-@spec IOS-4.7: When the user selects a saved host, the application shall issue `GET <baseURL>/ghostty-config` and, if the response is a non-empty 2xx body, pass it to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting any `TerminalPaneView`. A missing or empty response is a non-fatal condition — the client shall fall back to `libghostty-spm`'s default configuration. The endpoint is a concatenation of the user's on-disk Ghostty configs (`$XDG_CONFIG_HOME/ghostty/config`, then `~/Library/Application Support/com.mitchellh.ghostty/config`) in the same priority order the Mac app applies them at launch, so terminals render with the same fonts, theme, and colors as the desktop.
+@spec IOS-4.7: When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 """, .disabled("not yet implemented"))
     func ios_4_7() async throws { }
 
@@ -109,7 +89,7 @@ struct IosTodo {
     func ios_4_10() async throws { }
 
     @Test("""
-@spec IOS-4.11: When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+@spec IOS-4.11: When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The authenticated terminal channel is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 """, .disabled("not yet implemented"))
     func ios_4_11() async throws { }
 
@@ -149,7 +129,7 @@ struct IosTodo {
     func ios_8_5() async throws { }
 
     @Test("""
-@spec IOS-9.1: The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by `POST /worktrees` (`WEB-7.2`): a repository picker populated from `GET /repos` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
+@spec IOS-9.1: The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by the authenticated `.createWorktree` request: a repository picker populated by `.listRepositories` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 """, .disabled("not yet implemented"))
     func ios_9_1() async throws { }
 
@@ -159,17 +139,17 @@ struct IosTodo {
     func ios_9_2() async throws { }
 
     @Test("""
-@spec IOS-9.3: On submit, the application shall issue `POST <baseURL>/worktrees` with `{repoPath, worktreeName, branchName}` and handle the response per the server's status-code contract (`WEB-7.3` / `WEB-7.4`):
+@spec IOS-9.3: On submit, the application shall send `.createWorktree(repositoryID, worktreeName, branchName)` over the authenticated worktree-management channel and handle structured success or failure responses:
 """, .disabled("not yet implemented"))
     func ios_9_3() async throws { }
 
     @Test("""
-@spec IOS-9.4: When `GET /repos` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent, same stance as `WEB-7.7`).
+@spec IOS-9.4: When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 """, .disabled("not yet implemented"))
     func ios_9_4() async throws { }
 
     @Test("""
-@spec IOS-9.5: While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
+@spec IOS-9.5: While an authenticated `.createWorktree` request is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the request resolves (success or failure) all controls shall re-enable.
 """, .disabled("not yet implemented"))
     func ios_9_5() async throws { }
 

@@ -19,8 +19,8 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
         public var maxBodyBytes: Int
 
         public init(
-            port: Int = 0,
-            bindHost: String = "0.0.0.0",
+            port: Int = RemoteAccessProtocol.pairedAccessPort,
+            bindHost: String = "::",
             maxBodyBytes: Int = 1_048_576
         ) {
             self.port = port
@@ -45,6 +45,7 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
         var group: EventLoopGroup?
         var listener: Channel?
         var childChannels: [ObjectIdentifier: Channel] = [:]
+        var stopping = false
     }
 
     public init(config: Config = .init(), routeHandler: LANRemoteAccessRouteHandler) {
@@ -76,7 +77,6 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                     ))
                 }
             }
-
         do {
             state.listener = try bootstrap.bind(host: config.bindHost, port: config.port).wait()
             lock.unlock()
@@ -89,17 +89,28 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
     }
 
     public func stop() {
-        let snapshot = lock.withLock {
-            let snapshot = state
-            state = LifecycleState()
-            return snapshot
+        let listenerAndGroup: (Channel?, EventLoopGroup)? = lock.withLock {
+            guard let group = state.group, !state.stopping else {
+                return nil
+            }
+            state.stopping = true
+            return (state.listener, group)
         }
+        guard let (listener, group) = listenerAndGroup else { return }
 
-        try? snapshot.listener?.close().wait()
-        for child in snapshot.childChannels.values {
+        // Stop accepts first, then take the child snapshot. Taking the entire
+        // lifecycle snapshot before closing the listener can miss a child
+        // whose accept was already queued, leaving it to schedule work after
+        // its event loop has shut down.
+        try? listener?.close().wait()
+        let children = lock.withLock { Array(state.childChannels.values) }
+        for child in children {
             try? child.close().wait()
         }
-        try? snapshot.group?.syncShutdownGracefully()
+        try? group.syncShutdownGracefully()
+        lock.withLock {
+            state = LifecycleState()
+        }
     }
 
     private func registerChildChannel(_ channel: Channel) {
@@ -131,6 +142,7 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
         private var acceptingRequest = true
         private var responseStarted = false
         private var routeTask: Task<Void, Never>?
+        private var cancelRouteTaskOnDisconnect = true
 
         init(routeHandler: LANRemoteAccessRouteHandler, maxBodyBytes: Int) {
             self.routeHandler = routeHandler
@@ -176,6 +188,12 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                 }
 
                 let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+                // If an authenticated offer's response route disappears, the
+                // host must still finish negotiation and cache its signed
+                // answer so an identical LAN/Tailscale retry can recover it.
+                // Pairing long-polls and every other route remain cancellable.
+                cancelRouteTaskOnDisconnect =
+                    path != "/\(RemoteAccessProtocol.offerPath)"
                 let requestBaseURL = Self.requestBaseURL(from: head.headers)
                 let requestSource = context.channel.remoteAddress?.ipAddress ?? "unknown"
                 let routeHandler = self.routeHandler
@@ -204,7 +222,9 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
         }
 
         func channelInactive(context: ChannelHandlerContext) {
-            routeTask?.cancel()
+            if cancelRouteTaskOnDisconnect {
+                routeTask?.cancel()
+            }
             routeTask = nil
         }
 

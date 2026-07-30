@@ -39,6 +39,25 @@ struct WorktreePanesStoreTests {
         #expect(await store.connectionState == .closed(reason: "network-error"))
     }
 
+    @Test func closeDuringOpenCannotBeOverwrittenAsSubscribed() async throws {
+        let driver = ClosingDuringOpenDriver()
+        let store = WorktreePanesStore(driver: driver)
+        driver.onOpen = {
+            await store.markClosed(reason: "closed-during-open")
+        }
+
+        await #expect(throws: WorktreePanesStore.SubscriptionError.closedDuringOpen(
+            reason: "closed-during-open"
+        )) {
+            try await store.subscribe()
+        }
+        #expect(
+            await store.connectionState
+                == .closed(reason: "closed-during-open")
+        )
+        #expect(driver.closed)
+    }
+
     private func makeWorktrees(count: Int) -> [WorktreePanes] {
         (0..<count).map { idx in
             WorktreePanes(
@@ -54,6 +73,33 @@ struct WorktreePanesStoreTests {
                 layout: .leaf(sessionName: "s\(idx)", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
             )
         }
+    }
+}
+
+private final class ClosingDuringOpenDriver:
+    PanesStateChannelDriver,
+    @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock(
+        initialState: (
+            onOpen: Optional<@Sendable () async -> Void>.none,
+            closed: false
+        )
+    )
+
+    var onOpen: (@Sendable () async -> Void)? {
+        get { lock.withLock { $0.onOpen } }
+        set { lock.withLock { $0.onOpen = newValue } }
+    }
+
+    var closed: Bool { lock.withLock { $0.closed } }
+
+    func open() async throws {
+        let callback = lock.withLock { $0.onOpen }
+        await callback?()
+    }
+
+    func close() {
+        lock.withLock { $0.closed = true }
     }
 }
 

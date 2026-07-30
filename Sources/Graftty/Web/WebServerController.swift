@@ -59,10 +59,6 @@ final class WebServerController: ObservableObject {
     /// main actor. Nil before injection causes the endpoint to respond
     /// `503 service unavailable`.
     private var worktreeRemover: (@Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome)?
-    /// Drives `POST /v1/rtc/offer`. Nil (default) causes the endpoint
-    /// to respond `503 service unavailable`. Injected by `GrafttyApp`
-    /// once `WebRTCHostAgent` is constructed.
-    private var signalingHandler: (@Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome)?
     /// TERM-11.5: counts remote clients per zmx session so Mac panes
     /// know a remote viewer is attached. Nil before injection — the
     /// `WebServer.Config` default disables tracking. Injected by
@@ -205,16 +201,6 @@ final class WebServerController: ObservableObject {
         _ remover: @escaping @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome
     ) {
         worktreeRemover = remover
-        rebuildIfRunning()
-    }
-
-    /// Install the signaling handler for `POST /v1/rtc/offer`. Pre-injection
-    /// requests get `503 service unavailable`. Wired in `GrafttyApp.startup()`
-    /// once `WebRTCHostAgent` is constructed with its production params.
-    func setSignalingHandler(
-        _ handler: @escaping @Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome
-    ) {
-        signalingHandler = handler
         rebuildIfRunning()
     }
 
@@ -455,7 +441,6 @@ final class WebServerController: ObservableObject {
         // answers 503 so clients keep their bundled fallback instead of
         // caching {} as host-resolved (WEB-9.10).
         let ghosttyKeybindingsProvider = self.ghosttyKeybindingsProvider
-        let signalingHandler = self.signalingHandler
         let s = WebServer(
             config: .init(
                 port: port,
@@ -473,7 +458,6 @@ final class WebServerController: ObservableObject {
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
                 relayedWorktreePanesProvider:
                     relayedWorktreePanesProvider ?? { [] },
-                signalingHandler: signalingHandler,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore
             ),

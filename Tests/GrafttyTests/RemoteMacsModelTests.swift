@@ -1,10 +1,11 @@
 import CryptoKit
 import Foundation
+import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+
 @testable import Graftty
 @testable import GrafttyKit
-import GrafttyProtocol
 
 @Suite("RemoteMacsModel")
 @MainActor
@@ -405,7 +406,7 @@ struct RemoteMacsModelTests {
         #expect(await second.value == cancelled)
         #expect(await third.value == cancelled)
         #expect(await recorder.requests() == [
-            .equalize(target: "pane-a"),
+            .equalize(target: "pane-a")
         ])
     }
 
@@ -474,7 +475,7 @@ struct RemoteMacsModelTests {
                     deviceLabel: remote.label,
                     relayDepth: 0
                 )
-            ),
+            )
         ])
         let promoted = try #require(
             model.promotedWorktreesForRelay().first
@@ -606,7 +607,7 @@ struct RemoteMacsModelTests {
                 stats: nil,
                 attentionText: nil,
                 layout: nil
-            ),
+            )
         ]
 
         registry.onPaneSnapshot(RemoteMacIdentity(remote), snapshot)
@@ -651,7 +652,7 @@ struct RemoteMacsModelTests {
                 stats: nil,
                 attentionText: nil,
                 layout: nil
-            ),
+            )
         ]
         registry.onPaneSnapshot(identity, snapshot)
 
@@ -695,7 +696,7 @@ struct RemoteMacsModelTests {
                 stats: nil,
                 attentionText: nil,
                 layout: nil
-            ),
+            )
         ])
         #expect(model.worktreePanesByRemote[identity]?.count == 1)
 
@@ -775,7 +776,7 @@ struct RemoteMacsModelTests {
                         deviceLabel: remote.label,
                         relayDepth: 0
                     )
-                ),
+                )
             ]
         }
 
@@ -920,7 +921,7 @@ struct RemoteMacsModelTests {
                         deviceLabel: remote.label,
                         relayDepth: 0
                     )
-                ),
+                )
             ]
         }
 
@@ -967,13 +968,24 @@ struct RemoteMacsModelTests {
     @Test("""
     @spec REMOTE-12.4: When Mac-to-Mac pairing succeeds, the application \
     shall persist a saved Remote Mac using the pinned host identity, \
-    fingerprint, display name, and signaling base URL.
+    fingerprint, display name, protocol version, and advertised LAN/Tailscale \
+    routes.
     """)
     func pairingSuccessSavesPinnedHost() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
         let model = makeModel(store: store)
         await model.loadSavedRemotes()
         let key = try publicKey()
+        let routes = [
+            RemoteConnectionRoute(
+                kind: .lan,
+                baseURL: URL(string: "http://paired.local:8800")!
+            ),
+            RemoteConnectionRoute(
+                kind: .tailscaleDNS,
+                baseURL: URL(string: "http://paired.tailnet.ts.net:8800")!
+            ),
+        ]
         let pinned = PinnedHost(
             id: RemoteDeviceID(value: "paired-host"),
             kind: .mac,
@@ -981,7 +993,8 @@ struct RemoteMacsModelTests {
             displayName: "Paired Studio",
             pinnedAt: Date(timeIntervalSince1970: 1_710_000_000),
             lastConnectedAt: nil,
-            pairingURL: URL(string: "http://paired.local:9443/v1/pairing")!
+            pairingURL: URL(string: "http://paired.local:8800/v2/pairing")!,
+            routes: routes
         )
 
         try model.recordPairingResult(.paired(pinned))
@@ -994,7 +1007,9 @@ struct RemoteMacsModelTests {
         #expect(saved.id == pinned.id)
         #expect(saved.label == "Paired Studio")
         #expect(saved.fingerprint == identity.fingerprint)
-        #expect(saved.lastKnownBaseURL == URL(string: "http://paired.local:9443"))
+        #expect(saved.lastKnownBaseURL == routes[0].baseURL)
+        #expect(saved.routes == routes)
+        #expect(saved.pairingProtocolVersion == RemoteAccessProtocol.version)
         #expect(try store.get(id: pinned.id, fingerprint: identity.fingerprint) != nil)
     }
 
@@ -1011,8 +1026,8 @@ struct RemoteMacsModelTests {
         #expect(store.remoteMacs.isEmpty)
     }
 
-    @Test("LAN route handler uses host pairing coordinator and maps host busy")
-    func lanRouteHandlerWiresPairingAndHostBusy() async throws {
+    @Test("LAN route handler uses host pairing coordinator and rejects unsigned signaling")
+    func lanRouteHandlerWiresPairingAndRejectsV1() async throws {
         let fixture = try HostPairingCoordinatorTestFixture.make()
         defer { fixture.cleanup() }
         let routeHandler = RemoteMacAccessServices.makeLANRouteHandler(
@@ -1025,7 +1040,7 @@ struct RemoteMacsModelTests {
 
         let beginResponse = await routeHandler.handle(
             method: .POST,
-            path: "/v1/pairing/begin",
+            path: "/v2/pairing/begin",
             body: Data()
         )
         #expect(beginResponse.status == 200)
@@ -1036,18 +1051,15 @@ struct RemoteMacsModelTests {
         }
         #expect(activePayload.nonce == payload.nonce)
 
-        let offerBody = try JSONEncoder.iso8601().encode(
-            SignalingOffer(clientDeviceID: "client", sdp: "v=0\n")
-        )
         let offerResponse = await routeHandler.handle(
             method: .POST,
             path: "/v1/rtc/offer",
-            body: offerBody
+            body: Data("{}".utf8)
         )
 
-        #expect(offerResponse.status == 503)
+        #expect(offerResponse.status == 426)
         let error = try JSONDecoder.iso8601().decode(PairingErrorResponse.self, from: offerResponse.body)
-        #expect(error.code == .hostBusy)
+        #expect(error.code == .unsupportedVersion)
     }
 }
 
@@ -1269,7 +1281,7 @@ private struct HostPairingCoordinatorTestFixture {
             hostDeviceID: RemoteDeviceID(value: "host-mac"),
             hostKind: .mac,
             hostDisplayName: "Host Mac",
-            pairingURLProvider: { URL(string: "http://studio.local:9443/v1/pairing")! }
+            pairingURLProvider: { URL(string: "http://studio.local:9443/v2/pairing")! }
         )
         let server = HostPairingServer(session: session)
         return HostPairingCoordinatorTestFixture(

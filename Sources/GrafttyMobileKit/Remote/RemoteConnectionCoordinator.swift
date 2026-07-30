@@ -5,10 +5,17 @@ import GrafttyProtocol
 import WebRTC
 import os
 
+public enum RemoteWorktreeLoadStage: Sendable, Equatable {
+    case connecting
+    case openingChannel
+    case waitingForSnapshot
+}
+
+public typealias RemoteWorktreeLoadProgress =
+    @MainActor @Sendable (RemoteWorktreeLoadStage) -> Void
+
 /// Negotiates and caches per-host `RemoteHostConnection`s on demand.
 ///
-/// `RootView`'s `/ws` fallback (Task 3) asks this coordinator for a
-/// connection before falling back to the plain WebSocket transport.
 /// `connection(for:)` is the single entry point: it fast-nils for a
 /// host that isn't paired, returns an already-live connection, dedups
 /// concurrent negotiation requests for the same host onto one in-flight
@@ -34,6 +41,25 @@ import os
 /// methods on.
 @MainActor
 public final class RemoteConnectionCoordinator {
+    public enum ConnectionError: LocalizedError {
+        case pairingRequired
+        case unavailable
+        case paneSnapshotTimedOut
+        case paneChannelClosed
+
+        public var errorDescription: String? {
+            switch self {
+            case .pairingRequired:
+                return "This Mac must be paired before connecting."
+            case .unavailable:
+                return "The paired Mac is unavailable."
+            case .paneSnapshotTimedOut:
+                return "Timed out waiting for the Mac's worktree list."
+            case .paneChannelClosed:
+                return "The Mac closed the worktree channel."
+            }
+        }
+    }
 
     private let identityStore: ClientIdentityStore
     private let deviceIDStore: ClientDeviceIDStore
@@ -44,6 +70,24 @@ public final class RemoteConnectionCoordinator {
 
     /// Successfully negotiated, still-live connections, keyed by `Host.id`.
     private var liveConnections: [UUID: RemoteHostConnection] = [:]
+    /// Long-lived authenticated panes-state subscriptions. Keeping these
+    /// alongside the connection replaces HTTP polling without repeatedly
+    /// opening a new SSH child channel.
+    private var panesStores: [UUID: WorktreePanesStore] = [:]
+    private struct PanesAttempt {
+        let id: UUID
+        let task: Task<WorktreePanesStore?, Never>
+    }
+    private var panesStoreAttempts: [UUID: PanesAttempt] = [:]
+    private struct CachedPresentation {
+        let connectionIdentity: ObjectIdentifier
+        let value: RemoteHostPresentation
+    }
+    private var presentations: [UUID: CachedPresentation] = [:]
+    /// Current Bonjour routing hints keyed by paired device identity. These
+    /// are intentionally process-local and replace stale persisted listener
+    /// ports without changing the trust key.
+    private var discoveredBaseURLs: [RemoteDeviceID: URL] = [:]
 
     /// One negotiation attempt, identified independently of the `Task`
     /// itself so `invalidate(host:)` can mark exactly THIS attempt as
@@ -62,9 +106,8 @@ public final class RemoteConnectionCoordinator {
 
     /// At most one in-flight negotiation `Task` per host. Concurrent
     /// callers for the same host await this same `Task` instead of
-    /// starting a second negotiation (and, downstream, a second
-    /// `POST /v1/rtc/offer` — which would hit `WebRTCHostAgent`'s own
-    /// `HostError.busy` guard on the host side).
+    /// starting a second negotiation (and, downstream, a second unique signed
+    /// offer that would hit `WebRTCHostAgent`'s busy guard on the host side).
     private var inFlightAttempts: [UUID: Attempt] = [:]
 
     /// Attempt ids (see `Attempt`) whose `invalidate(host:)` call landed
@@ -79,15 +122,11 @@ public final class RemoteConnectionCoordinator {
     /// observes the same `nil` outcome — closing the connection instead
     /// of resurrecting one the app already asked to tear down.
     ///
-    /// Chosen behavior: let the in-flight negotiation finish, then evict
-    /// (rather than cancelling its `Task`). `negotiate`'s own awaits —
-    /// `signaling.exchange`, `connection.createOffer`/`applyAnswer` —
-    /// have no cooperative-cancellation checkpoints of their own, so an
-    /// actual `Task.cancel()` would either no-op or require threading
-    /// `Task.isCancelled` checks through WebRTC/SSH setup code that
-    /// doesn't have them today. Letting it finish and closing the result
-    /// is simple, correct, and doesn't leave a half-negotiated
-    /// `RTCPeerConnection` in an undefined state.
+    /// Invalidation removes the attempt from the dedup slot immediately
+    /// and requests cancellation, allowing a foreground rebuild to start a
+    /// fresh dial. The attempt id remains here until the old task exits so
+    /// cancellation-unaware WebRTC work still closes its result instead of
+    /// registering a connection or imposing a failure cooldown.
     private var invalidatedAttempts: Set<UUID> = []
 
     /// How long `connection(for:)` fast-nils a host WITHOUT negotiating
@@ -104,7 +143,19 @@ public final class RemoteConnectionCoordinator {
     /// Cooldown expiry per host, populated only on a FAILED negotiation
     /// (never on success, and never for the "invalidated mid-flight"
     /// outcome, which is an intentional teardown rather than a failure).
-    private var cooldownUntil: [UUID: Date] = [:]
+    private struct FailureCooldown {
+        let route: URL
+        let until: Date
+    }
+    private var failureCooldowns: [UUID: FailureCooldown] = [:]
+
+    /// A lock/background transition is a transport capability boundary, not
+    /// merely a visual overlay. `desiredConnectionsAllowed` records the
+    /// latest scene/auth state while `connectionsAllowed` stays false until
+    /// any asynchronous teardown has completed.
+    private var desiredConnectionsAllowed: Bool
+    private var connectionsAllowed: Bool
+    private var connectionTeardownTask: Task<Void, Never>?
 
     private static let logger = Logger(
         subsystem: "com.quotably.graftty",
@@ -131,7 +182,8 @@ public final class RemoteConnectionCoordinator {
         directory: URL = ClientIdentityStore.defaultDirectory,
         signaling: SignalingClient = SignalingClient(),
         connectionFactory: ((Curve25519.Signing.PrivateKey, RemoteIdentityFingerprint) -> RemoteHostConnection)? = nil,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        connectionsAllowedInitially: Bool = true
     ) {
         let stores = ClientRemoteStores(directory: directory)
         self.identityStore = stores.identityStore
@@ -142,6 +194,29 @@ public final class RemoteConnectionCoordinator {
             RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
         }
         self.now = now
+        self.desiredConnectionsAllowed = connectionsAllowedInitially
+        self.connectionsAllowed = connectionsAllowedInitially
+    }
+
+    /// Enables or suspends all coordinator consumers. Suspension takes
+    /// effect synchronously so polling/list/presentation tasks cannot redial
+    /// while the existing channels are being closed. A resume waits for that
+    /// teardown to finish before allowing a fresh negotiation.
+    public func setConnectionsAllowed(_ allowed: Bool) {
+        guard desiredConnectionsAllowed != allowed else { return }
+        desiredConnectionsAllowed = allowed
+
+        if !allowed {
+            connectionsAllowed = false
+            guard connectionTeardownTask == nil else { return }
+            connectionTeardownTask = Task { [weak self] in
+                guard let self else { return }
+                await self.invalidateAll()
+                self.finishConnectionTeardown()
+            }
+        } else if connectionTeardownTask == nil {
+            connectionsAllowed = true
+        }
     }
 
     /// Returns a live connection for `host`, negotiating one if none
@@ -149,17 +224,26 @@ public final class RemoteConnectionCoordinator {
     /// (`remoteDeviceID` is `nil`, or `PinnedHostStore` has no matching
     /// entry), when `host` is within its post-failure cooldown window
     /// (see `failureCooldown`), and when negotiation fails for any
-    /// reason — callers fall back to `/ws` in every case and cannot tell
-    /// them apart, which is intentional: none of these should ever crash
-    /// the caller.
+    /// reason. Callers surface authenticated-connection unavailability and
+    /// never treat nil as permission to downgrade to an unpaired transport.
     public func connection(for host: Host) async -> RemoteHostConnection? {
+        guard desiredConnectionsAllowed else { return nil }
+        if let connectionTeardownTask {
+            await connectionTeardownTask.value
+        }
+        guard connectionsAllowed else { return nil }
         guard let pinnedHost = pinnedHost(for: host) else { return nil }
 
         if let live = liveConnections[host.id] {
             return live
         }
-        if let until = cooldownUntil[host.id], now() < until {
-            return nil
+        let routes = routingRoutes(for: host, pinnedHost: pinnedHost)
+        let route = routes.first?.baseURL ?? host.baseURL
+        if let cooldown = failureCooldowns[host.id] {
+            if cooldown.route == route, now() < cooldown.until {
+                return nil
+            }
+            failureCooldowns[host.id] = nil
         }
         if let inFlight = inFlightAttempts[host.id] {
             return await inFlight.task.value
@@ -167,7 +251,12 @@ public final class RemoteConnectionCoordinator {
 
         let attemptID = UUID()
         let task = Task<RemoteHostConnection?, Never> { [weak self] in
-            await self?.negotiate(host: host, pinnedHost: pinnedHost, attemptID: attemptID)
+            await self?.negotiate(
+                host: host,
+                pinnedHost: pinnedHost,
+                routes: routes,
+                attemptID: attemptID
+            )
         }
         inFlightAttempts[host.id] = Attempt(id: attemptID, task: task)
         let result = await task.value
@@ -197,14 +286,21 @@ public final class RemoteConnectionCoordinator {
     ///
     /// If a negotiation for `host` is still in flight (IPAD-5.1 fired
     /// mid-`IPAD-5.2` rebuild), there is no live connection to remove
-    /// yet — instead this marks that attempt in `invalidatedAttempts` so
-    /// `negotiate(host:pinnedHost:attemptID:)` self-evicts the moment
-    /// that negotiation finishes, rather than silently registering a
-    /// connection the app already asked to tear down.
+    /// yet — instead this marks and cancels that attempt, removes it from
+    /// the dedup slot so a later foreground request can dial immediately,
+    /// and makes `negotiate(host:pinnedHost:attemptID:)` self-evict if
+    /// cancellation-unaware work still reaches completion.
     public func invalidate(host: Host) async {
-        cooldownUntil[host.id] = nil
+        failureCooldowns[host.id] = nil
+        presentations[host.id] = nil
+        panesStoreAttempts[host.id]?.task.cancel()
+        panesStoreAttempts[host.id] = nil
+        let panesStore = panesStores.removeValue(forKey: host.id)
+        await panesStore?.unsubscribe()
         if let inFlight = inFlightAttempts[host.id] {
             invalidatedAttempts.insert(inFlight.id)
+            inFlight.task.cancel()
+            inFlightAttempts[host.id] = nil
         }
         guard let connection = liveConnections.removeValue(forKey: host.id) else { return }
         // Detach the observer BEFORE closing: this is an intentional,
@@ -231,11 +327,23 @@ public final class RemoteConnectionCoordinator {
     /// on background) — nothing survives into the background, and
     /// foreground re-negotiates every host from a clean slate.
     public func invalidateAll() async {
-        cooldownUntil.removeAll()
+        failureCooldowns.removeAll()
+        presentations.removeAll()
+        for attempt in panesStoreAttempts.values {
+            attempt.task.cancel()
+        }
+        panesStoreAttempts.removeAll()
+        let stores = Array(panesStores.values)
+        panesStores.removeAll()
+        for store in stores {
+            await store.unsubscribe()
+        }
         let hostIDs = Set(liveConnections.keys).union(inFlightAttempts.keys)
         for hostID in hostIDs {
             if let inFlight = inFlightAttempts[hostID] {
                 invalidatedAttempts.insert(inFlight.id)
+                inFlight.task.cancel()
+                inFlightAttempts[hostID] = nil
             }
             guard let connection = liveConnections.removeValue(forKey: hostID) else { continue }
             // See `invalidate(host:)`'s identical detach-before-close
@@ -249,17 +357,252 @@ public final class RemoteConnectionCoordinator {
     /// Single source of truth for "is `host` paired" — the same
     /// two-part check `connection(for:)` performs before ever attempting
     /// to negotiate (a non-nil `remoteDeviceID` AND a matching
-    /// `PinnedHostStore` entry). `shouldLogFallbackLoudly`
-    /// (`SessionLifecycleEnvironment.swift`) reads this so its
-    /// `/ws`-fallback log-level gate can't drift from the coordinator's
-    /// actual pairing gate.
+    /// `PinnedHostStore` entry). UI routing and authenticated channel
+    /// factories read this same gate so their definition of a usable paired
+    /// Mac cannot drift.
     public func isPaired(_ host: Host) -> Bool {
         pinnedHost(for: host) != nil
+    }
+
+    /// Verifies that a Bonjour routing hint still advertises the exact host
+    /// key pinned during pairing. Discovery never establishes or changes
+    /// trust; a mismatch therefore cannot refresh the saved address.
+    public func isTrustedDiscoveryCandidate(_ candidate: NearbyMac) -> Bool {
+        guard let pinned = try? pinnedHostStore.get(id: candidate.deviceID)
+        else {
+            return false
+        }
+        return pinned.fingerprint == candidate.fingerprint
+    }
+
+    public func updateDiscoveryCandidates(_ candidates: [NearbyMac]) {
+        discoveredBaseURLs = Dictionary(
+            uniqueKeysWithValues: candidates.compactMap { candidate in
+                guard isTrustedDiscoveryCandidate(candidate) else {
+                    return nil
+                }
+                return (candidate.deviceID, candidate.baseURL)
+            }
+        )
+    }
+
+    /// Returns the latest authenticated worktree snapshot, establishing one
+    /// long-lived panes-state-v2 subscription on first use. V2 includes the
+    /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.
+    public func worktreePanes(
+        for host: Host,
+        onProgress: RemoteWorktreeLoadProgress? = nil
+    ) async throws -> [WorktreePanes] {
+        let clock = ContinuousClock()
+        let loadStarted = clock.now
+        onProgress?(.connecting)
+        guard isPaired(host) else { throw ConnectionError.pairingRequired }
+        guard let connection = await connection(for: host) else {
+            throw ConnectionError.unavailable
+        }
+        let connectionFinished = clock.now
+        if onProgress != nil {
+            Self.logger.info(
+                "worktree load host=\(host.id, privacy: .public) stage=connect duration_ms=\(Self.milliseconds(loadStarted.duration(to: connectionFinished)), privacy: .public)"
+            )
+        }
+
+        onProgress?(.openingChannel)
+        let store = try await panesStore(
+            for: host,
+            connection: connection
+        )
+        let channelFinished = clock.now
+        if onProgress != nil {
+            Self.logger.info(
+                "worktree load host=\(host.id, privacy: .public) stage=open-channel duration_ms=\(Self.milliseconds(connectionFinished.duration(to: channelFinished)), privacy: .public)"
+            )
+        }
+
+        onProgress?(.waitingForSnapshot)
+        let deadline = Date().addingTimeInterval(10)
+        while !Task.isCancelled {
+            if case .closed = await store.connectionState {
+                await discardPanesStore(store, hostID: host.id)
+                throw ConnectionError.paneChannelClosed
+            }
+            if await store.hasReceivedSnapshot {
+                if onProgress != nil {
+                    let snapshotFinished = clock.now
+                    Self.logger.info(
+                        "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
+                    )
+                }
+                return await store.current
+            }
+            if Date() >= deadline {
+                await discardPanesStore(store, hostID: host.id)
+                throw ConnectionError.paneSnapshotTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw CancellationError()
+    }
+
+    private nonisolated static func milliseconds(
+        _ duration: Duration
+    ) -> Int64 {
+        let components = duration.components
+        return components.seconds * 1_000
+            + components.attoseconds / 1_000_000_000_000_000
+    }
+
+    /// Sends a typed request over the mutually-authenticated SSH control
+    /// channel. The child channel is intentionally request-scoped; the
+    /// panes-state subscription above is the only long-lived control channel.
+    public func sendWorktreeManagement(
+        _ request: WorktreeManagementRequest,
+        to host: Host
+    ) async throws -> WorktreeManagementResponse {
+        guard isPaired(host) else { throw ConnectionError.pairingRequired }
+        guard let connection = await connection(for: host) else {
+            throw ConnectionError.unavailable
+        }
+        return try await sendWorktreeManagement(request, over: connection)
+    }
+
+    private func sendWorktreeManagement(
+        _ request: WorktreeManagementRequest,
+        over connection: RemoteHostConnection
+    ) async throws -> WorktreeManagementResponse {
+        let client = try await connection.openWorktreeManagementChannel()
+        defer { client.close() }
+        return try await client.send(request)
+    }
+
+    public func presentation(for host: Host) async
+        -> RemoteHostPresentation? {
+        guard isPaired(host),
+              let connection = await connection(for: host) else {
+            return nil
+        }
+        let connectionIdentity = ObjectIdentifier(connection)
+        if let cached = presentations[host.id],
+           cached.connectionIdentity == connectionIdentity {
+            return cached.value
+        }
+        guard let response = try? await sendWorktreeManagement(
+            .hostPresentation,
+            over: connection
+        ), case .hostPresentation(let presentation) = response else {
+            return nil
+        }
+        guard connectionsAllowed,
+              let current = liveConnections[host.id],
+              ObjectIdentifier(current) == connectionIdentity else {
+            return nil
+        }
+        presentations[host.id] = CachedPresentation(
+            connectionIdentity: connectionIdentity,
+            value: presentation
+        )
+        return presentation
+    }
+
+    /// Forgetting a Mac removes the local trust pin and closes all channels.
+    /// The Mac intentionally continues to trust this phone until the user
+    /// also removes it from the Mac's paired-device list.
+    public func forget(_ host: Host) async throws {
+        await invalidate(host: host)
+        guard let deviceID = host.remoteDeviceID else { return }
+        discoveredBaseURLs[deviceID] = nil
+        do {
+            try pinnedHostStore.remove(id: deviceID)
+        } catch PinnedHostStore.Error.notFound {
+            // A legacy host row may have no surviving pin. Forget is
+            // idempotent from the user's point of view.
+        }
     }
 
     private func pinnedHost(for host: Host) -> PinnedHost? {
         guard let remoteDeviceID = host.remoteDeviceID else { return nil }
         return (try? pinnedHostStore.get(id: remoteDeviceID)) ?? nil
+    }
+
+    private func panesStore(
+        for host: Host,
+        connection: RemoteHostConnection
+    ) async throws -> WorktreePanesStore {
+        if let existing = panesStores[host.id] {
+            if case .closed = await existing.connectionState {
+                panesStores[host.id] = nil
+                await existing.unsubscribe()
+            } else {
+                return existing
+            }
+        }
+        if let attempt = panesStoreAttempts[host.id] {
+            guard let store = await attempt.task.value else {
+                throw ConnectionError.paneChannelClosed
+            }
+            guard let current = liveConnections[host.id],
+                  ObjectIdentifier(current) == ObjectIdentifier(connection)
+            else {
+                await store.unsubscribe()
+                throw ConnectionError.unavailable
+            }
+            return store
+        }
+
+        let connectionIdentity = ObjectIdentifier(connection)
+        let attempt = Task<WorktreePanesStore?, Never> {
+            await Self.makePanesStore(connection: connection)
+        }
+        let attemptID = UUID()
+        panesStoreAttempts[host.id] = PanesAttempt(
+            id: attemptID,
+            task: attempt
+        )
+        let built = await attempt.value
+        if panesStoreAttempts[host.id]?.id == attemptID {
+            panesStoreAttempts[host.id] = nil
+        }
+        guard let built else {
+            throw ConnectionError.paneChannelClosed
+        }
+        guard let current = liveConnections[host.id],
+              ObjectIdentifier(current) == connectionIdentity else {
+            await built.unsubscribe()
+            throw ConnectionError.unavailable
+        }
+        panesStores[host.id] = built
+        return built
+    }
+
+    private nonisolated static func makePanesStore(
+        connection: RemoteHostConnection
+    ) async -> WorktreePanesStore? {
+        for originAware in [true, false] {
+            var openedStore: WorktreePanesStore?
+            do {
+                let client = try await connection.makePanesStateClient(
+                    onSnapshot: { _ in },
+                    onClosed: { _ in },
+                    originAware: originAware,
+                    requestReply: originAware
+                )
+                let store = WorktreePanesStore(driver: client)
+                openedStore = store
+                client.setCallbacks(
+                    onSnapshot: { [weak store] snapshot in
+                        await store?.applySnapshot(snapshot)
+                    },
+                    onClosed: { [weak store] reason in
+                        await store?.markClosed(reason: reason)
+                    }
+                )
+                try await store.subscribe()
+                return store
+            } catch {
+                await openedStore?.unsubscribe()
+            }
+        }
+        return nil
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state
@@ -271,17 +614,23 @@ public final class RemoteConnectionCoordinator {
     /// re-verifying — closes the connection, starts this host's failure
     /// cooldown, and returns `nil` without leaving anything in the
     /// registry, so the host is free to retry once the cooldown expires.
-    private func negotiate(host: Host, pinnedHost: PinnedHost, attemptID: UUID) async -> RemoteHostConnection? {
+    private func negotiate(
+        host: Host,
+        pinnedHost: PinnedHost,
+        routes: [RemoteConnectionRoute],
+        attemptID: UUID
+    ) async -> RemoteHostConnection? {
+        let failureRoute = routes.first?.baseURL ?? host.baseURL
         // One-shot per attempt: cleared here regardless of outcome so a
         // FUTURE attempt for this host starts with a clean flag.
         defer { invalidatedAttempts.remove(attemptID) }
         guard let clientKey = try? identityStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client identity available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host)
+            return fail(host: host, route: failureRoute)
         }
         guard let clientDeviceID = try? deviceIDStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client device id available; cannot negotiate with host \(host.id, privacy: .public)")
-            return fail(host: host)
+            return fail(host: host, route: failureRoute)
         }
 
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
@@ -293,19 +642,45 @@ public final class RemoteConnectionCoordinator {
 
         do {
             let offer = try await connection.createOffer()
-            let answer = try await signaling.exchange(
-                baseURL: host.baseURL,
-                offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offer.sdp)
+            let exchange = try await signaling.authenticatedExchange(
+                routes: routes,
+                hostDeviceID: pinnedHost.id,
+                hostPublicKey: pinnedHost.publicKey,
+                clientDeviceID: clientDeviceID,
+                clientKey: clientKey,
+                sdp: offer.sdp
             )
-            try await connection.applyAnswer(RTCSessionDescription(type: .answer, sdp: answer.sdp))
+            try await connection.applyAnswer(
+                RTCSessionDescription(
+                    type: .answer,
+                    sdp: exchange.answer.sdp
+                )
+            )
+            var refreshedPin = pinnedHost
+            refreshedPin.routes = exchange.answer.routes
+            refreshedPin.lastSuccessfulRoute = exchange.route
+            refreshedPin.lastConnectedAt = now()
+            do {
+                try pinnedHostStore.update(refreshedPin)
+            } catch PinnedHostStore.Error.notFound {
+                // Trust was revoked while negotiation was in flight.
+                throw PinnedHostStore.Error.notFound
+            } catch {
+                Self.logger.warning(
+                    "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
+                )
+            }
         } catch {
+            await connection.close()
+            guard !invalidatedAttempts.contains(attemptID) else {
+                return nil
+            }
             // A 503 (host busy) surfaces here as `SignalingClient.Error.http`
             // like any other non-2xx response — logged, cooled down, and
             // retried once the cooldown expires; never cached as a
             // PERMANENT failure.
             Self.logger.warning("negotiation with host \(host.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
-            await connection.close()
-            return fail(host: host)
+            return fail(host: host, route: failureRoute)
         }
 
         // No `await` between this check and registration below — see
@@ -337,7 +712,10 @@ public final class RemoteConnectionCoordinator {
         if state.isTerminal {
             evict(hostID: host.id, connectionIdentity: connectionIdentity)
             await connection.close()
-            return fail(host: host)
+            guard !invalidatedAttempts.contains(attemptID) else {
+                return nil
+            }
+            return fail(host: host, route: failureRoute)
         }
 
         return connection
@@ -347,9 +725,56 @@ public final class RemoteConnectionCoordinator {
     /// — the common tail of every FAILURE exit from `negotiate`. Not
     /// called for the "invalidated mid-flight" exit, which is an
     /// intentional teardown rather than a failure (see call site).
-    private func fail(host: Host) -> RemoteHostConnection? {
-        cooldownUntil[host.id] = now().addingTimeInterval(Self.failureCooldown)
+    private func fail(host: Host, route: URL) -> RemoteHostConnection? {
+        failureCooldowns[host.id] = FailureCooldown(
+            route: route,
+            until: now().addingTimeInterval(Self.failureCooldown)
+        )
         return nil
+    }
+
+    private func routingRoutes(
+        for host: Host,
+        pinnedHost: PinnedHost
+    ) -> [RemoteConnectionRoute] {
+        var candidates: [RemoteConnectionRoute] = []
+        if let discovered = host.remoteDeviceID.flatMap({
+            discoveredBaseURLs[$0]
+        }) {
+            candidates.append(
+                RemoteConnectionRoute(kind: .lan, baseURL: discovered)
+            )
+        }
+        if let lastSuccessful = pinnedHost.lastSuccessfulRoute {
+            candidates.append(lastSuccessful)
+        }
+        candidates.append(contentsOf: pinnedHost.routes)
+        candidates.append(contentsOf: host.routes)
+        if candidates.isEmpty {
+            candidates.append(
+                RemoteConnectionRoute(kind: .lan, baseURL: host.baseURL)
+            )
+        }
+        var seen = Set<URL>()
+        return candidates.filter { seen.insert($0.baseURL).inserted }
+    }
+
+    private func discardPanesStore(
+        _ store: WorktreePanesStore,
+        hostID: UUID
+    ) async {
+        if let current = panesStores[hostID],
+           ObjectIdentifier(current) == ObjectIdentifier(store) {
+            panesStores[hostID] = nil
+        }
+        await store.unsubscribe()
+    }
+
+    private func finishConnectionTeardown() {
+        connectionTeardownTask = nil
+        if desiredConnectionsAllowed {
+            connectionsAllowed = true
+        }
     }
 
     /// Removes `hostID`'s live connection if — and only if — it is still
@@ -368,6 +793,10 @@ public final class RemoteConnectionCoordinator {
             return
         }
         liveConnections.removeValue(forKey: hostID)
+        presentations[hostID] = nil
+        if let store = panesStores.removeValue(forKey: hostID) {
+            Task { await store.unsubscribe() }
+        }
     }
 
     /// Test-only seam: seeds the registry directly, bypassing a real

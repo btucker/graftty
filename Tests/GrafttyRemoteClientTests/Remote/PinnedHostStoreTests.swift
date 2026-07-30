@@ -1,9 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
+import Foundation
+import GrafttyProtocol
+import Testing
 
 @testable import GrafttyRemoteClient
-import GrafttyProtocol
 
 @Suite("PinnedHostStore Tests")
 struct PinnedHostStoreTests {
@@ -30,7 +30,7 @@ struct PinnedHostStoreTests {
             displayName: name,
             pinnedAt: pinnedAt,
             lastConnectedAt: lastConnectedAt,
-            pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host.local:8800/v2/pairing")!
         )
     }
 
@@ -79,12 +79,12 @@ struct PinnedHostStoreTests {
         try store.add(host)
 
         host.displayName = "New Name"
-        host.pairingURL = URL(string: "https://newhost.local:9900/v1/pairing")!
+        host.pairingURL = URL(string: "https://newhost.local:9900/v2/pairing")!
         try store.update(host)
 
         let retrieved = try store.get(id: host.id)
         #expect(retrieved?.displayName == "New Name")
-        #expect(retrieved?.pairingURL.absoluteString == "https://newhost.local:9900/v1/pairing")
+        #expect(retrieved?.pairingURL.absoluteString == "https://newhost.local:9900/v2/pairing")
     }
 
     // MARK: - Remove
@@ -125,7 +125,7 @@ struct PinnedHostStoreTests {
             publicKey: publicKey,
             displayName: "Host 1",
             pinnedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            pairingURL: URL(string: "https://host1.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host1.local:8800/v2/pairing")!
         )
         let host2 = PinnedHost(
             id: .generate(),
@@ -133,12 +133,58 @@ struct PinnedHostStoreTests {
             publicKey: publicKey,
             displayName: "Host 2",
             pinnedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            pairingURL: URL(string: "https://host2.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host2.local:8800/v2/pairing")!
         )
 
         try store.add(host1)
         #expect(throws: PinnedHostStore.Error.duplicateFingerprint) {
             try store.add(host2)
+        }
+    }
+
+    @Test("pairing upsert replaces a rotated key for the same device ID")
+    func pairingUpsertReplacesRotatedKey() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let original = makeHost(name: "Before Rotation")
+        let replacementKey = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        )
+        let replacement = PinnedHost(
+            id: original.id,
+            kind: original.kind,
+            publicKey: replacementKey,
+            displayName: "After Rotation",
+            pinnedAt: original.pinnedAt.addingTimeInterval(1),
+            pairingURL: original.pairingURL
+        )
+
+        try store.add(original)
+        try store.upsertAfterPairing(replacement)
+
+        #expect(try store.list() == [replacement])
+        #expect(try store.get(id: original.id)?.publicKey == replacementKey)
+    }
+
+    @Test("pairing upsert still rejects a fingerprint owned by another device ID")
+    func pairingUpsertRejectsFingerprintOwnedByAnotherDevice() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let existing = makeHost()
+        let collision = PinnedHost(
+            id: .generate(),
+            kind: .mac,
+            publicKey: existing.publicKey,
+            displayName: "Imposter",
+            pinnedAt: existing.pinnedAt,
+            pairingURL: existing.pairingURL
+        )
+        try store.add(existing)
+
+        #expect(throws: PinnedHostStore.Error.duplicateFingerprint) {
+            try store.upsertAfterPairing(collision)
         }
     }
 
@@ -189,6 +235,31 @@ struct PinnedHostStoreTests {
         #expect(list.count == 1)
         #expect(list[0].displayName == "Persistent Host")
         #expect(list[0].id == host.id)
+    }
+
+    @Test("Protocol v1 pinned hosts are discarded and must be paired again")
+    func protocolV1HostsAreDiscarded() throws {
+        struct LegacyEnvelope: Encodable {
+            let version: Int
+            let hosts: [PinnedHost]
+        }
+
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let legacyHost = makeHost(name: "Needs Re-pairing")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(LegacyEnvelope(version: 1, hosts: [legacyHost]))
+            .write(to: dir.appendingPathComponent("pinned-hosts.json"))
+
+        let store = PinnedHostStore(directory: dir)
+
+        #expect(try store.list().isEmpty)
+        #expect(try store.get(id: legacyHost.id) == nil)
+
+        let replacement = makeHost(name: "Paired with v2")
+        try store.add(replacement)
+        #expect(try store.list().map(\.id) == [replacement.id])
     }
 
     // MARK: - update throws notFound

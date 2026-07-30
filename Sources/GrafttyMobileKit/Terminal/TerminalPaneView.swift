@@ -77,11 +77,6 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Pass `.unspecified` (the default) when the config uses a
     /// `light:X,dark:Y` pair and should adapt to system appearance.
     public let preferredInterfaceStyle: UIUserInterfaceStyle
-    /// Invoked when SwiftUI is about to remove this representable from
-    /// the tree — typically because `renderActivity` flipped to `.idle`.
-    /// Passes nil rather than rendering the live Metal-backed terminal
-    /// layer during teardown.
-    public let onWillUnmount: ((UIImage?) -> Void)?
     /// Invoked when the user taps **Paste** in the long-press menu.
     /// `RootView` wires this to read `UIPasteboard.general.string` and
     /// forward to `SessionClient.sendPaste(_:)`. (IOS-11.8)
@@ -101,7 +96,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
-        onWillUnmount: ((UIImage?) -> Void)? = nil,
         onPasteRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil
     ) {
@@ -114,7 +108,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
         self.preferredInterfaceStyle = preferredInterfaceStyle
-        self.onWillUnmount = onWillUnmount
         self.onPasteRequested = onPasteRequested
         self.captureContainer = captureContainer
     }
@@ -122,7 +115,6 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
     public final class Coordinator {
-        var onWillUnmount: ((UIImage?) -> Void)?
         /// Fired once per successful keyboard focus so the counter owners
         /// can zero the pending count. Consumption lives with the counters
         /// (not here) because this Coordinator dies with the representable
@@ -150,7 +142,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
-        context.coordinator.onWillUnmount = onWillUnmount
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -165,14 +156,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
-        context.coordinator.onWillUnmount = onWillUnmount
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
-    }
-
-    public static func dismantleUIView(_: TerminalInputContainerView, coordinator: Coordinator) {
-        guard let onWillUnmount = coordinator.onWillUnmount else { return }
-        onWillUnmount(nil)
     }
 }
 

@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyKit
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("TrustedPeerStore Tests")
 struct TrustedPeerStoreTests {
@@ -186,6 +187,57 @@ struct TrustedPeerStoreTests {
         }
     }
 
+    @Test("pairing upsert replaces a rotated key for the same device ID")
+    func pairingUpsertReplacesRotatedKey() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let original = makePeer(name: "Before Rotation")
+        let replacementKey = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        )
+        let replacement = TrustedPeer(
+            id: original.id,
+            kind: original.kind,
+            publicKey: replacementKey,
+            displayName: "After Rotation",
+            capabilities: .defaultsAfterPairing,
+            pairedAt: original.pairedAt.addingTimeInterval(1),
+            lastSeenAt: nil
+        )
+
+        try store.add(original)
+        try store.upsertAfterPairing(replacement)
+
+        let loaded = try store.get(id: original.id)
+        let stored = try #require(loaded)
+        #expect(try store.list().count == 1)
+        #expect(stored.publicKey == replacementKey)
+        #expect(stored.displayName == replacement.displayName)
+    }
+
+    @Test("pairing upsert still rejects a fingerprint owned by another device ID")
+    func pairingUpsertRejectsFingerprintOwnedByAnotherDevice() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let existing = makePeer()
+        let collision = TrustedPeer(
+            id: .generate(),
+            kind: .ipad,
+            publicKey: existing.publicKey,
+            displayName: "Imposter",
+            capabilities: .defaultsAfterPairing,
+            pairedAt: existing.pairedAt,
+            lastSeenAt: nil
+        )
+        try store.add(existing)
+
+        #expect(throws: TrustedPeerStore.Error.duplicateFingerprint) {
+            try store.upsertAfterPairing(collision)
+        }
+    }
+
     // MARK: - List sorting
 
     @Test("list() returns peers sorted by lastSeenAt desc, with pairedAt desc as tiebreak")
@@ -305,6 +357,31 @@ struct TrustedPeerStoreTests {
         let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         let backupFiles = contents.filter { $0.hasPrefix("trusted-peers.json.corrupt.") }
         #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
+    }
+
+    @Test("Protocol v1 trusted peers are discarded and must be paired again")
+    func protocolV1PeersAreDiscarded() throws {
+        struct LegacyEnvelope: Encodable {
+            let version: Int
+            let peers: [TrustedPeer]
+        }
+
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let legacyPeer = makePeer(name: "Needs Re-pairing")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(LegacyEnvelope(version: 1, peers: [legacyPeer]))
+            .write(to: dir.appendingPathComponent("trusted-peers.json"))
+
+        let store = TrustedPeerStore(directory: dir)
+
+        #expect(try store.list().isEmpty)
+        #expect(try store.get(id: legacyPeer.id) == nil)
+
+        let replacement = makePeer(name: "Paired with v2")
+        try store.add(replacement)
+        #expect(try store.list().map(\.id) == [replacement.id])
     }
 
     // MARK: - get(fingerprint:)

@@ -55,9 +55,9 @@ public final class ClientPairingSession: @unchecked Sendable {
             switch (lhs, rhs) {
             case (.expired, .expired): return true
             case (.fingerprintMismatch, .fingerprintMismatch): return true
-            case let (.wrongState(l), .wrongState(r)): return l == r
-            case let (.unsupportedPayloadVersion(l), .unsupportedPayloadVersion(r)): return l == r
-            case let (.pinnedHostStoreFailed(l), .pinnedHostStoreFailed(r)): return l == r
+            case (.wrongState(let l), .wrongState(let r)): return l == r
+            case (.unsupportedPayloadVersion(let l), .unsupportedPayloadVersion(let r)): return l == r
+            case (.pinnedHostStoreFailed(let l), .pinnedHostStoreFailed(let r)): return l == r
             default: return false
             }
         }
@@ -110,13 +110,13 @@ public final class ClientPairingSession: @unchecked Sendable {
     /// Starts pairing from a scanned QR payload. Validates the payload version
     /// and expiry, then transitions to `.readyToConnect`.
     ///
-    /// Throws `.unsupportedPayloadVersion` for version != 1.
+    /// Throws `.unsupportedPayloadVersion` for obsolete payloads.
     /// Throws `.expired` if the payload's expiry has already passed.
     public func consume(payload: PairingPayload) throws {
         lock.lock()
         defer { lock.unlock() }
 
-        guard payload.version == 1 else {
+        guard payload.version == RemoteAccessProtocol.version else {
             throw Error.unsupportedPayloadVersion(payload.version)
         }
 
@@ -143,6 +143,26 @@ public final class ClientPairingSession: @unchecked Sendable {
 
         let code = transcript.verificationCode()
         _state = .awaitingHostConfirmation(transcript: transcript, verificationCode: code, payload: payload)
+    }
+
+    /// Rejects a substituted host key before either side can confirm trust.
+    ///
+    /// This runs immediately after the introduce response, before the client
+    /// displays a code or starts the confirmation long-poll. `confirm` repeats
+    /// the check as defense in depth before persisting the pin.
+    public func validateHostPublicKey(_ hostPublicKey: RemoteIdentityPublicKey) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard case .readyToConnect(let payload) = _state else {
+            throw Error.wrongState(current: _state)
+        }
+
+        let receivedFingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
+        guard receivedFingerprint == payload.hostPublicKeyFingerprint else {
+            _state = .failed(message: "Fingerprint mismatch: received key does not match pairing payload")
+            throw Error.fingerprintMismatch
+        }
     }
 
     /// Called when the host's HTTPS response confirms pairing and delivers the
@@ -177,11 +197,12 @@ public final class ClientPairingSession: @unchecked Sendable {
             displayName: payload.hostDisplayName,
             pinnedAt: currentTime,
             lastConnectedAt: currentTime,
-            pairingURL: payload.pairingURL
+            pairingURL: payload.pairingURL,
+            routes: payload.routes
         )
 
         do {
-            try pinnedHostStore.add(host)
+            try pinnedHostStore.upsertAfterPairing(host)
         } catch {
             _state = .failed(message: "\(error)")
             throw Error.pinnedHostStoreFailed(underlying: "\(error)")

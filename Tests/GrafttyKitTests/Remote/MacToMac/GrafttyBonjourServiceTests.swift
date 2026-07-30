@@ -1,7 +1,8 @@
 import Foundation
-import Testing
-@testable import GrafttyKit
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("GrafttyBonjourService Tests")
 struct GrafttyBonjourServiceTests {
@@ -14,7 +15,7 @@ struct GrafttyBonjourServiceTests {
         deviceID: RemoteDeviceID = RemoteDeviceID(value: "mac-1"),
         label: String = "Studio Mac",
         fingerprintByte: UInt8 = 0xAA,
-        protocolVersion: String = "1",
+        protocolVersion: String = "2",
         pairingStatus: GrafttyBonjourService.PairingStatus = .required
     ) throws -> GrafttyBonjourService.DiscoveryMetadata {
         GrafttyBonjourService.DiscoveryMetadata(
@@ -35,10 +36,10 @@ struct GrafttyBonjourServiceTests {
 
         #expect(GrafttyBonjourService.serviceType == "_graftty._tcp.")
         #expect(GrafttyBonjourService.domain == "local.")
-        #expect(decodedDictionary["version"] == "1")
+        #expect(decodedDictionary["version"] == "2")
         #expect(decodedDictionary["deviceID"] == "mac-1")
         #expect(decodedDictionary["fingerprint"] == String(repeating: "aa", count: 32))
-        #expect(decodedDictionary["proto"] == "1")
+        #expect(decodedDictionary["proto"] == "2")
         #expect(decodedDictionary["pairing"] == "required")
     }
 
@@ -75,7 +76,7 @@ struct GrafttyBonjourServiceTests {
             [selfMetadata, first, duplicate, changedIdentity],
             localDeviceID: selfID,
             localFingerprint: selfFingerprint,
-            supportedProtocolVersions: ["1"]
+            supportedProtocolVersions: ["2"]
         )
 
         #expect(filtered.map(\.label) == ["First", "Changed"])
@@ -83,7 +84,7 @@ struct GrafttyBonjourServiceTests {
 
     @Test("filters protocol-incompatible candidates")
     func filtersProtocolIncompatibleCandidates() throws {
-        let compatible = try metadata(label: "Compatible", protocolVersion: "1")
+        let compatible = try metadata(label: "Compatible", protocolVersion: "2")
         let compatibleRange = try metadata(
             deviceID: RemoteDeviceID(value: "range"),
             label: "Compatible Range",
@@ -94,20 +95,20 @@ struct GrafttyBonjourServiceTests {
             deviceID: RemoteDeviceID(value: "old"),
             label: "Old",
             fingerprintByte: 0xBB,
-            protocolVersion: "0"
+            protocolVersion: "1"
         )
         let malformed = try metadata(
             deviceID: RemoteDeviceID(value: "malformed"),
             label: "Malformed",
             fingerprintByte: 0xDD,
-            protocolVersion: "1-"
+            protocolVersion: "2-"
         )
 
         let filtered = GrafttyBonjourService.filterCandidates(
             [compatible, compatibleRange, incompatible, malformed],
             localDeviceID: RemoteDeviceID(value: "self"),
             localFingerprint: try fingerprint(0x01),
-            supportedProtocolVersions: ["1"]
+            supportedProtocolVersions: ["2"]
         )
 
         #expect(filtered.map(\.label) == ["Compatible", "Compatible Range"])
@@ -117,11 +118,11 @@ struct GrafttyBonjourServiceTests {
     func filtersDiscoverySchemaIncompatibleCandidates() throws {
         let compatible = try metadata(label: "Compatible")
         let incompatible = GrafttyBonjourService.DiscoveryMetadata(
-            version: "2",
+            version: "3",
             deviceID: RemoteDeviceID(value: "future"),
             label: "Future",
             fingerprint: try fingerprint(0xCC),
-            protocolVersion: "1",
+            protocolVersion: "2",
             pairingStatus: .required
         )
 
@@ -129,7 +130,7 @@ struct GrafttyBonjourServiceTests {
             [compatible, incompatible],
             localDeviceID: RemoteDeviceID(value: "self"),
             localFingerprint: try fingerprint(0x01),
-            supportedProtocolVersions: ["1"]
+            supportedProtocolVersions: ["2"]
         )
 
         #expect(filtered.map(\.label) == ["Compatible"])

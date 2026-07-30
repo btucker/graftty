@@ -1,7 +1,8 @@
 import Foundation
-import Testing
-@testable import GrafttyKit
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyKit
 
 @Suite("RemoteMacStore Tests")
 struct RemoteMacStoreTests {
@@ -140,7 +141,27 @@ struct RemoteMacStoreTests {
     }
 
     @MainActor
-    @Test("""
+    @Test("Protocol v1 remote Macs are discarded and must be paired again")
+    func protocolV1RemoteMacsAreDiscarded() async throws {
+        let url = makeTempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var legacy = try makeRemoteMac(label: "Needs Re-pairing")
+        legacy.pairingProtocolVersion = 1
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([legacy]).write(to: url)
+
+        let store = RemoteMacStore(storeURL: url)
+        await store.loadIfNeeded()
+
+        #expect(store.remoteMacs.isEmpty)
+
+        let replacement = try makeRemoteMac(label: "Paired with v2")
+        try store.add(replacement)
+        #expect(store.remoteMacs == [replacement])
+    }
+
+    @MainActor    @Test("""
     @spec REMOTE-12.1: If the saved Remote Macs file exists but cannot be \
     decoded, the application shall move it to a timestamped corruption backup \
     before allowing a later save to create a fresh file.

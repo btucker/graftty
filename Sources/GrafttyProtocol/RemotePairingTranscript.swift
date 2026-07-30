@@ -27,40 +27,68 @@ public struct RemotePairingNonce: Codable, Sendable, Equatable, Hashable {
 public struct RemotePairingTranscript: Codable, Sendable, Equatable {
     public let hostPublicKey: RemoteIdentityPublicKey
     public let clientPublicKey: RemoteIdentityPublicKey
-    public let nonce: RemotePairingNonce
-    public let expiry: Date
+    public let payload: PairingPayload
+
+    public var nonce: RemotePairingNonce { payload.nonce }
+    public var expiry: Date { payload.expiry }
 
     public init(
         hostPublicKey: RemoteIdentityPublicKey,
         clientPublicKey: RemoteIdentityPublicKey,
-        nonce: RemotePairingNonce,
-        expiry: Date
+        payload: PairingPayload
     ) {
         self.hostPublicKey = hostPublicKey
         self.clientPublicKey = clientPublicKey
-        self.nonce = nonce
-        // Truncate to whole-second precision so the stored value matches the
-        // Int64 epoch-seconds used in verificationCode() and Codable encoding.
-        self.expiry = Date(timeIntervalSince1970: Double(Int64(expiry.timeIntervalSince1970)))
+        // Pairing payloads cross JSON and QR encoders that preserve whole
+        // seconds. Normalize here so an in-memory host payload and its decoded
+        // client copy always derive the same verification code.
+        self.payload = PairingPayload(
+            version: payload.version,
+            hostDeviceID: payload.hostDeviceID,
+            hostKind: payload.hostKind,
+            hostDisplayName: payload.hostDisplayName,
+            hostPublicKeyFingerprint: payload.hostPublicKeyFingerprint,
+            nonce: payload.nonce,
+            expiry: Date(
+                timeIntervalSince1970: Double(
+                    Int64(payload.expiry.timeIntervalSince1970)
+                )
+            ),
+            pairingURL: payload.pairingURL,
+            routes: payload.routes
+        )
     }
 
     /// Derives a 6-digit verification code via HKDF-SHA256.
     ///
-    /// Input keying material: `hostPublicKey || clientPublicKey || expiry (8-byte big-endian Int64)`.
+    /// Input keying material binds both identity keys and every payload field
+    /// the client will persist, including the pairing URL and ordered route
+    /// list. This makes metadata or route substitution visible as a different
+    /// verification code.
     /// Salt: `nonce.bytes` (makes the code one-time per pairing session).
-    /// Info: fixed label `"graftty-remote-pairing-verification-v1"`.
+    /// Info: fixed label `"graftty-remote-pairing-verification-v2"`.
     /// Output: 4 bytes → UInt32 mod 1,000,000 → 6 decimal digits (000000–999999), displayed as `"XXX XXX"`.
     public func verificationCode() -> RemoteVerificationCode {
-        let info = Data("graftty-remote-pairing-verification-v1".utf8)
-        // Salt must conform to DataProtocol — use raw Data
+        let info = Data("graftty-remote-pairing-verification-v2".utf8)
         let salt = nonce.bytes
 
-        // IKM = hostPublicKey || clientPublicKey || expiry
         var ikm = Data()
-        ikm.append(hostPublicKey.rawRepresentation)
-        ikm.append(clientPublicKey.rawRepresentation)
-        var expiryValue = Int64(expiry.timeIntervalSince1970).bigEndian
-        ikm.append(Data(bytes: &expiryValue, count: 8))
+        ikm.appendFramed(Data("graftty.remote-pairing.transcript.v2".utf8))
+        ikm.appendFramed(hostPublicKey.rawRepresentation)
+        ikm.appendFramed(clientPublicKey.rawRepresentation)
+        ikm.appendFramed(String(payload.version))
+        ikm.appendFramed(payload.hostDeviceID.value)
+        ikm.appendFramed(payload.hostKind.rawValue)
+        ikm.appendFramed(payload.hostDisplayName)
+        ikm.appendFramed(payload.hostPublicKeyFingerprint.rawBytes)
+        ikm.appendFramed(payload.nonce.bytes)
+        ikm.appendFramed(String(Int64(payload.expiry.timeIntervalSince1970)))
+        ikm.appendFramed(payload.pairingURL.absoluteString)
+        ikm.appendFramed(String(payload.routes.count))
+        for route in payload.routes {
+            ikm.appendFramed(route.kind.rawValue)
+            ikm.appendFramed(route.baseURL.absoluteString)
+        }
 
         let ikmKey = SymmetricKey(data: ikm)
 
@@ -76,6 +104,18 @@ public struct RemotePairingTranscript: Codable, Sendable, Equatable {
         let digits = String(format: "%06d", sixDigits)
 
         return RemoteVerificationCode(digits: digits)
+    }
+}
+
+private extension Data {
+    mutating func appendFramed(_ value: String) {
+        appendFramed(Data(value.utf8))
+    }
+
+    mutating func appendFramed(_ value: Data) {
+        var length = UInt64(value.count).bigEndian
+        Swift.withUnsafeBytes(of: &length) { append(contentsOf: $0) }
+        append(value)
     }
 }
 

@@ -8,9 +8,7 @@ import Testing
 struct GhosttyKeybindingsFetcherTests {
     private let baseURL = URL(string: "https://keybindings.test")!
 
-    @Test("""
-    @spec IPAD-9.1: When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
-    """)
+    @Test("Legacy HTTP keybinding responses decode known actions")
     func validJSONDecodesKnownActionsAndDropsUnknownActions() async {
         let session = Self.session(statusCode: 200, body: #"""
         {
@@ -38,9 +36,7 @@ struct GhosttyKeybindingsFetcherTests {
         #expect(keybindingSet.bridge.allChords.isEmpty)
     }
 
-    @Test("""
-    @spec IPAD-9.7: If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
-    """)
+    @Test("Legacy HTTP failures use bundled defaults")
     func missingEndpointFallsBackToGhosttyDefaults() async {
         let session = Self.session(statusCode: 404, body: "Not Found")
 

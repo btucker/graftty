@@ -27,8 +27,14 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
     /// Most recent successful connection time.
     public var lastConnectedAt: Date?
 
-    /// Last known address — may change as the host moves between networks.
+    /// Pairing endpoint retained for pairing UI and diagnostics.
     public var pairingURL: URL
+
+    /// Signed ways to reach the host's paired-access listener.
+    public var routes: [RemoteConnectionRoute]
+
+    /// The most recently successful route, preferred on the next connection.
+    public var lastSuccessfulRoute: RemoteConnectionRoute?
 
     /// SHA-256 fingerprint derived from the host's public key.
     public var fingerprint: RemoteIdentityFingerprint {
@@ -42,7 +48,9 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
         displayName: String,
         pinnedAt: Date,
         lastConnectedAt: Date? = nil,
-        pairingURL: URL
+        pairingURL: URL,
+        routes: [RemoteConnectionRoute] = [],
+        lastSuccessfulRoute: RemoteConnectionRoute? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -51,6 +59,8 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
         self.pinnedAt = pinnedAt
         self.lastConnectedAt = lastConnectedAt
         self.pairingURL = pairingURL
+        self.routes = routes
+        self.lastSuccessfulRoute = lastSuccessfulRoute
     }
 }
 
@@ -80,6 +90,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     private static let fileName = "pinned-hosts.json"
 
     private struct Envelope: Codable {
+        var version: Int
         var hosts: [PinnedHost]
     }
 
@@ -106,6 +117,25 @@ public final class PinnedHostStore: @unchecked Sendable {
         guard !envelope.hosts.contains(where: { $0.fingerprint == fingerprint }) else {
             throw Error.duplicateFingerprint
         }
+        envelope.hosts.append(host)
+        try _save(envelope)
+    }
+
+    /// Persists trust established by a completed verification-code ceremony.
+    ///
+    /// Repeating the same ceremony is idempotent, and a newly confirmed key
+    /// for the same stable device ID replaces the prior key. A fingerprint
+    /// already assigned to a *different* device ID remains an error.
+    public func upsertAfterPairing(_ host: PinnedHost) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var envelope = try _load()
+        guard !envelope.hosts.contains(where: {
+            $0.id != host.id && $0.fingerprint == host.fingerprint
+        }) else {
+            throw Error.duplicateFingerprint
+        }
+        envelope.hosts.removeAll { $0.id == host.id }
         envelope.hosts.append(host)
         try _save(envelope)
     }
@@ -159,7 +189,7 @@ public final class PinnedHostStore: @unchecked Sendable {
         let envelope = try _load()
         return envelope.hosts.sorted { lhs, rhs in
             switch (lhs.lastConnectedAt, rhs.lastConnectedAt) {
-            case let (.some(l), .some(r)):
+            case (.some(let l), .some(let r)):
                 return l > r
             case (.some, .none):
                 return true
@@ -185,18 +215,22 @@ public final class PinnedHostStore: @unchecked Sendable {
     private func _load() throws -> Envelope {
         let fileURL = directory.appendingPathComponent(Self.fileName)
         guard let data = try? Data(contentsOf: fileURL) else {
-            return Envelope(hosts: [])
+            return Envelope(version: RemoteAccessProtocol.version,hosts: [])
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            return try decoder.decode(Envelope.self, from: data)
+            let envelope = try decoder.decode(Envelope.self, from: data)
+            guard envelope.version == RemoteAccessProtocol.version else {
+                return Envelope(version: RemoteAccessProtocol.version, hosts: [])
+            }
+            return envelope
         } catch {
             // Corrupt file: back it up and return an empty envelope so callers can recover.
             let ms = Int(Date().timeIntervalSince1970 * 1000)
             let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
             try? FileManager.default.moveItem(at: fileURL, to: backupURL)
-            return Envelope(hosts: [])
+            return Envelope(version: RemoteAccessProtocol.version,hosts: [])
         }
     }
 

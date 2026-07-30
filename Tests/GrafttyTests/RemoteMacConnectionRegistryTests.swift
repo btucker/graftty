@@ -25,35 +25,107 @@ struct RemoteMacConnectionRegistryTests {
 
     @Test("""
     @spec REMOTE-12.5: When the user connects to a saved Remote Mac, the \
-    application shall exchange a WebRTC offer at its last known LAN base URL, \
-    apply the answer, and open the remote pane-state/control environment.
+    application shall complete the authenticated route race and signed WebRTC \
+    offer/answer exchange, apply the answer, and open the remote pane-state and \
+    pane-control environment.
     """)
     func successfulConnectPostsOfferAndAppliesAnswer() async throws {
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostPublicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: hostKey.publicKey.rawRepresentation
+        )
+        let route = RemoteConnectionRoute(
+            kind: .lan,
+            baseURL: URL(string: "http://studio.local:8800")!
+        )
+        let refreshedRoute = RemoteConnectionRoute(
+            kind: .tailscaleDNS,
+            baseURL: URL(string: "http://studio.tailnet.ts.net:8800")!
+        )
+        let remote = RemoteMac(
+            id: RemoteDeviceID(value: "studio-mac"),
+            label: "Studio Mac",
+            fingerprint: RemoteIdentityFingerprint(of: hostPublicKey),
+            lastKnownBaseURL: route.baseURL,
+            routes: [route]
+        )
+        let pinned = PinnedHost(
+            id: remote.id,
+            kind: .mac,
+            publicKey: hostPublicKey,
+            displayName: remote.label,
+            pinnedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            pairingURL: route.baseURL.appendingPathComponent("v2/pairing"),
+            routes: [route]
+        )
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         let captured = CapturedSignalingRequest()
+        let updatedPin = CapturedPinnedHost()
         let registry = makeRegistry(
             signalingTransport: { request, body in
                 captured.record(request: request, body: body)
-                return try signalingResponse(
-                    url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
-                )
+                switch request.url?.path {
+                case "/v2/rtc/challenge":
+                    let probe = try JSONDecoder.iso8601().decode(
+                        SignalingChallengeRequest.self,
+                        from: body
+                    )
+                    let challenge = try SignalingChallengeResponse(
+                        hostDeviceID: remote.id,
+                        clientDeviceID: probe.clientDeviceID,
+                        clientNonce: probe.clientNonce,
+                        hostNonce: Data(repeating: 0x72, count: 32),
+                        expiresAt: Date(
+                            timeIntervalSince1970:
+                                floor(Date().timeIntervalSince1970) + 30
+                        ),
+                        routes: [route, refreshedRoute],
+                        signingKey: hostKey
+                    )
+                    return try authenticatedSignalingResponse(
+                        url: request.url!,
+                        value: challenge
+                    )
+                case "/v2/rtc/offer":
+                    let offer = try JSONDecoder.iso8601().decode(
+                        AuthenticatedSignalingOffer.self,
+                        from: body
+                    )
+                    let answer = try AuthenticatedSignalingAnswer(
+                        offer: offer,
+                        sdp: "v=0\nanswer\n",
+                        routes: [route, refreshedRoute],
+                        signingKey: hostKey
+                    )
+                    return try authenticatedSignalingResponse(
+                        url: request.url!,
+                        value: answer
+                    )
+                default:
+                    throw URLError(.unsupportedURL)
+                }
             },
+            pinnedHostProvider: { _ in pinned },
+            pinnedHostUpdater: { updatedPin.record($0) },
             connectionFactory: { _, _ in connection }
         )
-        let remote = try makeRemoteMac(baseURL: URL(string: "http://studio.local:9443")!)
 
         let entry = try await registry.connect(to: remote)
 
         #expect(entry.identity == RemoteMacIdentity(remote))
-        #expect(captured.url == URL(string: "http://studio.local:9443/v1/rtc/offer"))
+        #expect(captured.url == URL(string: "http://studio.local:8800/v2/rtc/offer"))
         let offerBody = try #require(captured.body)
-        let offer = try JSONDecoder().decode(SignalingOffer.self, from: offerBody)
-        #expect(offer.clientDeviceID == "client-mac")
+        let offer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: offerBody
+        )
+        #expect(offer.clientDeviceID == RemoteDeviceID(value: "client-mac"))
         #expect(offer.sdp == "v=0\noffer\n")
         #expect(await connection.appliedAnswers == ["v=0\nanswer\n"])
         #expect(entry.paneEnvironment.worktreePanesStore != nil)
         #expect(entry.paneEnvironment.paneControlClient != nil)
+        #expect(updatedPin.value?.routes == [route, refreshedRoute])
+        #expect(updatedPin.value?.lastSuccessfulRoute == route)
     }
 
     @Test("""
@@ -66,7 +138,7 @@ struct RemoteMacConnectionRegistryTests {
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n", offerGate: gate)
         let registry = makeRegistry(
             signalingTransport: { request, _ in
-                try signalingResponse(url: request.url!, answer: SignalingAnswer(sdp: "v=0\nanswer\n"))
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
             },
             connectionFactory: { _, _ in connection }
         )
@@ -94,7 +166,7 @@ struct RemoteMacConnectionRegistryTests {
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         let registry = makeRegistry(
             signalingTransport: { request, _ in
-                try signalingResponse(url: request.url!, answer: SignalingAnswer(sdp: "v=0\nanswer\n"))
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
             },
             connectionFactory: { _, _ in connection }
         )
@@ -111,7 +183,7 @@ struct RemoteMacConnectionRegistryTests {
         let remote = try makeRemoteMac()
         let registry = makeRegistry(
             signalingTransport: { request, _ in
-                try signalingResponse(url: request.url!, answer: SignalingAnswer(sdp: "v=0\nanswer\n"))
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
             },
             connectionFactory: { _, _ in connection },
             paneEnvironmentBuilder: { _, _, _ in .empty }
@@ -155,7 +227,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in connection }
@@ -180,7 +252,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in connection }
@@ -215,7 +287,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in connection }
@@ -258,7 +330,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in connection }
@@ -286,7 +358,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in sequence.next() }
@@ -318,7 +390,7 @@ struct RemoteMacConnectionRegistryTests {
             signalingTransport: { request, _ in
                 try signalingResponse(
                     url: request.url!,
-                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
                 )
             },
             connectionFactory: { _, _ in connection },
@@ -340,6 +412,8 @@ struct RemoteMacConnectionRegistryTests {
 
     private func makeRegistry(
         signalingTransport: @escaping SignalingClient.Transport,
+        pinnedHostProvider: RemoteMacConnectionRegistry.PinnedHostProvider? = nil,
+        pinnedHostUpdater: RemoteMacConnectionRegistry.PinnedHostUpdater? = nil,
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         },
@@ -352,12 +426,87 @@ struct RemoteMacConnectionRegistryTests {
         },
         onPaneSnapshot: @escaping RemoteMacConnectionRegistry.PaneSnapshotHandler = { _, _ in }
     ) -> RemoteMacConnectionRegistry {
-        RemoteMacConnectionRegistry(
+        let defaultHostKey = try! Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x62, count: 32)
+        )
+        let defaultHostPublicKey = try! RemoteIdentityPublicKey(
+            rawRepresentation: defaultHostKey.publicKey.rawRepresentation
+        )
+        let defaultRoute = RemoteConnectionRoute(
+            kind: .lan,
+            baseURL: URL(string: "http://studio.local:9443")!
+        )
+        let effectivePinnedHostProvider = pinnedHostProvider ?? { id in
+            PinnedHost(
+                id: id,
+                kind: .mac,
+                publicKey: defaultHostPublicKey,
+                displayName: "Studio Mac",
+                pinnedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                pairingURL: defaultRoute.baseURL.appendingPathComponent("v2/pairing"),
+                routes: [defaultRoute]
+            )
+        }
+        let effectiveTransport: SignalingClient.Transport
+        if pinnedHostProvider != nil {
+            effectiveTransport = signalingTransport
+        } else {
+            effectiveTransport = { request, body in
+                switch request.url?.path {
+                case "/v2/rtc/challenge":
+                    let probe = try JSONDecoder.iso8601().decode(
+                        SignalingChallengeRequest.self,
+                        from: body
+                    )
+                    let challenge = try SignalingChallengeResponse(
+                        hostDeviceID: RemoteDeviceID(value: "studio-mac"),
+                        clientDeviceID: probe.clientDeviceID,
+                        clientNonce: probe.clientNonce,
+                        hostNonce: Data(repeating: 0x63, count: 32),
+                        expiresAt: Date(
+                            timeIntervalSince1970:
+                                floor(Date().timeIntervalSince1970) + 30
+                        ),
+                        routes: [defaultRoute],
+                        signingKey: defaultHostKey
+                    )
+                    return try authenticatedSignalingResponse(
+                        url: request.url!,
+                        value: challenge
+                    )
+                case "/v2/rtc/offer":
+                    let legacyResponse = try await signalingTransport(request, body)
+                    let legacyAnswer = try JSONDecoder().decode(
+                        TestSignalingAnswer.self,
+                        from: legacyResponse.0
+                    )
+                    let offer = try JSONDecoder.iso8601().decode(
+                        AuthenticatedSignalingOffer.self,
+                        from: body
+                    )
+                    let answer = try AuthenticatedSignalingAnswer(
+                        offer: offer,
+                        sdp: legacyAnswer.sdp,
+                        routes: [defaultRoute],
+                        signingKey: defaultHostKey
+                    )
+                    return try authenticatedSignalingResponse(
+                        url: request.url!,
+                        value: answer
+                    )
+                default:
+                    throw URLError(.unsupportedURL)
+                }
+            }
+        }
+        return RemoteMacConnectionRegistry(
             identityProvider: {
                 try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x41, count: 32))
             },
             clientDeviceID: RemoteDeviceID(value: "client-mac"),
-            signalingClient: SignalingClient(transport: signalingTransport),
+            pinnedHostProvider: effectivePinnedHostProvider,
+            pinnedHostUpdater: pinnedHostUpdater,
+            signalingClient: SignalingClient(transport: effectiveTransport),
             connectionFactory: connectionFactory,
             paneEnvironmentBuilder: paneEnvironmentBuilder,
             onPaneSnapshot: onPaneSnapshot
@@ -380,9 +529,28 @@ private func makeWorktreeSnapshot(path: String) -> WorktreePanes {
     )
 }
 
-private func signalingResponse(url: URL, answer: SignalingAnswer) throws -> (Data, HTTPURLResponse) {
+private struct TestSignalingAnswer: Codable {
+    let sdp: String
+}
+
+private func signalingResponse(url: URL, answer: TestSignalingAnswer) throws -> (Data, HTTPURLResponse) {
     (
         try JSONEncoder().encode(answer),
+        HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+    )
+}
+
+private func authenticatedSignalingResponse<Value: Encodable>(
+    url: URL,
+    value: Value
+) throws -> (Data, HTTPURLResponse) {
+    (
+        try JSONEncoder.iso8601().encode(value),
         HTTPURLResponse(
             url: url,
             statusCode: 200,
@@ -418,6 +586,21 @@ private final class CapturedSignalingRequest: @unchecked Sendable {
     func record(request: URLRequest, body: Data) {
         lock.withLock {
             storage = (request.url, body)
+        }
+    }
+}
+
+private final class CapturedPinnedHost: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: PinnedHost?
+
+    var value: PinnedHost? {
+        lock.withLock { storage }
+    }
+
+    func record(_ host: PinnedHost) {
+        lock.withLock {
+            storage = host
         }
     }
 }

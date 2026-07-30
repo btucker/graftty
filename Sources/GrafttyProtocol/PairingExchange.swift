@@ -2,21 +2,25 @@ import Foundation
 
 // MARK: - PairingRoutes
 
-/// The two HTTP routes the local pairing ceremony serves, shared by the
-/// host's `PairingHTTPServer` (route switch), `HostPairingCoordinator`
-/// (constructing the QR-advertised `pairingURL`), and the client's
-/// `LocalPairingClient` (path suffixes appended to that URL) so the
-/// three can't drift apart.
+/// HTTP route suffixes the local pairing ceremony serves, shared by the
+/// host route handlers and the client's `LocalPairingClient`, so their
+/// path suffixes cannot drift apart.
 public enum PairingRoutes {
-    public static let basePath = "/v1/pairing"
+    public static let basePath = "/v2/pairing"
     public static let introduce = "introduce"
     public static let awaitOutcome = "await-outcome"
+    public static let cancel = "cancel"
 }
 
 // MARK: - PairingProtocolDefaults
 
 /// Shared timing defaults for the local pairing ceremony.
 public enum PairingProtocolDefaults {
+    /// The LAN discovery bootstrap is a short request that only creates a
+    /// host-side ceremony. It must not inherit the multi-minute timeout
+    /// reserved for the user's confirmation long-poll.
+    public static let bootstrapRequestTimeout: TimeInterval = 10
+
     /// How long a QR-published pairing session stays valid before its
     /// nonce expires. Matches `HostPairingSession.startPairing`'s and
     /// `HostPairingServer.start`'s default `validFor`.
@@ -31,14 +35,14 @@ public enum PairingProtocolDefaults {
 
 // MARK: - PairingIntroduceRequest
 
-/// Body of `POST /v1/pairing/introduce`.
+/// Body of `POST /v2/pairing/introduce`.
 ///
 /// The client publishes its identity to the host using the nonce baked into
 /// the scanned QR payload. The host validates the nonce against its active
 /// `HostPairingSession` and, on success, returns its full public key so the
 /// client can build the transcript and display the verification code.
 public struct PairingIntroduceRequest: Codable, Sendable, Equatable {
-    /// Protocol version. Must be 1.
+    /// Protocol version. Must match `RemoteAccessProtocol.version`.
     public let version: Int
 
     /// Nonce from the QR payload. Pins this request to a single pairing session.
@@ -50,7 +54,7 @@ public struct PairingIntroduceRequest: Codable, Sendable, Equatable {
     public let clientDisplayName: String
 
     public init(
-        version: Int = 1,
+        version: Int = RemoteAccessProtocol.version,
         nonce: RemotePairingNonce,
         clientPublicKey: RemoteIdentityPublicKey,
         clientDeviceID: RemoteDeviceID,
@@ -68,7 +72,7 @@ public struct PairingIntroduceRequest: Codable, Sendable, Equatable {
 
 // MARK: - PairingIntroduceResponse
 
-/// Body of a successful response to `POST /v1/pairing/introduce`.
+/// Body of a successful response to `POST /v2/pairing/introduce`.
 ///
 /// The host returns its full public key so the client can recompute the
 /// pairing transcript and display the matching verification code. The
@@ -86,7 +90,7 @@ public struct PairingIntroduceResponse: Codable, Sendable, Equatable {
 
 // MARK: - PairingAwaitOutcomeRequest
 
-/// Body of `POST /v1/pairing/await-outcome`.
+/// Body of `POST /v2/pairing/await-outcome`.
 ///
 /// The client long-polls this endpoint after `introduce` succeeded; the host
 /// holds the response until the user confirms/denies in the host UI or the
@@ -95,7 +99,21 @@ public struct PairingAwaitOutcomeRequest: Codable, Sendable, Equatable {
     public let version: Int
     public let nonce: RemotePairingNonce
 
-    public init(version: Int = 1, nonce: RemotePairingNonce) {
+    public init(version: Int = RemoteAccessProtocol.version, nonce: RemotePairingNonce) {
+        self.version = version
+        self.nonce = nonce
+    }
+}
+
+/// Body of `POST /v2/pairing/cancel`.
+///
+/// Cancellation is scoped to the unpredictable nonce returned by bootstrap,
+/// so a stale client cannot cancel a newer ceremony.
+public struct PairingCancelRequest: Codable, Sendable, Equatable {
+    public let version: Int
+    public let nonce: RemotePairingNonce
+
+    public init(version: Int = RemoteAccessProtocol.version, nonce: RemotePairingNonce) {
         self.version = version
         self.nonce = nonce
     }
@@ -113,7 +131,7 @@ public enum PairingOutcome: String, Codable, Sendable, Equatable {
 
 // MARK: - PairingOutcomeResponse
 
-/// Body of a response to `POST /v1/pairing/await-outcome`.
+/// Body of a response to `POST /v2/pairing/await-outcome`.
 public struct PairingOutcomeResponse: Codable, Sendable, Equatable {
     public let outcome: PairingOutcome
 
@@ -147,6 +165,10 @@ public struct PairingErrorResponse: Codable, Sendable, Equatable, Error {
         case rateLimited
         /// The host cannot accept a WebRTC offer right now.
         case hostBusy
+        /// The request did not prove possession of a paired identity key.
+        case authenticationFailed
+        /// A single-use challenge was missing, expired, or already consumed.
+        case replayDetected
         case internalError
     }
 

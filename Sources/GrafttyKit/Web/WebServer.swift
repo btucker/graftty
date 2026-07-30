@@ -200,13 +200,6 @@ public final class WebServer {
         case internalFailure(String)               // 500
     }
 
-    public enum SignalingHandlerOutcome: Sendable {
-        case success(SignalingAnswer)
-        case invalid(String)        // 400 — malformed offer
-        case unavailable(String)    // 503 — handler not wired
-        case internalFailure(String) // 500
-    }
-
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
@@ -261,12 +254,6 @@ public final class WebServer {
         /// advertise `remote-worktrees-v1`.
         public let relayedWorktreePanesProvider:
             @Sendable () async -> [WorktreePanes]
-        /// Drives `POST /v1/rtc/offer`. Receives the client's
-        /// `SignalingOffer` and returns a `SignalingHandlerOutcome`. Nil
-        /// disables the endpoint with a 503 response — matching the
-        /// existing `worktreeCreator` shape so a client can distinguish
-        /// "not supported yet" from "wrong URL".
-        public let signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)?
         /// TERM-11.5: when set, each WebSocket bridge's WebSession
         /// registers its zmx attach so Mac panes know a remote client
         /// is present. Nil (tests, early boot) disables tracking.
@@ -295,7 +282,6 @@ public final class WebServer {
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
             relayedWorktreePanesProvider:
                 @escaping @Sendable () async -> [WorktreePanes] = { [] },
-            signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
             remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
             displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore()
         ) {
@@ -313,7 +299,6 @@ public final class WebServer {
             self.ghosttyKeybindingsProvider = ghosttyKeybindingsProvider
             self.worktreePanesProvider = worktreePanesProvider
             self.relayedWorktreePanesProvider = relayedWorktreePanesProvider
-            self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
             self.displayOwnershipStore = displayOwnershipStore
             self.ownershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
@@ -768,21 +753,6 @@ public final class WebServer {
                 handlePullDefaultBranch(context: context, body: body)
                 return
             }
-            // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
-            // POST-only; other verbs get 405 so caching proxies and curl
-            // probes don't surprise the client.
-            if path == "/v1/rtc/offer" {
-                guard head.method == .POST else {
-                    Self.respondJSON(
-                        context: context,
-                        status: .methodNotAllowed,
-                        error: "only POST is supported"
-                    )
-                    return
-                }
-                handleSignalingOffer(context: context, body: body)
-                return
-            }
             // WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
             // POST-only; body is the same JSON envelope the iOS client
             // sends. Other verbs get 405 so caching proxies and curl
@@ -1047,62 +1017,6 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await remover(decoded))
-            }
-        }
-
-        /// Decode the JSON body as a `SignalingOffer`, invoke the
-        /// injected `signalingHandler`, and map the outcome to an HTTP
-        /// status + JSON envelope. Mirrors `handleCreateWorktree`.
-        private func handleSignalingOffer(context: ChannelHandlerContext, body: Data) {
-            guard let handler = config.signalingHandler else {
-                Self.respondJSON(
-                    context: context,
-                    status: .serviceUnavailable,
-                    error: "signaling endpoint not available"
-                )
-                return
-            }
-            let offer: SignalingOffer
-            do {
-                offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "malformed signaling offer: \(error.localizedDescription)"
-                )
-                return
-            }
-            let promise = context.eventLoop.makePromise(of: WebServer.SignalingHandlerOutcome.self)
-            promise.futureResult.whenComplete { result in
-                let outcome = (try? result.get()) ?? .internalFailure("handler dispatch failed")
-                switch outcome {
-                case .success(let answer):
-                    do {
-                        let data = try JSONEncoder().encode(answer)
-                        Self.respond(
-                            context: context,
-                            status: .ok,
-                            body: data,
-                            contentType: "application/json; charset=utf-8"
-                        )
-                    } catch {
-                        Self.respondJSON(
-                            context: context,
-                            status: .internalServerError,
-                            error: "encoding error"
-                        )
-                    }
-                case .invalid(let msg):
-                    Self.respondJSON(context: context, status: .badRequest, error: msg)
-                case .unavailable(let msg):
-                    Self.respondJSON(context: context, status: .serviceUnavailable, error: msg)
-                case .internalFailure(let msg):
-                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
-                }
-            }
-            Task {
-                promise.succeed(await handler(offer))
             }
         }
 

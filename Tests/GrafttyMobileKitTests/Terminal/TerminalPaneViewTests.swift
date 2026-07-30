@@ -540,23 +540,6 @@ struct TerminalPaneViewTests {
         #expect(!container.terminalView.isFirstResponder)
     }
 
-    @Test
-    func dismantleUIViewDoesNotCaptureLayerSnapshotDuringTeardown() {
-        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let coordinator = TerminalPaneView.Coordinator()
-        var didNotifyUnmount = false
-        var receivedSnapshot: UIImage?
-        coordinator.onWillUnmount = { snapshot in
-            didNotifyUnmount = true
-            receivedSnapshot = snapshot
-        }
-
-        TerminalPaneView.dismantleUIView(container, coordinator: coordinator)
-
-        #expect(didNotifyUnmount)
-        #expect(receivedSnapshot == nil)
-    }
-
     @Test("""
 @spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 """)

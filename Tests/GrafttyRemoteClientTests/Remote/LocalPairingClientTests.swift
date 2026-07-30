@@ -1,8 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
-@testable import GrafttyRemoteClient
+import Foundation
 import GrafttyProtocol
+import Testing
+
+@testable import GrafttyRemoteClient
 
 @Suite("LocalPairingClient Tests")
 struct LocalPairingClientTests {
@@ -45,7 +46,7 @@ struct LocalPairingClientTests {
             hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPub),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
-            pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host.local:8800/v2/pairing")!
         )
 
         let session = ClientPairingSession(
@@ -180,14 +181,17 @@ struct LocalPairingClientTests {
 
         let recordedBeforeConfirm = await stub.recordedRequests
         #expect(recordedBeforeConfirm.map { $0.url?.path } == [
-            "/v1/pairing/begin",
-            "/v1/pairing/introduce",
+                "/v2/pairing/begin",
+                "/v2/pairing/introduce",
         ])
+        #expect(
+            recordedBeforeConfirm[0].timeoutInterval
+                == PairingProtocolDefaults.bootstrapRequestTimeout
+        )
         #expect(code == RemotePairingTranscript(
             hostPublicKey: fx.hostPublicKey,
             clientPublicKey: fx.clientPublicKey,
-            nonce: fx.payload.nonce,
-            expiry: fx.payload.expiry
+            payload: fx.payload
         ).verificationCode())
         #expect(try fx.pinnedStore.list().isEmpty)
 
@@ -196,9 +200,9 @@ struct LocalPairingClientTests {
         #expect(pinned.id == fx.payload.hostDeviceID)
         let recordedAfterConfirm = await stub.recordedRequests
         #expect(recordedAfterConfirm.map { $0.url?.path } == [
-            "/v1/pairing/begin",
-            "/v1/pairing/introduce",
-            "/v1/pairing/await-outcome",
+                "/v2/pairing/begin",
+                "/v2/pairing/introduce",
+                "/v2/pairing/await-outcome",
         ])
         #expect(try fx.pinnedStore.list().contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
@@ -241,10 +245,68 @@ struct LocalPairingClientTests {
             transport: await stub.makeTransport()
         )
 
-        _ = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800/v1/pairing")!)
+        _ = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800/v2/pairing")!)
 
         let recorded = await stub.recordedRequests
-        #expect(recorded.map { $0.url?.path } == ["/v1/pairing/begin"])
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/begin"])
+    }
+
+    @Test("beginPairing rejects a response that changes the contacted origin")
+    func beginPairingRejectsChangedOrigin() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+        let poisoned = PairingPayload(
+            hostDeviceID: fx.payload.hostDeviceID,
+            hostKind: fx.payload.hostKind,
+            hostDisplayName: fx.payload.hostDisplayName,
+            hostPublicKeyFingerprint: fx.payload.hostPublicKeyFingerprint,
+            nonce: fx.payload.nonce,
+            expiry: fx.payload.expiry,
+            pairingURL: URL(string: "https://attacker.local:8800/v2/pairing")!
+        )
+        let stub = StubTransport()
+        await stub.setResponse(for: "begin", body: try jsonData(poisoned))
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        await #expect(throws: LocalPairingClient.Error.transport(
+            "pairing response changed the requested origin"
+        )) {
+            _ = try await client.beginPairing(
+                baseURL: URL(string: "https://host.local:8800")!
+            )
+        }
+    }
+
+    @Test("cancelPairing posts the active nonce to the host")
+    func cancelPairingPostsActiveNonce() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+        let stub = StubTransport()
+        await stub.setResponse(
+            for: "cancel",
+            body: try jsonData(PairingOutcomeResponse(outcome: .cancelled))
+        )
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        await client.cancelPairing(payload: fx.payload)
+
+        let recorded = await stub.recordedRequests
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/cancel"])
+        let request = try JSONDecoder.iso8601().decode(
+            PairingCancelRequest.self,
+            from: recorded[0].httpBody ?? Data()
+        )
+        #expect(request.nonce == fx.payload.nonce)
     }
 
     // MARK: - Fingerprint mismatch (REMOTE-1.2 client side enforcement at the wire)
@@ -272,12 +334,11 @@ struct LocalPairingClientTests {
             _ = try await client.runPairing(payload: fx.payload)
             Issue.record("Expected fingerprintMismatch")
         } catch ClientPairingSession.Error.fingerprintMismatch {
-            // REMOTE-1.2 protection fired inside session.confirm
+            // Expected before the confirmation long-poll begins.
         }
 
-        // The protection that matters: no host was persisted, even though
-        // await-outcome returned `.confirmed`. The fingerprint check is
-        // the gating step inside ClientPairingSession.confirm.
+        let recorded = await stub.recordedRequests
+        #expect(recorded.map { $0.url?.path } == ["/v2/pairing/introduce"])
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.isEmpty)
     }
@@ -430,7 +491,7 @@ struct LocalPairingClientTests {
 
     // MARK: - Request shape
 
-    @Test("introduce request body carries nonce + client identity + version 1")
+    @Test("introduce request body carries nonce, client identity, and protocol version")
     func introduceRequestBody() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -450,7 +511,7 @@ struct LocalPairingClientTests {
         let introduceReq = recorded.first { $0.url?.path.hasSuffix("/introduce") == true }
         let body = try #require(introduceReq?.httpBody)
         let decoded = try JSONDecoder.iso8601().decode(PairingIntroduceRequest.self, from: body)
-        #expect(decoded.version == 1)
+        #expect(decoded.version == RemoteAccessProtocol.version)
         #expect(decoded.nonce == fx.payload.nonce)
         #expect(decoded.clientPublicKey == fx.clientPublicKey)
         #expect(decoded.clientDeviceID == fx.session.clientDeviceID)

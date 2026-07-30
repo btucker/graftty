@@ -7,10 +7,8 @@ import NIOHTTP1
 /// Writes a complete HTTP/1.1 response (head + body + end) on `context`
 /// and closes the connection once the response has actually flushed.
 ///
-/// Shared by `WebServer.HTTPHandler` and `PairingHTTPServer.HTTPHandler`
-/// — both are one-shot, `Connection: close` responders with identical
-/// head/body/end/close sequencing; this is the single implementation
-/// both delegate to.
+/// Used by the one-shot `WebServer.HTTPHandler`, which responds with
+/// `Connection: close`.
 ///
 /// Chains `close` off the end-of-response flush promise rather than
 /// closing synchronously after `writeAndFlush(..., promise: nil)`. NIO's
@@ -25,9 +23,8 @@ import NIOHTTP1
 /// already guarantees: the `whenComplete` callback below runs back on
 /// `context.eventLoop` — the same loop every caller of this function
 /// runs on — because the promise was created from it. `ChannelHandlerContext`
-/// itself isn't `Sendable`, so this is required for strict-concurrency
-/// callers (`PairingHTTPServer`); it's a behavior-neutral no-op for
-/// callers that don't need it (`WebServer`).
+/// itself isn't `Sendable`, so the explicit loop-bound wrapper documents
+/// and enforces that executor relationship.
 func writeHTTPResponse(
     context: ChannelHandlerContext,
     status: HTTPResponseStatus,

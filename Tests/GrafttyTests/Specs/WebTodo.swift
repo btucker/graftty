@@ -34,11 +34,6 @@ struct WebTodo {
     func web_1_12() async throws { }
 
     @Test("""
-@spec WEB-1.13: While the server is listening, the Settings pane shall render a 160 pt QR code inline beneath the Base URL row, encoding the Base URL so that an iOS client can scan it on first run to add a saved host. Alongside the QR, the pane shall render a one-sentence usage hint ("Scan with Graftty") so a reader who has never onboarded a phone before knows what the code is for. Hiding it behind a disclosure is rejected on discoverability grounds: a user who has Web Access on has almost certainly enabled it to onboard a phone, and the QR is the payoff for that action. When the server is not listening, the Base URL row (and therefore the QR) is not rendered at all, per the existing status-gated layout.
-""", .disabled("not yet implemented"))
-    func web_1_13() async throws { }
-
-    @Test("""
 @spec WEB-2.1: The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
 """, .disabled("not yet implemented"))
     func web_2_1() async throws { }

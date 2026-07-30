@@ -679,6 +679,9 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         // Empty ICE servers — LAN / Tailscale loopback uses mDNS-derived
         // host candidates only; no STUN/TURN needed in M1.1 scope.
         config.iceServers = []
+        config.iceTransportPolicy = .all
+        config.candidateNetworkPolicy = .all
+        config.maxIPv6Networks = .max
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
         return config

@@ -62,6 +62,15 @@ private final class GhosttyKeybindingsCache {
 /// `GET <baseURL>/ghostty-keybindings` so iPad can mirror host command
 /// shortcuts after the focused command context is wired.
 public enum GhosttyKeybindingsFetcher {
+    static func pairedPresentation(
+        _ response: GhosttyKeybindingsResponse
+    ) -> MobileGhosttyKeybindingSet {
+        MobileGhosttyKeybindingSet(
+            bridge: bridge(from: response),
+            source: .hostResolved
+        )
+    }
+
     @MainActor
     public static func fetch(baseURL: URL) async -> MobileGhosttyKeybindingSet {
         await GhosttyKeybindingsCache.shared.keybindingSet(for: baseURL)

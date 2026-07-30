@@ -59,7 +59,7 @@ struct SessionReconnectTests {
     }
 
     @Test("""
-    @spec IOS-7.4: On WebSocket failure (upgrade failure, read/write error, or close frame not initiated by the app) for a pane whose session name is still listed in `/sessions`, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to sessions" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
+    @spec IOS-7.4: On authenticated terminal-channel failure for a pane whose session name is still present in the latest paired panes-state snapshot, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to worktrees" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
     """)
     func receiveErrorTransitionsToReconnecting() async throws {
         let clock = VirtualClock()

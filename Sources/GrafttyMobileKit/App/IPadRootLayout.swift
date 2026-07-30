@@ -17,6 +17,7 @@ public struct IPadRootLayout: View {
     /// `RootView` level so a host negotiated from either surface is
     /// cached for the other (W3 Task 3).
     public let coordinator: RemoteConnectionCoordinator
+    @Bindable public var nearbyMacBrowser: NearbyMacBrowser
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
@@ -73,10 +74,16 @@ public struct IPadRootLayout: View {
         var projectedSessionOrder: [String]
     }
 
-    public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
+    public init(
+        hostStore: HostStore,
+        appState: IPadAppState,
+        coordinator: RemoteConnectionCoordinator,
+        nearbyMacBrowser: NearbyMacBrowser = NearbyMacBrowser()
+    ) {
         self.hostStore = hostStore
         self.appState = appState
         self.coordinator = coordinator
+        self.nearbyMacBrowser = nearbyMacBrowser
     }
 
     private var selectedHost: Host? {
@@ -109,6 +116,11 @@ public struct IPadRootLayout: View {
                                 host: host,
                                 sessionName: "worktree-management"
                             ),
+                            remoteSnapshotProvider:
+                                makeRemoteWorktreeSnapshotProvider(
+                                    coordinator: coordinator,
+                                    host: host
+                                ),
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { leaf in selectPane(leaf) },
                             onListChanged: { list in
@@ -138,7 +150,9 @@ public struct IPadRootLayout: View {
                         HostMenu(
                             selectedHost: selectedHost,
                             hostStore: hostStore,
-                            appState: appState
+                            appState: appState,
+                            browser: nearbyMacBrowser,
+                            coordinator: coordinator
                         )
                     }
                 }
@@ -179,7 +193,13 @@ public struct IPadRootLayout: View {
             set: { appState.sidebarWidth = $0 }
         ))
         .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
-        .task(id: selectedHost?.id) {
+        .task(id: HostPresentationRefreshKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            )
+        )) {
             await refreshHostPresentationState()
         }
         .task(id: PaneEnvironmentRefreshKey(
@@ -345,6 +365,14 @@ public struct IPadRootLayout: View {
 
     static func keybindingSetForStartingHostRefresh() -> MobileGhosttyKeybindingSet {
         .loading
+    }
+
+    static func keybindingSet(
+        for presentation: RemoteHostPresentation?
+    ) -> MobileGhosttyKeybindingSet {
+        presentation.map {
+            GhosttyKeybindingsFetcher.pairedPresentation($0.keybindings)
+        } ?? .bundledFallback
     }
 
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
@@ -1078,6 +1106,12 @@ public struct IPadRootLayout: View {
 
     @MainActor
     private func refreshHostPresentationState() async {
+        guard LiveSessionReadiness.isActive(
+            scene: scenePhase,
+            gateUnlocked: gate.isUnlocked
+        ) else {
+            return
+        }
         guard let host = selectedHost else {
             appState.theme = .fallback
             keybindingSet = Self.keybindingSetForStartingHostRefresh()
@@ -1085,15 +1119,13 @@ public struct IPadRootLayout: View {
         }
         let capturedHostID = host.id
         keybindingSet = Self.keybindingSetForStartingHostRefresh()
-        async let configText = GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
-        async let keybindings = GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
-
-        let text = await configText
+        let presentation = await coordinator.presentation(for: host)
+        let text = presentation?.ghosttyConfig
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
 
-        let resolvedKeybindingSet = await keybindings
+        let resolvedKeybindingSet = Self.keybindingSet(for: presentation)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         keybindingSet = resolvedKeybindingSet
@@ -1147,6 +1179,11 @@ private struct PaneEnvironmentRefreshKey: Hashable {
     let isReady: Bool
 }
 
+private struct HostPresentationRefreshKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
+}
+
 // MARK: - HostMenu (private)
 
 /// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
@@ -1154,6 +1191,8 @@ private struct HostMenu: View {
     let selectedHost: Host?
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
+    @Bindable var browser: NearbyMacBrowser
+    let coordinator: RemoteConnectionCoordinator
 
     @State private var showingAddHost = false
 
@@ -1162,7 +1201,8 @@ private struct HostMenu: View {
             // Saved hosts with a checkmark on the currently-selected
             // one; tapping fires the standard host switch (clears
             // worktree selection + focused pane).
-            ForEach(hostStore.hosts) { host in
+            ForEach(hostStore.hosts.filter { coordinator.isPaired($0) }) {
+                host in
                 Button {
                     IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
                 } label: {
@@ -1173,7 +1213,7 @@ private struct HostMenu: View {
                     }
                 }
             }
-            if !hostStore.hosts.isEmpty {
+            if hostStore.hosts.contains(where: { coordinator.isPaired($0) }) {
                 Divider()
             }
             Button {
@@ -1208,11 +1248,14 @@ private struct HostMenu: View {
         }
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
-                AddHostView { host in
-                    try hostStore.add(host)
+                AddHostView(browser: browser) { host in
+                    let savedHost = try hostStore.add(host)
                     // Auto-select the freshly-added host so the sidebar
                     // immediately fetches its worktree list.
-                    IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
+                    IPadRootLayout.applyHostSwitch(
+                        appState: appState,
+                        to: savedHost.id
+                    )
                 }
             }
         }

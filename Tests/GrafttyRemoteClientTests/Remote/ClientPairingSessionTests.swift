@@ -1,9 +1,9 @@
-import Testing
-import Foundation
 import CryptoKit
+import Foundation
+import GrafttyProtocol
+import Testing
 
 @testable import GrafttyRemoteClient
-import GrafttyProtocol
 
 @Suite("ClientPairingSession Tests")
 struct ClientPairingSessionTests {
@@ -45,14 +45,14 @@ struct ClientPairingSessionTests {
     ) -> PairingPayload {
         let fingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
         return PairingPayload(
-            version: 1,
+            version: RemoteAccessProtocol.version,
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce.generate(),
             expiry: expiry,
-            pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host.local:8800/v2/pairing")!
         )
     }
 
@@ -91,19 +91,19 @@ struct ClientPairingSessionTests {
 
         let hostPublicKey = makePublicKey(byte: 0x01)
         let fingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
-        let v2Payload = PairingPayload(
-            version: 2,
+        let obsoletePayload = PairingPayload(
+            version: 1,
             hostDeviceID: .generate(),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce.generate(),
             expiry: Date(timeIntervalSince1970: 1_800_000_300),
-            pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://host.local:8800/v2/pairing")!
         )
 
-        #expect(throws: ClientPairingSession.Error.unsupportedPayloadVersion(2)) {
-            try session.consume(payload: v2Payload)
+        #expect(throws: ClientPairingSession.Error.unsupportedPayloadVersion(1)) {
+            try session.consume(payload: obsoletePayload)
         }
     }
 
@@ -164,8 +164,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
@@ -207,8 +206,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
@@ -245,8 +243,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
@@ -285,8 +282,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
         _ = try session.confirm(hostPublicKey: hostPublicKey)
@@ -320,8 +316,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
         _ = try session.confirm(hostPublicKey: hostPublicKey)
@@ -356,8 +351,7 @@ struct ClientPairingSessionTests {
         let transcript = RemotePairingTranscript(
             hostPublicKey: hostPublicKey,
             clientPublicKey: clientPublicKey,
-            nonce: payload.nonce,
-            expiry: payload.expiry
+            payload: payload
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
