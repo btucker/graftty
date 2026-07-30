@@ -50,12 +50,17 @@ struct WorktreeListContentTests {
     @Test("WorktreePickerView wrapper delegates to WorktreeListContent")
     func wrapperDelegates() {
         let h = sampleHost()
+        let coordinator = RemoteConnectionCoordinator()
         let wrapper = WorktreePickerView(
             host: h,
+            coordinator: coordinator,
             onSelect: { _ in },
             onSelectPane: { _ in }
         )
+        let requiredCoordinator: RemoteConnectionCoordinator =
+            wrapper.coordinator
         #expect(wrapper.host.id == h.id)
+        #expect(requiredCoordinator === coordinator)
     }
 
     @Test("""

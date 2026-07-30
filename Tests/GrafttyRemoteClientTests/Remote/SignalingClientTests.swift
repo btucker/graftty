@@ -14,7 +14,7 @@ struct SignalingClientTests {
     mismatched, or invalid signature shall fail closed without trying an \
     unauthenticated signaling endpoint.
     """)
-    func authenticatedExchangeRejectsChallengeFromUnpinnedKey() async throws {
+    func authenticatedExchangeRejectsChallengeOrAnswerFromUnpinnedKey() async throws {
         let pinnedHostKey = Curve25519.Signing.PrivateKey()
         let attackerKey = Curve25519.Signing.PrivateKey()
         let clientKey = Curve25519.Signing.PrivateKey()
@@ -63,6 +63,76 @@ struct SignalingClientTests {
                 )
         }
         #expect(paths.values == ["/v2/rtc/challenge"])
+
+        let answerPaths = CapturedPaths()
+        let forgedAnswerTransport: SignalingClient.Transport = {
+            request,
+            body in
+            answerPaths.append(request.url?.path ?? "")
+            switch request.url?.path {
+            case "/\(RemoteAccessProtocol.challengePath)":
+                let probe = try JSONDecoder.iso8601().decode(
+                    SignalingChallengeRequest.self,
+                    from: body
+                )
+                let challenge = try SignalingChallengeResponse(
+                    hostDeviceID: hostDeviceID,
+                    clientDeviceID: clientDeviceID,
+                    clientNonce: probe.clientNonce,
+                    hostNonce: Data(repeating: 0x62, count: 32),
+                    expiresAt: Date(timeIntervalSince1970: 1_800_000_030),
+                    routes: [route],
+                    signingKey: pinnedHostKey
+                )
+                return try Self.jsonResponse(
+                    request: request,
+                    value: challenge
+                )
+            case "/\(RemoteAccessProtocol.offerPath)":
+                let offer = try JSONDecoder.iso8601().decode(
+                    AuthenticatedSignalingOffer.self,
+                    from: body
+                )
+                let forgedAnswer = try AuthenticatedSignalingAnswer(
+                    offer: offer,
+                    sdp: "v=0\nforged-answer\n",
+                    routes: [route],
+                    signingKey: attackerKey
+                )
+                return try Self.jsonResponse(
+                    request: request,
+                    value: forgedAnswer
+                )
+            default:
+                return Self.response(
+                    request: request,
+                    status: 404,
+                    body: Data()
+                )
+            }
+        }
+
+        await #expect(
+            throws: SignalingClient.Error.authentication(
+                "host answer signature is invalid"
+            )
+        ) {
+            _ = try await SignalingClient(
+                transport: forgedAnswerTransport
+            ).authenticatedExchange(
+                routes: [route],
+                hostDeviceID: hostDeviceID,
+                hostPublicKey: pinnedPublicKey,
+                clientDeviceID: clientDeviceID,
+                clientKey: clientKey,
+                sdp: "v=0\noffer\n",
+                now: { Date(timeIntervalSince1970: 1_800_000_000) }
+            )
+        }
+        #expect(answerPaths.values == [
+            "/v2/rtc/challenge",
+            "/v2/rtc/offer",
+        ])
     }
 
     @Test("""

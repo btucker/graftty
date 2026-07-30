@@ -33,7 +33,7 @@ struct LANRemoteAccessServerTests {
 
     @Test("""
     @spec REMOTE-2.4: Native paired-device access shall use one stable dual-stack \
-    HTTP listener on port 8800 for LAN, MagicDNS, and Tailscale-IP routes. \
+    HTTP listener on port 8800 for LAN and Tailscale-IP routes. \
     Browser Web Access shall remain an independent HTTPS service and shall not \
     be used for native signaling.
     """)

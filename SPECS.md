@@ -1848,11 +1848,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.3** The client shall verify the challenge and signaling answer with the full host public key pinned during pairing; a missing, expired, mismatched, or invalid signature shall fail closed without trying an unauthenticated signaling endpoint.
 
-**REMOTE-2.4** Native paired-device access shall use one stable dual-stack HTTP listener on port 8800 for LAN, MagicDNS, and Tailscale-IP routes. Browser Web Access shall remain an independent HTTPS service and shall not be used for native signaling.
+**REMOTE-2.4** Native paired-device access shall use one stable dual-stack HTTP listener on port 8800 for LAN and Tailscale-IP routes. Browser Web Access shall remain an independent HTTPS service and shall not be used for native signaling.
 
 **REMOTE-2.5** When connecting to a paired host, the client shall race authenticated challenge probes across trusted routes, construct exactly one signed SDP offer, race that same offer across the routes so one blackhole cannot exhaust the challenge, and persist the winning route plus routes refreshed in the signed answer.
 
-**REMOTE-2.6** Tailscale route discovery and refresh shall not depend on Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route available; later recovery shall restore MagicDNS and Tailscale-IP routes.
+**REMOTE-2.6** Tailscale route discovery and refresh shall not depend on Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route available; later recovery shall restore Tailscale-IP routes. Native clients shall not advertise plaintext fully qualified MagicDNS routes that Apple Transport Security rejects.
 
 **REMOTE-2.7** If the stable paired-access listener cannot bind, Settings shall show a clear error and shall not begin a pairing ceremony that advertises the unavailable listener.
 

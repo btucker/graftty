@@ -71,6 +71,30 @@ struct TailscaleLocalAPIParsingTests {
 }
 
 @Suite("""
+@spec REMOTE-2.6: Tailscale route discovery and refresh shall not depend on \
+Browser Web Access being enabled. Loss of Tailscale shall leave the LAN route \
+available; later recovery shall restore Tailscale-IP routes. Native clients \
+shall not advertise plaintext fully qualified MagicDNS routes that Apple \
+Transport Security rejects.
+""")
+struct RemoteAccessRouteDiscoveryTests {
+    @Test("native routes retain LAN and Tailscale IPs without plaintext DNS")
+    func nativeRoutesExcludePlaintextMagicDNS() {
+        let routes = RemoteAccessRouteDiscovery.nativeRoutes(
+            lanBaseURL: URL(string: "http://studio.local:8800")!,
+            tailscaleIPs: ["100.64.0.5", "fd7a:115c:a1e0::5"]
+        )
+
+        #expect(routes.map(\.kind) == [.lan, .tailscaleIP, .tailscaleIP])
+        #expect(routes.map(\.baseURL.absoluteString) == [
+            "http://studio.local:8800",
+            "http://100.64.0.5:8800",
+            "http://[fd7a:115c:a1e0::5]:8800",
+        ])
+    }
+}
+
+@Suite("""
 @spec WEB-1.6: When resolving the Tailscale LocalAPI, the application shall try Unix domain socket endpoints first (OSS / sandboxed App Store installs) and, if none are reachable, shall fall back to the macsys DMG's TCP endpoint by reading the port from `/Library/Tailscale/ipnport` (file or symlink) and the auth token from `/Library/Tailscale/sameuserproof-<port>`.
 """)
 struct TailscaleLocalAPIAutoDetectTests {

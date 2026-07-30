@@ -9,14 +9,14 @@ import SwiftUI
 public struct WorktreePickerView: View {
     public let host: Host
     public let theme: GhosttyThemeColors?
-    public let coordinator: RemoteConnectionCoordinator?
+    public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
     public init(
         host: Host,
         theme: GhosttyThemeColors? = nil,
-        coordinator: RemoteConnectionCoordinator? = nil,
+        coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void
     ) {
@@ -31,7 +31,7 @@ public struct WorktreePickerView: View {
         WorktreeListContent(
             host: host,
             theme: theme,
-            includeRemoteWorktrees: coordinator?.isPaired(host) == true,
+            includeRemoteWorktrees: coordinator.isPaired(host),
             remoteConnectionProvider: makeRemoteConnectionProvider(
                 coordinator: coordinator,
                 host: host,
