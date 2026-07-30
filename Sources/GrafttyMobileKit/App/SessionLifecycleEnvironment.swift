@@ -175,7 +175,9 @@ func makeRemoteConnectionProvider(
 }
 
 public typealias RemoteWorktreeSnapshotProvider =
-    @Sendable () async throws -> [WorktreePanes]
+    @MainActor @Sendable (
+        RemoteWorktreeLoadProgress?
+    ) async throws -> [WorktreePanes]
 
 @MainActor
 func makeRemoteWorktreeSnapshotProvider(
@@ -183,11 +185,14 @@ func makeRemoteWorktreeSnapshotProvider(
     host: Host
 ) -> RemoteWorktreeSnapshotProvider? {
     guard let coordinator else { return nil }
-    return { [weak coordinator] in
+    return { [weak coordinator] onProgress in
         guard let coordinator else {
             throw RemoteConnectionCoordinator.ConnectionError.unavailable
         }
-        return try await coordinator.worktreePanes(for: host)
+        return try await coordinator.worktreePanes(
+            for: host,
+            onProgress: onProgress
+        )
     }
 }
 

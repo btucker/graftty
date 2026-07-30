@@ -5,6 +5,15 @@ import GrafttyProtocol
 import WebRTC
 import os
 
+public enum RemoteWorktreeLoadStage: Sendable, Equatable {
+    case connecting
+    case openingChannel
+    case waitingForSnapshot
+}
+
+public typealias RemoteWorktreeLoadProgress =
+    @MainActor @Sendable (RemoteWorktreeLoadStage) -> Void
+
 /// Negotiates and caches per-host `RemoteHostConnection`s on demand.
 ///
 /// `connection(for:)` is the single entry point: it fast-nils for a
@@ -380,16 +389,37 @@ public final class RemoteConnectionCoordinator {
     /// Returns the latest authenticated worktree snapshot, establishing one
     /// long-lived panes-state-v2 subscription on first use. V2 includes the
     /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.
-    public func worktreePanes(for host: Host) async throws
-        -> [WorktreePanes] {
+    public func worktreePanes(
+        for host: Host,
+        onProgress: RemoteWorktreeLoadProgress? = nil
+    ) async throws -> [WorktreePanes] {
+        let clock = ContinuousClock()
+        let loadStarted = clock.now
+        onProgress?(.connecting)
         guard isPaired(host) else { throw ConnectionError.pairingRequired }
         guard let connection = await connection(for: host) else {
             throw ConnectionError.unavailable
         }
+        let connectionFinished = clock.now
+        if onProgress != nil {
+            Self.logger.info(
+                "worktree load host=\(host.id, privacy: .public) stage=connect duration_ms=\(Self.milliseconds(loadStarted.duration(to: connectionFinished)), privacy: .public)"
+            )
+        }
+
+        onProgress?(.openingChannel)
         let store = try await panesStore(
             for: host,
             connection: connection
         )
+        let channelFinished = clock.now
+        if onProgress != nil {
+            Self.logger.info(
+                "worktree load host=\(host.id, privacy: .public) stage=open-channel duration_ms=\(Self.milliseconds(connectionFinished.duration(to: channelFinished)), privacy: .public)"
+            )
+        }
+
+        onProgress?(.waitingForSnapshot)
         let deadline = Date().addingTimeInterval(10)
         while !Task.isCancelled {
             if case .closed = await store.connectionState {
@@ -397,6 +427,12 @@ public final class RemoteConnectionCoordinator {
                 throw ConnectionError.paneChannelClosed
             }
             if await store.hasReceivedSnapshot {
+                if onProgress != nil {
+                    let snapshotFinished = clock.now
+                    Self.logger.info(
+                        "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
+                    )
+                }
                 return await store.current
             }
             if Date() >= deadline {
@@ -406,6 +442,14 @@ public final class RemoteConnectionCoordinator {
             try await Task.sleep(for: .milliseconds(25))
         }
         throw CancellationError()
+    }
+
+    private nonisolated static func milliseconds(
+        _ duration: Duration
+    ) -> Int64 {
+        let components = duration.components
+        return components.seconds * 1_000
+            + components.attoseconds / 1_000_000_000_000_000
     }
 
     /// Sends a typed request over the mutually-authenticated SSH control

@@ -129,5 +129,45 @@ struct WorktreeListContentTests {
             currentHostID: UUID()
         ))
     }
+
+    @Test("""
+    @spec IOS-4.29: While the initial authenticated worktree load remains \
+    incomplete for at least 750 milliseconds, the application shall reveal \
+    the current connection stage and elapsed time. Loads that finish sooner \
+    shall keep the loading presentation compact.
+    """)
+    func delayedLoadingDetailsDescribeRealStages() {
+        #expect(
+            WorktreeLoadingView.detail(
+                for: .connecting,
+                hostLabel: "Studio"
+            ) == "Connecting securely to Studio…"
+        )
+        #expect(
+            WorktreeLoadingView.detail(
+                for: .openingChannel,
+                hostLabel: "Studio"
+            ) == "Opening secure worktree channel…"
+        )
+        #expect(
+            WorktreeLoadingView.detail(
+                for: .waitingForSnapshot,
+                hostLabel: "Studio"
+            ) == "Waiting for worktree list…"
+        )
+        #expect(
+            WorktreeLoadingView.detailRevealDelay == .milliseconds(750)
+        )
+
+        let startedAt = Date(timeIntervalSince1970: 100)
+        #expect(WorktreeLoadingView.elapsedText(
+            startedAt: startedAt,
+            now: startedAt.addingTimeInterval(3.9)
+        ) == "Elapsed 3s")
+        #expect(WorktreeLoadingView.elapsedText(
+            startedAt: startedAt,
+            now: startedAt.addingTimeInterval(-1)
+        ) == "Elapsed 0s")
+    }
 }
 #endif

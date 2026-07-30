@@ -1394,6 +1394,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.28** When an authenticated connection to a paired Mac is unavailable, GrafttyMobile shall fail closed and shall not downgrade the terminal to the legacy unauthenticated `/ws` transport.
 
+**IOS-4.29** While the initial authenticated worktree load remains incomplete for at least 750 milliseconds, the application shall reveal the current connection stage and elapsed time. Loads that finish sooner shall keep the loading presentation compact.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

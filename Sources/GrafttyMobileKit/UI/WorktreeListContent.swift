@@ -7,6 +7,7 @@ public struct WorktreeListContent: View {
     static let iPadRowLeadingInset: CGFloat = 10
 
     @State private var state: LoadState = .loading
+    @State private var loadingStage: RemoteWorktreeLoadStage = .connecting
     @State private var isAddSheetPresented: Bool = false
     @State private var pendingDelete: PendingDelete?
     @State private var pendingForceDelete: PendingForceDelete?
@@ -100,7 +101,11 @@ public struct WorktreeListContent: View {
         Group {
             switch state {
             case .loading:
-                ProgressView()
+                WorktreeLoadingView(
+                    hostLabel: host.label,
+                    stage: loadingStage
+                )
+                .id(host.id)
             case .error(let msg):
                 ContentUnavailableView {
                     Label("Couldn't load worktrees", systemImage: "exclamationmark.triangle")
@@ -307,16 +312,28 @@ public struct WorktreeListContent: View {
 
     private func load() async {
         state = .loading
+        loadingStage = .connecting
         refreshError = nil
-        await refresh()
+        await refresh(reportsLoadingProgress: true)
     }
 
-    private func refresh() async {
+    private func refresh(reportsLoadingProgress: Bool = false) async {
+        let onProgress: RemoteWorktreeLoadProgress?
+        if reportsLoadingProgress {
+            onProgress = { stage in
+                guard case .loading = state else { return }
+                loadingStage = stage
+            }
+        } else {
+            onProgress = nil
+        }
+
         do {
             let list = try await fetchWorktrees(
                 host: host,
                 remoteSnapshotProvider: remoteSnapshotProvider,
-                includeRemoteWorktrees: includeRemoteWorktrees
+                includeRemoteWorktrees: includeRemoteWorktrees,
+                onProgress: onProgress
             )
             state = .loaded(list)
             refreshError = nil
@@ -354,10 +371,14 @@ public struct WorktreeListContent: View {
     private func fetchWorktrees(
         host: Host,
         remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?,
-        includeRemoteWorktrees: Bool
+        includeRemoteWorktrees: Bool,
+        onProgress: RemoteWorktreeLoadProgress? = nil
     ) async throws -> [WorktreePanes] {
         if let remoteSnapshotProvider {
-            return try await remoteSnapshotProvider()
+            return try await remoteSnapshotProvider(onProgress)
+        }
+        if onProgress != nil {
+            loadingStage = .waitingForSnapshot
         }
         return try await WorktreePanesFetcher.fetch(
             baseURL: host.baseURL,
@@ -1072,6 +1093,73 @@ private struct DivergenceGutter: View {
         if aheadShown && behindShown { return ahead + Text(" ") + behind }
         if aheadShown { return ahead }
         return behind
+    }
+}
+
+struct WorktreeLoadingView: View {
+    static let detailRevealDelay: Duration = .milliseconds(750)
+
+    let hostLabel: String
+    let stage: RemoteWorktreeLoadStage
+
+    @State private var startedAt = Date()
+    @State private var detailsVisible = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+            Text("Loading worktrees…")
+                .foregroundStyle(.secondary)
+
+            if detailsVisible {
+                VStack(spacing: 3) {
+                    Text(Self.detail(for: stage, hostLabel: hostLabel))
+                    TimelineView(.periodic(from: startedAt, by: 1)) {
+                        context in
+                        Text(Self.elapsedText(
+                            startedAt: startedAt,
+                            now: context.date
+                        ))
+                        .monospacedDigit()
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .transition(.opacity)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .padding()
+        .task {
+            do {
+                try await Task.sleep(for: Self.detailRevealDelay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) {
+                detailsVisible = true
+            }
+        }
+    }
+
+    static func detail(
+        for stage: RemoteWorktreeLoadStage,
+        hostLabel: String
+    ) -> String {
+        switch stage {
+        case .connecting:
+            return "Connecting securely to \(hostLabel)…"
+        case .openingChannel:
+            return "Opening secure worktree channel…"
+        case .waitingForSnapshot:
+            return "Waiting for worktree list…"
+        }
+    }
+
+    static func elapsedText(startedAt: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(startedAt)))
+        return "Elapsed \(seconds)s"
     }
 }
 #endif
