@@ -47,6 +47,63 @@ struct GitLabPRFetcherTests {
         #expect(mr?.mergeable == .mergeable)
     }
 
+    @Test("""
+    @spec PR-8.27: For an open GitLab merge request, the application shall derive textual-conflict state from `has_conflicts` and `merge_status` in the single-MR `glab mr view` response, not from the potentially stale `glab mr list` response or from `detailed_merge_status`. `has_conflicts == true` shall mean conflicting, while `false` shall mean mergeable only when paired with `merge_status == can_be_merged`; transient recomputation states such as `checking`, `unchecked`, and `cannot_be_merged_recheck` shall map to `.unknown`. A `detailed_merge_status` such as `draft_status` describes broader merge policy, not whether the source and target branches conflict. When the single-MR detail call fails, omits `has_conflicts`, or reports `false` without a definitive `merge_status`, mergeability shall be `.unknown` rather than a conclusion that can trigger a false transition.
+    """)
+    func detailHasConflictsIsAuthoritativeAndDraftStatusIsIgnored() async throws {
+        let fake = FakeCLIExecutor()
+        let list = """
+        [
+          {"iid":11,"title":"Conflict hidden by stale list","web_url":"https://gitlab.com/foo/bar/-/merge_requests/11","state":"opened","source_branch":"conflicting","source_project_id":1,"target_project_id":1,"has_conflicts":false},
+          {"iid":22,"title":"Clean but still draft","web_url":"https://gitlab.com/foo/bar/-/merge_requests/22","state":"opened","source_branch":"draft","source_project_id":1,"target_project_id":1,"has_conflicts":true},
+          {"iid":33,"title":"Pipeline recomputing","web_url":"https://gitlab.com/foo/bar/-/merge_requests/33","state":"opened","source_branch":"checking","source_project_id":1,"target_project_id":1,"has_conflicts":false}
+        ]
+        """
+        fake.stub(
+            command: "glab",
+            args: listAllArgs,
+            output: CLIOutput(stdout: list, stderr: "", exitCode: 0)
+        )
+        fake.stub(
+            command: "glab",
+            args: viewArgs(11),
+            output: CLIOutput(
+                stdout: #"{"head_pipeline":null,"has_conflicts":true,"merge_status":"cannot_be_merged","detailed_merge_status":"draft_status"}"#,
+                stderr: "",
+                exitCode: 0
+            )
+        )
+        fake.stub(
+            command: "glab",
+            args: viewArgs(22),
+            output: CLIOutput(
+                stdout: #"{"head_pipeline":null,"has_conflicts":false,"merge_status":"can_be_merged","detailed_merge_status":"draft_status"}"#,
+                stderr: "",
+                exitCode: 0
+            )
+        )
+        fake.stub(
+            command: "glab",
+            args: viewArgs(33),
+            output: CLIOutput(
+                stdout: #"{"head_pipeline":{"id":9002,"status":"running"},"has_conflicts":false,"merge_status":"checking","detailed_merge_status":"ci_still_running"}"#,
+                stderr: "",
+                exitCode: 0
+            )
+        )
+
+        let fetcher = GitLabPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(
+            origin: origin,
+            branchesOfInterest: ["conflicting", "draft", "checking"]
+        )
+
+        #expect(snapshot.prsByBranch["conflicting"]?.mergeable == .conflicting)
+        #expect(snapshot.prsByBranch["draft"]?.mergeable == .mergeable)
+        #expect(snapshot.prsByBranch["checking"]?.checks == .pending)
+        #expect(snapshot.prsByBranch["checking"]?.mergeable == .unknown)
+    }
+
     @Test func filtersForkMRInFavorOfOriginMR() async throws {
         // `glab mr list` surfaces same-source-branch MRs from forks
         // (their `source_project_id` differs from the target's).
@@ -128,12 +185,13 @@ struct GitLabPRFetcherTests {
         #expect(mr?.number == 512)
         #expect(mr?.state == .open)
         #expect(mr?.checks == PRInfo.Checks.none)
+        #expect(mr?.mergeable == .unknown)
     }
 
     @Test("""
     @spec PR-8.15: When the application resolves PR/MR status for a GitLab repo's worktrees, it shall issue a single `glab mr list --all` call per repo for the listing and fan out per-MR `glab mr view` calls in parallel only for branches the caller cares about. A repo with 100 MRs and 5 worktrees must produce 1 list call + 5 view calls per tick, not 100 view calls.
     """)
-    func pipelineFetchedOnlyForBranchesOfInterest() async throws {
+    func detailsFetchedOnlyForBranchesOfInterest() async throws {
         // Two same-repo MRs in the listing. Only `branchA` is asked for.
         let fake = FakeCLIExecutor()
         let multiMR = """
@@ -153,9 +211,10 @@ struct GitLabPRFetcherTests {
         // List + 1 view (only branchA), not 1 + 2.
         #expect(fake.invocations.count == 2)
         #expect(snapshot.prsByBranch["branchA"]?.checks == .success)
-        // branchB still in the snapshot (with .none checks) and conflict surfaces.
+        // branchB still appears in the snapshot, but detail-derived fields
+        // stay absent because it wasn't a branch of interest.
         #expect(snapshot.prsByBranch["branchB"]?.checks == PRInfo.Checks.none)
-        #expect(snapshot.prsByBranch["branchB"]?.mergeable == .conflicting)
+        #expect(snapshot.prsByBranch["branchB"]?.mergeable == .unknown)
     }
 
     @Test("""

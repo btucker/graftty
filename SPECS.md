@@ -1302,6 +1302,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.26** When multiple same-project GitLab merge requests reuse one source branch, the application shall select an opened MR over a terminal MR and otherwise select the newest candidate by highest IID, independent of `glab mr list` result order, and shall attribute pipeline status to that selected MR.
 
+**PR-8.27** For an open GitLab merge request, the application shall derive textual-conflict state from `has_conflicts` and `merge_status` in the single-MR `glab mr view` response, not from the potentially stale `glab mr list` response or from `detailed_merge_status`. `has_conflicts == true` shall mean conflicting, while `false` shall mean mergeable only when paired with `merge_status == can_be_merged`; transient recomputation states such as `checking`, `unchecked`, and `cannot_be_merged_recheck` shall map to `.unknown`. A `detailed_merge_status` such as `draft_status` describes broader merge policy, not whether the source and target branches conflict. When the single-MR detail call fails, omits `has_conflicts`, or reports `false` without a definitive `merge_status`, mergeability shall be `.unknown` rather than a conclusion that can trigger a false transition.
+
 ## IOS — iOS App
 
 ### IOS-1.x — Target and platform
