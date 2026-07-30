@@ -3,15 +3,15 @@ import GrafttyProtocol
 
 /// Per-repo `glab mr list` fetcher. Pipeline status isn't available
 /// from the listing and its conflict status can be stale, so we fan
-/// out per-MR `glab mr view` requests in parallel for the branches
-/// the caller cares about.
+/// out per-MR raw REST requests through `glab api` in parallel for
+/// the branches the caller cares about.
 ///
 /// @spec PR-8.15
 public struct GitLabPRFetcher: PRFetcher {
     private let executor: CLIExecutor
     private let now: @Sendable () -> Date
 
-    /// Maximum number of `glab mr view` subprocesses in flight at
+    /// Maximum number of `glab api` subprocesses in flight at
     /// once. Bounded so a repo with many open MRs (or a slow
     /// `glab`) can't saturate file descriptors / process slots.
     static let detailConcurrency = 6
@@ -48,13 +48,15 @@ public struct GitLabPRFetcher: PRFetcher {
         }
 
         // Pipeline and authoritative conflict status are only in
-        // the per-MR view payload. The list endpoint can return a
-        // stale `has_conflicts` value because it doesn't proactively
-        // recalculate merge status. Fetch details in parallel,
+        // the raw single-MR REST payload. `glab mr view -F json`
+        // serializes the CLI's client model, which omits the deprecated
+        // but still API-provided `merge_status` field. The list endpoint
+        // can return a stale `has_conflicts` value because it doesn't
+        // proactively recalculate merge status. Fetch details in parallel,
         // capped at `detailConcurrency` so a repo with many open
         // MRs (or a slow `glab`) can't spawn dozens of subprocesses
         // at once. Restricted to branches the caller cares about so
-        // a 100-MR repo with 5 worktrees fires 5 view calls, not 100.
+        // a 100-MR repo with 5 worktrees fires 5 detail calls, not 100.
         let needsDetail = primaryByBranch
             .filter { branchesOfInterest.contains($0.key) && $0.value.state.lowercased() == "opened" }
             .map(\.value)
@@ -130,9 +132,12 @@ public struct GitLabPRFetcher: PRFetcher {
     }
 
     private func listMRs(origin: HostingOrigin) async throws -> [RawMR] {
+        guard let repoURL = origin.webURL else {
+            throw URLError(.badURL)
+        }
         let args = [
             "mr", "list",
-            "--repo", origin.slug,
+            "--repo", repoURL.absoluteString,
             "--all",
             "--per-page", "100",
             "-F", "json",
@@ -152,10 +157,17 @@ public struct GitLabPRFetcher: PRFetcher {
         origin: HostingOrigin,
         iid: Int
     ) async throws -> RawMRDetail {
+        var pathSegmentAllowed = CharacterSet.alphanumerics
+        pathSegmentAllowed.insert(charactersIn: "-._~")
+        guard let projectPath = origin.slug.addingPercentEncoding(
+            withAllowedCharacters: pathSegmentAllowed
+        ) else {
+            throw URLError(.badURL)
+        }
         let args = [
-            "mr", "view", String(iid),
-            "--repo", origin.slug,
-            "-F", "json",
+            "api",
+            "projects/\(projectPath)/merge_requests/\(iid)",
+            "--hostname", origin.host,
         ]
         let output = try await executor.run(
             command: "glab",
