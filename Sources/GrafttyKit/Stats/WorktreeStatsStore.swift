@@ -65,11 +65,11 @@ public final class WorktreeStatsStore {
 
     /// Per-repo timestamp of the most recently dispatched `git fetch`,
     /// stored as a date (not a `Set` membership) for the same reason as
-    /// the per-path `inFlight` map: `git fetch` is a network subprocess
-    /// with no timeout (`CLIRunner` never terminates a hung child), so a
-    /// socket wedged across a sleep/wake or a dead VPN link can block
-    /// `performRepoFetch` indefinitely and never run its slot-releasing
-    /// `defer`. A bare `Set` would then latch the repo's path forever:
+    /// the per-path `inFlight` map: although `git fetch` has a 20-second
+    /// subprocess deadline, task scheduling or termination delivery can
+    /// still be delayed across sleep/wake. That can keep
+    /// `performRepoFetch` from reaching its slot-releasing `defer`. A
+    /// bare `Set` would then latch the repo's path forever:
     /// every poll short-circuits at the in-flight check, Gate B is
     /// skipped, and the divergence gutter freezes until relaunch. The
     /// timestamp lets `maybeDispatchRepoFetch` treat a slot older than
@@ -338,30 +338,57 @@ public final class WorktreeStatsStore {
         .seconds(20)
     }
 
+    /// Local Git can also block indefinitely when repository metadata is
+    /// an iCloud placeholder or another filesystem provider stalls a read.
+    /// Keep the deadline below the 30-second in-flight replacement threshold
+    /// so the child is terminated before a later poll may supersede it.
+    nonisolated static func localCommandTimeout() -> Duration {
+        .seconds(20)
+    }
+
     /// Production `ComputeFunction` — resolves the default branch,
     /// picks the per-worktree upstream refs, and computes divergence
     /// via `GitRunner`. `nonisolated` so `init`'s default-parameter
     /// evaluation can reference it.
-    public nonisolated static let defaultCompute: ComputeFunction = { worktreePath, repoPath, branch, cachedDefault in
-        let name: String?
-        if let cached = cachedDefault {
-            name = cached
-        } else {
-            name = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+    public nonisolated static let defaultCompute: ComputeFunction = makeDefaultCompute()
+
+    /// Builds the production compute pipeline around one absolute deadline.
+    /// The executor seam keeps timeout-propagation tests independent of
+    /// `GitRunner`'s legacy process-global test override.
+    nonisolated static func makeDefaultCompute(
+        executor: CLIExecutor? = nil,
+        timeout: Duration = localCommandTimeout()
+    ) -> ComputeFunction {
+        { worktreePath, repoPath, branch, cachedDefault in
+            let deadline = GitCommandDeadline(timeout: timeout)
+            let name: String?
+            if let cached = cachedDefault {
+                name = cached
+            } else {
+                name = await GitOriginDefaultBranch.resolve(
+                    repoPath: repoPath,
+                    deadline: deadline,
+                    using: executor
+                )
+            }
+            guard let name else {
+                return ComputeResult(defaultBranch: nil, stats: nil)
+            }
+            let refs = await GitWorktreeStats.resolveUpstreamRefs(
+                worktreePath: worktreePath,
+                branch: branch,
+                defaultBranch: name,
+                deadline: deadline,
+                using: executor
+            )
+            let stats = try? await GitWorktreeStats.compute(
+                worktreePath: worktreePath,
+                upstreamRefs: refs,
+                deadline: deadline,
+                using: executor
+            )
+            return ComputeResult(defaultBranch: name, stats: stats)
         }
-        guard let name else {
-            return ComputeResult(defaultBranch: nil, stats: nil)
-        }
-        let refs = await GitWorktreeStats.resolveUpstreamRefs(
-            worktreePath: worktreePath,
-            branch: branch,
-            defaultBranch: name
-        )
-        let stats = try? await GitWorktreeStats.compute(
-            worktreePath: worktreePath,
-            upstreamRefs: refs
-        )
-        return ComputeResult(defaultBranch: name, stats: stats)
     }
 
     private func apply(
@@ -456,13 +483,14 @@ public final class WorktreeStatsStore {
     /// bump `inFlight` churn unnecessarily.
     private func maybeDispatchRepoFetch(repo: RepoEntry, now: Date) -> Bool {
         // Defer to an in-flight fetch only while it's plausibly still
-        // running. `git fetch` has no subprocess timeout, so a wedged
-        // socket (sleep/wake, dead VPN) can hang `performRepoFetch`
-        // forever and never run its slot-releasing `defer`. Past the
-        // abandonment threshold we treat the slot as dead and fall
-        // through to dispatch a fresh fetch — otherwise the repo latches
-        // here permanently, Gate B is skipped every tick, and the
-        // divergence gutter freezes until relaunch (DIVERGE-4.11).
+        // running. Although `git fetch` has a 20-second subprocess
+        // deadline, task scheduling or termination delivery can still be
+        // delayed across sleep/wake and keep `performRepoFetch` from
+        // reaching its slot-releasing `defer`. Past the abandonment
+        // threshold we treat the slot as dead and fall through to
+        // dispatch a fresh fetch — otherwise the repo latches here
+        // permanently, Gate B is skipped every tick, and the divergence
+        // gutter freezes until relaunch (DIVERGE-4.11).
         let cap = Double(Self.inFlightAbandonmentThreshold().components.seconds)
         if let started = inFlightRepos[repo.path],
            now.timeIntervalSince(started) < cap {
@@ -525,7 +553,10 @@ public final class WorktreeStatsStore {
         if let cached = defaultBranchByRepo[repoPath] ?? nil {
             defaultBranchResult = cached
         } else {
-            defaultBranchResult = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+            defaultBranchResult = await GitOriginDefaultBranch.resolve(
+                repoPath: repoPath,
+                timeout: Self.localCommandTimeout()
+            )
         }
         self.defaultBranchByRepo[repoPath] = defaultBranchResult
         guard defaultBranchResult != nil else {

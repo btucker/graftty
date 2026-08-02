@@ -136,8 +136,13 @@ public final class PRStatusStore {
         if let detectHost {
             self.detectHost = detectHost
         } else {
+            let cap = executor
             self.detectHost = { repoPath in
-                try await GitOriginHost.detect(repoPath: repoPath)
+                try await GitOriginHost.detect(
+                    repoPath: repoPath,
+                    timeout: PRStatusStore.hostDetectionTimeout(),
+                    using: cap
+                )
             }
         }
     }
@@ -514,6 +519,13 @@ extension PRStatusStore {
     /// next dispatch.
     nonisolated static func refreshCadence() -> Duration {
         .seconds(30)
+    }
+
+    /// Local host detection performs Git repository setup before reading
+    /// the origin URL, so File Provider-backed metadata can block it just
+    /// like divergence probes. Finish before the 30-second replacement cap.
+    nonisolated static func hostDetectionTimeout() -> Duration {
+        .seconds(20)
     }
 
     /// Per-repo polling cadence. Base value 60s: `gh pr list

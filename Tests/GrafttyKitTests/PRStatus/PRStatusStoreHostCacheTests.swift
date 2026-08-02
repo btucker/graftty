@@ -15,6 +15,27 @@ struct PRStatusStoreHostCacheTests {
     enum StubError: Error { case boom }
 
     @MainActor
+    @Test("""
+    @spec PR-7.16: When PR polling detects an uncached repository origin, the application shall time-bound the local `git remote get-url origin` subprocess below the 30-second in-flight replacement threshold so a filesystem-blocked detection cannot accumulate abandoned Git children and pipe descriptors.
+    """)
+    func defaultHostDetectionIsBoundedBelowReplacementThreshold() async throws {
+        let executor = TimeoutRecordingOriginExecutor()
+        let store = PRStatusStore(
+            executor: executor,
+            fetcherFor: { _ in ReturningFetcher(info: nil) }
+        )
+
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
+
+        for _ in 0..<100 {
+            if executor.recordedTimeout != nil { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(executor.recordedTimeout == .seconds(20))
+        #expect(executor.recordedArgs == ["remote", "get-url", "origin"])
+    }
+
+    @MainActor
     @Test func transientDetectFailureDoesNotPoisonCache() async throws {
         // detectHost throws on call 1 (simulating .notFound / .launchFailed
         // from GitRunner), succeeds on call 2. After the first refresh,
@@ -82,6 +103,53 @@ struct PRStatusStoreHostCacheTests {
         try await Task.sleep(for: .milliseconds(120))
 
         #expect(callLog.current() == 1, "successful detect should be cached and reused")
+    }
+}
+
+private final class TimeoutRecordingOriginExecutor: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private var timeout: Duration?
+    private var args: [String] = []
+
+    var recordedTimeout: Duration? {
+        lock.lock()
+        defer { lock.unlock() }
+        return timeout
+    }
+
+    var recordedArgs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return args
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        record(timeout: timeout, args: args)
+        return CLIOutput(
+            stdout: "git@github.com:btucker/graftty.git\n",
+            stderr: "",
+            exitCode: 0
+        )
+    }
+
+    private func record(timeout: Duration?, args: [String]) {
+        lock.lock()
+        self.timeout = timeout
+        self.args = args
+        lock.unlock()
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        CLIOutput(stdout: "", stderr: "", exitCode: 0)
     }
 }
 

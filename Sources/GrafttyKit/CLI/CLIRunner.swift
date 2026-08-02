@@ -37,7 +37,16 @@ public struct CLIRunner: CLIExecutor {
         args: [String],
         at directory: String
     ) async throws -> CLIOutput {
-        try await execute(command: command, args: args, at: directory, timeout: nil)
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    public func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        try await execute(command: command, args: args, at: directory, timeout: timeout)
     }
 
     /// Augmented PATH that includes common install locations. Finder-launched
@@ -82,8 +91,8 @@ public struct CLIRunner: CLIExecutor {
             process.currentDirectoryURL = URL(fileURLWithPath: directory)
             process.environment = Self.enrichedEnvironment()
 
-            // Allocated only when a timeout is requested — the common
-            // unbounded path (every local git call) pays nothing. Holds
+            // Allocated only when a timeout is requested — unbounded
+            // interactive calls pay nothing. Holds
             // both the fired-flag and the pending SIGTERM timer under one
             // lock: the timer queue writes the flag and the termination
             // queue reads it / cancels the timer, so a `let` reference
@@ -199,17 +208,23 @@ public struct CLIRunner: CLIExecutor {
                 // (DIVERGE-4.11, 30s) re-dispatches regardless, so the
                 // sidebar never freezes — only this one Task would leak.
                 if let timeoutState {
-                    let item = DispatchWorkItem {
+                    // The global queue retains a canceled work item until its
+                    // scheduled deadline. Capture Process weakly so a fast
+                    // command can release its Process and Pipe descriptors as
+                    // soon as the continuation returns instead of retaining
+                    // them for the remainder of a 20-second polling timeout.
+                    let item = Self.makeWeakProcessWorkItem(process: process) { process in
                         if process.isRunning {
                             timeoutState.markTimedOut()
                             process.terminate()
                         }
                     }
-                    timeoutState.arm(item)
-                    DispatchQueue.global().asyncAfter(
-                        deadline: .now() + timeoutState.seconds,
-                        execute: item
-                    )
+                    if timeoutState.arm(item) {
+                        DispatchQueue.global().asyncAfter(
+                            deadline: .now() + timeoutState.seconds,
+                            execute: item
+                        )
+                    }
                 }
             } catch {
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
@@ -243,6 +258,19 @@ public struct CLIRunner: CLIExecutor {
         return chunk
     }
 
+    /// Builds the delayed timeout action without extending the subprocess
+    /// lifetime. `DispatchQueue.asyncAfter` retains canceled work items until
+    /// their deadline, so the work item must not strongly capture `Process`.
+    static func makeWeakProcessWorkItem(
+        process: Process,
+        action: @escaping @Sendable (Process) -> Void
+    ) -> DispatchWorkItem {
+        DispatchWorkItem { [weak process] in
+            guard let process else { return }
+            action(process)
+        }
+    }
+
     /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`
     /// and the `timedOut` error payload.
     private static func seconds(of duration: Duration) -> Double {
@@ -258,19 +286,26 @@ public struct CLIRunner: CLIExecutor {
 /// reference type — not a captured `var` — is what lets both queues touch
 /// it under Swift 6's concurrent-capture rules. `seconds` is immutable, so
 /// it needs no locking and carries the value into the `timedOut` error.
-private final class TimeoutState: @unchecked Sendable {
+final class TimeoutState: @unchecked Sendable {
     let seconds: Double
     private let lock = NSLock()
     private var _didTimeout = false
+    private var isFinished = false
     private var item: DispatchWorkItem?
 
     init(seconds: Double) {
         self.seconds = seconds
     }
 
-    func arm(_ newItem: DispatchWorkItem) {
+    /// Installs the delayed timeout item unless process termination already
+    /// completed. Returning false makes cancel-before-arm sticky: without it,
+    /// a fast child can finish first and a later arm recreates a permanent
+    /// state/item retain cycle that no termination handler remains to clear.
+    func arm(_ newItem: DispatchWorkItem) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        guard !isFinished else { return false }
         item = newItem
+        return true
     }
 
     func markTimedOut() {
@@ -285,6 +320,7 @@ private final class TimeoutState: @unchecked Sendable {
 
     func cancel() {
         lock.lock(); defer { lock.unlock() }
+        isFinished = true
         item?.cancel()
         item = nil
     }

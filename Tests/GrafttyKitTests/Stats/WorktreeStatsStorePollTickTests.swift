@@ -120,7 +120,7 @@ struct WorktreeStatsStorePollTickTests {
 
     @MainActor
     @Test("""
-@spec DIVERGE-4.11: If a per-repo `git fetch` dispatched by the divergence-stats polling tick hangs past the in-flight abandonment threshold — `git fetch` is a network subprocess with no timeout, so a socket wedged across a sleep/wake or a dead link can block indefinitely and never run the slot-releasing handler — then the application shall treat the in-flight repo slot as abandoned and let a later tick dispatch a fresh fetch, rather than latching the repo path in `inFlightRepos` for the lifetime of the session. Without this, every later poll short-circuits at the in-flight check, Gate B is skipped, and the divergence gutter freezes at its last value until the app is relaunched — the async-hang sibling of the synchronous latch closed by DIVERGE-4.10.
+@spec DIVERGE-4.11: If a per-repo `git fetch` dispatched by the divergence-stats polling tick remains in flight past the abandonment threshold despite its subprocess deadline, then the application shall treat the repo slot as abandoned and let a later tick dispatch a fresh fetch rather than latch the repo path for the lifetime of the session.
 """)
     func pollTickSupersedesAbandonedRepoFetchSlot() async throws {
         let compute = RecordingCompute()

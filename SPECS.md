@@ -348,6 +348,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.10** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3` and the secondary dimmed caption in the sidebar row), it shall read this property rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb or row. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text.
 
+**GIT-2.11** When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
+
 ### GIT-3.x — Change Handling
 
 **GIT-3.1** When a new worktree is detected, the application shall add a new entry in the closed state and briefly flash its background highlight.
@@ -790,7 +792,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, the empty-worktrees early-return in `maybeDispatchRepoFetch` leaves the repo's path latched in `inFlightRepos` for the lifetime of the session: every subsequent poll short-circuits at the `inFlightRepos.contains` check, Gate B is skipped, and `WorktreeStatsStore.refresh` is never re-invoked from the polling loop. The user-visible shape is a sidebar gutter whose ↓N count is frozen at whatever value the explicit `refresh` on worktree-open captured — merging `origin/<defaultBranch>` into a feature branch fails to drop the red behind-count, because nothing recomputes the stats until the app is relaunched.
 
-**DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick hangs past the in-flight abandonment threshold — `git fetch` is a network subprocess with no timeout, so a socket wedged across a sleep/wake or a dead link can block indefinitely and never run the slot-releasing handler — then the application shall treat the in-flight repo slot as abandoned and let a later tick dispatch a fresh fetch, rather than latching the repo path in `inFlightRepos` for the lifetime of the session. Without this, every later poll short-circuits at the in-flight check, Gate B is skipped, and the divergence gutter freezes at its last value until the app is relaunched — the async-hang sibling of the synchronous latch closed by DIVERGE-4.10.
+**DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick remains in flight past the abandonment threshold despite its subprocess deadline, then the application shall treat the repo slot as abandoned and let a later tick dispatch a fresh fetch rather than latch the repo path for the lifetime of the session.
+
+**DIVERGE-4.12** When recurring divergence computation invokes local Git commands, the application shall enforce one end-to-end subprocess budget below the 30-second in-flight abandonment threshold so a filesystem-blocked command is terminated and fallback probes stop before a replacement can be dispatched, preventing child-process and pipe-descriptor accumulation.
 
 ## TECH — Technology Constraints
 
@@ -1263,6 +1267,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PR-7.14** The PR polling tick shall dispatch eligible per-repo fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that repo's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated repos from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
 
 **PR-7.15** PRStatusStore.onTransition shall deliver a (RoutableEvent, worktreePath, attrs) tuple on every PR state or CI conclusion transition, so consumers can re-route via TeamEventDispatcher without parsing wire-format event types.
+
+**PR-7.16** When PR polling detects an uncached repository origin, the application shall time-bound the local `git remote get-url origin` subprocess below the 30-second in-flight replacement threshold so a filesystem-blocked detection cannot accumulate abandoned Git children and pipe descriptors.
 
 ### PR-8.x
 
@@ -2115,6 +2121,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CLI-1.x
 
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
+
+**CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
 
 ## MEM — MEM
 

@@ -17,7 +17,8 @@ struct CLIRunnerTests {
         let output = try await runner.capture(
             command: "sh",
             args: ["-c", "echo oops 1>&2; exit 3"],
-            at: NSTemporaryDirectory()
+            at: NSTemporaryDirectory(),
+            timeout: .seconds(10)
         )
         #expect(output.stderr.contains("oops"))
         #expect(output.exitCode == 3)
@@ -79,6 +80,31 @@ struct CLIRunnerTests {
         )
         #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hi")
         #expect(output.exitCode == 0)
+    }
+
+    @Test("""
+    @spec CLI-1.2: When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
+    """)
+    func delayedTimeoutWorkItemDoesNotRetainCompletedProcess() {
+        var timeoutItem: DispatchWorkItem?
+        weak var weakProcess: Process?
+
+        do {
+            let process = Process()
+            weakProcess = process
+            timeoutItem = CLIRunner.makeWeakProcessWorkItem(process: process) { _ in }
+        }
+
+        #expect(weakProcess == nil)
+        withExtendedLifetime(timeoutItem) {}
+
+        // A very fast child can invoke the termination handler before the
+        // launch path gets a chance to arm its timeout item. Completion must
+        // be sticky so that late arming cannot recreate the state/item retain
+        // cycle after `cancel()` already observed process termination.
+        let completedState = TimeoutState(seconds: 60)
+        completedState.cancel()
+        #expect(!completedState.arm(DispatchWorkItem {}))
     }
 
     @Test func notFoundForMissingCommand() async throws {

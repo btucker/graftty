@@ -285,24 +285,48 @@ public final class RemoteBranchStore {
         }
     }
 
-    public nonisolated static let defaultList: ListFunction = { repoPath in
-        async let remotesTask = GitRunner.run(
-            args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)", "refs/remotes/origin"],
-            at: repoPath
-        )
-        async let headsTask = GitRunner.run(
-            args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
-            at: repoPath
-        )
-        async let defaultBranchTask = GitOriginDefaultBranch.resolve(repoPath: repoPath)
-        let (remotes, heads) = try await (remotesTask, headsTask)
-        let defaultBranch = await defaultBranchTask
-        return RemoteBranchSnapshot(
-            remoteBranches: parseRemoteBranchesWithDates(remotes),
-            localBranches: parseLocalBranchesWithDates(heads),
-            upstreams: parseUpstreams(heads),
-            defaultBranch: defaultBranch
-        )
+    public nonisolated static let defaultList: ListFunction = makeDefaultList()
+
+    nonisolated static func scanTimeout() -> Duration {
+        .seconds(20)
+    }
+
+    /// Builds the recurring local-ref scan with one shared deadline and an
+    /// executor seam for race-free timeout propagation tests.
+    nonisolated static func makeDefaultList(
+        executor: CLIExecutor? = nil,
+        timeout: Duration = scanTimeout()
+    ) -> ListFunction {
+        { repoPath in
+            let deadline = GitCommandDeadline(timeout: timeout)
+            let remotesTimeout = try deadline.remaining()
+            let headsTimeout = try deadline.remaining()
+            async let remotesTask = GitRunner.run(
+                args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)", "refs/remotes/origin"],
+                at: repoPath,
+                timeout: remotesTimeout,
+                using: executor
+            )
+            async let headsTask = GitRunner.run(
+                args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
+                at: repoPath,
+                timeout: headsTimeout,
+                using: executor
+            )
+            async let defaultBranchTask = GitOriginDefaultBranch.resolve(
+                repoPath: repoPath,
+                deadline: deadline,
+                using: executor
+            )
+            let (remotes, heads) = try await (remotesTask, headsTask)
+            let defaultBranch = await defaultBranchTask
+            return RemoteBranchSnapshot(
+                remoteBranches: parseRemoteBranchesWithDates(remotes),
+                localBranches: parseLocalBranchesWithDates(heads),
+                upstreams: parseUpstreams(heads),
+                defaultBranch: defaultBranch
+            )
+        }
     }
 
     nonisolated static func parseUpstreamsForTesting(_ output: String) -> [String: String] {
