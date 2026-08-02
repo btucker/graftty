@@ -64,10 +64,19 @@ extension GitOriginHost {
     /// don't-cache-on-throw safeguard kicks in — otherwise a single
     /// transient nil poisons `hostByRepo` for the whole session and
     /// the repo's PR status never resolves until Espalier relaunches.
-    public static func detect(repoPath: String) async throws -> HostingOrigin? {
+    public static func detect(
+        repoPath: String,
+        timeout: Duration? = nil,
+        using executor: CLIExecutor? = nil
+    ) async throws -> HostingOrigin? {
         let output: String
         do {
-            output = try await GitRunner.run(args: ["remote", "get-url", "origin"], at: repoPath)
+            output = try await GitRunner.run(
+                args: ["remote", "get-url", "origin"],
+                at: repoPath,
+                timeout: timeout,
+                using: executor
+            )
         } catch CLIError.nonZeroExit(_, _, let stderr)
             where stderr.range(of: "no such remote", options: .caseInsensitive) != nil {
             return nil

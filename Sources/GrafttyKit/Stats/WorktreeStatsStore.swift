@@ -350,32 +350,45 @@ public final class WorktreeStatsStore {
     /// picks the per-worktree upstream refs, and computes divergence
     /// via `GitRunner`. `nonisolated` so `init`'s default-parameter
     /// evaluation can reference it.
-    public nonisolated static let defaultCompute: ComputeFunction = { worktreePath, repoPath, branch, cachedDefault in
-        let timeout = WorktreeStatsStore.localCommandTimeout()
-        let name: String?
-        if let cached = cachedDefault {
-            name = cached
-        } else {
-            name = await GitOriginDefaultBranch.resolve(
-                repoPath: repoPath,
-                timeout: timeout
+    public nonisolated static let defaultCompute: ComputeFunction = makeDefaultCompute()
+
+    /// Builds the production compute pipeline around one absolute deadline.
+    /// The executor seam keeps timeout-propagation tests independent of
+    /// `GitRunner`'s legacy process-global test override.
+    nonisolated static func makeDefaultCompute(
+        executor: CLIExecutor? = nil,
+        timeout: Duration = localCommandTimeout()
+    ) -> ComputeFunction {
+        { worktreePath, repoPath, branch, cachedDefault in
+            let deadline = GitCommandDeadline(timeout: timeout)
+            let name: String?
+            if let cached = cachedDefault {
+                name = cached
+            } else {
+                name = await GitOriginDefaultBranch.resolve(
+                    repoPath: repoPath,
+                    deadline: deadline,
+                    using: executor
+                )
+            }
+            guard let name else {
+                return ComputeResult(defaultBranch: nil, stats: nil)
+            }
+            let refs = await GitWorktreeStats.resolveUpstreamRefs(
+                worktreePath: worktreePath,
+                branch: branch,
+                defaultBranch: name,
+                deadline: deadline,
+                using: executor
             )
+            let stats = try? await GitWorktreeStats.compute(
+                worktreePath: worktreePath,
+                upstreamRefs: refs,
+                deadline: deadline,
+                using: executor
+            )
+            return ComputeResult(defaultBranch: name, stats: stats)
         }
-        guard let name else {
-            return ComputeResult(defaultBranch: nil, stats: nil)
-        }
-        let refs = await GitWorktreeStats.resolveUpstreamRefs(
-            worktreePath: worktreePath,
-            branch: branch,
-            defaultBranch: name,
-            timeout: timeout
-        )
-        let stats = try? await GitWorktreeStats.compute(
-            worktreePath: worktreePath,
-            upstreamRefs: refs,
-            timeout: timeout
-        )
-        return ComputeResult(defaultBranch: name, stats: stats)
     }
 
     private func apply(

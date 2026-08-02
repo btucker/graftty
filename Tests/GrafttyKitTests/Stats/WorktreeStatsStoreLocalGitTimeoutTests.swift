@@ -3,17 +3,14 @@ import Testing
 import Darwin
 @testable import GrafttyKit
 
-@Suite("WorktreeStatsStore — bounded local Git polling", .serialized)
+@Suite("WorktreeStatsStore — bounded local Git polling")
 struct WorktreeStatsStoreLocalGitTimeoutTests {
-    @Test("""
-    @spec DIVERGE-4.12: When recurring divergence computation invokes local Git commands, the application shall bound every subprocess below the 30-second in-flight abandonment threshold so a filesystem-blocked command is terminated before a replacement can be dispatched, preventing child-process and pipe-descriptor accumulation.
-    """)
+    @Test("Every local Git probe receives the shared compute deadline.")
     func recurringComputeBoundsEveryGitSubprocess() async throws {
         let executor = TimeoutRecordingCLIExecutor()
-        GitRunner.configure(executor: executor)
-        defer { GitRunner.resetForTests() }
+        let compute = WorktreeStatsStore.makeDefaultCompute(executor: executor)
 
-        let result = await WorktreeStatsStore.defaultCompute(
+        let result = await compute(
             "/worktree",
             "/repo",
             "feature",
@@ -24,8 +21,31 @@ struct WorktreeStatsStoreLocalGitTimeoutTests {
         let invocations = executor.recordedInvocations
         #expect(invocations.count == 7)
         #expect(
-            invocations.allSatisfy { $0.timeout == .seconds(20) },
-            "every poll-driven local Git subprocess must finish before the 30-second replacement threshold"
+            invocations.allSatisfy {
+                guard let timeout = $0.timeout else { return false }
+                return timeout > .zero && timeout <= .seconds(20)
+            },
+            "every poll-driven local Git subprocess must receive the remaining shared budget"
+        )
+    }
+
+    @Test("""
+    @spec DIVERGE-4.12: When recurring divergence computation invokes local Git commands, the application shall enforce one end-to-end subprocess budget below the 30-second in-flight abandonment threshold so a filesystem-blocked command is terminated and fallback probes stop before a replacement can be dispatched, preventing child-process and pipe-descriptor accumulation.
+    """)
+    func recurringComputeStopsFallbacksWhenSharedDeadlineExpires() async {
+        let executor = DeadlineConsumingCLIExecutor()
+        let compute = WorktreeStatsStore.makeDefaultCompute(
+            executor: executor,
+            timeout: .milliseconds(100)
+        )
+
+        let result = await compute("/worktree", "/repo", "feature", nil)
+
+        #expect(result.defaultBranch == nil)
+        #expect(result.stats == nil)
+        #expect(
+            executor.invocationCount == 1,
+            "an expired compute deadline must stop default-branch fallback probes"
         )
     }
 
@@ -53,7 +73,7 @@ struct WorktreeStatsStoreLocalGitTimeoutTests {
         }
 
         do {
-            _ = try await CLIRunner().run(
+            _ = try await CLIRunner().capture(
                 command: "git",
                 args: ["rev-parse", "--git-dir"],
                 at: repo.path,
@@ -63,6 +83,60 @@ struct WorktreeStatsStoreLocalGitTimeoutTests {
         } catch CLIError.timedOut(let command, _) {
             #expect(command == "git")
         }
+    }
+}
+
+private final class DeadlineConsumingCLIExecutor: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var invocationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        try await consume(command: command, timeout: timeout)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        try await consume(command: command, timeout: timeout)
+    }
+
+    private func consume(command: String, timeout: Duration?) async throws -> CLIOutput {
+        recordInvocation()
+        guard let timeout else {
+            throw CLIError.launchFailed(command: command, message: "missing timeout")
+        }
+        try await Task.sleep(for: timeout)
+        let components = timeout.components
+        let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+        throw CLIError.timedOut(command: command, seconds: seconds)
+    }
+
+    private func recordInvocation() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }
 

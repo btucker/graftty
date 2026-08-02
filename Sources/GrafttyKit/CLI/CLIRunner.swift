@@ -208,7 +208,12 @@ public struct CLIRunner: CLIExecutor {
                 // (DIVERGE-4.11, 30s) re-dispatches regardless, so the
                 // sidebar never freezes — only this one Task would leak.
                 if let timeoutState {
-                    let item = DispatchWorkItem {
+                    // The global queue retains a canceled work item until its
+                    // scheduled deadline. Capture Process weakly so a fast
+                    // command can release its Process and Pipe descriptors as
+                    // soon as the continuation returns instead of retaining
+                    // them for the remainder of a 20-second polling timeout.
+                    let item = Self.makeWeakProcessWorkItem(process: process) { process in
                         if process.isRunning {
                             timeoutState.markTimedOut()
                             process.terminate()
@@ -250,6 +255,19 @@ public struct CLIRunner: CLIExecutor {
             return nil
         }
         return chunk
+    }
+
+    /// Builds the delayed timeout action without extending the subprocess
+    /// lifetime. `DispatchQueue.asyncAfter` retains canceled work items until
+    /// their deadline, so the work item must not strongly capture `Process`.
+    static func makeWeakProcessWorkItem(
+        process: Process,
+        action: @escaping @Sendable (Process) -> Void
+    ) -> DispatchWorkItem {
+        DispatchWorkItem { [weak process] in
+            guard let process else { return }
+            action(process)
+        }
     }
 
     /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`

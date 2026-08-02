@@ -4,6 +4,23 @@ import Foundation
 
 @Suite("RemoteBranchStore")
 struct RemoteBranchStoreTests {
+    @Test("""
+    @spec GIT-2.11: When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
+    """)
+    func defaultListBoundsEveryLocalGitProbe() async throws {
+        let executor = RemoteBranchTimeoutRecordingExecutor()
+        let list = RemoteBranchStore.makeDefaultList(executor: executor)
+
+        _ = try await list("/repo")
+
+        let invocations = executor.recordedInvocations
+        #expect(invocations.count == 3)
+        #expect(invocations.allSatisfy {
+            guard let timeout = $0 else { return false }
+            return timeout > .zero && timeout <= .seconds(20)
+        })
+    }
+
     @Test func parseUpstreamsMapsLocalHeadsToOriginRemoteBranches() {
         // Branches without upstream emit an empty trailing column;
         // non-origin upstreams (e.g. `upstream/main`) are dropped.
@@ -388,6 +405,49 @@ struct RemoteBranchStoreTests {
         }
         let succeeded = await condition()
         #expect(succeeded, "waitUntil timed out")
+    }
+}
+
+private final class RemoteBranchTimeoutRecordingExecutor: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private var timeouts: [Duration?] = []
+
+    var recordedInvocations: [Duration?] {
+        lock.withLock { timeouts }
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        record(timeout)
+        return CLIOutput(stdout: "", stderr: "", exitCode: 0)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        record(timeout)
+        return CLIOutput(stdout: "origin/main\n", stderr: "", exitCode: 0)
+    }
+
+    private func record(_ timeout: Duration?) {
+        lock.withLock {
+            timeouts.append(timeout)
+        }
     }
 }
 

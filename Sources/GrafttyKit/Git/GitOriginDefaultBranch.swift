@@ -19,10 +19,26 @@ public enum GitOriginDefaultBranch {
         repoPath: String,
         timeout: Duration? = nil
     ) async -> String? {
+        let deadline = timeout.map(GitCommandDeadline.init(timeout:))
+        return await resolve(repoPath: repoPath, deadline: deadline)
+    }
+
+    static func resolve(
+        repoPath: String,
+        deadline: GitCommandDeadline?,
+        using executor: CLIExecutor? = nil
+    ) async -> String? {
+        let symbolicTimeout: Duration?
+        do {
+            symbolicTimeout = try deadline?.remaining()
+        } catch {
+            return nil
+        }
         if let captured = try? await GitRunner.capture(
             args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             at: repoPath,
-            timeout: timeout
+            timeout: symbolicTimeout,
+            using: executor
         ), captured.exitCode == 0 {
             let trimmed = captured.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("origin/") {
@@ -39,10 +55,17 @@ public enum GitOriginDefaultBranch {
         // otherwise. We check `refs/remotes/origin/<name>` directly so a
         // local branch of the same name doesn't false-positive.
         for candidate in ["main", "master", "develop"] {
+            let candidateTimeout: Duration?
+            do {
+                candidateTimeout = try deadline?.remaining()
+            } catch {
+                return nil
+            }
             guard let captured = try? await GitRunner.capture(
                 args: ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(candidate)"],
                 at: repoPath,
-                timeout: timeout
+                timeout: candidateTimeout,
+                using: executor
             ) else { continue }
             if captured.exitCode == 0 { return candidate }
         }

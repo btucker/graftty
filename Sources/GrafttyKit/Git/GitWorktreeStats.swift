@@ -74,14 +74,37 @@ public enum GitWorktreeStats {
         defaultBranch: String,
         timeout: Duration? = nil
     ) async -> UpstreamRefs {
+        let deadline = timeout.map(GitCommandDeadline.init(timeout:))
+        return await resolveUpstreamRefs(
+            worktreePath: worktreePath,
+            branch: branch,
+            defaultBranch: defaultBranch,
+            deadline: deadline
+        )
+    }
+
+    static func resolveUpstreamRefs(
+        worktreePath: String,
+        branch: String,
+        defaultBranch: String,
+        deadline: GitCommandDeadline?,
+        using executor: CLIExecutor? = nil
+    ) async -> UpstreamRefs {
         let defaultRef = "origin/\(defaultBranch)"
         let fallback = UpstreamRefs(defaultRef: defaultRef)
         guard !branch.isEmpty, branch != defaultBranch else { return fallback }
         let branchCandidate = "origin/\(branch)"
+        let commandTimeout: Duration?
+        do {
+            commandTimeout = try deadline?.remaining()
+        } catch {
+            return fallback
+        }
         guard let captured = try? await GitRunner.capture(
             args: ["show-ref", "--verify", "--quiet", "refs/remotes/\(branchCandidate)"],
             at: worktreePath,
-            timeout: timeout
+            timeout: commandTimeout,
+            using: executor
         ), captured.exitCode == 0 else {
             return fallback
         }
@@ -141,6 +164,20 @@ public enum GitWorktreeStats {
         upstreamRefs: UpstreamRefs,
         timeout: Duration? = nil
     ) async throws -> WorktreeStats {
+        let deadline = timeout.map(GitCommandDeadline.init(timeout:))
+        return try await compute(
+            worktreePath: worktreePath,
+            upstreamRefs: upstreamRefs,
+            deadline: deadline
+        )
+    }
+
+    static func compute(
+        worktreePath: String,
+        upstreamRefs: UpstreamRefs,
+        deadline: GitCommandDeadline?,
+        using executor: CLIExecutor? = nil
+    ) async throws -> WorktreeStats {
         let allRefs = upstreamRefs.all
 
         let behindArgs = ["rev-list", "--count"] + allRefs + ["^HEAD"]
@@ -149,7 +186,8 @@ public enum GitWorktreeStats {
             behindOutput = try await GitRunner.run(
                 args: behindArgs,
                 at: worktreePath,
-                timeout: timeout
+                timeout: try deadline?.remaining(),
+                using: executor
             )
         } catch let err as CLIError {
             throw GitWorktreeStatsError.gitFailed(err)
@@ -165,7 +203,8 @@ public enum GitWorktreeStats {
             aheadOutput = try await GitRunner.run(
                 args: aheadArgs,
                 at: worktreePath,
-                timeout: timeout
+                timeout: try deadline?.remaining(),
+                using: executor
             )
         } catch let err as CLIError {
             throw GitWorktreeStatsError.gitFailed(err)
@@ -183,7 +222,8 @@ public enum GitWorktreeStats {
             diffOutput = try await GitRunner.run(
                 args: ["diff", "--shortstat", "\(diffBase)...HEAD"],
                 at: worktreePath,
-                timeout: timeout
+                timeout: try deadline?.remaining(),
+                using: executor
             )
         } catch let err as CLIError {
             throw GitWorktreeStatsError.gitFailed(err)
@@ -195,7 +235,8 @@ public enum GitWorktreeStats {
             statusOutput = try await GitRunner.run(
                 args: ["status", "--porcelain"],
                 at: worktreePath,
-                timeout: timeout
+                timeout: try deadline?.remaining(),
+                using: executor
             )
         } catch let err as CLIError {
             throw GitWorktreeStatsError.gitFailed(err)

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Darwin
 @testable import GrafttyKit
 
 @Suite("GitOriginHost.parse")
@@ -97,6 +98,41 @@ struct GitOriginHostParseTests {
 
 @Suite("GitOriginHost.detect", .serialized)
 struct GitOriginHostDetectTests {
+    @Test(
+        "Blocked repository metadata is terminated during origin detection.",
+        .timeLimit(.minutes(1))
+    )
+    func blockedMetadataReadIsTerminated() async throws {
+        let repo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-blocked-origin-\(UUID().uuidString)")
+        let gitDirectory = repo.appendingPathComponent(".git")
+        try FileManager.default.createDirectory(
+            at: gitDirectory.appendingPathComponent("objects"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: gitDirectory.appendingPathComponent("refs"),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: repo) }
+
+        let headPath = gitDirectory.appendingPathComponent("HEAD").path
+        guard mkfifo(headPath, 0o600) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        do {
+            _ = try await GitOriginHost.detect(
+                repoPath: repo.path,
+                timeout: .milliseconds(100),
+                using: CLIRunner()
+            )
+            Issue.record("blocked origin detection should have timed out")
+        } catch CLIError.timedOut(let command, _) {
+            #expect(command == "git")
+        }
+    }
+
     @Test func detectsGitHubOrigin() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(

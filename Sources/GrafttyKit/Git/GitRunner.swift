@@ -30,9 +30,10 @@ public enum GitRunner {
     public static func run(
         args: [String],
         at directory: String,
-        timeout: Duration? = nil
+        timeout: Duration? = nil,
+        using executorOverride: CLIExecutor? = nil
     ) async throws -> String {
-        let out = try await executor.run(
+        let out = try await (executorOverride ?? executor).run(
             command: "git",
             args: args,
             at: directory,
@@ -46,9 +47,10 @@ public enum GitRunner {
     public static func capture(
         args: [String],
         at directory: String,
-        timeout: Duration? = nil
+        timeout: Duration? = nil,
+        using executorOverride: CLIExecutor? = nil
     ) async throws -> (stdout: String, exitCode: Int32) {
-        let out = try await executor.capture(
+        let out = try await (executorOverride ?? executor).capture(
             command: "git",
             args: args,
             at: directory,
@@ -62,13 +64,38 @@ public enum GitRunner {
     public static func captureAll(
         args: [String],
         at directory: String,
-        timeout: Duration? = nil
+        timeout: Duration? = nil,
+        using executorOverride: CLIExecutor? = nil
     ) async throws -> CLIOutput {
-        try await executor.capture(
+        try await (executorOverride ?? executor).capture(
             command: "git",
             args: args,
             at: directory,
             timeout: timeout
         )
+    }
+}
+
+/// One absolute budget shared by a sequence of Git subprocesses.
+/// Each command receives only the time remaining, so a fallback pipeline
+/// cannot outlive the poller's task-level replacement threshold merely by
+/// starting another individually bounded child.
+struct GitCommandDeadline: Sendable {
+    private let instant: ContinuousClock.Instant
+    private let timeoutSeconds: Double
+
+    init(timeout: Duration) {
+        instant = ContinuousClock().now.advanced(by: timeout)
+        let components = timeout.components
+        timeoutSeconds = Double(components.seconds)
+            + Double(components.attoseconds) / 1e18
+    }
+
+    func remaining() throws -> Duration {
+        let duration = ContinuousClock().now.duration(to: instant)
+        guard duration > .zero else {
+            throw CLIError.timedOut(command: "git", seconds: timeoutSeconds)
+        }
+        return duration
     }
 }
