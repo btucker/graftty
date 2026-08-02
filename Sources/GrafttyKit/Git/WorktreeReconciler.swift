@@ -24,11 +24,17 @@ public enum WorktreeReconciler {
 
     public static func reconcile(
         existing: [WorktreeEntry],
-        discovered: [DiscoveredWorktree]
+        discovered: [DiscoveredWorktree],
+        now: Date = Date()
     ) -> Result {
+        // A `prunable` porcelain record is leftover Git admin metadata for
+        // a worktree whose directory is gone, not a live worktree. Treat it
+        // exactly like absence so launch reconciliation agrees with the
+        // directory-deletion watcher (GIT-3.3).
+        let liveDiscovered = discovered.filter { !$0.isPrunable }
         let existingPaths = Set(existing.map(\.path))
-        let discoveredPaths = Set(discovered.map(\.path))
-        let branchByPath = Dictionary(uniqueKeysWithValues: discovered.map { ($0.path, $0.branch) })
+        let discoveredPaths = Set(liveDiscovered.map(\.path))
+        let branchByPath = Dictionary(uniqueKeysWithValues: liveDiscovered.map { ($0.path, $0.branch) })
 
         var merged: [WorktreeEntry] = []
         var newlyStale: [WorktreeEntry] = []
@@ -43,12 +49,18 @@ public enum WorktreeReconciler {
                 // to `.stale` mid-flight — only the owning flow may
                 // clear the placeholder.
                 if wt.state != .stale && !wt.state.isInFlight {
-                    copy.state = .stale
+                    copy.markStale(at: now)
                     newlyStale.append(copy)
+                } else if wt.state == .stale && wt.staleSince == nil {
+                    // Legacy persisted stale entries predate the timestamp.
+                    // Start their grace period only after a successful
+                    // discovery confirms they are still absent.
+                    copy.markStale(at: now)
                 }
             } else {
                 if wt.state == .stale {
                     copy.state = .closed
+                    copy.staleSince = nil
                     resurrected.append(copy)
                 }
                 if let b = branchByPath[wt.path] { copy.branch = b }
@@ -56,7 +68,7 @@ public enum WorktreeReconciler {
             merged.append(copy)
         }
 
-        let newlyAdded = discovered
+        let newlyAdded = liveDiscovered
             .filter { !existingPaths.contains($0.path) }
             .map { WorktreeEntry(path: $0.path, branch: $0.branch) }
 

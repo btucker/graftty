@@ -262,6 +262,9 @@ final class AppServices {
     /// path; this is the SIGKILL / hard-crash fallback. Retained here so
     /// the ticker outlives `startup()`. TEAM-PRESENCE-1.4.
     var presenceCleanupTicker: PollingTicker?
+    /// Sweeps worktrees that have remained stale for the full one-hour
+    /// grace period. Retained here so the timer survives `startup()`.
+    var staleWorktreeAutoDismissTicker: PollingTicker?
     /// Provides the current AppState for the team PR-merged dispatch hook.
     /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
     var appStateProvider: (() -> AppState)?
@@ -912,16 +915,7 @@ struct GrafttyApp: App {
                     startup()
                 }
                 .onChange(of: appState) { _, newState in
-                    do {
-                        try newState.save(to: AppState.defaultDirectory)
-                    } catch {
-                        // Silently dropping this error means a full disk,
-                        // read-only `$HOME`, or permissions clash silently
-                        // stops persisting every subsequent state mutation
-                        // — and Andy loses his worktree list on next launch
-                        // with no warning. STATE-6.2 / cf. ATTN-2.7.
-                        NSLog("[Graftty] AppState.save failed: %@", String(describing: error))
-                    }
+                    Self.persistAppState(newState)
                 }
                 .onOpenURL { url in
                     handleDeepLink(url)
@@ -1089,6 +1083,20 @@ struct GrafttyApp: App {
                     .padding()
                     .frame(minWidth: 480, minHeight: 360)
             }
+        }
+    }
+
+    /// Window-scoped `.onChange` handles normal UI mutations. Background
+    /// services also call this directly because they remain active after the
+    /// last window closes and therefore cannot rely on a live view observer.
+    fileprivate static func persistAppState(_ state: AppState) {
+        do {
+            try state.save(to: AppState.defaultDirectory)
+        } catch {
+            // Silently dropping this error means a full disk, read-only
+            // `$HOME`, or permissions clash silently stops persistence.
+            // STATE-6.2 / PERSIST-2.2.
+            NSLog("[Graftty] AppState.save failed: %@", String(describing: error))
         }
     }
 
@@ -1526,7 +1534,48 @@ struct GrafttyApp: App {
             services.worktreeMonitor.installRepoWatchers(repo: repo)
         }
 
-        reconcileOnLaunch()
+        // Deleted worktrees remain visible for a one-hour recovery window:
+        // transient filesystem events and same-path re-adds can resurrect
+        // them during that time. The persisted `staleSince` timestamp makes
+        // the deadline survive relaunches. Keep ticking in the background
+        // because the deletion may occur while the user is working in a
+        // different app; the next tick after wake handles system sleep. Do
+        // not start its immediate first tick until launch reconciliation has
+        // had a chance to resurrect or relocate recoverable stale entries.
+        let staleWorktreeAutoDismissTicker = PollingTicker(
+            interval: .seconds(30),
+            pauseWhenInactive: { false }
+        )
+        let autoDismissPRStatusStore = services.prStatusStore
+        let autoDismissStatsStore = services.statsStore
+        services.staleWorktreeAutoDismissTicker = staleWorktreeAutoDismissTicker
+        reconcileOnLaunch {
+            staleWorktreeAutoDismissTicker.start {
+                _ = await StaleWorktreeDismissal.dismissExpired(
+                    appState: binding,
+                    now: Date(),
+                    discoverWorktrees: { repo in
+                        if !repo.isGitTracked,
+                           !FileManager.default.fileExists(atPath: repo.path) {
+                            return []
+                        }
+                        return try await WorktreeDiscovery.discover(repo: repo)
+                    },
+                    destroySurfaces: {
+                        tm.destroySurfaces(terminalIDs: $0)
+                    },
+                    clearPRStatus: {
+                        autoDismissPRStatusStore.clear(worktreePath: $0)
+                    },
+                    clearStats: {
+                        autoDismissStatsStore.clear(worktreePath: $0)
+                    },
+                    onDismiss: {
+                        Self.persistAppState($0)
+                    }
+                )
+            }
+        }
 
         // Start the stats safety-net poller: HEAD and origin-ref events
         // provide the prompt path, while this 5s ticker catches
@@ -2670,12 +2719,16 @@ struct GrafttyApp: App {
         // rug out.
         let controller = webController
         let appServices = services
+        let stateBinding = binding
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                // PERSIST-2.1: save process-lifetime mutations even when the
+                // main window (and its `.onChange` observer) is closed.
+                Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()
@@ -3040,7 +3093,7 @@ struct GrafttyApp: App {
         }
         for stale in finalDecision.goneStale {
             if var existing = pre.worktrees.first(where: { $0.id == stale.existingID }) {
-                existing.state = .stale
+                existing.markStale()
                 newWorktrees.append(existing)
             }
         }
@@ -3064,17 +3117,21 @@ struct GrafttyApp: App {
         // from-scratch launch at the new location.
         worktreeMonitor.installRepoWatchers(repo: appState.wrappedValue.repos[repoIdx])
         remoteBranchStore.refresh(repoPath: newRepoPath)
+        Self.persistAppState(appState.wrappedValue)
 
         NSLog("[Graftty] relocateRepo: %@ → %@", oldRepoPath, newRepoPath)
     }
 
-    private func reconcileOnLaunch() {
+    private func reconcileOnLaunch(
+        onComplete: @MainActor @escaping () -> Void
+    ) {
         let binding = $appState
         let statsStore = services.statsStore
         let prStatusStore = services.prStatusStore
         let remoteBranchStore = services.remoteBranchStore
         let worktreeMonitor = services.worktreeMonitor
         Task { @MainActor in
+            defer { onComplete() }
             // LAYOUT-4.6 / LAYOUT-4.9: resolve bookmarks and run any
             // relocate cascades BEFORE the discover+reconcile loop below.
             // If a repo moved in Finder between runs, this fixes up its
@@ -5320,11 +5377,17 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             }
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }) else { return }
 
+            let previousWorktrees = binding.wrappedValue.repos[repoIdx].worktrees
             let result = WorktreeReconciler.reconcile(
-                existing: binding.wrappedValue.repos[repoIdx].worktrees,
+                existing: previousWorktrees,
                 discovered: discovered
             )
             binding.wrappedValue.repos[repoIdx].worktrees = result.merged
+            if result.merged != previousWorktrees {
+                // This delegate remains active with no visible window; the
+                // WindowGroup's `.onChange` observer may not exist then.
+                GrafttyApp.persistAppState(binding.wrappedValue)
+            }
 
             // GIT-3.13 / GIT-3.15: clear cached stats/PR AND drop the
             // worktree's watchers on every stale transition, matching
@@ -5364,6 +5427,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let prStore = prStatusStore
         let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
+            let previousState = binding.wrappedValue
             // LAYOUT-4.7: before marking the worktree stale, see if the
             // owning repo has a bookmark and whether it now resolves to
             // a different path. If it does, run the relocate cascade —
@@ -5404,7 +5468,11 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             if let indices = binding.wrappedValue.indices(forWorktreePath: worktreePath) {
                 let repoID = binding.wrappedValue.repos[indices.repo].id
                 if binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].state != .stale {
-                    binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].state = .stale
+                    binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].markStale()
+                } else if binding.wrappedValue.repos[indices.repo]
+                    .worktrees[indices.worktree].staleSince == nil {
+                    binding.wrappedValue.repos[indices.repo]
+                        .worktrees[indices.worktree].markStale()
                 }
                 binding.wrappedValue.moveStaleWorktreesToBottom(inRepoID: repoID)
             }
@@ -5417,6 +5485,9 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             // reconciler's "idempotent" re-register skipping over
             // zombie fds bound to the reaped inode.
             monitor.stopWatchingWorktree(worktreePath)
+            if binding.wrappedValue != previousState {
+                GrafttyApp.persistAppState(binding.wrappedValue)
+            }
         }
     }
 

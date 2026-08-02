@@ -53,6 +53,26 @@ struct GitWorktreeDiscoveryTests {
         #expect(entries[0].branch == "(bare)")
     }
 
+    @Test func marksPrunableWorktreeAsDeletedMetadata() {
+        let output = """
+        worktree /repo
+        HEAD abc123
+        branch refs/heads/main
+
+        worktree /repo/wt
+        HEAD def456
+        branch refs/heads/feature
+        prunable gitdir file points to non-existent location
+
+        """
+
+        let entries = GitWorktreeDiscovery.parsePorcelain(output)
+
+        #expect(entries.count == 2)
+        #expect(!entries[0].isPrunable)
+        #expect(entries[1].isPrunable)
+    }
+
     /// GIT-4.7 regression guard: `discover` throws when asked to inspect
     /// a path that isn't a git repository. The app-level callers wrap
     /// this in `try?` historically — cycle 100's fix makes them log via
@@ -101,5 +121,67 @@ struct GitWorktreeDiscoveryTests {
         #expect(entries.count == 2)
         // Note: default branch may be 'main' or 'master' depending on git config
         #expect(entries[1].branch == "feature")
+    }
+
+    @Test func discoverBoundsTheGitSubprocess() async throws {
+        let recorder = DiscoveryTimeoutRecorder()
+        GitRunner.configure(executor: recorder)
+        defer { GitRunner.resetForTests() }
+
+        _ = try await GitWorktreeDiscovery.discover(repoPath: "/repo")
+
+        #expect(recorder.receivedTimeout == GitWorktreeDiscovery.discoveryTimeout)
+    }
+
+    @Test func discoverOmitsPrunableMetadata() async throws {
+        let recorder = DiscoveryTimeoutRecorder(stdout: """
+        worktree /repo
+        HEAD abc123
+        branch refs/heads/main
+
+        worktree /repo/deleted
+        HEAD def456
+        branch refs/heads/feature
+        prunable gitdir file points to non-existent location
+
+        """)
+        GitRunner.configure(executor: recorder)
+        defer { GitRunner.resetForTests() }
+
+        let discovered = try await GitWorktreeDiscovery.discover(repoPath: "/repo")
+
+        #expect(discovered.map(\.path) == ["/repo"])
+    }
+}
+
+private final class DiscoveryTimeoutRecorder: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private let stdout: String
+    private var timeout: Duration?
+
+    init(stdout: String = "") {
+        self.stdout = stdout
+    }
+
+    var receivedTimeout: Duration? {
+        lock.withLock { timeout }
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        CLIOutput(stdout: "", stderr: "", exitCode: 0)
+    }
+
+    func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        lock.withLock { self.timeout = timeout }
+        return CLIOutput(stdout: stdout, stderr: "", exitCode: 0)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        CLIOutput(stdout: "", stderr: "", exitCode: 0)
     }
 }

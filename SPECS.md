@@ -356,7 +356,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.3** When a worktree's directory is deleted externally, the application shall transition the entry to the stale state.
 
-**GIT-3.4** While a worktree entry is in the stale state and was running, the application shall keep terminal surfaces alive until the user explicitly stops the entry.
+**GIT-3.4** While a worktree entry is in the stale state and was running, the application shall keep terminal surfaces alive until the user explicitly stops the entry, manually dismisses it per `GIT-3.10`, or its one-hour automatic dismissal deadline expires per `GIT-3.21`.
 
 **GIT-3.5** When a worktree's HEAD reference changes, the application shall update the entry's branch label in the sidebar.
 
@@ -389,6 +389,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-3.19** When a local `origin/<branch>` ref disappears for a non-stale worktree's current branch, the application shall clear cached PR/MR status for that worktree so stale PR badges do not remain attached to an unpushed or deleted remote branch.
 
 **GIT-3.20** If a linked worktree's `.git` entry is not a materialized regular file (an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then `WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only stat, which never triggers materialization — and fall back to the `<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the calling thread on network materialization. `startup()` resolves reflog paths on the main thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at launch (Application Not Responding).
+
+**GIT-3.21** When a worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
 
 ### GIT-4.x — Deleting a Worktree
 

@@ -64,7 +64,7 @@ struct GitTodo {
     func git_3_3() async throws { }
 
     @Test("""
-@spec GIT-3.4: While a worktree entry is in the stale state and was running, the application shall keep terminal surfaces alive until the user explicitly stops the entry.
+@spec GIT-3.4: While a worktree entry is in the stale state and was running, the application shall keep terminal surfaces alive until the user explicitly stops the entry, manually dismisses it per `GIT-3.10`, or its one-hour automatic dismissal deadline expires per `GIT-3.21`.
 """, .disabled("not yet implemented"))
     func git_3_4() async throws { }
 
