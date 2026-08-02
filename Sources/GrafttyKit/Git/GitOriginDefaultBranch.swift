@@ -15,10 +15,14 @@ public enum GitOriginDefaultBranch {
     /// `git symbolic-ref --short refs/remotes/origin/HEAD` and strips the
     /// `origin/` prefix; on failure, probes `main`, `master`, `develop` in
     /// order via `git show-ref --verify`.
-    public static func resolve(repoPath: String) async -> String? {
+    public static func resolve(
+        repoPath: String,
+        timeout: Duration? = nil
+    ) async -> String? {
         if let captured = try? await GitRunner.capture(
             args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-            at: repoPath
+            at: repoPath,
+            timeout: timeout
         ), captured.exitCode == 0 {
             let trimmed = captured.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("origin/") {
@@ -37,7 +41,8 @@ public enum GitOriginDefaultBranch {
         for candidate in ["main", "master", "develop"] {
             guard let captured = try? await GitRunner.capture(
                 args: ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(candidate)"],
-                at: repoPath
+                at: repoPath,
+                timeout: timeout
             ) else { continue }
             if captured.exitCode == 0 { return candidate }
         }

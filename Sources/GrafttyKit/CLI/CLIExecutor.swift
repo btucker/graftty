@@ -41,6 +41,16 @@ public protocol CLIExecutor: Sendable {
     /// Still throws on launch failure.
     func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput
 
+    /// Capture a command regardless of exit code, terminating it if it
+    /// exceeds `timeout`. A `nil` timeout is identical to the unbounded
+    /// `capture(command:args:at:)` overload.
+    func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput
+
     /// Run a command, terminating it (and throwing `CLIError.timedOut`)
     /// if it does not exit within `timeout`. A `nil` timeout is identical
     /// to `run(command:args:at:)` — unbounded. Declared as a protocol
@@ -57,6 +67,17 @@ public protocol CLIExecutor: Sendable {
 }
 
 public extension CLIExecutor {
+    /// Default: ignore the timeout and defer to the unbounded `capture`.
+    /// Production `CLIRunner` overrides this; test stubs can inherit it.
+    func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout _: Duration?
+    ) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory)
+    }
+
     /// Default: ignore the timeout and defer to the unbounded `run`.
     /// Production `CLIRunner` overrides this with a real terminating
     /// timeout; stubs inherit this no-op so existing conformers keep

@@ -37,7 +37,16 @@ public struct CLIRunner: CLIExecutor {
         args: [String],
         at directory: String
     ) async throws -> CLIOutput {
-        try await execute(command: command, args: args, at: directory, timeout: nil)
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    public func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        try await execute(command: command, args: args, at: directory, timeout: timeout)
     }
 
     /// Augmented PATH that includes common install locations. Finder-launched
@@ -82,8 +91,8 @@ public struct CLIRunner: CLIExecutor {
             process.currentDirectoryURL = URL(fileURLWithPath: directory)
             process.environment = Self.enrichedEnvironment()
 
-            // Allocated only when a timeout is requested — the common
-            // unbounded path (every local git call) pays nothing. Holds
+            // Allocated only when a timeout is requested — unbounded
+            // interactive calls pay nothing. Holds
             // both the fired-flag and the pending SIGTERM timer under one
             // lock: the timer queue writes the flag and the termination
             // queue reads it / cancels the timer, so a `let` reference

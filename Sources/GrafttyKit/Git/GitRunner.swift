@@ -23,10 +23,10 @@ public enum GitRunner {
     /// Runs `git <args>` and returns stdout. Throws `CLIError.nonZeroExit`
     /// on non-zero exit. Use when non-zero means "the call failed."
     ///
-    /// `timeout` bounds the subprocess: pass a value for network-bound,
-    /// poll-driven calls (`git fetch`) so a wedged socket is SIGTERMed and
-    /// surfaced as `CLIError.timedOut` rather than hanging. `nil` (the
-    /// default) is unbounded, preserving every existing local-git caller.
+    /// `timeout` bounds the subprocess: pass a value for recurring work so
+    /// a wedged socket or filesystem read is SIGTERMed and surfaced as
+    /// `CLIError.timedOut` rather than hanging. `nil` (the default) is
+    /// unbounded, preserving interactive call sites.
     public static func run(
         args: [String],
         at directory: String,
@@ -45,9 +45,15 @@ public enum GitRunner {
     /// non-zero exit. Use when exit code is diagnostic.
     public static func capture(
         args: [String],
-        at directory: String
+        at directory: String,
+        timeout: Duration? = nil
     ) async throws -> (stdout: String, exitCode: Int32) {
-        let out = try await executor.capture(command: "git", args: args, at: directory)
+        let out = try await executor.capture(
+            command: "git",
+            args: args,
+            at: directory,
+            timeout: timeout
+        )
         return (stdout: out.stdout, exitCode: out.exitCode)
     }
 
@@ -55,8 +61,14 @@ public enum GitRunner {
     /// Use for mutation commands where stderr carries the user-visible error.
     public static func captureAll(
         args: [String],
-        at directory: String
+        at directory: String,
+        timeout: Duration? = nil
     ) async throws -> CLIOutput {
-        try await executor.capture(command: "git", args: args, at: directory)
+        try await executor.capture(
+            command: "git",
+            args: args,
+            at: directory,
+            timeout: timeout
+        )
     }
 }
