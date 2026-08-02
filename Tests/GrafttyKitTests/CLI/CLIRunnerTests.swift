@@ -97,6 +97,14 @@ struct CLIRunnerTests {
 
         #expect(weakProcess == nil)
         withExtendedLifetime(timeoutItem) {}
+
+        // A very fast child can invoke the termination handler before the
+        // launch path gets a chance to arm its timeout item. Completion must
+        // be sticky so that late arming cannot recreate the state/item retain
+        // cycle after `cancel()` already observed process termination.
+        let completedState = TimeoutState(seconds: 60)
+        completedState.cancel()
+        #expect(!completedState.arm(DispatchWorkItem {}))
     }
 
     @Test func notFoundForMissingCommand() async throws {

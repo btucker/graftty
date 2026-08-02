@@ -71,6 +71,8 @@ struct WorktreeStatsStoreLocalGitTimeoutTests {
         guard mkfifo(headPath, 0o600) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+        let fifoRelease = BlockedFIFOTestSupport.scheduleRelease(of: headPath)
+        defer { fifoRelease.cancel() }
 
         do {
             _ = try await CLIRunner().capture(

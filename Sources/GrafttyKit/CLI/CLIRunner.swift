@@ -219,11 +219,12 @@ public struct CLIRunner: CLIExecutor {
                             process.terminate()
                         }
                     }
-                    timeoutState.arm(item)
-                    DispatchQueue.global().asyncAfter(
-                        deadline: .now() + timeoutState.seconds,
-                        execute: item
-                    )
+                    if timeoutState.arm(item) {
+                        DispatchQueue.global().asyncAfter(
+                            deadline: .now() + timeoutState.seconds,
+                            execute: item
+                        )
+                    }
                 }
             } catch {
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
@@ -285,19 +286,26 @@ public struct CLIRunner: CLIExecutor {
 /// reference type — not a captured `var` — is what lets both queues touch
 /// it under Swift 6's concurrent-capture rules. `seconds` is immutable, so
 /// it needs no locking and carries the value into the `timedOut` error.
-private final class TimeoutState: @unchecked Sendable {
+final class TimeoutState: @unchecked Sendable {
     let seconds: Double
     private let lock = NSLock()
     private var _didTimeout = false
+    private var isFinished = false
     private var item: DispatchWorkItem?
 
     init(seconds: Double) {
         self.seconds = seconds
     }
 
-    func arm(_ newItem: DispatchWorkItem) {
+    /// Installs the delayed timeout item unless process termination already
+    /// completed. Returning false makes cancel-before-arm sticky: without it,
+    /// a fast child can finish first and a later arm recreates a permanent
+    /// state/item retain cycle that no termination handler remains to clear.
+    func arm(_ newItem: DispatchWorkItem) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        guard !isFinished else { return false }
         item = newItem
+        return true
     }
 
     func markTimedOut() {
@@ -312,6 +320,7 @@ private final class TimeoutState: @unchecked Sendable {
 
     func cancel() {
         lock.lock(); defer { lock.unlock() }
+        isFinished = true
         item?.cancel()
         item = nil
     }
