@@ -83,9 +83,34 @@ public enum InstructionStore {
         return InstructionSet(documents: documents, files: files)
     }
 
+    /// Truncates `text` to at most `limit` UTF-8 bytes, including the
+    /// appended `truncationMarker`. The slice always lands on a Unicode
+    /// scalar boundary — never mid-sequence — so truncation cannot corrupt a
+    /// multi-byte character into replacement characters (`U+FFFD`).
     static func cap(_ text: String, to limit: Int) -> String {
         guard text.utf8.count > limit else { return text }
-        let head = String(decoding: text.utf8.prefix(limit), as: UTF8.self)
+        let markerBytes = truncationMarker.utf8.count
+        guard limit > markerBytes else {
+            // Not enough budget left to fit the marker itself; there is no
+            // sensible truncation marker to append, so just clamp the body.
+            return scalarPrefix(of: text, maxBytes: max(limit, 0))
+        }
+        let head = scalarPrefix(of: text, maxBytes: limit - markerBytes)
         return head + truncationMarker
+    }
+
+    /// The longest prefix of `text`, measured in whole Unicode scalars, whose
+    /// UTF-8 encoding is no more than `maxBytes`.
+    private static func scalarPrefix(of text: String, maxBytes: Int) -> String {
+        guard maxBytes > 0 else { return "" }
+        var byteCount = 0
+        var result = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            let scalarBytes = String(scalar).utf8.count
+            guard byteCount + scalarBytes <= maxBytes else { break }
+            byteCount += scalarBytes
+            result.append(scalar)
+        }
+        return String(result)
     }
 }

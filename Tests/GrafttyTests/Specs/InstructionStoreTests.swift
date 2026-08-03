@@ -127,4 +127,32 @@ struct InstructionStoreTests {
         let set = await InstructionStore.load(repoPath: "/repo", using: exec)
         #expect(set?.documents.count == InstructionStore.maxFiles)
     }
+
+    @Test func truncatedDocumentStaysWithinPerFileCap() async {
+        let exec = StubExecutor()
+        exec.stub(args: lsTreeArgs, stdout: ".graftty/GRAFTTY.md")
+        exec.stub(args: ["show", "HEAD:.graftty/GRAFTTY.md"],
+                  stdout: String(repeating: "x", count: InstructionStore.perFileByteCap + 500))
+
+        let set = await InstructionStore.load(repoPath: "/repo", using: exec)
+        let shared = set?.documents["GRAFTTY.md"]?.shared ?? ""
+
+        #expect(shared.hasSuffix(InstructionStore.truncationMarker))
+        #expect(shared.utf8.count <= InstructionStore.perFileByteCap)
+    }
+
+    @Test func truncationNeverSplitsMultiByteScalars() async {
+        let exec = StubExecutor()
+        exec.stub(args: lsTreeArgs, stdout: ".graftty/GRAFTTY.md")
+        // "—" (em dash, U+2014) is 3 bytes in UTF-8; perFileByteCap (32_768) is not
+        // a multiple of 3, so a naive byte-offset slice lands mid-scalar.
+        let longMultiByte = String(repeating: "\u{2014}", count: InstructionStore.perFileByteCap)
+        exec.stub(args: ["show", "HEAD:.graftty/GRAFTTY.md"], stdout: longMultiByte)
+
+        let set = await InstructionStore.load(repoPath: "/repo", using: exec)
+        let shared = set?.documents["GRAFTTY.md"]?.shared ?? ""
+
+        #expect(shared.utf8.count <= InstructionStore.perFileByteCap)
+        #expect(!shared.unicodeScalars.contains(Unicode.Scalar(0xFFFD)!))
+    }
 }
