@@ -564,7 +564,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-3.5** When a `pane list`, `pane add`, or `pane close` request targets a tracked worktree that is not in the `.running` state (i.e., no terminals currently alive in it), the server shall respond with `.error("worktree not running")`. `list` in particular shall NOT return an empty `.paneList` — that reads as a silent success to callers scripting `pane list | wc -l` or similar, when in fact the worktree needs to be clicked to start its terminals.
 
-**ATTN-3.6** The CLI's response-read path shall cap total accumulated bytes at 1 MB via `SocketIO.readAll(fd:cap:)`. Mirrors the server-side `ATTN-2.11`: `SO_RCVTIMEO` only fires on idle pipes, so a misbehaving or compromised server that keeps the pipe continuously full would otherwise grow the CLI's per-response buffer without bound. 1 MB is 1000× the typical ≤1 KB response size; a legit server never hits it.
+**ATTN-3.6** The CLI's response-read path shall cap total accumulated bytes at 16 MiB and report when the peer sent more than that limit, so an oversized response is not misreported as malformed JSON. This response cap is independent of the server's incoming-request cap; normal bulk commands shall paginate below it.
 
 ### ATTN-4.x — CLI Distribution
 
@@ -1729,6 +1729,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
 
 **TEAM-4.4** The built-in session-start template shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.
+
+**TEAM-4.5** When team inbox diagnostics contain more than one page, the application shall return a newest-first page selection bounded by both message count and encoded size, preserve chronological order within each page, and provide an opaque cursor whose traversal neither duplicates nor omits messages.
+
+**TEAM-4.6** When a team member-list command is invoked with `--json`, the CLI shall emit a Codable document with `team` and `members`, using the existing snake_case `TeamListMember` wire keys rather than human-formatted rows.
+
+**TEAM-4.7** When a team inbox request omits the pagination limit, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.
 
 ### TEAM-5.x — `team_*` Inbox Events
 

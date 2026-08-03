@@ -96,12 +96,15 @@ struct TeamMembers: ParsableCommand {
     @Option(name: .long, help: "Repository path to inspect")
     var repo: String?
 
+    @Flag(name: .long, help: "Print stable JSON instead of human-formatted rows")
+    var json: Bool = false
+
     func run() throws {
         let callerWorktree = try TeamDiagnosticScope.resolveCaller(worktree: worktree, repo: repo)
         let response = try CLIEnv.sendRequest(
             .teamMembers(callerWorktree: callerWorktree, worktree: worktree, repo: repo)
         )
-        try TeamOutput.printMembers(response)
+        try TeamOutput.printMembers(response, json: json)
     }
 }
 
@@ -200,7 +203,7 @@ struct TeamInbox: ParsableCommand {
     @Flag(name: .long, help: "Show unread messages only")
     var unread: Bool = false
 
-    @Flag(name: .long, help: "Show all messages")
+    @Flag(name: .long, help: "Show all matching messages by fetching every page")
     var all: Bool = false
 
     @Flag(name: .long, help: "Print JSON")
@@ -208,33 +211,57 @@ struct TeamInbox: ParsableCommand {
 
     func run() throws {
         let callerWorktree = try TeamDiagnosticScope.resolveCaller(worktree: worktree, repo: repo)
-        let response = try CLIEnv.sendRequest(
-            .teamInbox(
-                callerWorktree: callerWorktree,
-                worktree: worktree,
-                repo: repo,
-                member: member,
-                unread: unread,
-                all: all
+        var pages: [[TeamInboxMessage]] = []
+        var beforeID: String?
+        var seenCursors: Set<String> = []
+
+        while true {
+            let response = try CLIEnv.sendRequest(
+                .teamInbox(
+                    callerWorktree: callerWorktree,
+                    worktree: worktree,
+                    repo: repo,
+                    member: member,
+                    unread: unread,
+                    all: all,
+                    beforeID: beforeID,
+                    limit: all
+                        ? TeamInboxDiagnosticPage.maximumLimit
+                        : TeamInboxDiagnosticPage.defaultLimit
+                )
             )
-        )
-        switch response {
-        case .teamInbox(let messages):
-            if json {
-                let data = try JSONEncoder().encode(messages)
-                print(String(data: data, encoding: .utf8) ?? "[]")
-            } else {
-                for message in messages {
-                    print(TeamOutput.inboxLine(message))
+            switch response {
+            case .teamInbox(let messages, let nextBeforeID):
+                pages.append(messages)
+                guard all, let nextBeforeID else {
+                    beforeID = nil
+                    break
                 }
+                guard seenCursors.insert(nextBeforeID).inserted else {
+                    CLIEnv.printError("Team inbox pagination returned a repeated cursor")
+                    throw ExitCode(1)
+                }
+                beforeID = nextBeforeID
+                continue
+            case .error(let msg):
+                CLIEnv.printError(msg)
+                throw ExitCode(1)
+            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+                 .worktreeCreate, .worktreeRemove:
+                CLIEnv.printError("Unexpected response for team inbox")
+                throw ExitCode(1)
             }
-        case .error(let msg):
-            CLIEnv.printError(msg)
-            throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .worktreeCreate, .worktreeRemove:
-            CLIEnv.printError("Unexpected response for team inbox")
-            throw ExitCode(1)
+            break
+        }
+
+        let messages = pages.reversed().flatMap { $0 }
+        if json {
+            let data = try JSONEncoder().encode(messages)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+        } else {
+            for message in messages {
+                print(TeamOutput.inboxLine(message))
+            }
         }
     }
 }
@@ -266,10 +293,13 @@ struct TeamList: ParsableCommand {
         abstract: "List the members of this worktree's team"
     )
 
+    @Flag(name: .long, help: "Print stable JSON instead of human-formatted rows")
+    var json: Bool = false
+
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
         let response = try CLIEnv.sendRequest(.teamList(callerWorktree: worktreePath))
-        try TeamOutput.printMembers(response)
+        try TeamOutput.printMembers(response, json: json)
     }
 }
 
@@ -896,12 +926,21 @@ private enum TeamDiagnosticScope {
 }
 
 private enum TeamOutput {
-    static func printMembers(_ response: ResponseMessage) throws {
+    static func printMembers(_ response: ResponseMessage, json: Bool) throws {
         switch response {
         case .teamList(let teamName, let members):
-            print("team=\(teamName)  members=\(members.count)")
-            for m in members {
-                print(memberLine(m))
+            if json {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = try encoder.encode(
+                    TeamListDocument(team: teamName, members: members)
+                )
+                print(String(decoding: data, as: UTF8.self))
+            } else {
+                print("team=\(teamName)  members=\(members.count)")
+                for m in members {
+                    print(memberLine(m))
+                }
             }
         case .error(let msg):
             CLIEnv.printError(msg)

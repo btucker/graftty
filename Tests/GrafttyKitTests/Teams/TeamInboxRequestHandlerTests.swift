@@ -115,6 +115,152 @@ struct TeamInboxRequestHandlerTests {
         }
     }
 
+    @Test("@spec TEAM-4.5: When team inbox diagnostics contain more than one page, the application shall return a newest-first page selection bounded by both message count and encoded size, preserve chronological order within each page, and provide an opaque cursor whose traversal neither duplicates nor omits messages.")
+    func diagnosticInboxPaginatesBackwardFromNewestMessage() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001", "0002", "0003", "0004", "0005"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(inbox: inbox)
+        for index in 1...5 {
+            _ = try handler.send(
+                callerWorktree: "/repo",
+                recipient: "alice",
+                text: "message \(index)",
+                priority: .normal,
+                repos: [repo],
+                teamsEnabled: true
+            )
+        }
+
+        let newest = try handler.diagnosticPage(
+            callerWorktree: "/repo/.worktrees/alice",
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: false,
+            all: false,
+            beforeID: nil,
+            limit: 2,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(newest.messages.map(\.id) == ["0004", "0005"])
+        #expect(newest.nextBeforeID == "0004")
+
+        let middle = try handler.diagnosticPage(
+            callerWorktree: "/repo/.worktrees/alice",
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: false,
+            all: false,
+            beforeID: newest.nextBeforeID,
+            limit: 2,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(middle.messages.map(\.id) == ["0002", "0003"])
+        #expect(middle.nextBeforeID == "0002")
+
+        let oldest = try handler.diagnosticPage(
+            callerWorktree: "/repo/.worktrees/alice",
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: false,
+            all: false,
+            beforeID: middle.nextBeforeID,
+            limit: 2,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(oldest.messages.map(\.id) == ["0001"])
+        #expect(oldest.nextBeforeID == nil)
+    }
+
+    @Test func diagnosticInboxPageHonorsEncodedByteLimit() throws {
+        let messages = (1...3).map { index in
+            TeamInboxMessage(
+                id: "000\(index)",
+                batchID: nil,
+                createdAt: Self.fixedDate,
+                team: "/repo",
+                repoPath: "/repo",
+                from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+                to: TeamInboxEndpoint(
+                    member: "alice",
+                    worktree: "/repo/.worktrees/alice",
+                    runtime: nil
+                ),
+                priority: .normal,
+                body: String(repeating: "x", count: 200)
+            )
+        }
+        let oneMessageBudget = try JSONEncoder().encode(messages[2]).count + 1
+
+        let page = try TeamInboxDiagnosticPaginator.newestPage(
+            from: messages[...],
+            countLimit: 100,
+            encodedByteLimit: oneMessageBudget
+        )
+
+        #expect(page.map(\.id) == ["0003"])
+    }
+
+    @Test("@spec TEAM-4.7: When a team inbox request omits the pagination limit, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.")
+    func diagnosticInboxRequestWithoutPaginationIsRejected() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let ids = (1...101).map { String(format: "%04d", $0) }
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(ids),
+            now: { Self.fixedDate }
+        )
+        for index in 1...101 {
+            _ = try inbox.appendMessage(
+                teamID: "/repo",
+                teamName: "repo",
+                repoPath: "/repo",
+                from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+                to: TeamInboxEndpoint(
+                    member: "alice",
+                    worktree: "/repo/.worktrees/alice",
+                    runtime: nil
+                ),
+                priority: .normal,
+                body: "message \(index)"
+            )
+        }
+
+        #expect(throws: TeamInboxRequestError.paginationRequired) {
+            try Self.makeHandler(inbox: inbox).diagnosticPage(
+                callerWorktree: "/repo/.worktrees/alice",
+                worktree: nil,
+                repo: nil,
+                member: nil,
+                unread: false,
+                all: false,
+                beforeID: nil,
+                limit: nil,
+                repos: [repo],
+                teamsEnabled: true
+            )
+        }
+    }
+
     @Test("""
     @spec TEAM-3.3: Two user templates control agent-facing team text. At session start, the rendered `teamSessionPrompt` is the complete team context section delivered by the hook, with instruction files delivered as a separate section; empty, whitespace-only, or invalid templates suppress that context rather than revealing a hidden hard-coded primer, and render failures are logged. Queued inbox messages remain a separate transient session-start section. For automated-event delivery, the rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient, with the same render/empty/failure rules. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
     """)

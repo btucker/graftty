@@ -176,7 +176,9 @@ struct NotificationMessageTests {
             repo: "/r",
             member: "main",
             unread: true,
-            all: false
+            all: false,
+            beforeID: "m0100",
+            limit: 100
         )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -187,6 +189,8 @@ struct NotificationMessageTests {
         #expect(json["member"] as? String == "main")
         #expect(json["unread"] as? Bool == true)
         #expect(json["all"] as? Bool == false)
+        #expect(json["before_id"] as? String == "m0100")
+        #expect(json["limit"] as? Int == 100)
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
@@ -458,14 +462,62 @@ struct NotificationMessageTests {
             priority: .normal,
             body: "hello"
         )
-        let original = ResponseMessage.teamInbox([message])
+        let original = ResponseMessage.teamInbox(
+            messages: [message],
+            nextBeforeID: "0001"
+        )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_inbox")
         let messages = json["messages"] as! [[String: Any]]
         #expect(messages.count == 1)
+        #expect(json["next_before_id"] as? String == "0001")
 
         let decoded = try JSONDecoder().decode(ResponseMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test func finalTeamInboxPageDecodesWithoutPaginationCursor() throws {
+        let json = #"{"type":"team_inbox","messages":[]}"#
+        let decoded = try JSONDecoder().decode(ResponseMessage.self, from: Data(json.utf8))
+        #expect(decoded == .teamInbox(messages: [], nextBeforeID: nil))
+    }
+
+    @Test func teamInboxRequestWithoutPaginationFieldsDecodesForExplicitRejection() throws {
+        let json = #"{"type":"team_inbox","caller_worktree":"/r","unread":false,"all":true}"#
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: Data(json.utf8))
+        #expect(decoded == .teamInbox(
+            callerWorktree: "/r",
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: false,
+            all: true,
+            beforeID: nil,
+            limit: nil
+        ))
+    }
+
+    @Test("@spec TEAM-4.6: When a team member-list command is invoked with `--json`, the CLI shall emit a Codable document with `team` and `members`, using the existing snake_case `TeamListMember` wire keys rather than human-formatted rows.")
+    func teamListDocumentUsesStableJSONKeys() throws {
+        let document = TeamListDocument(
+            team: "acme",
+            members: [
+                TeamListMember(
+                    name: "main",
+                    branch: "main",
+                    worktreePath: "/r",
+                    isMainWorktree: true,
+                    isRunning: true
+                ),
+            ]
+        )
+        let data = try JSONEncoder().encode(document)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["team"] as? String == "acme")
+        let members = json["members"] as! [[String: Any]]
+        #expect(members[0]["worktree_path"] as? String == "/r")
+        #expect(members[0]["is_main_worktree"] as? Bool == true)
+        #expect(members[0]["is_running"] as? Bool == true)
     }
 }

@@ -2,6 +2,8 @@ import Foundation
 import GrafttyKit
 
 enum SocketClient {
+    static let maxResponseBytes = 16 * 1024 * 1024
+
     /// Fire-and-forget: write the message and close. Used by `notify`.
     static func send(_ message: NotificationMessage) throws {
         let fd = try openConnectedSocket()
@@ -22,12 +24,20 @@ enum SocketClient {
         // server would block indefinitely waiting for more bytes.
         _ = Darwin.shutdown(fd, Int32(SHUT_WR))
 
-        // `ATTN-3.6`: cap the read at 1 MB so a misbehaving or
+        // `ATTN-3.6`: cap the read at 16 MiB so a misbehaving or
         // compromised server can't OOM the CLI by flooding faster
-        // than `SO_RCVTIMEO` fires. Matches the server-side cap in
-        // `SocketServer.maxPerClientBytes`.
-        let buffer = SocketIO.readAll(fd: fd, cap: 1 * 1024 * 1024)
-        switch SocketResponseDecoder.decode(buffer) {
+        // than `SO_RCVTIMEO` fires. This is independent of the server's
+        // incoming-request cap; legitimate bulk responses paginate well
+        // below this last-resort boundary.
+        let read = SocketIO.readCapped(fd: fd, cap: maxResponseBytes)
+        return try decodeResponse(read)
+    }
+
+    static func decodeResponse(_ read: SocketIO.CappedRead) throws -> ResponseMessage {
+        guard !read.exceededCap else {
+            throw CLIError.responseTooLarge(maxBytes: maxResponseBytes)
+        }
+        switch SocketResponseDecoder.decode(read.data) {
         case .success(let msg):
             return msg
         case .failure(.timeout):
