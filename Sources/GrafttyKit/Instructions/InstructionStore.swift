@@ -5,21 +5,69 @@ import os
 public struct InstructionSet: Sendable, Equatable {
     /// Parsed documents keyed by `.graftty/`-relative path.
     public let documents: [String: InstructionDocument]
+    /// Active leaf documents keyed by the worktree whose committed `HEAD`
+    /// supplied them.
+    public let leafDocumentsByWorktreePath: [String: InstructionDocument]
+    /// Worktrees whose leaf was resolved from their own `HEAD`, including
+    /// worktrees where that committed leaf does not exist. The latter matters:
+    /// an absent branch leaf must not fall back to a same-named main leaf.
+    public let resolvedLeafWorktreePaths: Set<String>
 
-    public init(documents: [String: InstructionDocument]) {
+    public init(
+        documents: [String: InstructionDocument],
+        leafDocumentsByWorktreePath: [String: InstructionDocument] = [:],
+        resolvedLeafWorktreePaths: Set<String> = []
+    ) {
         self.documents = documents
+        self.leafDocumentsByWorktreePath = leafDocumentsByWorktreePath
+        self.resolvedLeafWorktreePaths = resolvedLeafWorktreePaths
     }
 }
 
-/// Reads `.graftty/` from a repository's committed tree.
+/// One active worktree leaf to read from that worktree's committed `HEAD`.
+public struct InstructionLeafSource: Sendable, Equatable {
+    public let worktreePath: String
+    public let relativePath: String
+
+    public init(worktreePath: String, relativePath: String) {
+        self.worktreePath = worktreePath
+        self.relativePath = relativePath
+    }
+}
+
+/// Reads `.graftty/` from committed Git trees.
 ///
 /// @spec INSTR-1.1
-/// Content comes from the committed tree at `HEAD` in the main checkout, not
-/// the working tree: that matches the propose-only authoring model, keeps a
-/// multi-file edit from being observed half-applied, and avoids APFS
-/// case-insensitivity diverging from git's case-sensitive tree. Every failure
-/// degrades to `nil` so session start is never blocked.
+/// When instruction files are loaded, the application shall read group and
+/// unmatched leaf files from the committed HEAD of the main checkout and each
+/// active worktree's leaf file from that worktree's committed HEAD, rather
+/// than from any working tree, and shall produce no instruction set when no
+/// committed instruction content can be read.
 public enum InstructionStore {
+
+    private enum ReadTarget {
+        case main(relativePath: String)
+        case leaf(InstructionLeafSource)
+
+        var relativePath: String {
+            switch self {
+            case let .main(relativePath): relativePath
+            case let .leaf(source): source.relativePath
+            }
+        }
+
+        var isLeafSource: Bool {
+            if case .leaf = self { return true }
+            return false
+        }
+
+        func checkoutPath(mainRepoPath: String) -> String {
+            switch self {
+            case .main: mainRepoPath
+            case let .leaf(source): source.worktreePath
+            }
+        }
+    }
 
     private static let logger = Logger(
         subsystem: "com.btucker.graftty",
@@ -43,6 +91,7 @@ public enum InstructionStore {
 
     public static func load(
         repoPath: String,
+        leafSources: [InstructionLeafSource] = [],
         budget: Duration = gitBudget,
         using executor: CLIExecutor? = nil
     ) async -> InstructionSet? {
@@ -70,17 +119,36 @@ public enum InstructionStore {
             .filter { $0.hasPrefix(prefix) }
             .map { String($0.dropFirst(prefix.count)) }
 
-        var seen: Set<String> = []
-        var ordered: [String] = []
+        var seenWorktrees: Set<String> = []
+        let validLeafSources = leafSources.filter { source in
+            guard seenWorktrees.insert(source.worktreePath).inserted,
+                  case .leaf = InstructionFile.classify(
+                      relativePath: source.relativePath
+                  ) else { return false }
+            return true
+        }
+        let activeLeafPaths = Set(validLeafSources.map(\.relativePath))
+
+        var seenMainPaths: Set<String> = []
+        var mainGroups: [String] = []
+        var mainLeaves: [String] = []
         var skipped: [String] = []
         for candidate in candidates {
-            guard InstructionFile.classify(relativePath: candidate) != nil else {
+            guard let kind = InstructionFile.classify(relativePath: candidate) else {
                 skipped.append(candidate)
                 continue
             }
-            guard seen.insert(candidate).inserted else { continue }
-            ordered.append(candidate)
-            if ordered.count == maxFiles { break }
+            guard seenMainPaths.insert(candidate).inserted else { continue }
+            // An active worktree owns this leaf even when the file is absent
+            // on its branch. Never let the main checkout's copy act as an
+            // implicit fallback.
+            guard !activeLeafPaths.contains(candidate) else { continue }
+            switch kind {
+            case .group:
+                mainGroups.append(candidate)
+            case .leaf:
+                mainLeaves.append(candidate)
+            }
         }
         if !skipped.isEmpty {
             logger.info(
@@ -90,33 +158,67 @@ public enum InstructionStore {
                 """
             )
         }
-        guard !ordered.isEmpty else { return nil }
+        // Shared/group files are most important, followed by each live
+        // worktree's own role, then unmatched main-checkout leaves retained
+        // for org-chart discoverability. The existing cap covers the combined
+        // plan, so adding worktrees cannot make session prompts unbounded.
+        let targets = Array(
+            (
+                mainGroups.map(ReadTarget.main)
+                    + validLeafSources.map(ReadTarget.leaf)
+                    + mainLeaves.map(ReadTarget.main)
+            ).prefix(maxFiles)
+        )
+        guard !targets.isEmpty else { return nil }
 
         // One `git show` per file. `git cat-file --batch` would read them all
         // in a single count-independent subprocess, but `CLIExecutor` has no
         // stdin channel to feed it object names; the shared deadline below is
         // what keeps the aggregate cost bounded in the meantime.
         var documents: [String: InstructionDocument] = [:]
+        var leafDocuments: [String: InstructionDocument] = [:]
         var byteBudget = totalByteCap
         var failed: [String] = []
-        for relative in ordered {
+        for target in targets {
             guard byteBudget > 0 else { break }
             guard let remaining = try? deadline.remaining() else {
                 logger.error("git budget lapsed mid-read; omitting instructions")
                 return nil
             }
-            guard let body = try? await GitRunner.run(
-                args: ["show", "HEAD:\(prefix)\(relative)"],
-                at: repoPath,
-                timeout: remaining,
-                using: executor
-            ) else {
-                failed.append(relative)
+            let body: String
+            do {
+                body = try await GitRunner.run(
+                    args: ["show", "HEAD:\(prefix)\(target.relativePath)"],
+                    at: target.checkoutPath(mainRepoPath: repoPath),
+                    timeout: remaining,
+                    using: executor
+                )
+            } catch let error as CLIError {
+                if case .timedOut = error {
+                    logger.error("git budget lapsed mid-read; omitting instructions")
+                    return nil
+                }
+                // Most worktrees will not opt into a leaf. `git show` reports
+                // an absent path as a normal non-zero exit, so omission is the
+                // expected result rather than a session-start error.
+                if case .nonZeroExit = error, target.isLeafSource {
+                    continue
+                }
+                failed.append(target.relativePath)
+                continue
+            } catch {
+                failed.append(target.relativePath)
                 continue
             }
             let capped = cap(body, to: min(perFileByteCap, byteBudget))
             byteBudget -= capped.utf8.count
-            documents[relative] = InstructionDocument.parse(capped)
+            let document = InstructionDocument.parse(capped)
+            switch target {
+            case let .main(relativePath):
+                documents[relativePath] = document
+            case let .leaf(source):
+                leafDocuments[source.worktreePath] = document
+            }
         }
         if !failed.isEmpty {
             logger.error(
@@ -126,8 +228,12 @@ public enum InstructionStore {
                 """
             )
         }
-        guard !documents.isEmpty else { return nil }
-        return InstructionSet(documents: documents)
+        guard !documents.isEmpty || !leafDocuments.isEmpty else { return nil }
+        return InstructionSet(
+            documents: documents,
+            leafDocumentsByWorktreePath: leafDocuments,
+            resolvedLeafWorktreePaths: Set(validLeafSources.map(\.worktreePath))
+        )
     }
 
     /// Truncates `text` to at most `limit` UTF-8 bytes, including the

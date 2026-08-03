@@ -25,9 +25,10 @@ be visible to the other worktrees' agents that need to coordinate with it.
 
 ## Decision
 
-Add `.graftty/`, a directory of plain-markdown instruction files in the
-repository's main checkout, read from committed content and delivered to agent
-sessions at session start.
+Add `.graftty/`, a directory of plain-markdown instruction files read from
+committed content and delivered to agent sessions at session start. Shared,
+group, and unmatched leaf files come from the repository's main checkout;
+each active worktree's leaf comes from that worktree's own committed tree.
 
 Files are matched to worktrees by **path**, using directory nesting for
 inheritance. Each file may split itself into a *shared* portion visible to every
@@ -42,35 +43,44 @@ repo-wide file.
 
 ## Storage and resolution
 
-All files live in `.graftty/` **in the repository's main checkout** — the
-worktree where `worktree.path == repo.path` per `TEAM-2.3` — and resolve from
-there regardless of which worktree the agent is running in.
+All files use the same `.graftty/` paths in Git. Their source checkout depends
+on their role:
 
-Content is read from the **committed tree at `HEAD`**, not from the working
-tree:
+- `GRAFTTY.md`, nested group files, and leaf files matching no active worktree
+  come from the main checkout's committed `HEAD`.
+- Each active worktree's leaf file comes from that worktree's committed `HEAD`.
+  A missing worktree leaf does not fall back to a same-named main-checkout
+  file.
+
+Content is always read from a **committed tree at `HEAD`**, never from a
+working tree:
 
 ```
-git ls-tree -r HEAD .graftty/       # names + blob SHAs, one call
-git cat-file --batch                # all bodies, one call
+git ls-tree -r HEAD .graftty/       # discover main-checkout files
+git show HEAD:.graftty/<path>       # read each selected main file
+git show HEAD:.graftty/<leaf>       # run in each active worktree
 ```
 
-Two subprocesses total, independent of file count.
+One listing plus at most one read per selected file. The combined read plan is
+bounded by the file-count, byte, and aggregate-time limits below.
 
 Reading committed content rather than the filesystem is load-bearing for three
 reasons:
 
-1. It matches the propose-only authoring model below — an instruction file is in
-   effect once merged, and uncommitted experiments in the main checkout are
-   invisible to other worktrees' agents.
-2. It is atomic. A multi-file edit can never be observed half-applied.
+1. Instruction changes take effect only when committed; uncommitted experiments
+   remain invisible to current and peer sessions.
+2. Each checkout is observed atomically at a committed tree rather than through
+   a partially written working-tree edit.
 3. Git's tree is case-sensitive on every platform, whereas APFS is usually
    case-insensitive. A filesystem-based resolver would match `.graftty/Research/`
    against key `research/…` locally but not in CI.
 
-The known cost: a merged instruction change reaches agents only after the main
+The known cost: a shared or group change reaches agents only after the main
 checkout advances its `HEAD`. Keeping the main checkout current is the
-operator's job. Reading `origin/main` instead was considered and rejected — it
-trades a local-consistency problem for a fetch-freshness problem.
+operator's job. A leaf change instead reaches the owning worktree at its next
+session as soon as it is committed there. Reading `origin/main` was considered
+and rejected — it trades a local-consistency problem for a fetch-freshness
+problem.
 
 ## Worktree keys
 
@@ -216,17 +226,19 @@ team context and the queued inbox messages:
 
 - **Your instructions** — the agent's own chain, concatenated verbatim,
   including both the shared and private portions of its own files.
-- **Other worktrees** — folded into the roster `TeamInstructionsRenderer`
-  already builds. Each entry keeps its existing name, branch, path, and running
-  status, and gains the shared portions of the files applying to it.
+- **Other worktrees** — a separate block keyed by the same display names used
+  in the `TeamInstructionsRenderer` roster, containing the shared portions of
+  the files applying to each worktree.
   `.graftty/GRAFTTY.md` is excluded from roster entries: it applies to every
   worktree and already appears once in the reader's own stack.
 - **Unmatched entries** — instruction files that currently apply to no worktree
   are listed by their path with their shared portion, as plain discoverability.
   No suggested command; what to do about them is the reader's call.
 
-If `.graftty/` is absent or empty at `HEAD`, the section is omitted entirely and
-behavior is unchanged for repos that have not opted in.
+If no relevant checkout contains committed instruction content, the section is
+omitted entirely and behavior is unchanged for repos that have not opted in. A
+branch-only active leaf is sufficient to opt in before main contains
+`.graftty/`.
 
 ### Relationship to `teamSessionPrompt`
 
@@ -237,8 +249,8 @@ guarantee is amended to scope to the *team context section only*. Instructions
 become their own section, exactly as queued messages already are.
 
 Consequently, blanking the session template no longer suppresses instructions —
-deleting the files does. Existing custom templates keep working unchanged, and
-no template migration is required.
+committing their deletion does. Existing custom templates keep working
+unchanged, and no template migration is required.
 
 Instruction files are **plain markdown, not Stencil templates**. Template
 rendering was considered and rejected: it adds a context surface, a render-
@@ -247,30 +259,33 @@ files do not obviously need.
 
 ### Trust
 
-Instruction files reach an agent as repo-trusted instructions, on the same
-footing as `CLAUDE.md`, because reaching the main checkout's `HEAD` required
-review under the authoring model below. This is distinct from peer messages,
-which the session prompt already marks as untrusted notes.
+Shared and group files reach an agent as repo-trusted instructions, on the same
+footing as `CLAUDE.md`, because they come from the main checkout's committed
+tree. A worktree's own leaf is branch-local trusted context, like other
+instruction files committed on that branch.
 
-The rendered section states that other worktrees' shared instructions describe
-what those worktrees do, not instructions the reader must follow, and that
-coordination goes through `graftty team send`.
+Another worktree's shared leaf content is not an instruction to the reader. It
+is explicitly framed as that worktree's self-authored role description, and the
+rendered section directs coordination through `graftty team send`. This framing
+is load-bearing now that a worktree can publish its role before main-branch
+review.
 
 ## Authoring
 
-Graftty never writes `.graftty/`. Files change through ordinary commits to the
-default branch, which for an agent means opening a pull request.
+The Graftty application never writes `.graftty/`. The built-in session prompt
+teaches agents the file forms, asks them to keep files concise, and permits them
+to suggest an appropriate file when durable structure would help. Agents create
+or modify files only when the user has authorized that work.
 
-Direct writes into the main checkout's working tree by an agent in another
-worktree were considered and rejected: they leave the main checkout dirty from a
-non-obvious source, can collide with whatever the main worktree's own agent is
-doing, and offer no guard against one worktree rewriting another's instructions.
-The tradeoff accepted is that a worktree cannot revise its own standing brief
-within a single autonomous run.
+Shared and group files change through ordinary commits to the default branch,
+normally by pull request. A worktree may author its own leaf in its own checkout
+and commit it on its branch; that committed leaf takes effect at the next
+session without waiting to merge. Agents never need to write into another
+worktree or dirty the main checkout.
 
-Because content is read from `HEAD`, uncommitted edits in the main checkout do
-not take effect — including an agent's own in-progress edits — which keeps the
-authoring model and the read model consistent.
+Because content is read from `HEAD`, an agent's in-progress edits do not take
+effect. This preserves a clear boundary between drafting a role and activating
+it.
 
 ## Failure handling and limits
 
@@ -278,7 +293,7 @@ The governing rule is to degrade to omission and never block session start.
 
 | Condition | Behavior |
 |---|---|
-| No `.graftty/` at `HEAD`, or repo has no commits | Omit the section |
+| No committed instruction content in any relevant checkout | Omit the section |
 | `git` fails or exceeds a bounded timeout | Omit the section, log, proceed |
 | Filename not matching `GRAFTTY.md` / `GRAFTTY.<leaf>.md` | Skip, log |
 | Empty leaf component (`GRAFTTY..md`) | Skip, log |
@@ -308,12 +323,14 @@ Three pure units and one I/O unit, each testable in isolation:
   skippable. No I/O.
 - **`InstructionDocument`** — splits raw markdown into shared and private
   portions. No I/O.
-- **`InstructionStore`** — performs the two git reads behind an injectable
-  command runner, applies caps, and returns parsed documents keyed by path.
+- **`InstructionStore`** — lists main-checkout files, reads each active leaf in
+  its owning checkout, applies one aggregate timeout and size budget, and
+  returns main documents plus worktree-keyed leaf documents.
 
 `TeamHookRenderer.sessionStart` gains an instructions parameter.
-`TeamInstructionsRenderer`'s roster member context gains a shared-instructions
-field.
+`InstructionSessionText` supplies the active worktree sources to the store and
+the resulting audience-specific documents to `InstructionRenderer`.
+`TeamInstructionsRenderer`'s built-in prompt gains the concise authoring guide.
 
 ## Specs
 
@@ -346,14 +363,15 @@ names containing dots and the rejected forms; the split marker at each heading
 level, with no marker, and as the first line; and renderer output for own-stack,
 roster, and unmatched-entry cases.
 
-`InstructionStore` tests inject a fake command runner to cover cap truncation,
-git failure, timeout, and malformed `ls-tree` output without needing a repo.
+`InstructionStore` tests inject a fake command runner to cover checkout
+selection, cap truncation, git failure, timeout, and malformed `ls-tree` output
+without needing a repo.
 
-One integration test earns its keep: a temporary repo where an instruction file
-is committed and then edited dirty in the working tree, asserting the agent
-receives the **committed** text. That is the single behavioral proof of the
-`HEAD`-reads decision, and it is the one thing unit tests with a fake runner
-cannot establish.
+Two integration cases earn their keep: a main-checkout instruction committed
+and then edited dirty, and a leaf committed in a linked worktree but absent from
+main and then edited dirty. Both assert that delivery uses the appropriate
+**committed** text. These are the behavioral proofs of the `HEAD`-read decision
+that a fake runner cannot establish.
 
 ## Non-goals
 
@@ -361,7 +379,8 @@ cannot establish.
   per repo if local-only instructions are wanted; an Application Support overlay
   keyed by repo identity is deliberately deferred.
 - Mid-session refresh when instructions change. Files are read at session start;
-  a merged change reaches an agent on its next session.
+  a committed change in the relevant checkout reaches an agent on its next
+  session.
 - Any Graftty-side writing, creation, or editing UI for instruction files.
 - Stencil templating within instruction files.
 - Wildcard or glob patterns in filenames.

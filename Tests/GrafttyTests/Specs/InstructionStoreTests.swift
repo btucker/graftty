@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("@spec INSTR-1.1: The application shall read instruction files from the committed tree at HEAD in the repository main checkout rather than from the working tree, and shall produce no instruction set when the directory is absent or git fails.")
+@Suite("@spec INSTR-1.1: When instruction files are loaded, the application shall read group and unmatched leaf files from the committed HEAD of the main checkout and each active worktree's leaf file from that worktree's committed HEAD, rather than from any working tree, and shall produce no instruction set when no committed instruction content can be read.")
 struct InstructionStoreTests {
 
     @Test func loadsAndParsesCommittedFiles() async {
@@ -52,6 +52,41 @@ struct InstructionStoreTests {
         #expect(set?.documents.count == 1)
         #expect(set?.documents["GRAFTTY.ok.md"]?.shared == "kept")
         #expect(!exec.invocations.contains(["show", "HEAD:.graftty/README.md"]))
+    }
+
+    @Test("Active leaf reads run in the owning worktree")
+    func activeLeafComesFromItsWorktreeHead() async {
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
+            ".graftty/GRAFTTY.md"
+        ))
+        exec.stub(args: ["show", "HEAD:.graftty/GRAFTTY.md"], stdout: "repo wide")
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "branch-owned role"
+        )
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: "/repo/.worktrees/feature-login",
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            using: exec
+        )
+
+        #expect(set?.documents["GRAFTTY.md"]?.shared == "repo wide")
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/feature-login"]?.shared
+                == "branch-owned role"
+        )
+        let calls = Array(zip(exec.invocationDirectories, exec.invocations))
+        #expect(calls.contains { directory, args in
+            directory == "/repo/.worktrees/feature-login"
+                && args == ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"]
+        })
     }
 
     /// Real git, because the defect being guarded is git's own path quoting:

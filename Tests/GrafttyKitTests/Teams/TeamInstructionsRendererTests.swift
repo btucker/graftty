@@ -120,6 +120,21 @@ struct TeamInstructionsRendererTests {
         #expect(template.contains("{% for worktree in team.other_worktrees %}"))
     }
 
+    @Test("""
+    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, their peer-visible role descriptions, and when an agent may suggest or author them.
+    """)
+    func defaultTemplateExplainsInstructionFileAuthoring() {
+        let template = TeamInstructionsRenderer.defaultTemplate
+
+        #expect(template.contains(".graftty/GRAFTTY.md"))
+        #expect(template.contains("GRAFTTY.<worktree-name>.md"))
+        #expect(template.contains("shared section"))
+        #expect(template.contains("shown to peers"))
+        #expect(template.contains("reads only committed content"))
+        #expect(template.contains("suggest an appropriate instruction file"))
+        #expect(template.contains("only when authorized"))
+    }
+
     @Test func defaultRenderIncludesSharedCommandsExactlyOnce() {
         let view = makeView()
         for member in view.members {

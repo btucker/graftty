@@ -26,4 +26,41 @@ struct InstructionCommittedReadTests {
         #expect(shared == "COMMITTED")
         #expect(shared != "WORKING TREE")
     }
+    @Test("""
+    @spec INSTR-1.3: When an active worktree has a committed leaf instruction file, the application shall load that leaf from the worktree's own HEAD even when the main checkout does not contain it.
+    """)
+    func linkedWorktreeLeafUsesItsCommittedHead() async throws {
+        let root = try makeCommittedInstructionRepo(name: "GRAFTTY.md", body: "repo wide")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let linked = root
+            .appendingPathComponent(".worktrees", isDirectory: true)
+            .appendingPathComponent("feature-login", isDirectory: true)
+        try runInstructionGit(
+            ["worktree", "add", "-q", "-b", "feature-login", linked.path],
+            at: root
+        )
+        let leaf = linked
+            .appendingPathComponent(".graftty", isDirectory: true)
+            .appendingPathComponent("GRAFTTY.feature-login.md")
+        try "COMMITTED BRANCH ROLE".write(to: leaf, atomically: true, encoding: .utf8)
+        try runInstructionGit(["add", ".graftty/GRAFTTY.feature-login.md"], at: linked)
+        try runInstructionGit(["commit", "-q", "-m", "add branch role"], at: linked)
+        try "DIRTY BRANCH ROLE".write(to: leaf, atomically: true, encoding: .utf8)
+
+        let set = await InstructionStore.load(
+            repoPath: root.path,
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: linked.path,
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            budget: .seconds(30)
+        )
+
+        let shared = set?.leafDocumentsByWorktreePath[linked.path]?.shared
+        #expect(shared == "COMMITTED BRANCH ROLE")
+        #expect(shared != "DIRTY BRANCH ROLE")
+    }
 }

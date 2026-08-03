@@ -12,7 +12,7 @@ private func makeTeam() -> TeamView {
     return TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
 }
 
-@Suite("@spec INSTR-6.2: When rendering the session-start instructions section for a team member, the application shall load and resolve `.graftty/` for the viewer's repository and yield the empty string on any failure to do so, so the session-start hook is never blocked by an instructions problem.")
+@Suite("@spec INSTR-6.2: When rendering the session-start instructions section for a team member, the application shall resolve committed main-checkout and active-worktree instruction content, omit unavailable individual leaves, and yield the empty string when no committed content can be read, so an instructions problem never blocks the session-start hook.")
 struct InstructionSessionTextTests {
 
     @Test func absentInstructionsDirectoryYieldsEmptyString() async {
@@ -76,6 +76,26 @@ struct InstructionSessionTextTests {
         // The default branch arrives from in-memory app state; rendering must
         // not shell out to resolve `origin/HEAD`.
         #expect(!exec.invocations.contains { $0.first == "symbolic-ref" })
+    }
+
+    @Test func branchOnlyLeafRendersBeforeMainContainsGrafttyDirectory() async {
+        let team = makeTeam()
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: "")
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "branch-only role"
+        )
+
+        let text = await InstructionSessionText.render(
+            team: team,
+            viewer: team.mainWorktree,
+            defaultBranch: "main",
+            using: exec
+        )
+
+        #expect(text.contains("branch-only role"))
+        #expect(text.contains("feature/login"))
     }
 
     @Test func nilDefaultBranchLimitsTheMainCheckoutToTheRootFile() async {

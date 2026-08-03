@@ -4,9 +4,11 @@ import Foundation
 /// instructions section for one viewer.
 ///
 /// @spec INSTR-6.2
-/// Every failure path — unresolvable repository, absent directory, git error,
-/// timeout — yields the empty string so the session-start hook still returns
-/// its team context and queued messages.
+/// When rendering the session-start instructions section for a team member,
+/// the application shall resolve committed main-checkout and active-worktree
+/// instruction content, omit unavailable individual leaves, and yield the
+/// empty string when no committed content can be read, so an instructions
+/// problem never blocks the session-start hook.
 public enum InstructionSessionText {
 
     /// `defaultBranch` is the main checkout's instruction key. It is supplied
@@ -21,11 +23,6 @@ public enum InstructionSessionText {
         defaultBranch: String?,
         using executor: CLIExecutor? = nil
     ) async -> String {
-        guard let set = await InstructionStore.load(
-            repoPath: team.repoPath,
-            using: executor
-        ) else { return "" }
-
         func audience(_ member: TeamMember) -> InstructionAudience {
             InstructionAudience(
                 key: InstructionKey.key(
@@ -33,15 +30,35 @@ public enum InstructionSessionText {
                     repoPath: team.repoPath,
                     defaultBranch: defaultBranch
                 ),
-                displayName: member.name
+                displayName: member.name,
+                worktreePath: member.worktreePath
             )
         }
 
+        let viewerAudience = audience(viewer)
+        let otherAudiences = team.members
+            .filter { $0.worktreePath != viewer.worktreePath }
+            .map(audience)
+        let leafSources = ([viewerAudience] + otherAudiences).compactMap {
+            audience -> InstructionLeafSource? in
+            guard let key = audience.key,
+                  let leafPath = InstructionChain.paths(forKey: key).last,
+                  let worktreePath = audience.worktreePath else { return nil }
+            return InstructionLeafSource(
+                worktreePath: worktreePath,
+                relativePath: leafPath
+            )
+        }
+
+        guard let set = await InstructionStore.load(
+            repoPath: team.repoPath,
+            leafSources: leafSources,
+            using: executor
+        ) else { return "" }
+
         return InstructionRenderer.render(
-            viewer: audience(viewer),
-            others: team.members
-                .filter { $0.worktreePath != viewer.worktreePath }
-                .map(audience),
+            viewer: viewerAudience,
+            others: otherAudiences,
             set: set
         )
     }

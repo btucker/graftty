@@ -99,8 +99,8 @@ online in the same tailnet and the host must still be reachable on port
 ## Agent instructions
 
 Graftty can give the agents running in your worktrees durable, per-worktree
-instructions. Commit a `.graftty/` directory to your repository's main
-checkout:
+instructions. Put shared and group files in the main checkout and leaf files
+on the branches that own them:
 
 ```
 .graftty/GRAFTTY.md                     # every worktree in the repo
@@ -117,9 +117,16 @@ applies to. Everything above it is shared with every agent in the repo, so
 it's the right place for what other worktrees need in order to coordinate
 with this one. A file with no such heading is entirely shared.
 
-Files are read from the committed tree, so changes take effect once merged
-into the main checkout — uncommitted edits are ignored. Graftty never writes
-these files.
+Files are read from committed trees; uncommitted edits are ignored. The
+repo-wide file, group files, and unmatched leaf files come from the main
+checkout's `HEAD`. Each active worktree's leaf file comes from that worktree's
+own `HEAD`, so a worktree can commit its standing role on its branch before the
+file merges to main. If that leaf is absent on the branch, Graftty does not
+fall back to a same-named copy on main.
+
+The built-in team session prompt explains these forms and tells agents they may
+suggest concise instruction files when durable team structure would help, but
+to create or modify them only when authorized.
 
 Requires **Agent Teams** to be enabled in Settings, and a repository with
 more than one worktree.
