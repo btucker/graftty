@@ -1874,7 +1874,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
 
-**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, their peer-visible role descriptions, and when an agent may suggest or author them.
+**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, the root-only fallback when the main key is unresolved, their peer-visible role descriptions, when an agent may suggest or author them, the commit-then-`--base HEAD` workflow for configuring a child before its first session, and the distinct conditions under which main retains that leaf and a future same-key worktree receives it.
+
+**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's committed leaf from that new checkout so the child receives its role in the first session.
+
+**INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's committed leaf ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
 
 ### INSTR-7.x
 

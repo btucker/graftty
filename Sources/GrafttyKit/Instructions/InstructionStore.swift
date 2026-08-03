@@ -145,16 +145,9 @@ public enum InstructionStore {
             return true
         }
         let activeLeafPaths = Set(validLeafSources.map(\.relativePath))
-        let applicableMainPaths = Set(validLeafSources.flatMap { source in
-            guard case let .leaf(key) = InstructionFile.classify(
-                relativePath: source.relativePath
-            ) else { return [String]() }
-            return InstructionChain.paths(forKey: key)
-        })
 
         var seenMainPaths: Set<String> = []
-        var applicableMainGroups: [String] = []
-        var unmatchedMainGroups: [String] = []
+        var mainGroups: [String] = []
         var mainLeaves: [String] = []
         var skipped: [String] = []
         for candidate in candidates {
@@ -169,13 +162,7 @@ public enum InstructionStore {
             guard !activeLeafPaths.contains(candidate) else { continue }
             switch kind {
             case .group:
-                let appliesToActiveWorktree = candidate == "GRAFTTY.md"
-                    || applicableMainPaths.contains(candidate)
-                if appliesToActiveWorktree {
-                    applicableMainGroups.append(candidate)
-                } else {
-                    unmatchedMainGroups.append(candidate)
-                }
+                mainGroups.append(candidate)
             case .leaf:
                 mainLeaves.append(candidate)
             }
@@ -188,15 +175,32 @@ public enum InstructionStore {
                 """
             )
         }
-        // Prioritize groups that apply to a live worktree, then each live
-        // worktree's own role. Unmatched main-checkout files remain available
-        // for org-chart discoverability without being able to starve active
-        // roles at either the file-count or byte cap. The existing cap covers
-        // the combined plan, so adding worktrees cannot make prompts unbounded.
+        // Each leaf source is preceded by its as-yet-unclaimed main-checkout
+        // groups. The caller supplies the viewer first, so its whole role
+        // chain is attempted before peer-only content can consume either cap.
+        // Unmatched main files remain available for org-chart discoverability
+        // after every live role. The existing caps still cover the combined
+        // plan, so adding worktrees cannot make prompts unbounded.
+        let availableMainGroups = Set(mainGroups)
+        var claimedMainGroups: Set<String> = []
+        var liveTargets: [ReadTarget] = []
+        for source in validLeafSources {
+            guard case let .leaf(key) = InstructionFile.classify(
+                relativePath: source.relativePath
+            ) else { continue }
+            for groupPath in InstructionChain.paths(forKey: key).dropLast()
+                where availableMainGroups.contains(groupPath)
+                    && claimedMainGroups.insert(groupPath).inserted {
+                liveTargets.append(.main(relativePath: groupPath))
+            }
+            liveTargets.append(.leaf(source))
+        }
+        let unmatchedMainGroups = mainGroups.filter {
+            !claimedMainGroups.contains($0)
+        }
         let targets = Array(
             (
-                applicableMainGroups.map(ReadTarget.main)
-                    + validLeafSources.map(ReadTarget.leaf)
+                liveTargets
                     + unmatchedMainGroups.map(ReadTarget.main)
                     + mainLeaves.map(ReadTarget.main)
             ).prefix(maxFiles)

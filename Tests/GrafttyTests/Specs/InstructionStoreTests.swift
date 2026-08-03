@@ -221,6 +221,44 @@ struct InstructionStoreLimitTests {
         )
     }
 
+    @Test func firstLeafSourcePrecedesGroupsExclusiveToLaterWorktrees() async {
+        let exec = InstructionStubExecutor()
+        let groups = (0..<4).map { ".graftty/peer-\($0)/GRAFTTY.md" }
+        exec.stub(args: instructionLsTreeArgs, stdout: groups.map { $0 + "\0" }.joined())
+        for group in groups {
+            exec.stub(
+                args: ["show", "HEAD:\(group)"],
+                stdout: String(repeating: "x", count: InstructionStore.perFileByteCap)
+            )
+        }
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.child.md"],
+            stdout: "viewer's own role"
+        )
+        let sources = [
+            InstructionLeafSource(
+                worktreePath: "/repo/.worktrees/child",
+                relativePath: "GRAFTTY.child.md"
+            ),
+        ] + (0..<4).map { index in
+            InstructionLeafSource(
+                worktreePath: "/repo/.worktrees/peer-\(index)/task",
+                relativePath: "peer-\(index)/GRAFTTY.task.md"
+            )
+        }
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: sources,
+            using: exec
+        )
+
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/child"]?.shared
+                == "viewer's own role"
+        )
+    }
+
     @Test func activeLeafPrecedesUnmatchedGroupsAtTheFileCap() async {
         let exec = InstructionStubExecutor()
         let groups = (0..<InstructionStore.maxFiles)

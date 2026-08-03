@@ -64,6 +64,23 @@ git show HEAD:.graftty/<leaf>       # run in each active worktree
 One listing plus at most one read per selected file. The combined read plan is
 bounded by the file-count, byte, and aggregate-time limits below.
 
+### Configuring a child before launch
+
+An agent can define a new worktree's leaf on its own branch, commit it, and
+create the child from that exact commit:
+
+```
+graftty worktree add <name> --base HEAD --agent <codex|claude>
+```
+
+The CLI resolves `HEAD` in the caller's worktree before creating the new
+branch, so the child owns the committed leaf immediately and receives it in
+its first session. Once the same file reaches the main checkout's `HEAD`, main
+retains it as durable team structure. A future worktree with the same key
+receives that leaf when its starting commit contains the file; an explicit
+older or unrelated `--base` does not fall back to main. This is not a separate
+hidden or ephemeral instruction tier.
+
 Reading committed content rather than the filesystem is load-bearing for three
 reasons:
 

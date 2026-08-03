@@ -124,6 +124,14 @@ own `HEAD`, so a worktree can commit its standing role on its branch before the
 file merges to main. If that leaf is absent on the branch, Graftty does not
 fall back to a same-named copy on main.
 
+This lets one agent configure another before launch: commit the new worktree's
+leaf on the caller's branch, then run
+`graftty worktree add <name> --base HEAD --agent <codex|claude>`. The child
+inherits that commit and receives the leaf in its first session. If the commit
+later reaches the main checkout's `HEAD`, main retains the leaf as durable team
+structure. A future worktree with the same key receives it when that worktree's
+starting commit contains the file.
+
 The built-in team session prompt explains these forms and tells agents they may
 suggest concise instruction files when durable team structure would help, but
 to create or modify them only when authorized.

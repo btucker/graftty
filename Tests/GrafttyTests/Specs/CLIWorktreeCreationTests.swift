@@ -533,6 +533,10 @@ struct CLIWorktreeCreationTests {
         #expect(primer.contains("worktree's stable reply address"))
         #expect(primer.contains("graftty team send --stdin <address>"))
         #expect(primer.contains("--base <ref>"))
+        #expect(primer.contains(
+            "graftty worktree add <name> --base HEAD --agent <codex|claude>"
+        ))
+        #expect(primer.contains("inherits the caller's committed leaf"))
         #expect(primer.contains("--prompt-stdin"))
         #expect(!primer.contains("Spawn a teammate"))
     }

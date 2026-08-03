@@ -36,14 +36,18 @@ public enum InstructionSessionText {
         }
 
         let viewerAudience = audience(viewer)
-        // Stale and in-flight rows remain in the public team roster, but
-        // there is no checkout whose HEAD can own their leaf. Treat any
-        // matching main-checkout leaf as unmatched until the worktree exists.
-        let activeMembers = team.members.filter(\.hasOnDiskWorktree)
-        let otherAudiences = activeMembers
+        // Stale and in-flight peers remain in the public team roster, but
+        // there is no checkout whose HEAD can own their leaf. The viewer is
+        // the exception: receipt of its hook proves its checkout and agent
+        // process exist, even if worktree creation has not yet promoted the
+        // app-state row from `.creating` to `.running`.
+        let readableMembers = [viewer] + team.members.filter {
+            $0.worktreePath != viewer.worktreePath && $0.hasOnDiskWorktree
+        }
+        let otherAudiences = readableMembers
             .filter { $0.worktreePath != viewer.worktreePath }
             .map(audience)
-        let leafSources = activeMembers.map(audience).compactMap {
+        let leafSources = readableMembers.map(audience).compactMap {
             audience -> InstructionLeafSource? in
             guard let key = audience.key,
                   let leafPath = InstructionChain.paths(forKey: key).last,
