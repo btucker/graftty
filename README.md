@@ -96,6 +96,34 @@ when one is available. For later remote connections, both devices must be
 online in the same tailnet and the host must still be reachable on port
 8800.
 
+## Agent instructions
+
+Graftty can give the agents running in your worktrees durable, per-worktree
+instructions. Commit a `.graftty/` directory to your repository's main
+checkout:
+
+```
+.graftty/GRAFTTY.md                     # every worktree in the repo
+.graftty/research/GRAFTTY.md            # every worktree under research/
+.graftty/research/GRAFTTY.vector-db.md  # just the research/vector-db worktree
+```
+
+A worktree receives the repo-wide file, then each ancestor directory's
+`GRAFTTY.md`, then its own leaf file — which lives one level up, named after
+the worktree.
+
+Anything below a `## Private` heading goes only to the worktrees that file
+applies to. Everything above it is shared with every agent in the repo, so
+it's the right place for what other worktrees need in order to coordinate
+with this one. A file with no such heading is entirely shared.
+
+Files are read from the committed tree, so changes take effect once merged
+into the main checkout — uncommitted edits are ignored. Graftty never writes
+these files.
+
+Requires **Agent Teams** to be enabled in Settings, and a repository with
+more than one worktree.
+
 ## Agent teams
 
 When a repo has more than one worktree open, Graftty treats it as an
