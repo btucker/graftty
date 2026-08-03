@@ -12,6 +12,11 @@ enum KeyboardFrameInset {
     ) -> CGFloat {
         let intersection = keyboardEndFrame.intersection(screenBounds)
         if intersection.isNull || intersection.isEmpty { return 0 }
+        // Floating and split keyboards can intersect the screen without
+        // occupying its bottom edge. Bottom padding cannot route around a
+        // middle-of-screen rectangle; treating its full height as an inset
+        // only shrinks the entire terminal tree for no benefit.
+        guard keyboardEndFrame.maxY >= screenBounds.maxY else { return 0 }
         return intersection.height
     }
 }

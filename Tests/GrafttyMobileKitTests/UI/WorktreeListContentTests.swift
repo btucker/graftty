@@ -47,6 +47,71 @@ struct WorktreeListContentTests {
         #expect(view.externalRefreshToken == 3)
     }
 
+    @Test("""
+    @spec IOS-4.30: When a paired host's worktree list mounts before the biometric gate has made authenticated connections available, the application shall keep the initial loading state pending and automatically start the load when the active, unlocked readiness state arrives. A successful list shall remain mounted across transient inactive/active cycles, while changing hosts shall automatically load the new host without requiring Refresh.
+    """)
+    func initialLoadTracksConnectionReadinessAndHostIdentity() {
+        let firstHostID = UUID()
+
+        #expect(!WorktreeListContent.shouldAutomaticallyLoad(
+            hostID: firstHostID,
+            loadedHostID: nil,
+            isReady: false
+        ))
+        #expect(WorktreeListContent.shouldAutomaticallyLoad(
+            hostID: firstHostID,
+            loadedHostID: nil,
+            isReady: true
+        ))
+        #expect(!WorktreeListContent.shouldAutomaticallyLoad(
+            hostID: firstHostID,
+            loadedHostID: firstHostID,
+            isReady: true
+        ))
+        #expect(WorktreeListContent.shouldAutomaticallyLoad(
+            hostID: UUID(),
+            loadedHostID: firstHostID,
+            isReady: true
+        ))
+
+        let secondHostID = UUID()
+        #expect(!WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: firstHostID,
+            presentedHostID: secondHostID,
+            isCancelled: false
+        ))
+        #expect(!WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: secondHostID,
+            presentedHostID: secondHostID,
+            isCancelled: true
+        ))
+        #expect(WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: secondHostID,
+            presentedHostID: secondHostID,
+            isCancelled: false
+        ))
+    }
+
+    @Test("""
+    @spec IOS-4.31: When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
+    """)
+    func identicalPollingSnapshotsDoNotRepublishThePaneHierarchy() {
+        let current = [sampleWorktree(path: "/repo/first")]
+
+        #expect(!WorktreeListContent.shouldPublishLoadedList(
+            current: .loaded(current),
+            next: current
+        ))
+        #expect(WorktreeListContent.shouldPublishLoadedList(
+            current: .loaded(current),
+            next: [sampleWorktree(path: "/repo/second")]
+        ))
+        #expect(WorktreeListContent.shouldPublishLoadedList(
+            current: .loading,
+            next: current
+        ))
+    }
+
     @Test("WorktreePickerView wrapper delegates to WorktreeListContent")
     func wrapperDelegates() {
         let h = sampleHost()
@@ -173,6 +238,21 @@ struct WorktreeListContentTests {
             startedAt: startedAt,
             now: startedAt.addingTimeInterval(-1)
         ) == "Elapsed 0s")
+    }
+
+    private func sampleWorktree(path: String) -> WorktreePanes {
+        WorktreePanes(
+            path: path,
+            displayName: URL(fileURLWithPath: path).lastPathComponent,
+            repoDisplayName: "repo",
+            displayBranch: "main",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
     }
 }
 #endif

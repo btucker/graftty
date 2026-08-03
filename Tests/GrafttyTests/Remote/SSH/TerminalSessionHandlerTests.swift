@@ -893,6 +893,10 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await waitUntil(timeout: 3.0) { !channel.isActive }
         try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID == nil }
 
+        XCTAssertTrue(
+            capture.sawExitStatus0,
+            "natural terminal EOF must be identified to the client as exit-status: 0"
+        )
         XCTAssertFalse(channel.isActive, "channel must close when the engine's byte stream ends on its own")
         XCTAssertNil(
             store.snapshot(sessionName: "alpha").ownerClientID,
@@ -1138,8 +1142,13 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
     typealias OutboundOut = Any
 
     private let lock = NIOLock()
+    private var _sawExitStatus0 = false
     private var _sawExitStatus1 = false
     private var _successCount = 0
+
+    var sawExitStatus0: Bool {
+        lock.withLock { _sawExitStatus0 }
+    }
 
     var sawExitStatus1: Bool {
         lock.withLock { _sawExitStatus1 }
@@ -1157,8 +1166,12 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
     }
 
     func triggerUserOutboundEvent(context: ChannelHandlerContext, event: Any, promise: EventLoopPromise<Void>?) {
-        if let exitStatus = event as? SSHChannelRequestEvent.ExitStatus, exitStatus.exitStatus == 1 {
-            lock.withLock { _sawExitStatus1 = true }
+        if let exitStatus = event as? SSHChannelRequestEvent.ExitStatus {
+            if exitStatus.exitStatus == 0 {
+                lock.withLock { _sawExitStatus0 = true }
+            } else if exitStatus.exitStatus == 1 {
+                lock.withLock { _sawExitStatus1 = true }
+            }
         }
         if event is ChannelSuccessEvent {
             lock.withLock { _successCount += 1 }

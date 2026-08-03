@@ -41,6 +41,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case notConnected
         case channelClosed
+        /// The remote PTY process reached EOF and deliberately closed the
+        /// SSH child channel. This is not a retryable transport failure.
+        case sessionEnded(exitStatus: Int)
         case openFailed(any Error)
     }
 
@@ -140,13 +143,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WebSocketFrame, Error>) in
             lock.withLock {
-                if let error = didFailReceive {
-                    cont.resume(throwing: error)
-                    return
-                }
                 if !receiveBuffer.isEmpty {
                     let next = receiveBuffer.removeFirst()
                     cont.resume(returning: next)
+                    return
+                }
+                if let error = didFailReceive {
+                    cont.resume(throwing: error)
                     return
                 }
                 if closed {
@@ -291,15 +294,36 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     fileprivate func handleChildClose() {
-        let toResume: [CheckedContinuation<WebSocketFrame, Error>] = lock.withLock {
+        let result: (
+            [CheckedContinuation<WebSocketFrame, Error>],
+            any Error
+        ) = lock.withLock {
             let pending = pendingReceivers
             pendingReceivers.removeAll()
             closed = true
-            didFailReceive = ClientError.channelClosed
+            let failure = didFailReceive ?? ClientError.channelClosed
+            didFailReceive = failure
+            return (pending, failure)
+        }
+        for cont in result.0 {
+            cont.resume(throwing: result.1)
+        }
+    }
+
+    fileprivate func handleSessionEnded(exitStatus: Int) {
+        let failure = ClientError.sessionEnded(exitStatus: exitStatus)
+        let toResume: [CheckedContinuation<WebSocketFrame, Error>] = lock.withLock {
+            // Preserve the first terminal outcome if duplicate exit-status
+            // events arrive. `handleChildClose` also preserves this error.
+            guard didFailReceive == nil else { return [] }
+            didFailReceive = failure
+            closed = true
+            let pending = pendingReceivers
+            pendingReceivers.removeAll()
             return pending
         }
         for cont in toResume {
-            cont.resume(throwing: ClientError.channelClosed)
+            cont.resume(throwing: failure)
         }
     }
 
@@ -399,6 +423,13 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         default:
             owner.deliverInboundBinary(Data(bytes))
         }
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let exit = event as? SSHChannelRequestEvent.ExitStatus {
+            owner.handleSessionEnded(exitStatus: exit.exitStatus)
+        }
+        context.fireUserInboundEventTriggered(event)
     }
 
     /// Accumulates inbound `.stdErr` bytes and drains every complete

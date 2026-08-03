@@ -20,12 +20,12 @@ struct LiveSessionReadinessTests {
         #expect(!LiveSessionReadiness.isActive(scene: .inactive, gateUnlocked: true))
     }
 
-    @Test("""
-@spec IOS-10.1: While `scenePhase` is `.inactive` or `.background`, the application shall tear down active terminal channels and unmount live `TerminalPaneView` instances so libghostty's display link stops. Entering `.background` shall additionally suspend and invalidate every paired host connection; `.inactive` may retain the shared paired connection for prompt foreground recovery.
+@Test("""
+@spec IOS-10.1: While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. Entering `.background` shall close terminal channels, unmount live `TerminalPaneView` instances, and suspend every paired host connection; the biometric gate continues to prevent authenticated dialing while locked.
 """)
-    func shouldTearDownOnInactiveAndBackground() {
+    func tearsDownOnlyOnBackground() {
         #expect(!LiveSessionReadiness.shouldTearDown(scene: .active))
-        #expect(LiveSessionReadiness.shouldTearDown(scene: .inactive))
+        #expect(!LiveSessionReadiness.shouldTearDown(scene: .inactive))
         #expect(LiveSessionReadiness.shouldTearDown(scene: .background))
     }
 }

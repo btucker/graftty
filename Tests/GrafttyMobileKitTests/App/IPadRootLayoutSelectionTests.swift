@@ -31,6 +31,20 @@ struct IPadRootLayoutSelectionTests {
         #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "f13", modifiers: [.command])) == nil)
     }
 
+    @Test("embedded Back to worktrees clears detail selection and reveals the sidebar")
+    func embeddedBackToWorktreesUsesIPadSelectionState() {
+        let appState = freshAppState()
+        appState.selectedWorktreePath = "/repo/feature"
+        appState.focusedPaneId = "pane-1"
+        appState.columnVisibility = .detailOnly
+
+        IPadRootLayout.applyBackToWorktrees(appState: appState)
+
+        #expect(appState.selectedWorktreePath == nil)
+        #expect(appState.focusedPaneId == nil)
+        #expect(appState.columnVisibility == .all)
+    }
+
     @Test("""
 @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each paired saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 """)
@@ -1277,6 +1291,19 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     func testTerminalKeyboardEligibilityRequiresDisplayOwnership() {
         XCTAssertFalse(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: false))
         XCTAssertTrue(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: true))
+    }
+
+    func testOnlyFocusedPaneMayDismissTheSharedKeyboard() {
+        XCTAssertFalse(SingleSessionView.shouldDismissKeyboard(
+            isKeyboardVisible: true,
+            keyboardAllowed: false,
+            isPaneFocused: false
+        ))
+        XCTAssertTrue(SingleSessionView.shouldDismissKeyboard(
+            isKeyboardVisible: true,
+            keyboardAllowed: false,
+            isPaneFocused: true
+        ))
     }
 
     /// @spec IPAD-8.5: While processing an iPad auto-ownership request, the

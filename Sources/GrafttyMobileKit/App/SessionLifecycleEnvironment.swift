@@ -238,12 +238,13 @@ public enum LiveSessionReadiness {
     }
 
     /// @spec IOS-10.1
-    /// Returns true when the application should release WSes and unmount
-    /// live terminal views. `.inactive` is included so that lock-screen
-    /// pulls / Control Center / app-switcher windows don't keep
-    /// libghostty's display link ticking at 120 Hz.
+    /// Returns true when the application must release terminal channels.
+    /// Transient `.inactive` phases preserve the live channel so Control
+    /// Center, app-switcher transitions, and system interruptions do not
+    /// manufacture a reconnect. A true `.background` transition still tears
+    /// down every terminal and the coordinator's authenticated transport.
     public static func shouldTearDown(scene: ScenePhase) -> Bool {
-        scene == .inactive || scene == .background
+        scene == .background
     }
 }
 

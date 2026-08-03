@@ -59,6 +59,58 @@ struct SSHTerminalLoopbackTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(3)))
+    func naturalTerminalEOFIsReportedAsSessionEnded() async throws {
+        let stream = EchoStream()
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(
+                    LoopbackError.unexpectedChannelType
+                )
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                let handler = TerminalSessionHandler(streamFactory: { _ in stream })
+                try childChannel.pipeline.syncOperations.addHandler(handler)
+            }
+        }
+        let client = TerminalSessionClient(
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
+            sessionName: "clean-exit"
+        )
+        let deadlineTask = Task { [client] in
+            try? await Task.sleep(for: .seconds(20))
+            client.close()
+        }
+        defer {
+            deadlineTask.cancel()
+            client.close()
+        }
+
+        try await client.connect()
+        try await stream.send(Data("final output".utf8))
+        stream.finishForTesting()
+
+        // Let both the queued data frame and the following exit-status reach
+        // the client before reading. The data must remain observable even
+        // after the terminal outcome has been recorded.
+        try await Task.sleep(for: .milliseconds(100))
+
+        let finalFrame = try await client.receive()
+        #expect(finalFrame == .binary(Data("final output".utf8)))
+
+        do {
+            _ = try await client.receive()
+            Issue.record("expected clean EOF to end the session")
+        } catch TerminalSessionClient.ClientError.sessionEnded(let exitStatus) {
+            #expect(exitStatus == 0)
+        } catch {
+            Issue.record("expected .sessionEnded(exitStatus: 0), got \(error)")
+        }
+
+        await connection.close()
+    }
+
     /// Decision-gate spike for W2: pins whether swift-nio-ssh 0.13 supports
     /// writing SSH extended data (`.stdErr`-typed `SSHChannelData`) from
     /// BOTH halves of a session channel — server→client and client→server —
@@ -769,6 +821,10 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     func close() async {
         continuation.finish()
     }
+
+    func finishForTesting() {
+        continuation.finish()
+    }
 }
 
 // MARK: - Extended-data spike helpers (SSHChannelData carrier decision gate)
@@ -1412,13 +1468,22 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
     }
 
     private func startInboundForwarding(stream: TerminalByteStream, channel: Channel, loop: EventLoop) {
-        let task = Task {
+        let task = Task { [weak self] in
             for await chunk in stream.inboundBytes {
                 let buffer = channel.allocator.buffer(bytes: chunk)
                 let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
                 loop.execute {
                     channel.writeAndFlush(data, promise: nil)
                 }
+            }
+            loop.execute { [weak self] in
+                guard let self, !self.isShuttingDown else { return }
+                let exit = SSHChannelRequestEvent.ExitStatus(exitStatus: 0)
+                let sent = loop.makePromise(of: Void.self)
+                sent.futureResult.whenComplete { _ in
+                    channel.close(promise: nil)
+                }
+                channel.pipeline.triggerUserOutboundEvent(exit, promise: sent)
             }
         }
         inboundForwardingTask = task

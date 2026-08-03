@@ -161,7 +161,10 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 }
 
-public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDelegate {
+public final class TerminalInputContainerView: UIView,
+    TerminalSoftwareInputDelegate,
+    TerminalHardwareInputDelegate
+{
     private struct HardwareKeyboardCommandSignature: Equatable {
         let id: String
         let title: String
@@ -169,12 +172,67 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         let modifierFlags: UIKeyModifierFlags
     }
 
+    private struct TerminalHardwareTextCommand {
+        let id: String
+        let title: String
+        let input: String
+        let modifierFlags: UIKeyModifierFlags
+        let text: String
+    }
+
+    /// libghostty-spm's iPad hardware path currently loses Escape and crosses
+    /// Return with the quote key: Return does not emit CR, while quote emits CR
+    /// instead of its printable character; Tab can also be consumed by UIKit's
+    /// focus traversal before Ghostty receives it. Reserve only those logical
+    /// UIKit chords and feed their exact terminal text through the same
+    /// committed-input transport as the software keyboard. Shift+Return
+    /// deliberately remains with Ghostty so user bindings such as
+    /// `shift+enter=text:\\n` keep working.
+    private static let terminalHardwareTextCommands = [
+        TerminalHardwareTextCommand(
+            id: "terminal-return",
+            title: "Terminal Return",
+            input: "\r",
+            modifierFlags: [],
+            text: "\r"
+        ),
+        TerminalHardwareTextCommand(
+            id: "terminal-apostrophe",
+            title: "Terminal Apostrophe",
+            input: "'",
+            modifierFlags: [],
+            text: "'"
+        ),
+        TerminalHardwareTextCommand(
+            id: "terminal-double-quote",
+            title: "Terminal Double Quote",
+            input: "'",
+            modifierFlags: [.shift],
+            text: "\""
+        ),
+        TerminalHardwareTextCommand(
+            id: "terminal-escape",
+            title: "Terminal Escape",
+            input: UIKeyCommand.inputEscape,
+            modifierFlags: [],
+            text: "\u{1B}"
+        ),
+        TerminalHardwareTextCommand(
+            id: "terminal-tab",
+            title: "Terminal Tab",
+            input: "\t",
+            modifierFlags: [],
+            text: "\t"
+        ),
+    ]
+
     let terminalView = UITerminalView(frame: .zero)
     private var isCommittedSoftwareInputEligible = false
     private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
         get { storedCommittedSoftwareInput }
         set {
+            let wasEligible = isCommittedSoftwareInputEligible
             if let newValue {
                 storedCommittedSoftwareInput = newValue
                 isCommittedSoftwareInputEligible = true
@@ -184,6 +242,10 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
                 terminalView.isKeyboardInputEnabled = false
                 storedCommittedSoftwareInput = nil
             }
+            guard wasEligible != isCommittedSoftwareInputEligible else { return }
+            cachedKeyCommands = nil
+            keyCommandUpdateRequestCountForTesting += 1
+            UIMenuSystem.main.setNeedsRebuild()
         }
     }
     private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
@@ -222,9 +284,10 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     private var cachedKeyCommands: [UIKeyCommand]?
 
     override public var keyCommands: [UIKeyCommand]? {
-        guard !hardwareKeyboardCommands.isEmpty else { return nil }
+        let effectiveCommands = effectiveHardwareKeyboardCommands
+        guard !effectiveCommands.isEmpty else { return nil }
         if let cachedKeyCommands { return cachedKeyCommands }
-        let commands = hardwareKeyboardCommands.map { command in
+        let commands = effectiveCommands.map { command in
             let keyCommand = UIKeyCommand(
                 title: command.title,
                 image: nil,
@@ -251,6 +314,29 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
                 title: $0.title,
                 input: $0.input,
                 modifierFlags: $0.modifierFlags.appCommandModifiers
+            )
+        }
+    }
+
+    private var effectiveHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
+        guard isCommittedSoftwareInputEligible else { return hardwareKeyboardCommands }
+        let availableTransportCommands = Self.terminalHardwareTextCommands.filter { command in
+            !hardwareKeyboardCommands.contains {
+                $0.input == command.input
+                    && $0.modifierFlags.appCommandModifiers
+                        == command.modifierFlags.appCommandModifiers
+            }
+        }
+        return hardwareKeyboardCommands + availableTransportCommands.map { command in
+            TerminalPaneView.HardwareKeyboardCommand(
+                id: command.id,
+                title: command.title,
+                input: command.input,
+                modifierFlags: command.modifierFlags,
+                perform: { [weak self] in
+                    guard let self, self.isCommittedSoftwareInputEligible else { return }
+                    self.storedCommittedSoftwareInput?.insertText(command.text)
+                }
             )
         }
     }
@@ -304,6 +390,7 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
 
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         terminalView.softwareInputDelegate = self
+        terminalView.hardwareInputDelegate = self
         terminalView.isKeyboardInputEnabled = false
         terminalView.showsInputAccessory = false
         addSubview(terminalView)
@@ -550,6 +637,60 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         return true
     }
 
+    public func terminalView(
+        _: UITerminalView,
+        handleHardwareKey event: TerminalHardwareKeyEvent
+    ) -> Bool {
+        let normalizedModifiers = event.modifierFlags.appCommandModifiers
+        let inputs = hardwareCommandInputs(for: event)
+        guard let command = effectiveHardwareKeyboardCommands.first(where: {
+            $0.modifierFlags.appCommandModifiers == normalizedModifiers
+                && inputs.contains(canonicalHardwareCommandInput($0.input))
+        }) else {
+            return false
+        }
+        command.perform()
+        return true
+    }
+
+    private func hardwareCommandInputs(for event: TerminalHardwareKeyEvent) -> Set<String> {
+        if !event.charactersIgnoringModifiers.isEmpty {
+            return [canonicalHardwareCommandInput(event.charactersIgnoringModifiers)]
+        }
+        if let input = Self.hardwareCommandInputByUsage[event.usage] {
+            return [input]
+        }
+        return []
+    }
+
+    private func canonicalHardwareCommandInput(_ input: String) -> String {
+        guard input.unicodeScalars.count == 1,
+              let scalar = input.unicodeScalars.first,
+              scalar.value >= 0x41,
+              scalar.value <= 0x5A
+        else {
+            return input
+        }
+        return String(UnicodeScalar(scalar.value + 0x20)!)
+    }
+
+    private static let hardwareCommandInputByUsage: [UInt16: String] = [
+        UInt16(UIKeyboardHIDUsage.keyboardReturnOrEnter.rawValue): "\r",
+        UInt16(UIKeyboardHIDUsage.keyboardEscape.rawValue): UIKeyCommand.inputEscape,
+        UInt16(UIKeyboardHIDUsage.keyboardDeleteOrBackspace.rawValue): "\u{8}",
+        UInt16(UIKeyboardHIDUsage.keyboardTab.rawValue): "\t",
+        UInt16(UIKeyboardHIDUsage.keyboardSpacebar.rawValue): " ",
+        UInt16(UIKeyboardHIDUsage.keyboardHome.rawValue): UIKeyCommand.inputHome,
+        UInt16(UIKeyboardHIDUsage.keyboardPageUp.rawValue): UIKeyCommand.inputPageUp,
+        UInt16(UIKeyboardHIDUsage.keyboardDeleteForward.rawValue): UIKeyCommand.inputDelete,
+        UInt16(UIKeyboardHIDUsage.keyboardEnd.rawValue): UIKeyCommand.inputEnd,
+        UInt16(UIKeyboardHIDUsage.keyboardPageDown.rawValue): UIKeyCommand.inputPageDown,
+        UInt16(UIKeyboardHIDUsage.keyboardRightArrow.rawValue): UIKeyCommand.inputRightArrow,
+        UInt16(UIKeyboardHIDUsage.keyboardLeftArrow.rawValue): UIKeyCommand.inputLeftArrow,
+        UInt16(UIKeyboardHIDUsage.keyboardDownArrow.rawValue): UIKeyCommand.inputDownArrow,
+        UInt16(UIKeyboardHIDUsage.keyboardUpArrow.rawValue): UIKeyCommand.inputUpArrow,
+    ]
+
     override public func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(handleHardwareKeyboardCommand(_:)),
            let command = sender as? UIKeyCommand {
@@ -568,7 +709,7 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         guard let commandID = keyCommand.propertyList as? String,
               let input = keyCommand.input else { return nil }
         let modifierFlags = keyCommand.modifierFlags.appCommandModifiers
-        return hardwareKeyboardCommands.first {
+        return effectiveHardwareKeyboardCommands.first {
             $0.id == commandID
                 && $0.title == keyCommand.title
                 && $0.input == input
@@ -578,7 +719,7 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
 
     func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
         let normalizedModifiers = modifierFlags.appCommandModifiers
-        guard let command = hardwareKeyboardCommands.first(where: {
+        guard let command = effectiveHardwareKeyboardCommands.first(where: {
             $0.input == input
                 && $0.modifierFlags.appCommandModifiers == normalizedModifiers
         }) else { return }

@@ -12,6 +12,8 @@ public struct WorktreePickerView: View {
     public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.biometricGate) private var gate
 
     public init(
         host: Host,
@@ -32,6 +34,10 @@ public struct WorktreePickerView: View {
             host: host,
             theme: theme,
             includeRemoteWorktrees: coordinator.isPaired(host),
+            isReadyToLoad: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            ),
             remoteConnectionProvider: makeRemoteConnectionProvider(
                 coordinator: coordinator,
                 host: host,

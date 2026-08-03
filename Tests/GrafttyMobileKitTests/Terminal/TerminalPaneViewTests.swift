@@ -76,7 +76,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.9: The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish only app-level Ghostty shortcuts as `UIKeyCommand`s that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change. General terminal hardware keys remain owned by the sole `UITerminalView` responder.
+@spec IPAD-9.9: The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish app-level Ghostty shortcuts as priority `UIKeyCommand`s for system arbitration and discoverability, and shall install itself as `UITerminalView`'s hardware-input delegate so the actual first responder dispatches the same enabled command candidates before Ghostty consumes raw presses. It shall also expose only the narrow Return/quote/Escape/Tab corrections required by `IOS-6.19`, synchronously request a UIKit menu-system rebuild whenever effective command metadata changes, and prefer an app-level shortcut on an exact correction-chord collision. Every unmatched terminal hardware key shall remain owned by `UITerminalView`.
 """)
     func activeTerminalInputResponderRefreshesPublishedHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -149,6 +149,177 @@ struct TerminalPaneViewTests {
         container.hardwareKeyboardCommands = []
         #expect(container.keyCommandUpdateRequestCountForTesting == 5)
         #expect(container.keyCommands == nil)
+    }
+
+    @Test("""
+@spec IOS-6.19: While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept only enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, and unmodified Tab, using logical UIKit characters ahead of suspect HID usage and forwarding exactly one CR (`0x0D`), apostrophe, double quote, Escape (`0x1B`), or Tab (`0x09`) for those transport corrections. An app-level shortcut shall win an exact chord collision. Shift-Return and every unmatched hardware key shall return to `UITerminalView` so Ghostty keybindings and IME behavior are unchanged, and an ineligible pane shall expose no transport-correction commands.
+""")
+    func returnQuoteEscapeAndTabHardwareCorrectionsForwardExactTextOnlyWhileEligible() {
+        let container = TerminalInputContainerView(frame: .zero)
+        var texts: [String] = []
+
+        #expect(container.keyCommands == nil)
+        container.committedSoftwareInput = .init(
+            insertText: { texts.append($0) },
+            deleteBackward: {}
+        )
+
+        let correctionCommands = try! #require(container.keyCommands)
+        #expect(correctionCommands.count == 5)
+        #expect(correctionCommands.map(\.input) == [
+            "\r", "'", "'", UIKeyCommand.inputEscape, "\t",
+        ])
+        #expect(correctionCommands.map(\.modifierFlags) == [[], [], [.shift], [], []])
+        #expect(correctionCommands.allSatisfy { $0.wantsPriorityOverSystemBehavior })
+
+        // Model the crossed HID values seen on the physical iPad: logical
+        // characters must win or apostrophe would still dispatch Return.
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: 0x34,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                modifierFlags: []
+            )
+        ))
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: 0x28,
+                characters: "'",
+                charactersIgnoringModifiers: "'",
+                modifierFlags: []
+            )
+        ))
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: 0x28,
+                characters: "\"",
+                charactersIgnoringModifiers: "'",
+                modifierFlags: [.shift]
+            )
+        ))
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardEscape.rawValue),
+                characters: "",
+                charactersIgnoringModifiers: "",
+                modifierFlags: []
+            )
+        ))
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardTab.rawValue),
+                characters: "\t",
+                charactersIgnoringModifiers: "\t",
+                modifierFlags: []
+            )
+        ))
+        // Shift-Return is intentionally not reserved: it must keep flowing to
+        // Ghostty so bindings such as `shift+enter=text:\\n` remain effective.
+        #expect(!container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardReturnOrEnter.rawValue),
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                modifierFlags: [.shift]
+            )
+        ))
+        #expect(texts == ["\r", "'", "\"", "\u{1B}", "\t"])
+
+        var appEscapeCount = 0
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "app-escape",
+                title: "App Escape",
+                input: UIKeyCommand.inputEscape,
+                modifierFlags: [],
+                perform: { appEscapeCount += 1 }
+            ),
+        ]
+        #expect(container.keyCommands?.count == 5)
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardEscape.rawValue),
+                characters: "",
+                charactersIgnoringModifiers: "",
+                modifierFlags: []
+            )
+        ))
+        #expect(appEscapeCount == 1)
+        #expect(texts == ["\r", "'", "\"", "\u{1B}", "\t"])
+
+        container.hardwareKeyboardCommands = []
+        container.committedSoftwareInput = nil
+        #expect(container.keyCommands == nil)
+        #expect(!container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: 0x34,
+                characters: "'",
+                charactersIgnoringModifiers: "'",
+                modifierFlags: []
+            )
+        ))
+        #expect(texts == ["\r", "'", "\"", "\u{1B}", "\t"])
+    }
+
+    @Test("the terminal first responder delegates application hardware chords before Ghostty")
+    func terminalHardwareInputDelegateDispatchesApplicationChords() {
+        let container = TerminalInputContainerView(frame: .zero)
+        var performed: [String] = []
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("split") }
+            ),
+            .init(
+                id: "next-pane",
+                title: "Next Pane",
+                input: "\t",
+                modifierFlags: [.control],
+                perform: { performed.append("pane") }
+            ),
+        ]
+
+        #expect((container.terminalView.hardwareInputDelegate as AnyObject?) === container)
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardD.rawValue),
+                characters: "D",
+                charactersIgnoringModifiers: "D",
+                modifierFlags: [.command, .numericPad]
+            )
+        ))
+        #expect(container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardTab.rawValue),
+                characters: "\t",
+                charactersIgnoringModifiers: "\t",
+                modifierFlags: [.control]
+            )
+        ))
+        #expect(!container.terminalView(
+            container.terminalView,
+            handleHardwareKey: .init(
+                usage: UInt16(UIKeyboardHIDUsage.keyboardD.rawValue),
+                characters: "D",
+                charactersIgnoringModifiers: "D",
+                modifierFlags: [.command, .shift]
+            )
+        ))
+        #expect(performed == ["split", "pane"])
     }
 
     @Test("equivalent hardware command signatures retain UIKit's table and replace dispatch closures")
@@ -675,7 +846,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. All general hardware keys, including Escape and arrows, shall flow through libghostty; GrafttyMobile shall publish `UIKeyCommand`s only for application-level shortcuts and shall not reimplement terminal key translation.
+@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the narrow logical-key transport correction in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 """)
     func eligibleTerminalBecomesFirstResponderInWindow() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -696,7 +867,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.18: When hardware Escape, arrow, or other terminal key presses reach an iOS terminal pane, the sole `UITerminalView` responder shall pass them to libghostty's hardware-key translation. GrafttyMobile shall not install per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+@spec IOS-6.18: When a hardware press does not match an enabled application command or the Return/quote/Escape/Tab correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
 """)
     func containerPublishesNoGeneralTerminalKeyCommands() {
         let container = TerminalInputContainerView(frame: .zero)

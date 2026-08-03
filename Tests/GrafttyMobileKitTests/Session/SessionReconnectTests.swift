@@ -26,6 +26,14 @@ struct SessionReconnectTests {
         func close() {}
     }
 
+    final class EndedWS: WebSocketClient, @unchecked Sendable {
+        func send(_ frame: WebSocketFrame) async throws {}
+        func receive() async throws -> WebSocketFrame {
+            throw TerminalSessionClient.ClientError.sessionEnded(exitStatus: 0)
+        }
+        func close() {}
+    }
+
     final class FactoryRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private var _creations = 0
@@ -75,6 +83,30 @@ struct SessionReconnectTests {
         client.start()
         await quiesce()
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(factory.creations == 1)
+    }
+
+    @Test("""
+    @spec IOS-7.5: When the host reports that a live terminal process reached EOF, the iPad application shall mark that pane ended and shall not reconnect its terminal channel. Clean process exit is distinct from the retryable authenticated-channel failures in `IOS-7.4`; reattaching after EOF can recreate the zmx session before the host removes the pane from its authoritative split tree.
+    """)
+    func cleanTerminalExitStopsWithoutReconnect() async throws {
+        let clock = VirtualClock()
+        let factory = FactoryRecorder()
+        factory.nextProvider = { EndedWS() }
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: factory.make,
+            clock: clock,
+            backoffSchedule: [1, 2, 4]
+        )
+        defer { client.stop() }
+        client.start()
+        await quiesce()
+
+        #expect(client.connectionState == .ended)
+        #expect(factory.creations == 1)
+        clock.advance(by: 30)
+        await quiesce()
         #expect(factory.creations == 1)
     }
 
