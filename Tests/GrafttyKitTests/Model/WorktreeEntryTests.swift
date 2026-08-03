@@ -8,7 +8,53 @@ struct WorktreeEntryTests {
     @Test func newEntryIsClosedState() {
         let entry = WorktreeEntry(path: "/tmp/worktree", branch: "feature/foo")
         #expect(entry.state == .closed)
+        #expect(entry.staleSince == nil)
         #expect(entry.attention == nil)
+    }
+
+    @Test func staleTimestampSurvivesCodableRoundTrip() throws {
+        let staleSince = Date(timeIntervalSince1970: 1_000)
+        let entry = WorktreeEntry(
+            path: "/tmp/worktree",
+            branch: "feature/foo",
+            state: .stale,
+            staleSince: staleSince
+        )
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.staleSince == staleSince)
+    }
+
+    @Test func legacyStateWithoutStaleTimestampDecodesAsNil() throws {
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "path": "/tmp/worktree",
+          "branch": "main",
+          "state": "stale",
+          "splitTree": {"root": null}
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(
+            WorktreeEntry.self,
+            from: Data(legacyJSON.utf8)
+        )
+
+        #expect(decoded.staleSince == nil)
+    }
+
+    @Test func repeatedStaleSignalDoesNotExtendGracePeriod() {
+        let first = Date(timeIntervalSince1970: 1_000)
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "feature/foo")
+
+        entry.markStale(at: first)
+        entry.markStale(at: first.addingTimeInterval(300))
+
+        #expect(entry.state == .stale)
+        #expect(entry.staleSince == first)
     }
 
     @Test func displayNameUsesLastComponentWhenUnique() {
@@ -578,7 +624,7 @@ struct WorktreeEntryTests {
             left: .leaf(leaf1),
             right: .leaf(leaf2)
         )))
-        entry.state = .stale
+        entry.markStale(at: Date(timeIntervalSince1970: 1_000))
         entry.focusedPaneSlotID = leaf1
         entry.primaryPaneSlotID = leaf2
         entry.paneAttention[leaf1] = Attention(text: "!", timestamp: Date())
@@ -589,6 +635,7 @@ struct WorktreeEntryTests {
 
         #expect(Set(toDestroy) == Set([leaf1, leaf2]))
         #expect(entry.state == .closed)
+        #expect(entry.staleSince == nil)
         #expect(entry.splitTree.root == nil)
         #expect(entry.focusedPaneSlotID == nil)
         #expect(entry.primaryPaneSlotID == nil)

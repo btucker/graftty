@@ -75,6 +75,13 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var path: String
     public var branch: String
     public var state: WorktreeState
+    /// Wall-clock time when this entry most recently transitioned to
+    /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
+    /// period survives app relaunches instead of restarting from zero.
+    ///
+    /// Older state files decode this as `nil`; the next successful
+    /// reconcile seeds the timestamp if the worktree is still absent.
+    public var staleSince: Date?
     /// Worktree-scoped attention slot. Driven by the CLI
     /// (`graftty notify`), which targets a worktree path rather than a
     /// specific pane. Rendered on the worktree's own sidebar row
@@ -107,6 +114,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         path: String,
         branch: String,
         state: WorktreeState = .closed,
+        staleSince: Date? = nil,
         attention: Attention? = nil,
         splitTree: SplitTree = SplitTree(root: nil)
     ) {
@@ -114,6 +122,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.path = path
         self.branch = branch
         self.state = state
+        self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
         self.paneAttention = [:]
         self.paneSessions = [:]
@@ -129,7 +138,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, state, attention, paneAttention,
+        case id, path, branch, state, staleSince, attention, paneAttention,
              paneSessions, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
@@ -150,6 +159,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.path = try container.decode(String.self, forKey: .path)
         self.branch = try container.decode(String.self, forKey: .branch)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
+        self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
@@ -346,6 +356,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return nil
     }
 
+    /// Records a real non-stale → stale transition. Repeated deletion
+    /// signals keep the original timestamp so noisy FSEvents cannot extend
+    /// the one-hour auto-dismiss grace period indefinitely.
+    public mutating func markStale(at date: Date = Date()) {
+        if state != .stale || staleSince == nil {
+            staleSince = date
+        }
+        state = .stale
+    }
+
     /// Transitions this entry from `.stale` back to `.closed`, returning
     /// the list of leaf `PaneSlotID`s whose surfaces the caller MUST
     /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
@@ -368,6 +388,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForResurrection() -> [PaneSlotID] {
         let oldLeaves = splitTree.allLeaves
         state = .closed
+        staleSince = nil
         splitTree = SplitTree(root: nil)
         focusedPaneSlotID = nil
         primaryPaneSlotID = nil

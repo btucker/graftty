@@ -24,10 +24,33 @@ struct WorktreeReconcilerTests {
 
     @Test func missingPathTransitionsToStale() {
         let existing = [wt("/r/gone", "feat", state: .closed)]
-        let r = WorktreeReconciler.reconcile(existing: existing, discovered: [])
+        let now = Date(timeIntervalSince1970: 1_000)
+        let r = WorktreeReconciler.reconcile(
+            existing: existing,
+            discovered: [],
+            now: now
+        )
         #expect(r.merged[0].state == .stale)
+        #expect(r.merged[0].staleSince == now)
         #expect(r.newlyStale.count == 1)
         #expect(r.newlyStale[0].path == "/r/gone")
+    }
+
+    @Test func prunablePathTransitionsToStale() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let r = WorktreeReconciler.reconcile(
+            existing: [wt("/r/gone", "feat", state: .closed)],
+            discovered: [DiscoveredWorktree(
+                path: "/r/gone",
+                branch: "feat",
+                isPrunable: true
+            )],
+            now: now
+        )
+
+        #expect(r.merged[0].state == .stale)
+        #expect(r.merged[0].staleSince == now)
+        #expect(r.newlyStale.map(\.path) == ["/r/gone"])
     }
 
     @Test func newlyStaleEntriesMoveAfterNonStaleSiblings() {
@@ -55,6 +78,21 @@ struct WorktreeReconcilerTests {
         #expect(r.newlyStale.isEmpty, "stale → stale is not a transition")
     }
 
+    @Test func legacyStaleEntryStartsGracePeriodAfterConfirmedAbsent() {
+        var legacy = wt("/r/gone", "feat", state: .stale)
+        legacy.staleSince = nil
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        let r = WorktreeReconciler.reconcile(
+            existing: [legacy],
+            discovered: [],
+            now: now
+        )
+
+        #expect(r.merged[0].staleSince == now)
+        #expect(r.newlyStale.isEmpty, "the entry was already stale")
+    }
+
     @Test func reappearingStaleEntryResurrectsToClosed() {
         // The observed bug: worktrees got stuck stale because no path
         // transitioned them back. Cycles 23 etc. assumed stale entries
@@ -65,6 +103,7 @@ struct WorktreeReconcilerTests {
         let discovered = [DiscoveredWorktree(path: "/r/back", branch: "feat")]
         let r = WorktreeReconciler.reconcile(existing: existing, discovered: discovered)
         #expect(r.merged[0].state == .closed)
+        #expect(r.merged[0].staleSince == nil)
         #expect(r.resurrected.count == 1)
         #expect(r.resurrected[0].path == "/r/back")
     }

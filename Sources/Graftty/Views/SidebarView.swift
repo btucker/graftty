@@ -431,7 +431,7 @@ struct SidebarView: View {
         }
         if worktree.state == .stale {
             menu.addItem(ClosureMenuItem(title: "Dismiss") {
-                dismissWorktree(worktree, in: repo)
+                dismissWorktree(worktree)
             })
         }
         // git refuses to remove the main checkout, so hiding the item
@@ -502,40 +502,20 @@ struct SidebarView: View {
         return menu
     }
 
-    private func dismissWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {
-        guard let repoIdx = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
-        guard let wtIdx = appState.repos[repoIdx].worktrees
-            .firstIndex(where: { $0.id == worktree.id }) else { return }
-        let path = worktree.path
-
-        // GIT-3.10: tear down surfaces kept alive by GIT-3.4
-        // (stale-while-running). Without this, a Dismiss on such an
-        // entry leaves render/io/kqueue threads running forever — the
-        // same orphan-surfaces shape that SIGKILL'd the app via
-        // libghostty's os_unfair_lock pre-GIT-3.9. `prepareForDismissal`
-        // returns the leaves and atomically clears the entry's model
-        // state so silently-leak shape is no longer spellable.
-        let orphan = appState.repos[repoIdx].worktrees[wtIdx].prepareForDismissal()
-        if !orphan.isEmpty {
-            terminalManager.destroySurfaces(terminalIDs: orphan)
-        }
-
-        // Drop cached per-path state in the observable stores before
-        // removing the entry from the model. If we reverse the order the
-        // stores' caches become orphan entries keyed by a path nobody
-        // iterates anymore — a slow memory leak over a long session
-        // where a user Dismisses many stale worktrees. Calling `clear`
-        // on both is idempotent for the never-cached case, so this is
-        // safe to run unconditionally.
-        prStatusStore.clear(worktreePath: path)
-        statsStore.clear(worktreePath: path)
-        // If the dismissed worktree was the selected one, clear selection
-        // so the detail pane shows the "No Worktree Selected" placeholder
-        // rather than binding to a now-nonexistent entry.
-        if appState.selectedWorktreePath == path {
-            appState.selectedWorktreePath = nil
-        }
-        appState.repos[repoIdx].worktrees.removeAll { $0.id == worktree.id }
+    private func dismissWorktree(_ worktree: WorktreeEntry) {
+        StaleWorktreeDismissal.dismiss(
+            worktreeID: worktree.id,
+            appState: $appState,
+            destroySurfaces: {
+                terminalManager.destroySurfaces(terminalIDs: $0)
+            },
+            clearPRStatus: {
+                prStatusStore.clear(worktreePath: $0)
+            },
+            clearStats: {
+                statsStore.clear(worktreePath: $0)
+            }
+        )
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
