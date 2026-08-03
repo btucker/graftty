@@ -215,6 +215,30 @@ struct TeamInboxTests {
         )?.lastDeliveredToAnySessionID == newer.id)
     }
 
+    @Test("@spec TEAM-11.6: If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.")
+    func watermarkLockAcquisitionIsBounded() throws {
+        let root = try temporaryDirectory()
+        let worktree = "/repo/acme/.worktrees/feature-auth"
+        let holder = try TeamTestFixtures.holdWatermarkLock(
+            root: root,
+            teamID: "acme",
+            worktree: worktree
+        )
+        defer { holder.release() }
+
+        let inbox = TeamInbox(rootDirectory: root, watermarkLockTimeout: 0.3)
+        let start = Date()
+        #expect(throws: TeamInboxError.watermarkLockTimeout) {
+            try inbox.compareAndAdvanceWorktreeWatermark(
+                teamID: "acme",
+                worktree: worktree,
+                to: "m1"
+            )
+        }
+        // The call must give up promptly — this is the whole point.
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("GrafttyTeamInboxTests-\(UUID().uuidString)", isDirectory: true)

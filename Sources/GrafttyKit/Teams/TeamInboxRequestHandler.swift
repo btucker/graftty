@@ -500,19 +500,25 @@ public final class TeamInboxRequestHandler {
             advanceTo = message.id
         }
         guard advanceTo != lastSeenID else { return }
-        try inbox.writeCursor(
+        // TEAM-11.7: commit the (fallible, lock-guarded) watermark before
+        // the cursor, mirroring `claimNextUnreadMessage`. If the watermark
+        // advance times out under lock contention, the cursor must not
+        // already point past messages this hook never delivered — that
+        // would skip them permanently. A watermark that lands without its
+        // cursor mirror at worst redelivers (at-least-once), never loses.
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(
+                worktree: worktree,
+                lastDeliveredToAnySessionID: advanceTo
+            ),
+            teamID: teamID
+        )
+        try? inbox.writeCursor(
             TeamInboxCursor(
                 sessionID: sessionID,
                 worktree: worktree,
                 runtime: runtime.rawValue,
                 lastSeenID: advanceTo
-            ),
-            teamID: teamID
-        )
-        try inbox.writeWorktreeWatermark(
-            TeamInboxWorktreeWatermark(
-                worktree: worktree,
-                lastDeliveredToAnySessionID: advanceTo
             ),
             teamID: teamID
         )

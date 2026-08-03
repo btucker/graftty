@@ -48,16 +48,20 @@ public actor WatcherOutcome {
     }
 }
 
-/// @spec TEAM-IDLE-1.3
 /// @spec TEAM-IDLE-1.4
 /// @spec TEAM-11.1
+/// @spec TEAM-11.4
+/// @spec TEAM-11.5
 /// Long-running watcher used by Claude's `asyncRewake` Stop hook. Writes
-/// its own PID to `<pidFileRoot>/<teamID>/watchers/<session>.<runtime>.pid`,
-/// SIGTERMing whatever PID was previously there (one watcher per session,
-/// deterministically — the next Stop firing supersedes the prior watcher).
-/// Then tails the inbox JSONL via `TeamInboxObserver` and resolves
-/// `outcome` with exit-code 2 + a stderr summary the first time a fresh
-/// message addressed to its recipient arrives.
+/// its own PID to `<pidFileRoot>/<teamID>/watchers/<worktree>.<runtime>.pid`,
+/// SIGTERMing whatever PID was previously there (one watcher per worktree
+/// and runtime, deterministically — the next Stop firing supersedes the
+/// prior watcher even when it belonged to an earlier session). Exits on
+/// its poll tick once its original parent process is gone, so watchers
+/// cannot outlive their agent session and pile up on the shared inbox
+/// lock. Otherwise tails the inbox JSONL via `TeamInboxObserver` and
+/// resolves `outcome` with exit-code 2 + a stderr summary the first time
+/// a fresh message addressed to its recipient arrives.
 public actor InboxWatcher {
     public struct Recipient: Sendable, Equatable {
         public let member: String
@@ -77,6 +81,8 @@ public actor InboxWatcher {
     public let outcome: WatcherOutcome
     public let pidFileRoot: URL
     public let eventLog: TeamEventLog?
+    private let pollIntervalNanoseconds: UInt64
+    private let parentAliveCheck: @Sendable () -> Bool
 
     private var observerCancellable: TeamInboxObserver.Cancellable?
     private var observer: TeamInboxObserver?
@@ -101,7 +107,9 @@ public actor InboxWatcher {
         inboxRootDirectory: URL,
         outcome: WatcherOutcome,
         pidFileRoot: URL,
-        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
+        pollIntervalNanoseconds: UInt64 = 1_000_000_000,
+        parentAliveCheck: (@Sendable () -> Bool)? = nil
     ) {
         self.sessionID = sessionID
         self.recipient = recipient
@@ -110,6 +118,18 @@ public actor InboxWatcher {
         self.outcome = outcome
         self.pidFileRoot = pidFileRoot
         self.eventLog = eventLog
+        self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.parentAliveCheck = parentAliveCheck ?? Self.defaultParentAliveCheck()
+    }
+
+    /// TEAM-11.5: the production liveness probe compares the parent PID
+    /// captured at construction against the current one — when the agent
+    /// session (our spawner) exits, the watcher is reparented and the
+    /// values diverge. PID comparison rather than `kill(pid, 0)` so a
+    /// recycled PID can't keep an orphan alive.
+    private static func defaultParentAliveCheck() -> @Sendable () -> Bool {
+        let originalParent = getppid()
+        return { getppid() == originalParent }
     }
 
     /// Awaits until the watcher has finished startup: PID file written and
@@ -161,11 +181,18 @@ public actor InboxWatcher {
         // own once that resolves, so we don't need to "exit" from here.
         while !Task.isCancelled {
             do {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
+                try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
             } catch {
                 break
             }
             guard !Task.isCancelled else { break }
+            // TEAM-11.5: an orphaned watcher (agent session gone) must not
+            // keep polling — lingering watchers convoy on the shared inbox
+            // lock and can claim messages no live session will ever see.
+            guard parentAliveCheck() else {
+                await outcome.complete(exitCode: 0, stderr: "")
+                break
+            }
             // A different runtime can consume a head-of-line targeted row
             // by advancing the shared watermark without appending to
             // messages.jsonl. Retry while armed so the next eligible row
@@ -344,7 +371,11 @@ public actor InboxWatcher {
     }
 
     private func pidFilePath() -> URL {
-        let leaf = TeamInbox.fileComponent("\(sessionID).\(recipient.runtime.rawValue)") + ".pid"
+        // TEAM-11.4: keyed by worktree + runtime, not session. A session
+        // that ends without firing (or is replaced via /clear) leaves its
+        // watcher running for up to 24h; the next session's watcher for
+        // the same worktree must supersede it or watchers accumulate.
+        let leaf = TeamInbox.fileComponent("\(recipient.worktree).\(recipient.runtime.rawValue)") + ".pid"
         return pidFileRoot
             .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
             .appendingPathComponent("watchers", isDirectory: true)
