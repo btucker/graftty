@@ -39,7 +39,11 @@ struct InstructionCommittedReadTests {
         // Dirty the working tree after committing.
         try "WORKING TREE".write(to: file, atomically: true, encoding: .utf8)
 
-        let set = await InstructionStore.load(repoPath: repo)
+        // Explicit budget: the production 1s bound is calibrated for a warm
+        // repo on an idle machine, and spawning real git from a fully
+        // parallel test suite can outrun it. Timing is INSTR-7.2's subject,
+        // not this test's.
+        let set = await InstructionStore.load(repoPath: repo, budget: .seconds(30))
         let shared = set?.documents["GRAFTTY.md"]?.shared
 
         #expect(shared == "COMMITTED")
