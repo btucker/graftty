@@ -11,7 +11,7 @@ session-start`. That context is entirely derived — team roster, main worktree,
 message protocol — plus whatever the user typed into the `teamSessionPrompt`
 template in Settings.
 
-There is no way to give a *particular* worktree, or a *class* of worktrees,
+There is no way to give a *particular* worktree, or a *group* of worktrees,
 durable instructions of its own. Everything an agent knows about its assignment
 either comes from the initial `--agent` prompt (which dies with the session),
 from repo-wide `CLAUDE.md`/`AGENTS.md` (which applies to every agent everywhere,
@@ -29,15 +29,16 @@ Add `.graftty/`, a directory of plain-markdown instruction files in the
 repository's main checkout, read from committed content and delivered to agent
 sessions at session start.
 
-Files are matched to worktrees by name, either exactly or by a trailing-`*`
-prefix pattern. Each file may split itself into a *shared* portion visible to
-every agent in the repo and a *private* portion visible only to matching
-agents. Graftty never writes these files; they change through ordinary commits.
+Files are matched to worktrees by **path**, using directory nesting for
+inheritance. Each file may split itself into a *shared* portion visible to every
+agent in the repo and a *private* portion visible only to the worktrees it
+applies to. Graftty never writes these files; they change through ordinary
+commits.
 
 The mechanism is deliberately unopinionated about *why* worktrees are grouped.
-Prefix patterns serve environment tiers (`staging-*`), task classes (`fix-*`,
-`spike-*`), ownership, simulated organizations, or nothing at all — a repo can
-use only exact-name files, or only the repo-wide file.
+Nesting serves environment tiers, task classes, ownership, simulated
+organizations, or nothing at all — a repo can use only leaf files, or only the
+repo-wide file.
 
 ## Storage and resolution
 
@@ -49,7 +50,7 @@ Content is read from the **committed tree at `HEAD`**, not from the working
 tree:
 
 ```
-git ls-tree HEAD .graftty/          # names + blob SHAs, one call
+git ls-tree -r HEAD .graftty/       # names + blob SHAs, one call
 git cat-file --batch                # all bodies, one call
 ```
 
@@ -63,42 +64,99 @@ reasons:
    invisible to other worktrees' agents.
 2. It is atomic. A multi-file edit can never be observed half-applied.
 3. Git's tree is case-sensitive on every platform, whereas APFS is usually
-   case-insensitive. A filesystem-based resolver would match `.graftty/Fix-*.md`
-   against worktree `fix-auth` locally but not in CI.
+   case-insensitive. A filesystem-based resolver would match `.graftty/Research/`
+   against key `research/…` locally but not in CI.
 
 The known cost: a merged instruction change reaches agents only after the main
 checkout advances its `HEAD`. Keeping the main checkout current is the
 operator's job. Reading `origin/main` instead was considered and rejected — it
 trades a local-consistency problem for a fetch-freshness problem.
 
+## Worktree keys
+
+Instruction files are matched against a worktree's **key**, which is derived
+from its path, not its branch.
+
+| Worktree | Key |
+|---|---|
+| Under `<repo>/.worktrees/` | its path relative to that directory, e.g. `research/vector-db` |
+| The main checkout (`worktree.path == repo.path`) | the repository's resolved default branch name |
+| Anywhere else on disk | none — receives only `.graftty/GRAFTTY.md` |
+
+Path keying rather than branch keying is deliberate. An agent lives inside its
+worktree and can run `git checkout` at will; keying on the branch would let an
+agent silently swap its own instruction set. The path is durable identity. This
+also matches how the rest of the system already addresses worktrees: the inbox
+routes on `worktreePath`, per-worktree state files are keyed by path, and
+`AGENT-5.2` calls the canonical worktree path its stable messaging address.
+`TEAM-2.2`'s branch-derived member name is a display label layered on top of
+that.
+
+The main checkout is the one exception, because its path relative to
+`.worktrees/` is empty. Its key is the repository's default branch, resolved via
+`RemoteBranchSnapshot.defaultBranch` falling back to `RepoEntry.defaultBranchHint`.
+This is a repo-level property rather than "the branch main currently has checked
+out", so it remains stable when an agent changes what is checked out there.
+
+**If the default branch is unresolved, the main checkout receives only
+`.graftty/GRAFTTY.md`.** Graftty's `SidebarWorktreeLabel` falls back to the
+literal string `main` when the snapshot has not resolved; inheriting that
+fallback here would load `GRAFTTY.main.md` into a repo whose default is
+`master`. Loading wrong instructions is worse than loading none.
+
+A worktree at `.worktrees/main` in a repo whose default branch is `main` would
+share the main checkout's key. This is benign and nearly unreachable: a
+Graftty-created worktree named `main` would require branch `main` to be checked
+out in two worktrees, which git refuses. Externally created, the two simply
+share a file.
+
 ## File layout
 
-| File | Applies to |
+Every file in `.graftty/` is named `GRAFTTY*.md`. There are exactly two forms:
+
+| Form | Applies to |
 |---|---|
-| `.graftty/GRAFTTY.md` | every worktree in the repo |
-| `.graftty/<prefix>*.md` | worktrees whose name matches the prefix |
-| `.graftty/<name>.md` | exactly the worktree named `<name>` |
+| `<dir>/GRAFTTY.md` | every worktree whose key is **beneath** `<dir>` |
+| `<dir>/GRAFTTY.<leaf>.md` | the single worktree whose key is `<dir>/<leaf>` |
 
-An exact-name file is a pattern with no wildcard, so there is one matching rule
-rather than two.
+A worktree's own leaf file lives at its **parent** level. For key
+`research/vector-db`:
 
-**Patterns are exact or trailing-`*` only.** General globbing was rejected: a
-pattern like `*-vector-db` has no coherent specificity ranking against
-`research-*`, and prefix matching covers the grouping cases without the
-ambiguity.
+```
+.graftty/GRAFTTY.md                     ← all worktrees
+.graftty/research/GRAFTTY.md            ← everything under research/
+.graftty/research/GRAFTTY.vector-db.md  ← just this worktree
+```
 
-**Matching target** is `WorktreeNameSanitizer(worktree.branch)` — the same value
-`TEAM-2.2` uses for team member names — with `/` flattened to `-`. Branch
-`research/vector-db` therefore matches `research-*` and has the exact-name file
-`.graftty/research-vector-db.md`. Flattening keeps `.graftty/` a single flat
-listable directory rather than a tree mirroring branch namespaces.
+For a top-level key `foo`, the chain is `.graftty/GRAFTTY.md` then
+`.graftty/GRAFTTY.foo.md`.
 
-**Reserved and skipped**, each logged:
+Placing the leaf file at the parent level is what removes the leaf/group
+collision. `research` as a *group* is the directory `.graftty/research/`;
+`research` as a *worktree* is the file `.graftty/GRAFTTY.research.md` one level
+up. Different names in different directories, so no precedence rule is needed.
 
-- the name `GRAFTTY` (reserved for the repo-wide file)
-- any path nested below `.graftty/` — names are `/`-flattened, so a nested file
-  could never match
-- any filename containing `*` in a position other than immediately before `.md`
+`<dir>/GRAFTTY.md` covers descendants **only**, not a worktree whose key is
+exactly `<dir>`. That worktree is addressed by its leaf file at the level above.
+The distinction is observable only when a worktree and a group share a name,
+which through Graftty's own Add Worktree flow cannot happen — the name becomes
+both branch and path, and git's ref directory/file conflict rejects branches
+`research` and `research/vector-db` coexisting in either creation order. It is
+reachable only for externally created worktrees whose branch and path diverge.
+
+**Skipped, each logged:** any file in `.graftty/` not matching `GRAFTTY.md` or
+`GRAFTTY.<leaf>.md`, and any file whose leaf component is empty
+(`GRAFTTY..md`). Leaf names containing `.` are fine — parsing anchors on the
+`GRAFTTY.` prefix and `.md` suffix, so `GRAFTTY.api.v2.md` unambiguously means
+leaf `api.v2`.
+
+**Wildcard patterns were considered and rejected.** Prefix globs
+(`GRAFTTY.research-*.md`) would provide grouping without namespaced names, but
+they require a specificity ranking, `*`-position validation, and a rule for how
+a glob match orders against a directory match. Directory depth supplies the same
+grouping with ordering that falls out for free. The cost is that grouping
+requires namespaced worktree names, and existing flat names get no grouping
+until renamed.
 
 ## Shared and private portions
 
@@ -112,40 +170,34 @@ to know in order to coordinate with this one.
 
 ## Private
 
-Instructions below the marker go only to agents whose worktree
-matches this file's pattern.
+Instructions below the marker go only to the worktrees this file
+applies to.
 ```
 
 A file with no such heading is **entirely shared**. That default is deliberate:
 the failure mode is a longer prompt, which is easy to notice and fix, rather
 than an instruction set that silently never appears anywhere.
 
-`GRAFTTY.md` reaches every agent regardless, so the marker has no effect there.
+`.graftty/GRAFTTY.md` reaches every agent regardless, so the marker has no
+effect there.
 
 A file that opens with the marker has no shared portion; the roster renders it
 with a no-shared-instructions note.
 
-Splitting inside one file rather than using two files per pattern keeps the two
+Splitting inside one file rather than using two files per level keeps the two
 halves from drifting in separate commits, and makes a review diff show at a
 glance whether a change alters what other worktrees rely on (above the line) or
-only the matching worktrees' own method (below it).
+only the applicable worktrees' own method (below it).
 
 ## Composition
 
-An agent's own instruction stack is concatenated in this order:
+An agent's own instruction stack is the chain from root to leaf, concatenated in
+path-depth order: each ancestor directory's `GRAFTTY.md`, then its own leaf
+file. Within a file, the shared portion precedes the private portion.
 
-1. `.graftty/GRAFTTY.md`
-2. each matching pattern in **ascending prefix length** — shorter, more general
-   prefixes first
-3. the exact-name file, which by construction has the longest prefix and
-   therefore lands last
-
-Within a file, the shared portion precedes the private portion. Later sections
-may override earlier prose; the ordering rule exists so that override direction
-is predictable.
-
-A worktree matching several patterns (`research-*` and `research-vector-*`)
-receives all of them, ordered by that rule.
+Later sections may override earlier prose; the ordering rule exists so that
+override direction is predictable. There is no specificity ranking to compute —
+depth is the ordering.
 
 ## Delivery
 
@@ -162,17 +214,16 @@ the runtime into a pane.
 `TeamHookRenderer.sessionStart` gains a third section alongside the rendered
 team context and the queued inbox messages:
 
-- **Your instructions** — the agent's own stack, concatenated verbatim,
+- **Your instructions** — the agent's own chain, concatenated verbatim,
   including both the shared and private portions of its own files.
 - **Other worktrees** — folded into the roster `TeamInstructionsRenderer`
   already builds. Each entry keeps its existing name, branch, path, and running
-  status, and gains the shared portion of the pattern and exact-name files
-  matching it. `GRAFTTY.md` is excluded from roster entries: it applies to every
+  status, and gains the shared portions of the files applying to it.
+  `.graftty/GRAFTTY.md` is excluded from roster entries: it applies to every
   worktree and already appears once in the reader's own stack.
-- **Unmatched patterns** — instruction files whose pattern currently matches no
-  worktree are listed by pattern with their shared portion, as plain
-  discoverability. No suggested command; what to do about them is the reader's
-  call.
+- **Unmatched entries** — instruction files that currently apply to no worktree
+  are listed by their path with their shared portion, as plain discoverability.
+  No suggested command; what to do about them is the reader's call.
 
 If `.graftty/` is absent or empty at `HEAD`, the section is omitted entirely and
 behavior is unchanged for repos that have not opted in.
@@ -208,7 +259,7 @@ coordination goes through `graftty team send`.
 ## Authoring
 
 Graftty never writes `.graftty/`. Files change through ordinary commits to the
-main branch, which for an agent means opening a pull request.
+default branch, which for an agent means opening a pull request.
 
 Direct writes into the main checkout's working tree by an agent in another
 worktree were considered and rejected: they leave the main checkout dirty from a
@@ -229,9 +280,10 @@ The governing rule is to degrade to omission and never block session start.
 |---|---|
 | No `.graftty/` at `HEAD`, or repo has no commits | Omit the section |
 | `git` fails or exceeds a bounded timeout | Omit the section, log, proceed |
-| Nested path below `.graftty/` | Skip, log |
-| Filename with a non-trailing `*` | Skip, log |
-| Reserved name collision | Skip, log |
+| Filename not matching `GRAFTTY.md` / `GRAFTTY.<leaf>.md` | Skip, log |
+| Empty leaf component (`GRAFTTY..md`) | Skip, log |
+| Main checkout with unresolved default branch | Root file only, no leaf file |
+| Worktree outside the repo's worktrees directory | Root file only |
 | Per-file size cap exceeded | Truncate with a visible marker |
 | Total stack size cap exceeded | Truncate with a visible marker |
 | Several `Private` headings | First one splits; the rest are ordinary content |
@@ -248,15 +300,16 @@ Size caps follow the precedent of the 131072-byte initial-prompt cap in
 
 Three pure units and one I/O unit, each testable in isolation:
 
-- **`InstructionPattern`** — parses a filename into an exact-or-prefix pattern,
-  matches it against a sanitized `/`-flattened worktree name, and ranks patterns
-  by prefix length. No I/O.
+- **`InstructionKey`** — derives a worktree's key from its path, the repo path,
+  and the resolved default branch; returns none for out-of-tree worktrees. No
+  I/O.
+- **`InstructionChain`** — turns a key into the ordered list of file paths to
+  read, and classifies a discovered filename as a group file, a leaf file, or
+  skippable. No I/O.
 - **`InstructionDocument`** — splits raw markdown into shared and private
   portions. No I/O.
-- **`InstructionRenderer`** — turns a resolved stack plus the existing roster
-  data into the session-start section text. No I/O.
 - **`InstructionStore`** — performs the two git reads behind an injectable
-  command runner, applies caps, and returns parsed documents keyed by pattern.
+  command runner, applies caps, and returns parsed documents keyed by path.
 
 `TeamHookRenderer.sessionStart` gains an instructions parameter.
 `TeamInstructionsRenderer`'s roster member context gains a shared-instructions
@@ -268,13 +321,15 @@ A new `INSTR — Agent Instruction Files` section in `SPECS.md`:
 
 - **INSTR-1.x** — storage location, `HEAD`-committed reads, absent-directory
   behavior
-- **INSTR-2.x** — filename patterns, matching against the sanitized flattened
-  name, reserved and skipped names
-- **INSTR-3.x** — shared/private split, default-to-shared, marker matching
-- **INSTR-4.x** — composition order and specificity ranking
-- **INSTR-5.x** — session-start delivery, roster shared text, unmatched pattern
+- **INSTR-2.x** — worktree key derivation, including the main checkout and
+  out-of-tree cases
+- **INSTR-3.x** — the two filename forms, descendants-only semantics for group
+  files, skipped names
+- **INSTR-4.x** — shared/private split, default-to-shared, marker matching
+- **INSTR-5.x** — composition order by path depth
+- **INSTR-6.x** — session-start delivery, roster shared text, unmatched entry
   listing, team gating
-- **INSTR-6.x** — failure handling, timeout, size caps
+- **INSTR-7.x** — failure handling, timeout, size caps
 
 Plus an amendment to `TEAM-3.3` scoping its complete-prompt guarantee to the
 team context section.
@@ -284,11 +339,12 @@ team context section.
 Swift Testing throughout, per the repo convention, with `@spec` titles carrying
 the EARS text.
 
-Unit coverage on the three pure components: pattern parsing and rejection,
-match and non-match against flattened names, specificity ordering across several
-matching patterns, the split marker at each heading level and with no marker,
-files opening with the marker, and renderer output for own-stack, roster, and
-unmatched-pattern cases.
+Unit coverage on the three pure components: key derivation for nested,
+top-level, main-checkout, unresolved-default-branch, and out-of-tree worktrees;
+chain construction at several depths; filename classification including leaf
+names containing dots and the rejected forms; the split marker at each heading
+level, with no marker, and as the first line; and renderer output for own-stack,
+roster, and unmatched-entry cases.
 
 `InstructionStore` tests inject a fake command runner to cover cap truncation,
 git failure, timeout, and malformed `ls-tree` output without needing a repo.
@@ -308,4 +364,5 @@ cannot establish.
   a merged change reaches an agent on its next session.
 - Any Graftty-side writing, creation, or editing UI for instruction files.
 - Stencil templating within instruction files.
+- Wildcard or glob patterns in filenames.
 - Delivery to single-worktree repos or with agent teams disabled.
