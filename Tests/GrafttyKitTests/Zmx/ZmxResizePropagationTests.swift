@@ -411,6 +411,128 @@ struct ZmxResizePropagationTests {
         }
     }
 
+    /// Poll the session log until `needle` has appeared at least
+    /// `count` times. Needed by the re-attach test: the first attach
+    /// already emits the steady-state needle once, so the second
+    /// attach's round-trip is only proven by a *second* occurrence.
+    private static func waitForLogOccurrences(
+        launcher: ZmxLauncher,
+        sessionName: String,
+        needle: String,
+        count: Int,
+        timeout: TimeInterval
+    ) -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        var log = ""
+        while Date() < deadline {
+            log = readSessionLog(launcher: launcher, sessionName: sessionName)
+            if log.components(separatedBy: needle).count - 1 >= count { return log }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return log
+    }
+
+    /// Root cause of the "last screenful repeated" LRU re-show bug: the
+    /// pixel-size extension made the daemon build every `TIOCSWINSZ` from
+    /// `client.pixel_size`, but Init is a client's *first* message —
+    /// `PixelSize` can only arrive after the daemon's Capabilities
+    /// advertisement. A fresh client therefore dips the session PTY's
+    /// pixels to 0 at Init and restores them at the leader size
+    /// round-trip. XNU raises SIGWINCH on *any* winsize field change
+    /// (pixels included), so every re-attach delivered two spurious
+    /// SIGWINCHes and zsh repainted its prompt over the just-replayed
+    /// screen. The pre-pixel-extension 0.5 binary delivers zero.
+    ///
+    /// Observable: a WINCH trap in the inner shell printing an epoch
+    /// marker. The marker is assembled via `printf "__W_%s__" B` so
+    /// neither command echo nor zmx's replay of that echo can satisfy
+    /// the match — only a genuinely delivered signal can.
+    @Test("""
+    @spec ZMX-9.4: When a `zmx attach` client attaches to an existing session whose winsize (cells and pixels) matches the outer PTY's, the daemon shall deliver no SIGWINCH to the session's foreground process: until that client sends a PixelSize message, the daemon's winsize writes shall preserve the session PTY's current pixel dimensions rather than substitute the client's unset zeros, so an unchanged-size re-attach is a kernel no-op and the shell does not repaint its prompt over the replayed screen.
+    """, .timeLimit(.minutes(1)))
+    func identicalReattachDeliversNoSIGWINCH() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: session) }
+            let size = PtyProcess.WindowSize(
+                cols: Self.initialCols,
+                rows: Self.initialRows,
+                xpixel: 960,
+                ypixel: 576
+            )
+
+            let first = try Self.spawnAttachWithInitialSize(
+                launcher: launcher,
+                sessionName: session,
+                cols: size.cols,
+                rows: size.rows,
+                xpixel: size.xpixel,
+                ypixel: size.ypixel
+            )
+            var firstTerminated = false
+            defer { if !firstTerminated { first.terminate() } }
+
+            try Self.waitForSteadyState(
+                launcher: launcher,
+                sessionName: session,
+                initialCols: Self.initialCols,
+                initialRows: Self.initialRows
+            )
+
+            // Arm the epoch-B trap *before* detaching so any SIGWINCH
+            // raised by the second attach sequence prints the marker.
+            first.write("trap 'printf \"__W_%s__\\n\" B' WINCH\n")
+            first.write("printf '__TRAP_%s__\\n' SET\n")
+            let armed = first.waitForOutput("__TRAP_SET__")
+            #expect(armed.contains("__TRAP_SET__"), "trap arming never confirmed; output=\(armed)")
+
+            first.terminate()
+            firstTerminated = true
+            Thread.sleep(forTimeInterval: 0.3)
+
+            let second = try Self.spawnAttachWithInitialSize(
+                launcher: launcher,
+                sessionName: session,
+                cols: size.cols,
+                rows: size.rows,
+                xpixel: size.xpixel,
+                ypixel: size.ypixel
+            )
+            defer { second.terminate() }
+
+            // Steady state for the SECOND attach = second occurrence of
+            // the daemon's post-init resize line (the first attach
+            // already logged one).
+            let steadyNeedle = Self.resizeNeedle(rows: Self.initialRows, cols: Self.initialCols)
+            let log = Self.waitForLogOccurrences(
+                launcher: launcher,
+                sessionName: session,
+                needle: steadyNeedle,
+                count: 2,
+                timeout: 5.0
+            )
+            #expect(
+                log.components(separatedBy: steadyNeedle).count - 1 >= 2,
+                "second attach never completed its resize round-trip; log=\(log)"
+            )
+
+            // Bounded drain: waitForOutput returns everything read within
+            // the window whether or not the marker appears. Any __W_B__
+            // is a SIGWINCH the identical-size re-attach fabricated.
+            let output = second.waitForOutput("__W_B__", timeout: 1.5)
+            let spurious = output.components(separatedBy: "__W_B__").count - 1
+            #expect(
+                spurious == 0,
+                """
+                identical-winsize re-attach delivered \(spurious) spurious \
+                SIGWINCH(es) to the session shell — the daemon substituted \
+                the client's unset pixel_size zeros into TIOCSWINSZ. \
+                Output: \(output)
+                """
+            )
+        }
+    }
+
     /// Regression test for the Graftty-side half of the resize bug:
     /// SIGWINCH must actually reach zmx-attach's handler. We set up
     /// steady state, TIOCSWINSZ, then nudge with a single LF — any

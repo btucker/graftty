@@ -906,6 +906,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.3** When native libghostty reports a resize, Graftty shall forward both the cell grid and pixel dimensions to the outer `zmx attach` PTY. When only the pixel dimensions change, Graftty shall not deduplicate the update, including across the trailing-edge resize coalescer.
 
+**ZMX-9.4** When a `zmx attach` client attaches to an existing session whose winsize (cells and pixels) matches the outer PTY's, the daemon shall deliver no SIGWINCH to the session's foreground process: until that client sends a PixelSize message, the daemon's winsize writes shall preserve the session PTY's current pixel dimensions rather than substitute the client's unset zeros, so an unchanged-size re-attach is a kernel no-op and the shell does not repaint its prompt over the replayed screen.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle

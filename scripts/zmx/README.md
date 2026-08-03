@@ -2,12 +2,19 @@
 
 `UPSTREAM_COMMIT` pins the source revision used by `scripts/bump-zmx.sh`, and
 `ZIG_VERSION` pins the compiler that must build it. `graftty.patch` applies to
-that exact source revision and carries two downstream changes:
+that exact source revision and carries three downstream changes:
 
 - explicitly unblock `SIGWINCH` before installing the attach client's wake
   handler;
 - preserve zmx's legacy 4-byte `Resize` message while negotiating a separate
-  pixel-size extension.
+  pixel-size extension;
+- treat a client that has not yet sent `PixelSize` as carrying *unknown*
+  pixel dimensions: its Init/Resize winsize writes preserve the session
+  PTY's current pixel fields instead of substituting zeros (ZMX-9.4).
+  Substituted zeros made every unchanged-size re-attach a real winsize
+  change — the kernel raises SIGWINCH on any field change, pixels included
+  — so the session shell repainted its prompt over the replayed screen on
+  every Graftty LRU rehydration.
 
 The resize extension is deliberately asymmetric for rolling app upgrades.
 A new daemon advertises a `Capabilities` bitset after a valid `Init`. A new

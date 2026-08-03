@@ -725,7 +725,12 @@ final class HostManagedZmxBackend {
     /// the user manually resizes. A same-size `TIOCSWINSZ` is a kernel no-op
     /// (no SIGWINCH emitted), so forwarding on every show costs one syscall
     /// and never churns the TUI, while correctly recovering from any prior
-    /// failed forward. A running background session deliberately bypasses the
+    /// failed forward. "Same-size" means the WHOLE winsize — the kernel
+    /// compares pixel fields too, so a show at unchanged cells but drifted
+    /// pixels is one real (and legitimate, per ZMX-9.3) SIGWINCH, not a
+    /// no-op. The daemon side must never *fabricate* pixel deltas of its
+    /// own; ZMX-9.4 pins that invariant after the pixel-size extension
+    /// broke it by substituting unset client pixels as zeros. A running background session deliberately bypasses the
     /// viewport callback's pre-layout gate here: visibility is an explicit
     /// authoritative lifecycle event, not unsolicited placeholder noise.
     /// Ordinary deferred panes are still idle and therefore no-op; followers
