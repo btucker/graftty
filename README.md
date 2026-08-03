@@ -148,9 +148,11 @@ disable SessionStart team context:
 ```sh
 graftty team register --runtime claude   # announce presence at session start
 graftty team list                        # see teammates, worktrees, and running state
+graftty team list --json                 # stable machine-readable roster
 graftty team send --stdin <member>       # read a direct message literally from stdin
 graftty team broadcast --stdin           # read a broadcast literally from stdin
-graftty team inbox                       # read your incoming messages
+graftty team inbox                       # read your newest 100 incoming messages
+graftty team inbox --all                 # fetch all team traffic page by page
 ```
 
 Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
@@ -163,6 +165,27 @@ message into the active conversation through Codex's app server.
 
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
+
+### Team inbox delivery cursors and maintenance
+
+The team inbox is an append-only JSONL log. Hook and watcher delivery track two
+positions: a cursor for each runtime session and a shared watermark for each
+worktree. Those paths advance both positions; a new session begins at the
+worktree watermark. Codex app-server delivery uses the worktree watermark as
+its authoritative position and does not maintain a session cursor. Manual
+`graftty team inbox` reads are diagnostic and advance neither position.
+Pagination bounds each socket response; it does not delete or archive records.
+
+Both positions store a message ID that acts as an anchor into the log's append
+order. If an external archive removes an anchor record, the reader cannot infer
+where that record used to be and conservatively starts at the beginning of the
+retained log. That can replay retained messages. Retaining anchors alone is not
+enough: deleting rows newer than an anchor can discard messages that are still
+pending. Direct store surgery is therefore unsupported. A safe archive must
+remove only a contiguous prefix that is older than every effective delivery
+position, and must retain each referenced anchor or migrate every position
+atomically to a retained cutoff record. Inbox pagination removes the need to
+compact the store merely to keep `graftty team inbox` usable.
 
 When inbox messages aren't enough, any agent can drive a teammate's
 pane directly — see **CLI** below for `graftty pane show` (read another

@@ -37,7 +37,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
     case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
     case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?, paneSessionName: String?)
-    case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
+    case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool, beforeID: String?, limit: Int?)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
     case createWorktree(
@@ -64,7 +64,8 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
-        case recipient, priority, runtime, event, worktree, repo, member, unread, all
+        case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit
+        case beforeID = "before_id"
         case worktreeName = "worktree_name"
         case branchName = "branch_name"
         case worktreePath = "worktree_path"
@@ -138,7 +139,7 @@ extension NotificationMessage: Codable {
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
-        case .teamInbox(let callerWorktree, let worktree, let repo, let member, let unread, let all):
+        case .teamInbox(let callerWorktree, let worktree, let repo, let member, let unread, let all, let beforeID, let limit):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
             try container.encodeIfPresent(worktree, forKey: .worktree)
@@ -146,6 +147,8 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(member, forKey: .member)
             try container.encode(unread, forKey: .unread)
             try container.encode(all, forKey: .all)
+            try container.encodeIfPresent(beforeID, forKey: .beforeID)
+            try container.encodeIfPresent(limit, forKey: .limit)
         case .teamMembers(let callerWorktree, let worktree, let repo):
             try container.encode("team_members", forKey: .type)
             try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
@@ -264,7 +267,9 @@ extension NotificationMessage: Codable {
             let member = try container.decodeIfPresent(String.self, forKey: .member)
             let unread = try container.decode(Bool.self, forKey: .unread)
             let all = try container.decode(Bool.self, forKey: .all)
-            self = .teamInbox(callerWorktree: callerWorktree, worktree: worktree, repo: repo, member: member, unread: unread, all: all)
+            let beforeID = try container.decodeIfPresent(String.self, forKey: .beforeID)
+            let limit = try container.decodeIfPresent(Int.self, forKey: .limit)
+            self = .teamInbox(callerWorktree: callerWorktree, worktree: worktree, repo: repo, member: member, unread: unread, all: all, beforeID: beforeID, limit: limit)
         case "team_members":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
@@ -500,6 +505,23 @@ public struct TeamListMember: Codable, Sendable, Equatable {
     }
 }
 
+/// Stable JSON document emitted by `graftty team list --json` and
+/// `graftty team members --json`.
+///
+/// @spec TEAM-4.6
+/// When a team member-list command is invoked with `--json`, the CLI shall
+/// emit a Codable document with `team` and `members`, using the existing
+/// snake_case `TeamListMember` wire keys rather than human-formatted rows.
+public struct TeamListDocument: Codable, Sendable, Equatable {
+    public let team: String
+    public let members: [TeamListMember]
+
+    public init(team: String, members: [TeamListMember]) {
+        self.team = team
+        self.members = members
+    }
+}
+
 /// Reply sent from the app back to the CLI after a request-style
 /// `NotificationMessage`. `ok` covers successful fire-and-forget commands;
 /// `error` carries a human-readable message printed to the CLI's stderr;
@@ -511,7 +533,7 @@ public enum ResponseMessage: Sendable, Equatable {
     case paneShow(String)
     case teamList(teamName: String, members: [TeamListMember])
     case teamHookOutput(String)
-    case teamInbox([TeamInboxMessage])
+    case teamInbox(messages: [TeamInboxMessage], nextBeforeID: String?)
     case worktreeCreate(WorktreeCreateStatus)
     case worktreeRemove(WorktreeRemoveStatus)
 }
@@ -521,6 +543,7 @@ extension ResponseMessage: Codable {
         case type, message, panes, output, messages, text, operation
         case teamName = "team_name"
         case members
+        case nextBeforeID = "next_before_id"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -544,9 +567,10 @@ extension ResponseMessage: Codable {
         case .teamHookOutput(let output):
             try container.encode("team_hook_output", forKey: .type)
             try container.encode(output, forKey: .output)
-        case .teamInbox(let messages):
+        case .teamInbox(let messages, let nextBeforeID):
             try container.encode("team_inbox", forKey: .type)
             try container.encode(messages, forKey: .messages)
+            try container.encodeIfPresent(nextBeforeID, forKey: .nextBeforeID)
         case .worktreeCreate(let operation):
             try container.encode("worktree_create", forKey: .type)
             try container.encode(operation, forKey: .operation)
@@ -580,7 +604,8 @@ extension ResponseMessage: Codable {
             self = .teamHookOutput(output)
         case "team_inbox":
             let messages = try container.decode([TeamInboxMessage].self, forKey: .messages)
-            self = .teamInbox(messages)
+            let nextBeforeID = try container.decodeIfPresent(String.self, forKey: .nextBeforeID)
+            self = .teamInbox(messages: messages, nextBeforeID: nextBeforeID)
         case "worktree_create":
             self = .worktreeCreate(
                 try container.decode(WorktreeCreateStatus.self, forKey: .operation)

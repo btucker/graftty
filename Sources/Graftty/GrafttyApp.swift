@@ -3461,7 +3461,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 remoteBranchStore: remoteBranchStore
             )
-        case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
+        case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all, let beforeID, let limit):
             return handleTeamInbox(
                 callerPath: callerPath,
                 worktree: worktree,
@@ -3469,6 +3469,8 @@ struct GrafttyApp: App {
                 member: member,
                 unread: unread,
                 all: all,
+                beforeID: beforeID,
+                limit: limit,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
@@ -3980,22 +3982,26 @@ struct GrafttyApp: App {
         member: String?,
         unread: Bool,
         all: Bool,
+        beforeID: String?,
+        limit: Int?,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let messages = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).diagnosticMessages(
+            let page = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).diagnosticPage(
                 callerWorktree: callerPath,
                 worktree: worktree,
                 repo: repo,
                 member: member,
                 unread: unread,
                 all: all,
+                beforeID: beforeID,
+                limit: limit,
                 repos: appState.wrappedValue.repos,
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             )
-            return .teamInbox(messages)
+            return .teamInbox(messages: page.messages, nextBeforeID: page.nextBeforeID)
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
         } catch {

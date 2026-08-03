@@ -7,6 +7,8 @@ public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
     case notInTeam
     case senderNotInTeam
     case recipientNotFound(name: String, available: [String])
+    case paginationRequired
+    case paginationCursorNotFound(String)
 
     public var description: String {
         switch self {
@@ -20,7 +22,52 @@ public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
             return "internal error: caller not in resolved team"
         case .recipientNotFound(let name, let available):
             return "\(name) is not a teammate of this worktree; current teammates: \(available.joined(separator: ", "))"
+        case .paginationRequired:
+            return "team inbox request is missing pagination support; use the CLI bundled with this Graftty version"
+        case .paginationCursorNotFound(let id):
+            return "team inbox pagination cursor no longer exists: \(id)"
         }
+    }
+}
+
+public struct TeamInboxDiagnosticPage: Sendable, Equatable {
+    public static let defaultLimit = 100
+    public static let maximumLimit = 500
+    public static let maximumEncodedBytes = 8 * 1024 * 1024
+
+    public let messages: [TeamInboxMessage]
+    public let nextBeforeID: String?
+
+    public init(messages: [TeamInboxMessage], nextBeforeID: String?) {
+        self.messages = messages
+        self.nextBeforeID = nextBeforeID
+    }
+}
+
+enum TeamInboxDiagnosticPaginator {
+    static func newestPage(
+        from candidates: ArraySlice<TeamInboxMessage>,
+        countLimit: Int,
+        encodedByteLimit: Int
+    ) throws -> [TeamInboxMessage] {
+        let encoder = JSONEncoder()
+        var newestFirst: [TeamInboxMessage] = []
+        var encodedBytes = 0
+
+        for message in candidates.reversed() {
+            if !newestFirst.isEmpty, newestFirst.count >= countLimit {
+                break
+            }
+            let separatorBytes = newestFirst.isEmpty ? 0 : 1
+            let messageBytes = try encoder.encode(message).count + separatorBytes
+            if !newestFirst.isEmpty, encodedBytes + messageBytes > encodedByteLimit {
+                break
+            }
+            newestFirst.append(message)
+            encodedBytes += messageBytes
+        }
+
+        return newestFirst.reversed()
     }
 }
 
@@ -145,16 +192,25 @@ public final class TeamInboxRequestHandler {
         return (context.team.repoDisplayName, members)
     }
 
-    public func diagnosticMessages(
+    public func diagnosticPage(
         callerWorktree: String?,
         worktree: String?,
         repo: String?,
         member: String?,
         unread: Bool,
         all: Bool,
+        beforeID: String?,
+        limit: Int?,
         repos: [RepoEntry],
         teamsEnabled: Bool
-    ) throws -> [TeamInboxMessage] {
+    ) throws -> TeamInboxDiagnosticPage {
+        // `beforeID` is naturally absent on the first page, so `limit` is the
+        // pagination capability signal. Refuse older clients explicitly: a
+        // full response can overflow their socket reader, while returning one
+        // page would silently omit the remainder.
+        guard let limit else {
+            throw TeamInboxRequestError.paginationRequired
+        }
         let context = try scopedTeamContext(
             callerWorktree: callerWorktree,
             worktree: worktree,
@@ -168,7 +224,31 @@ public final class TeamInboxRequestHandler {
         } else if unread || !all {
             messages = messages.filter { $0.to.worktree == context.viewer.worktreePath }
         }
-        return messages
+        let pageLimit = min(
+            max(limit, 1),
+            TeamInboxDiagnosticPage.maximumLimit
+        )
+        let candidates: ArraySlice<TeamInboxMessage>
+        if let beforeID {
+            guard let index = messages.lastIndex(where: { $0.id == beforeID }) else {
+                throw TeamInboxRequestError.paginationCursorNotFound(beforeID)
+            }
+            candidates = messages[..<index]
+        } else {
+            candidates = messages[...]
+        }
+        let pageMessages = try TeamInboxDiagnosticPaginator.newestPage(
+            from: candidates,
+            countLimit: pageLimit,
+            encodedByteLimit: TeamInboxDiagnosticPage.maximumEncodedBytes
+        )
+        let nextBeforeID = candidates.count > pageMessages.count
+            ? pageMessages.first?.id
+            : nil
+        return TeamInboxDiagnosticPage(
+            messages: pageMessages,
+            nextBeforeID: nextBeforeID
+        )
     }
 
     public func hook(

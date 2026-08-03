@@ -431,7 +431,7 @@ enum WorktreeCapability {
                     }
                     CLIEnv.printError(verificationMessage)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
-                     .socketPathTooLong:
+                     .socketPathTooLong, .responseTooLarge:
                     CLIEnv.printError(error.description)
                 }
                 throw ExitCode(1)

@@ -60,6 +60,7 @@ enum CLIError: Error, CustomStringConvertible {
     case socketTimeout
     case socketError(String)
     case socketPathTooLong(bytes: Int, maxBytes: Int)
+    case responseTooLarge(maxBytes: Int)
 
     var description: String {
         switch self {
@@ -71,6 +72,8 @@ enum CLIError: Error, CustomStringConvertible {
         case .socketError(let msg): return "Socket error: \(msg)"
         case .socketPathTooLong(let bytes, let maxBytes):
             return "Socket path is \(bytes) bytes, exceeds macOS sockaddr_un limit of \(maxBytes). Set GRAFTTY_SOCK to a shorter path."
+        case .responseTooLarge(let maxBytes):
+            return "Response exceeds control-socket limit of \(maxBytes) bytes; use a paginated or narrower command."
         }
     }
 }
