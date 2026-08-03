@@ -1,0 +1,89 @@
+import Testing
+import Foundation
+@testable import GrafttyKit
+
+private func set(_ pairs: [String: String]) -> InstructionSet {
+    var documents: [String: InstructionDocument] = [:]
+    var files: [String: InstructionFile] = [:]
+    for (path, body) in pairs {
+        documents[path] = InstructionDocument.parse(body)
+        files[path] = InstructionFile.classify(relativePath: path)
+    }
+    return InstructionSet(documents: documents, files: files)
+}
+
+@Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, omitting any block that is empty and the whole section when nothing applies.")
+struct InstructionRendererTests {
+
+    @Test func ownStackConcatenatesRootThroughLeafWithPrivateText() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "research/vector-db", displayName: "vector-db"),
+            others: [],
+            set: set([
+                "GRAFTTY.md": "repo wide",
+                "research/GRAFTTY.md": "group shared\n## Private\ngroup private",
+                "research/GRAFTTY.vector-db.md": "leaf text",
+            ])
+        )
+        #expect(text.contains("repo wide"))
+        #expect(text.contains("group shared"))
+        #expect(text.contains("group private"))
+        #expect(text.contains("leaf text"))
+        if let repoWide = text.range(of: "repo wide"),
+           let leaf = text.range(of: "leaf text") {
+            #expect(repoWide.lowerBound < leaf.lowerBound)
+        } else {
+            Issue.record("expected both the repo-wide and leaf sections")
+        }
+    }
+
+    @Test func otherWorktreesContributeSharedTextOnly() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "research/vector-db", displayName: "vector-db"),
+            others: [.init(key: "product", displayName: "product")],
+            set: set([
+                "GRAFTTY.product.md": "ask product for roadmap calls\n## Private\nproduct internals",
+            ])
+        )
+        #expect(text.contains("ask product for roadmap calls"))
+        #expect(!text.contains("product internals"))
+    }
+
+    @Test func repoWideFileIsNotRepeatedPerOtherWorktree() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "a", displayName: "a"),
+            others: [.init(key: "b", displayName: "b")],
+            set: set(["GRAFTTY.md": "repo wide"])
+        )
+        let occurrences = text.components(separatedBy: "repo wide").count - 1
+        #expect(occurrences == 1)
+    }
+
+    @Test func filesMatchingNoWorktreeAreListedSeparately() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "a", displayName: "a"),
+            others: [],
+            set: set(["marketing/GRAFTTY.md": "marketing brief"])
+        )
+        #expect(text.contains("marketing brief"))
+        #expect(text.contains("marketing/GRAFTTY.md"))
+    }
+
+    @Test func viewerWithNoKeyStillReceivesTheRepoWideFile() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: nil, displayName: "detached"),
+            others: [],
+            set: set(["GRAFTTY.md": "repo wide"])
+        )
+        #expect(text.contains("repo wide"))
+    }
+
+    @Test func nothingApplicableRendersAnEmptySection() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "a", displayName: "a"),
+            others: [],
+            set: InstructionSet(documents: [:], files: [:])
+        )
+        #expect(text.isEmpty)
+    }
+}
