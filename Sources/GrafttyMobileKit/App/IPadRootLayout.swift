@@ -185,6 +185,9 @@ public struct IPadRootLayout: View {
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelectPane: { sessionName in
                         selectPane(sessionName: sessionName)
+                    },
+                    onBackToWorktrees: {
+                        showWorktreeList()
                     }
                 )
                 .background(appState.theme.background)
@@ -310,6 +313,12 @@ public struct IPadRootLayout: View {
         appState.requestActiveTerminal()
     }
 
+    static func applyBackToWorktrees(appState: IPadAppState) {
+        appState.selectedWorktreePath = nil
+        appState.focusedPaneId = nil
+        appState.columnVisibility = .all
+    }
+
     public static func availableSplitDirections(
         focusedPaneId: String?,
         paneControlAvailable: Bool = true
@@ -412,6 +421,11 @@ public struct IPadRootLayout: View {
             return
         }
         selectPane(leaf)
+    }
+
+    private func showWorktreeList() {
+        explicitSelectionGeneration &+= 1
+        Self.applyBackToWorktrees(appState: appState)
     }
 
     private func selectWorktree(path: String) {
@@ -1302,14 +1316,15 @@ private struct IPadDetailColumn: View {
     let paneEnvironment: PaneEnvironment
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelectPane: (String) -> Void
+    let onBackToWorktrees: () -> Void
 
     var body: some View {
         content
             // @spec IPAD-2.8
-            // Match the Mac window: the terminal tree owns the complete
-            // detail-column rectangle and extends beneath transparent
-            // navigation chrome. Split controls stay real toolbar commands,
-            // but float over the panes instead of shrinking them.
+            // While the regular-width iPad detail is visible, the application
+            // shall let the terminal tree own the complete detail-column
+            // rectangle beneath transparent navigation chrome, with split
+            // controls floating over the panes instead of shrinking them.
             .ignoresSafeArea(.container, edges: .top)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
@@ -1392,7 +1407,8 @@ private struct IPadDetailColumn: View {
                 autoTakeControlRequestCount: appState.ownershipRequestCount,
                 autoTakeControlPolicy: appState.autoTakeControlPolicy,
                 ghosttyCommandContext: ghosttyCommandContext,
-                onSelectPane: onSelectPane
+                onSelectPane: onSelectPane,
+                onBackToWorktrees: onBackToWorktrees
             )
             .id("\(host.id)-\(worktree.path)")
         } else {

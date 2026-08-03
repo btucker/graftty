@@ -73,6 +73,23 @@ struct WorktreeListContentTests {
             loadedHostID: firstHostID,
             isReady: true
         ))
+
+        let secondHostID = UUID()
+        #expect(!WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: firstHostID,
+            presentedHostID: secondHostID,
+            isCancelled: false
+        ))
+        #expect(!WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: secondHostID,
+            presentedHostID: secondHostID,
+            isCancelled: true
+        ))
+        #expect(WorktreeListContent.shouldApplyLoadResult(
+            requestHostID: secondHostID,
+            presentedHostID: secondHostID,
+            isCancelled: false
+        ))
     }
 
     @Test("""

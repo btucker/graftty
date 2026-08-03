@@ -143,13 +143,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WebSocketFrame, Error>) in
             lock.withLock {
-                if let error = didFailReceive {
-                    cont.resume(throwing: error)
-                    return
-                }
                 if !receiveBuffer.isEmpty {
                     let next = receiveBuffer.removeFirst()
                     cont.resume(returning: next)
+                    return
+                }
+                if let error = didFailReceive {
+                    cont.resume(throwing: error)
                     return
                 }
                 if closed {

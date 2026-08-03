@@ -88,7 +88,16 @@ struct SSHTerminalLoopbackTests {
         }
 
         try await client.connect()
+        try await stream.send(Data("final output".utf8))
         stream.finishForTesting()
+
+        // Let both the queued data frame and the following exit-status reach
+        // the client before reading. The data must remain observable even
+        // after the terminal outcome has been recorded.
+        try await Task.sleep(for: .milliseconds(100))
+
+        let finalFrame = try await client.receive()
+        #expect(finalFrame == .binary(Data("final output".utf8)))
 
         do {
             _ = try await client.receive()

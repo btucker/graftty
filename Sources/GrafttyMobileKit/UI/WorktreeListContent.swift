@@ -17,6 +17,7 @@ public struct WorktreeListContent: View {
     @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
     @State private var selectionIntentGeneration: UInt64 = 0
     @State private var loadedHostID: UUID?
+    @State private var presentedHostID: UUID?
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -281,6 +282,7 @@ public struct WorktreeListContent: View {
             hostID: host.id,
             isReady: isReadyToLoad
         )) {
+            presentedHostID = host.id
             guard Self.shouldAutomaticallyLoad(
                 hostID: host.id,
                 loadedHostID: loadedHostID,
@@ -301,6 +303,7 @@ public struct WorktreeListContent: View {
             selectionIntentGeneration &+= 1
         }
         .onChange(of: host.id) { _, _ in
+            presentedHostID = host.id
             selectionIntentGeneration &+= 1
             pendingDelete = nil
             pendingForceDelete = nil
@@ -311,6 +314,7 @@ public struct WorktreeListContent: View {
             isReady: isReadyToLoad
         )) {
             guard includeRemoteWorktrees, isReadyToLoad else { return }
+            let requestHostID = host.id
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(1))
@@ -319,7 +323,11 @@ public struct WorktreeListContent: View {
                         remoteSnapshotProvider: remoteSnapshotProvider,
                         includeRemoteWorktrees: true
                     )
-                    guard !Task.isCancelled else { return }
+                    guard Self.shouldApplyLoadResult(
+                        requestHostID: requestHostID,
+                        presentedHostID: presentedHostID,
+                        isCancelled: Task.isCancelled
+                    ) else { return }
                     applyLoadedList(list)
                 } catch is CancellationError {
                     return
@@ -340,10 +348,15 @@ public struct WorktreeListContent: View {
     }
 
     private func refresh(reportsLoadingProgress: Bool = false) async {
+        let requestHostID = host.id
         let onProgress: RemoteWorktreeLoadProgress?
         if reportsLoadingProgress {
             onProgress = { stage in
-                guard case .loading = state else { return }
+                guard Self.shouldApplyLoadResult(
+                    requestHostID: requestHostID,
+                    presentedHostID: presentedHostID,
+                    isCancelled: Task.isCancelled
+                ), case .loading = state else { return }
                 loadingStage = stage
             }
         } else {
@@ -357,18 +370,37 @@ public struct WorktreeListContent: View {
                 includeRemoteWorktrees: includeRemoteWorktrees,
                 onProgress: onProgress
             )
+            guard Self.shouldApplyLoadResult(
+                requestHostID: requestHostID,
+                presentedHostID: presentedHostID,
+                isCancelled: Task.isCancelled
+            ) else { return }
             applyLoadedList(list)
+        } catch is CancellationError {
+            return
         } catch WorktreePanesFetcher.FetchError.forbidden {
+            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
             applyRefreshFailure("Not authorized — is this device on your tailnet?")
         } catch WorktreePanesFetcher.FetchError.http(let code) {
+            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
             applyRefreshFailure("HTTP \(code)")
         } catch WorktreePanesFetcher.FetchError.decode {
+            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
             applyRefreshFailure(
                 "The server sent a response this version can't read."
             )
         } catch {
+            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
             applyRefreshFailure("Couldn't reach the server.")
         }
+    }
+
+    private func shouldApplyLoadFailure(requestHostID: UUID) -> Bool {
+        Self.shouldApplyLoadResult(
+            requestHostID: requestHostID,
+            presentedHostID: presentedHostID,
+            isCancelled: Task.isCancelled
+        )
     }
 
     private func applyRefreshFailure(_ message: String) {
@@ -396,6 +428,14 @@ public struct WorktreeListContent: View {
         isReady && loadedHostID != hostID
     }
 
+    static func shouldApplyLoadResult(
+        requestHostID: UUID,
+        presentedHostID: UUID?,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && requestHostID == presentedHostID
+    }
+
     /// @spec IOS-4.31
     /// The authenticated panes subscription is sampled once per second, but
     /// most samples are identical. Suppressing those no-op writes keeps the
@@ -407,10 +447,10 @@ public struct WorktreeListContent: View {
             current: state,
             next: list
         )
-        state = next
         loadedHostID = host.id
         refreshError = nil
         if changed {
+            state = next
             onListChanged(list)
         }
     }

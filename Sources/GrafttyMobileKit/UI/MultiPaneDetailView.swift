@@ -20,6 +20,7 @@ struct MultiPaneDetailView: View {
     let autoTakeControlPolicy: SingleSessionView.AutoTakeControlPolicy
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelectPane: (String) -> Void
+    let onBackToWorktrees: () -> Void
 
     @State private var ratioOverrides = IPadPaneRatioOverrides()
     @State private var keyboardBottomInset: CGFloat = 0
@@ -89,16 +90,23 @@ struct MultiPaneDetailView: View {
                     onSelect: {
                         guard focusedPaneId != sessionName else { return }
                         onSelectPane(sessionName)
-                    }
+                    },
+                    onBackToWorktrees: onBackToWorktrees
                 )
                 .id(sessionName)
             )
 
         case let .split(direction, ratio, first, second):
+            let identity = IPadPaneSplitIdentity(
+                path: path,
+                direction: direction,
+                firstAnchor: first.leaves.first?.sessionName,
+                secondAnchor: second.leaves.first?.sessionName
+            )
             let ratioOverride = Binding<Double?>(
-                get: { ratioOverrides[path] },
+                get: { ratioOverrides[identity] },
                 set: { value in
-                    ratioOverrides[path] = value
+                    ratioOverrides[identity] = value
                 }
             )
             return AnyView(
@@ -109,7 +117,7 @@ struct MultiPaneDetailView: View {
                     first: render(first, at: path.appending(.first)),
                     second: render(second, at: path.appending(.second))
                 )
-                .id(path)
+                .id(identity.renderIdentity)
             )
         }
     }
@@ -133,6 +141,17 @@ struct MultiPaneDetailView: View {
     }
 }
 
+struct IPadPaneSplitIdentity: Hashable {
+    let path: IPadPaneTreePath
+    let direction: PaneLayoutNode.SplitAxis
+    let firstAnchor: String?
+    let secondAnchor: String?
+
+    /// SwiftUI node identity stays path-stable so topology edits preserve
+    /// surviving terminal views. The full identity remains the ratio-cache key.
+    var renderIdentity: IPadPaneTreePath { path }
+}
+
 struct IPadPaneTreePath: Hashable {
     enum Branch: Hashable {
         case first
@@ -149,15 +168,18 @@ struct IPadPaneTreePath: Hashable {
 }
 
 struct IPadPaneRatioOverrides {
-    private var values: [IPadPaneTreePath: Double] = [:]
+    private var values: [IPadPaneSplitIdentity: Double] = [:]
 
-    subscript(path: IPadPaneTreePath) -> Double? {
-        get { values[path] }
-        set { values[path] = newValue }
+    subscript(identity: IPadPaneSplitIdentity) -> Double? {
+        get { values[identity] }
+        set { values[identity] = newValue }
     }
 
-    func ratio(at path: IPadPaneTreePath, sourceRatio: Double) -> Double {
-        values[path] ?? sourceRatio
+    func ratio(
+        at identity: IPadPaneSplitIdentity,
+        sourceRatio: Double
+    ) -> Double {
+        values[identity] ?? sourceRatio
     }
 }
 
@@ -219,6 +241,7 @@ private struct MultiPaneLeafView: View {
     let autoTakeControlPolicy: SingleSessionView.AutoTakeControlPolicy
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelect: () -> Void
+    let onBackToWorktrees: () -> Void
 
     @State private var unusedNavigationPath = NavigationPath()
 
@@ -239,7 +262,8 @@ private struct MultiPaneLeafView: View {
             ghosttyCommandContext: ghosttyCommandContext,
             isPaneFocused: isFocused,
             isEmbeddedPane: true,
-            onPaneInteraction: onSelect
+            onPaneInteraction: onSelect,
+            onBackToWorktrees: onBackToWorktrees
         )
         .paneFocusDimming(
             fill: theme.unfocusedSplitFill,

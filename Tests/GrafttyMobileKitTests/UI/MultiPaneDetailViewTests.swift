@@ -85,8 +85,18 @@ struct MultiPaneDetailViewTests {
 @spec IPAD-2.7: When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
 """)
     func ipad_2_7_ratioOverridesAreLocalAndPathScoped() {
-        let first = IPadPaneTreePath.root.appending(.first)
-        let second = IPadPaneTreePath.root.appending(.second)
+        let first = IPadPaneSplitIdentity(
+            path: .root.appending(.first),
+            direction: .horizontal,
+            firstAnchor: "left",
+            secondAnchor: "right"
+        )
+        let second = IPadPaneSplitIdentity(
+            path: .root.appending(.second),
+            direction: .vertical,
+            firstAnchor: "top",
+            secondAnchor: "bottom"
+        )
         var overrides = IPadPaneRatioOverrides()
 
         overrides[first] = 0.32
@@ -95,6 +105,46 @@ struct MultiPaneDetailViewTests {
         #expect(overrides.ratio(at: second, sourceRatio: 0.61) == 0.61)
         overrides[first] = nil
         #expect(overrides.ratio(at: first, sourceRatio: 0.5) == 0.5)
+    }
+
+    @Test("a replacement split at the same path does not inherit a stale ratio")
+    func replacementSplitDoesNotReusePathOnlyOverride() {
+        let original = IPadPaneSplitIdentity(
+            path: .root,
+            direction: .horizontal,
+            firstAnchor: "left",
+            secondAnchor: "right"
+        )
+        let replacement = IPadPaneSplitIdentity(
+            path: .root,
+            direction: .vertical,
+            firstAnchor: "top",
+            secondAnchor: "bottom"
+        )
+        var overrides = IPadPaneRatioOverrides()
+
+        overrides[original] = 0.2
+
+        #expect(overrides.ratio(at: replacement, sourceRatio: 0.5) == 0.5)
+    }
+
+    @Test("topology changes reset ratio storage without remounting surviving panes")
+    func replacementSplitKeepsItsRenderIdentity() {
+        let original = IPadPaneSplitIdentity(
+            path: .root,
+            direction: .horizontal,
+            firstAnchor: "left",
+            secondAnchor: "right"
+        )
+        let replacement = IPadPaneSplitIdentity(
+            path: .root,
+            direction: .vertical,
+            firstAnchor: "top",
+            secondAnchor: "bottom"
+        )
+
+        #expect(original != replacement)
+        #expect(original.renderIdentity == replacement.renderIdentity)
     }
 
     private func makeView(
@@ -124,7 +174,8 @@ struct MultiPaneDetailViewTests {
                 perform: { _ in },
                 isEnabled: { _ in false }
             ),
-            onSelectPane: { _ in }
+            onSelectPane: { _ in },
+            onBackToWorktrees: {}
         )
     }
 

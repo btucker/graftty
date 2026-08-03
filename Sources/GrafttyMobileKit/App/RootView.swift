@@ -245,6 +245,10 @@ struct SingleSessionView: View {
     /// Fired from the terminal's UIKit touch observer before focus/input is
     /// attempted, allowing the split tree to select this leaf first.
     let onPaneInteraction: (() -> Void)?
+    /// Embedded regular-width panes use the iPad sidebar rather than a
+    /// `NavigationStack`; this callback gives their reconnect/ended actions a
+    /// real route back to the worktree list.
+    let onBackToWorktrees: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -326,6 +330,14 @@ struct SingleSessionView: View {
         clientIsOwner && isPaneFocused
     }
 
+    static func shouldDismissKeyboard(
+        isKeyboardVisible: Bool,
+        keyboardAllowed: Bool,
+        isPaneFocused: Bool
+    ) -> Bool {
+        isPaneFocused && isKeyboardVisible && !keyboardAllowed
+    }
+
     /// Reference type on purpose: the fulfillment latch must outlive any one
     /// `SingleSessionView` identity. The instance is owned by `IPadAppState`
     /// (the same scope as `ownershipRequestCount`) so a detail-view
@@ -399,7 +411,8 @@ struct SingleSessionView: View {
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
-        onPaneInteraction: (() -> Void)? = nil
+        onPaneInteraction: (() -> Void)? = nil,
+        onBackToWorktrees: (() -> Void)? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -413,6 +426,7 @@ struct SingleSessionView: View {
         self.isPaneFocused = isPaneFocused
         self.isEmbeddedPane = isEmbeddedPane
         self.onPaneInteraction = onPaneInteraction
+        self.onBackToWorktrees = onBackToWorktrees
     }
 
     var body: some View {
@@ -516,7 +530,11 @@ struct SingleSessionView: View {
                 // tap on the terminal can make UITerminalView ask for
                 // first-responder again. Immediately dismiss — brief
                 // flicker (one frame) but honours the user's intent.
-                if isKeyboardVisible && !keyboardAllowed {
+                if Self.shouldDismissKeyboard(
+                    isKeyboardVisible: isKeyboardVisible,
+                    keyboardAllowed: keyboardAllowed,
+                    isPaneFocused: isPaneFocused
+                ) {
                     UIApplication.shared.sendAction(
                         #selector(UIResponder.resignFirstResponder),
                         to: nil, from: nil, for: nil
@@ -693,7 +711,7 @@ struct SingleSessionView: View {
         } description: {
             Text("This pane's process exited.")
         } actions: {
-            if !isEmbeddedPane {
+            if !isEmbeddedPane || onBackToWorktrees != nil {
                 Button("Back to worktrees", action: popToParent)
                     .buttonStyle(.borderedProminent)
             }
@@ -714,6 +732,10 @@ struct SingleSessionView: View {
     }
 
     private func popToParent() {
+        if let onBackToWorktrees {
+            onBackToWorktrees()
+            return
+        }
         if !navigationPath.isEmpty {
             navigationPath.removeLast()
         }

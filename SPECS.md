@@ -1436,7 +1436,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.8** While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
 
-**IOS-6.9** While the iOS software keyboard is visible for the `UIViewRepresentable`-wrapped `UITerminalView` first responder, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. The application shall observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as explicit bottom padding so the terminal and the `IOS-6.1` control bar both remain above the keyboard.
+**IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
 **IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
 
@@ -1598,7 +1598,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.7** When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
 
-**IPAD-2.8** Match the Mac window: the terminal tree owns the complete detail-column rectangle and extends beneath transparent navigation chrome. Split controls stay real toolbar commands, but float over the panes instead of shrinking them.
+**IPAD-2.8** While the regular-width iPad detail is visible, the application shall let the terminal tree own the complete detail-column rectangle beneath transparent navigation chrome, with split controls floating over the panes instead of shrinking them.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
 
