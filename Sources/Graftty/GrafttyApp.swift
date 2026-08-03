@@ -1494,7 +1494,8 @@ struct GrafttyApp: App {
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
                 worktreeCreations: services.cliWorktreeCreations,
-                worktreeRemovals: services.cliWorktreeRemovals
+                worktreeRemovals: services.cliWorktreeRemovals,
+                remoteBranchStore: services.remoteBranchStore
             )
         }
 
@@ -3375,7 +3376,8 @@ struct GrafttyApp: App {
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
-        worktreeRemovals: CLIWorktreeRemovalStore
+        worktreeRemovals: CLIWorktreeRemovalStore,
+        remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -3447,7 +3449,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamHook(let callerPath, let runtime, let event, let sessionID, let paneSessionName):
-            return handleTeamHook(
+            return await handleTeamHook(
                 callerPath: callerPath,
                 runtime: runtime,
                 event: event,
@@ -3456,7 +3458,8 @@ struct GrafttyApp: App {
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
-                terminalManager: terminalManager
+                terminalManager: terminalManager,
+                remoteBranchStore: remoteBranchStore
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
             return handleTeamInbox(
@@ -3808,9 +3811,17 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
-        terminalManager: TerminalManager
-    ) -> ResponseMessage {
+        terminalManager: TerminalManager,
+        remoteBranchStore: RemoteBranchStore
+    ) async -> ResponseMessage {
         do {
+            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            // Snapshotted before the instruction render's `await`; the
+            // ownership decision below therefore reads presence as it stood
+            // at hook entry, not as it stands when the decision runs. That
+            // was already true of any await on this path — the render only
+            // widens the window — and a stale snapshot at worst hands
+            // delivery to a pane that has just gone away.
             let presenceRecords = (try? TeamPresenceStorage(
                 rootDirectory: TeamPresenceStorage.defaultRoot()
             ).listAll()) ?? []
@@ -3818,6 +3829,24 @@ struct GrafttyApp: App {
                 records: presenceRecords,
                 terminalManager: terminalManager
             )
+            var instructions = ""
+            if event == .sessionStart,
+               teamsEnabled,
+               let team = TeamLookup.team(
+                   for: callerPath,
+                   in: appState.wrappedValue.repos
+               ),
+               let viewer = team.members.first(where: { $0.worktreePath == callerPath }) {
+                instructions = await InstructionSessionText.render(
+                    team: team,
+                    viewer: viewer,
+                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(
+                        forRepoAt: team.repoPath,
+                        hint: appState.wrappedValue
+                            .repo(forWorktreePath: callerPath)?.defaultBranchHint
+                    )
+                )
+            }
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
@@ -3845,7 +3874,8 @@ struct GrafttyApp: App {
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
                 repos: appState.wrappedValue.repos,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                teamsEnabled: teamsEnabled,
+                instructions: instructions
             )
             if event == .stop {
                 recordAgentStop(
