@@ -49,7 +49,7 @@ index 27dddb7..f8908fa 100644
 +        return .{ .xpixel = self.xpixel, .ypixel = self.ypixel };
 +    }
  };
-
+ 
 -pub fn getTerminalSize(fd: i32) Resize {
 +pub fn getTerminalSize(fd: i32) TerminalSize {
      var ws: cross.c.struct_winsize = undefined;
@@ -58,7 +58,7 @@ index 27dddb7..f8908fa 100644
 @@ -54,6 +84,18 @@ pub fn getTerminalSize(fd: i32) Resize {
      return .{ .rows = 24, .cols = 120 };
  }
-
+ 
 +test "Graftty wire extensions preserve legacy resize size" {
 +    try std.testing.expectEqual(@as(usize, 4), @sizeOf(Resize));
 +    try std.testing.expectEqual(@as(usize, 4), @sizeOf(PixelSize));
@@ -73,23 +73,27 @@ index 27dddb7..f8908fa 100644
 +
  pub const MAX_CMD_LEN = 256;
  pub const MAX_CWD_LEN = 256;
-
+ 
 diff --git a/src/main.zig b/src/main.zig
-index 9d3d4d7..4e28ea9 100644
+index 9d3d4d7..605501a 100644
 --- a/src/main.zig
 +++ b/src/main.zig
-@@ -504,6 +504,7 @@ const Client = struct {
+@@ -504,6 +504,11 @@ const Client = struct {
      alloc: std.mem.Allocator,
      socket_fd: i32,
      has_pending_output: bool = false,
 +    pixel_size: ipc.PixelSize = .{},
++    /// True once this client has sent a PixelSize message. Until then its
++    /// `pixel_size` zeros are "unknown", not "zero" — winsize writes must
++    /// preserve the PTY's current pixels rather than substitute them.
++    has_pixel_size: bool = false,
      read_buf: ipc.SocketBuffer,
      write_buf: std.ArrayList(u8),
-
-@@ -1076,6 +1077,15 @@ const Daemon = struct {
+ 
+@@ -1076,6 +1081,15 @@ const Daemon = struct {
      ) !void {
          if (payload.len != @sizeOf(ipc.Resize)) return;
-
+ 
 +        const capabilities = ipc.Capabilities{ .bits = ipc.Capabilities.pixel_size };
 +        try ipc.appendMessage(
 +            self.alloc,
@@ -102,92 +106,130 @@ index 9d3d4d7..4e28ea9 100644
          // Serialize terminal state BEFORE resize to capture correct cursor position.
          // Resizing triggers reflow which can move the cursor, and the shell's
          // SIGWINCH-triggered redraw will run after our snapshot is sent.
-@@ -1115,8 +1125,8 @@ const Daemon = struct {
-             var ws: cross.c.struct_winsize = .{
-                 .ws_row = resize.rows,
-                 .ws_col = resize.cols,
+@@ -1112,12 +1126,7 @@ const Daemon = struct {
+         // only resize if leader
+         if (self.leader_client_fd == client.socket_fd) {
+             const resize = std.mem.bytesToValue(ipc.Resize, payload);
+-            var ws: cross.c.struct_winsize = .{
+-                .ws_row = resize.rows,
+-                .ws_col = resize.cols,
 -                .ws_xpixel = resize.xpixel,
 -                .ws_ypixel = resize.ypixel,
-+                .ws_xpixel = client.pixel_size.xpixel,
-+                .ws_ypixel = client.pixel_size.ypixel,
-             };
+-            };
++            const ws = clientWinsize(client, pty_fd, resize.rows, resize.cols);
              _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
              // Disable prompt_redraw before resize. The daemon's internal terminal
-@@ -1136,10 +1146,18 @@ const Daemon = struct {
+             // would otherwise clear prompt lines expecting the shell to redraw them,
+@@ -1136,10 +1145,50 @@ const Daemon = struct {
              self.has_had_client = true;
              self.has_terminal_client = true;
-
+ 
 -            std.log.debug("init resize rows={d} cols={d}", .{ resize.rows, resize.cols });
 +            std.log.debug(
 +                "init resize rows={d} cols={d} xpixel={d} ypixel={d}",
-+                .{ resize.rows, resize.cols, client.pixel_size.xpixel, client.pixel_size.ypixel },
++                .{ resize.rows, resize.cols, ws.ws_xpixel, ws.ws_ypixel },
 +            );
          }
      }
-
+ 
 +    pub fn handlePixelSize(_: *Daemon, client: *Client, payload: []const u8) void {
 +        if (payload.len != @sizeOf(ipc.PixelSize)) return;
 +        client.pixel_size = std.mem.bytesToValue(ipc.PixelSize, payload);
++        client.has_pixel_size = true;
++    }
++
++    /// Build the winsize a client's Init/Resize applies to the session PTY.
++    /// A client that has not sent PixelSize yet (every new client during its
++    /// Init — PixelSize can only follow the daemon's Capabilities
++    /// advertisement — and any legacy client, ever) carries no pixel
++    /// information, so preserve the PTY's current pixel fields. Substituting
++    /// its unset zeros would make every unchanged-size re-attach a real
++    /// winsize change: the kernel raises SIGWINCH on any field change,
++    /// pixels included, and the session shell repaints its prompt over the
++    /// just-replayed screen.
++    fn clientWinsize(
++        client: *const Client,
++        pty_fd: i32,
++        rows: u16,
++        cols: u16,
++    ) cross.c.struct_winsize {
++        var ws: cross.c.struct_winsize = .{
++            .ws_row = rows,
++            .ws_col = cols,
++            .ws_xpixel = client.pixel_size.xpixel,
++            .ws_ypixel = client.pixel_size.ypixel,
++        };
++        if (!client.has_pixel_size) {
++            var current: cross.c.struct_winsize = undefined;
++            if (cross.c.ioctl(pty_fd, cross.c.TIOCGWINSZ, &current) == 0) {
++                ws.ws_xpixel = current.ws_xpixel;
++                ws.ws_ypixel = current.ws_ypixel;
++            }
++        }
++        return ws;
 +    }
 +
      pub fn handleResize(
          self: *Daemon,
          client: *Client,
-@@ -1158,8 +1176,8 @@ const Daemon = struct {
-         var ws: cross.c.struct_winsize = .{
-             .ws_row = resize.rows,
-             .ws_col = resize.cols,
+@@ -1155,12 +1204,7 @@ const Daemon = struct {
+         if (self.leader_client_fd != client.socket_fd) return;
+ 
+         const resize = std.mem.bytesToValue(ipc.Resize, payload);
+-        var ws: cross.c.struct_winsize = .{
+-            .ws_row = resize.rows,
+-            .ws_col = resize.cols,
 -            .ws_xpixel = resize.xpixel,
 -            .ws_ypixel = resize.ypixel,
-+            .ws_xpixel = client.pixel_size.xpixel,
-+            .ws_ypixel = client.pixel_size.ypixel,
-         };
+-        };
++        const ws = clientWinsize(client, pty_fd, resize.rows, resize.cols);
          _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
          // Disable prompt_redraw before resize (same rationale as handleInit).
-@@ -1171,7 +1189,10 @@ const Daemon = struct {
+         const saved_prompt_redraw = term.flags.shell_redraws_prompt;
+@@ -1171,7 +1215,10 @@ const Daemon = struct {
              .rows = resize.rows,
          };
          try term.resize(self.alloc, opts);
 -        std.log.debug("resize rows={d} cols={d}", .{ resize.rows, resize.cols });
 +        std.log.debug(
 +            "resize rows={d} cols={d} xpixel={d} ypixel={d}",
-+            .{ resize.rows, resize.cols, client.pixel_size.xpixel, client.pixel_size.ypixel },
++            .{ resize.rows, resize.cols, ws.ws_xpixel, ws.ws_ypixel },
 +        );
      }
-
+ 
      pub fn handleDetach(self: *Daemon, client: *Client, i: usize) void {
-@@ -2630,6 +2651,10 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+@@ -2630,6 +2677,10 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
      const alloc = std.heap.c_allocator;
      defer posix.close(client_sock_fd);
-
+ 
 +    var sigwinch_mask = posix.sigemptyset();
 +    posix.sigaddset(&sigwinch_mask, posix.SIG.WINCH);
 +    posix.sigprocmask(posix.SIG.UNBLOCK, &sigwinch_mask, null);
 +
      try openSignalPipe();
      installWakeHandler(posix.SIG.WINCH);
-
-@@ -2644,7 +2669,9 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
-
+ 
+@@ -2644,7 +2695,9 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+ 
      // Send init message with terminal size (buffered)
      const size = ipc.getTerminalSize(posix.STDOUT_FILENO);
 -    try ipc.appendMessage(alloc, &sock_write_buf, .Init, std.mem.asBytes(&size));
 +    const initial_resize = size.resize();
 +    try ipc.appendMessage(alloc, &sock_write_buf, .Init, std.mem.asBytes(&initial_resize));
 +    var supports_pixel_size = false;
-
+ 
      var poll_fds = try std.ArrayList(posix.pollfd).initCapacity(alloc, 4);
      defer poll_fds.deinit(alloc);
-@@ -2699,7 +2726,7 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+@@ -2699,7 +2752,7 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
          if (poll_fds.items[2].revents & posix.POLL.IN != 0) {
              drainSignalPipe();
              const next_size = ipc.getTerminalSize(posix.STDOUT_FILENO);
 -            try ipc.appendMessage(alloc, &sock_write_buf, .Resize, std.mem.asBytes(&next_size));
 +            try appendTerminalSize(alloc, &sock_write_buf, next_size, supports_pixel_size);
          }
-
+ 
          // Handle stdin -> socket (Input)
-@@ -2755,12 +2782,12 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+@@ -2755,12 +2808,12 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
                          // daemon is asking for the client's window size usually in response
                          // to this client being set as leader.
                          const next_size = ipc.getTerminalSize(posix.STDOUT_FILENO);
@@ -206,10 +248,10 @@ index 9d3d4d7..4e28ea9 100644
                      },
                      .Switch => {
                          std.log.info("switch session", .{});
-@@ -2805,6 +2832,20 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
+@@ -2805,6 +2858,20 @@ fn clientLoop(client_sock_fd: i32) !ClientResult {
      }
  }
-
+ 
 +fn appendTerminalSize(
 +    alloc: std.mem.Allocator,
 +    write_buf: *std.ArrayList(u8),
@@ -227,7 +269,7 @@ index 9d3d4d7..4e28ea9 100644
  /// dameonLoop is what the daemon runs to send and receive ipc commands from its corresponding
  /// clients.  It uses poll() as its non-blocking mechanism.
  fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
-@@ -3061,9 +3102,10 @@ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
+@@ -3061,9 +3128,10 @@ fn daemonLoop(daemon: *Daemon, server_sock_fd: i32, pty_fd: i32) !void {
                          .LabelGet => try daemon.handleLabelGet(client),
                          .LabelSet => try daemon.handleLabelSet(client, msg.payload),
                          .LabelClear => try daemon.handleLabelClear(client),
