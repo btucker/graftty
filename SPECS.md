@@ -548,11 +548,25 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.8** The application's Unix-domain socket server shall call `listen(2)` with a backlog of 64, not the historical default of 5. A user scripting parallel `graftty notify` invocations (e.g. from a hook that fans out across a monorepo) can easily exceed 5 pending connections, and the extra backlog entries cost negligible kernel resources while preventing spurious `ECONNREFUSED` for the later clients.
 
-**ATTN-2.9** Each accepted client connection shall have `SO_RCVTIMEO` set to 2 seconds before the server enters its read loop. Without this, a silent peer (a `nc -U` that connects but never writes, a crashed CLI client whose kernel-level connection lingers, etc.) pins the server's serial dispatch queue on a blocking `read(2)` indefinitely — and since `acceptConnection` shares that queue, every subsequent `graftty notify` hangs for the duration. 2 seconds mirrors the CLI's client-side timeout (`ATTN-3.3`); JSON notify/pane messages are ≤~1 KB over a local socket, so any well-behaved client finishes in milliseconds.
+**ATTN-2.9** When the application accepts a client connection, it shall set `SO_RCVTIMEO` to 2 seconds before reading so a silent peer releases its connection worker and fd within a bounded interval. The deadline shall remain per-client so one silent peer does not delay independent connections.
 
-**ATTN-2.10** When a request-style socket message (`list_panes`, `add_pane`, `close_pane`) hands its handler to the main queue via `DispatchQueue.main.async`, the server shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) for the handler to return. If the handler has not completed within that window — main queue stalled by a modal dialog, heavy synchronous work, or a main-actor reentrancy bug — the server shall close the client fd without writing a response rather than pin its serial worker on `semaphore.wait()` indefinitely. The CLI's 2s client-side timeout (`ATTN-3.3`) then surfaces the event as a clean `socketTimeout`. The main-queue closure may still complete and write into the retained response box after the worker has returned; its `signal()` lands on a no-longer-awaited semaphore harmlessly.
+**ATTN-2.10** When a request-style socket message hands its handler to the main actor, the application shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) before terminating that client connection without a response. The CLI's 2-second client timeout shall surface the event as `socketTimeout`, and neither later request lines nor a handler that completes late shall write to the closed connection.
 
 **ATTN-2.11** Each accepted client connection's read loop shall cap total accumulated bytes at `SocketServer.maxPerClientBytes` (1 MB in production) before giving up and closing the fd. Without this, a local writer that keeps the pipe continuously full (`cat /dev/urandom | nc -U graftty.sock`) never trips `SO_RCVTIMEO` (which fires only when data STOPS flowing) — the historical unbounded read loop would grow the per-connection buffer until process memory was exhausted. 1 MB is 1000× the ≤~1 KB typical JSON notify/pane message size, so well-behaved clients never hit it. Tests can shrink the cap to bound per-test runtime.
+
+**ATTN-2.12** While one control-socket client request handler is suspended, the application shall accept and handle independent client connections concurrently so a fast request is not delayed behind the slow request.
+
+**ATTN-2.13** When one client connection sends multiple request lines, the application shall write their responses in request order even when an earlier handler suspends.
+
+**ATTN-2.14** When the control-socket server stops, the application shall stop accepting connections, interrupt every active client's socket I/O and request wait, and release its connection workers without waiting for handler timeouts.
+
+**ATTN-2.15** While 64 control-socket clients are active, the application shall reject additional clients promptly rather than admit unbounded connection workers, and it shall admit new clients again after capacity is released.
+
+**ATTN-2.16** When a stopped control-socket server is stopped or deinitialized again after a successor has bound the same path, the application shall preserve the successor's live socket path.
+
+**ATTN-2.17** When a stopped control-socket server restarts, the application shall keep every prior-generation connection cancelled so its buffered messages and late handler results cannot enter the new server generation.
+
+**ATTN-2.18** When control-socket shutdown begins during a message callback, the application shall return from `stop()` without waiting for arbitrary callback code and shall suppress request handlers still queued for the stopped generation.
 
 ### ATTN-3.x — Error Handling
 
