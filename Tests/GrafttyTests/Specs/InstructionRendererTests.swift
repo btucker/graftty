@@ -177,4 +177,27 @@ struct InstructionRendererTests {
         #expect(!text.contains("STALE MAIN ROLE"))
         #expect(!text.contains("Instruction files matching no current worktree"))
     }
+
+    @Test func suppliedLeafDocumentIsResolvedByConstruction() {
+        let worktreePath = "/repo/.worktrees/feature-login"
+        let text = InstructionRenderer.render(
+            viewer: .init(
+                key: "feature-login",
+                displayName: "feature-login",
+                worktreePath: worktreePath
+            ),
+            others: [],
+            set: InstructionSet(
+                documents: [
+                    "GRAFTTY.feature-login.md": .parse("STALE MAIN ROLE"),
+                ],
+                leafDocumentsByWorktreePath: [
+                    worktreePath: .parse("branch-owned role"),
+                ]
+            )
+        )
+
+        #expect(text.contains("branch-owned role"))
+        #expect(!text.contains("STALE MAIN ROLE"))
+    }
 }

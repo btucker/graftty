@@ -6,19 +6,22 @@ public struct TeamMember: Sendable, Equatable {
     public let branch: String
     public let isMainWorktree: Bool
     public let isRunning: Bool
+    public let hasOnDiskWorktree: Bool
 
     public init(
         name: String,
         worktreePath: String,
         branch: String,
         isMainWorktree: Bool,
-        isRunning: Bool
+        isRunning: Bool,
+        hasOnDiskWorktree: Bool = true
     ) {
         self.name = name
         self.worktreePath = worktreePath
         self.branch = branch
         self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
+        self.hasOnDiskWorktree = hasOnDiskWorktree
     }
 }
 
@@ -79,7 +82,8 @@ public struct TeamView: Sendable, Equatable {
                 worktreePath: wt.path,
                 branch: wt.branch,
                 isMainWorktree: wt.path == repo.path,
-                isRunning: wt.state == .running
+                isRunning: wt.state == .running,
+                hasOnDiskWorktree: wt.state.hasOnDiskWorktree
             )
         }.sorted { lhs, rhs in
             // Main worktree first, then linked worktrees in worktree-add order.

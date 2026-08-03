@@ -69,8 +69,9 @@ reasons:
 
 1. Instruction changes take effect only when committed; uncommitted experiments
    remain invisible to current and peer sessions.
-2. Each checkout is observed atomically at a committed tree rather than through
-   a partially written working-tree edit.
+2. Each individual file is observed as committed content rather than through a
+   partially written working-tree edit. One load does not pin a checkout's
+   `HEAD` across its several Git commands.
 3. Git's tree is case-sensitive on every platform, whereas APFS is usually
    case-insensitive. A filesystem-based resolver would match `.graftty/Research/`
    against key `research/…` locally but not in CI.
@@ -294,7 +295,8 @@ The governing rule is to degrade to omission and never block session start.
 | Condition | Behavior |
 |---|---|
 | No committed instruction content in any relevant checkout | Omit the section |
-| `git` fails or exceeds a bounded timeout | Omit the section, log, proceed |
+| One checkout's non-timeout `git` read fails | Omit its unavailable content, log, continue with other checkouts |
+| The aggregate `git` deadline expires | Omit the section, log, proceed |
 | Filename not matching `GRAFTTY.md` / `GRAFTTY.<leaf>.md` | Skip, log |
 | Empty leaf component (`GRAFTTY..md`) | Skip, log |
 | Main checkout with unresolved default branch | Root file only, no leaf file |

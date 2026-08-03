@@ -127,7 +127,9 @@ struct TeamInstructionsRendererTests {
         let template = TeamInstructionsRenderer.defaultTemplate
 
         #expect(template.contains(".graftty/GRAFTTY.md"))
-        #expect(template.contains("GRAFTTY.<worktree-name>.md"))
+        #expect(template.contains("GRAFTTY.<leaf>.md"))
+        #expect(template.contains("path relative to the main checkout's `.worktrees/`"))
+        #expect(template.contains("main checkout's key is the repository's default branch"))
         #expect(template.contains("shared section"))
         #expect(template.contains("shown to peers"))
         #expect(template.contains("reads only committed content"))

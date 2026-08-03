@@ -120,4 +120,40 @@ struct InstructionSessionTextTests {
         // block still surfaces the file's shared text.
         #expect(text.contains("Instruction files matching no current worktree"))
     }
+
+    @Test func staleMemberDoesNotClaimAMainCheckoutLeaf() async {
+        var repo = RepoEntry(path: "/r/acme", displayName: "acme-web")
+        repo.worktrees.append(WorktreeEntry(path: "/r/acme", branch: "main"))
+        repo.worktrees.append(WorktreeEntry(
+            path: "/r/acme/.worktrees/feature-login",
+            branch: "feature/login",
+            state: .stale
+        ))
+        let team = TeamView.team(
+            for: repo.worktrees[0],
+            in: [repo],
+            teamsEnabled: true
+        )!
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
+            ".graftty/GRAFTTY.feature-login.md"
+        ))
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "retained org-chart role"
+        )
+
+        let text = await InstructionSessionText.render(
+            team: team,
+            viewer: team.mainWorktree,
+            defaultBranch: "main",
+            using: exec
+        )
+
+        #expect(text.contains("retained org-chart role"))
+        #expect(text.contains("Instruction files matching no current worktree"))
+        #expect(!exec.invocationDirectories.contains(
+            "/r/acme/.worktrees/feature-login"
+        ))
+    }
 }

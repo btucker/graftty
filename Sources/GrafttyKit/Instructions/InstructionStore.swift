@@ -20,7 +20,9 @@ public struct InstructionSet: Sendable, Equatable {
     ) {
         self.documents = documents
         self.leafDocumentsByWorktreePath = leafDocumentsByWorktreePath
-        self.resolvedLeafWorktreePaths = resolvedLeafWorktreePaths
+        self.resolvedLeafWorktreePaths = resolvedLeafWorktreePaths.union(
+            leafDocumentsByWorktreePath.keys
+        )
     }
 }
 
@@ -101,16 +103,31 @@ public enum InstructionStore {
         // `-z` because `ls-tree` otherwise C-quotes any path containing a
         // non-ASCII byte, a quote, a backslash, or a control character —
         // which would leave those files unmatched by the prefix filter below.
-        guard let remaining = try? deadline.remaining(),
-              let listing = try? await GitRunner.run(
-                  args: ["ls-tree", "-r", "-z", "--name-only", "HEAD", prefix],
-                  at: repoPath,
-                  timeout: remaining,
-                  using: executor
-              )
-        else {
-            logger.error("listing .graftty at HEAD failed; omitting instructions")
-            return nil
+        let listing: String
+        do {
+            listing = try await GitRunner.run(
+                args: ["ls-tree", "-r", "-z", "--name-only", "HEAD", prefix],
+                at: repoPath,
+                timeout: try deadline.remaining(),
+                using: executor
+            )
+        } catch let error as CLIError {
+            if case .timedOut = error {
+                logger.error("git budget lapsed during main listing; omitting instructions")
+                return nil
+            }
+            // A linked worktree may have a valid committed leaf even when the
+            // main checkout has no resolvable HEAD (for example, an unborn
+            // branch). Continue with an empty main listing and probe leaves.
+            logger.error(
+                "listing main .graftty at HEAD failed; continuing with worktree leaves"
+            )
+            listing = ""
+        } catch {
+            logger.error(
+                "listing main .graftty at HEAD failed; continuing with worktree leaves"
+            )
+            listing = ""
         }
 
         let candidates = listing
@@ -128,9 +145,16 @@ public enum InstructionStore {
             return true
         }
         let activeLeafPaths = Set(validLeafSources.map(\.relativePath))
+        let applicableMainPaths = Set(validLeafSources.flatMap { source in
+            guard case let .leaf(key) = InstructionFile.classify(
+                relativePath: source.relativePath
+            ) else { return [String]() }
+            return InstructionChain.paths(forKey: key)
+        })
 
         var seenMainPaths: Set<String> = []
-        var mainGroups: [String] = []
+        var applicableMainGroups: [String] = []
+        var unmatchedMainGroups: [String] = []
         var mainLeaves: [String] = []
         var skipped: [String] = []
         for candidate in candidates {
@@ -145,7 +169,13 @@ public enum InstructionStore {
             guard !activeLeafPaths.contains(candidate) else { continue }
             switch kind {
             case .group:
-                mainGroups.append(candidate)
+                let appliesToActiveWorktree = candidate == "GRAFTTY.md"
+                    || applicableMainPaths.contains(candidate)
+                if appliesToActiveWorktree {
+                    applicableMainGroups.append(candidate)
+                } else {
+                    unmatchedMainGroups.append(candidate)
+                }
             case .leaf:
                 mainLeaves.append(candidate)
             }
@@ -158,14 +188,16 @@ public enum InstructionStore {
                 """
             )
         }
-        // Shared/group files are most important, followed by each live
-        // worktree's own role, then unmatched main-checkout leaves retained
-        // for org-chart discoverability. The existing cap covers the combined
-        // plan, so adding worktrees cannot make session prompts unbounded.
+        // Prioritize groups that apply to a live worktree, then each live
+        // worktree's own role. Unmatched main-checkout files remain available
+        // for org-chart discoverability without being able to starve active
+        // roles at either the file-count or byte cap. The existing cap covers
+        // the combined plan, so adding worktrees cannot make prompts unbounded.
         let targets = Array(
             (
-                mainGroups.map(ReadTarget.main)
+                applicableMainGroups.map(ReadTarget.main)
                     + validLeafSources.map(ReadTarget.leaf)
+                    + unmatchedMainGroups.map(ReadTarget.main)
                     + mainLeaves.map(ReadTarget.main)
             ).prefix(maxFiles)
         )
