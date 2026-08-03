@@ -5,53 +5,6 @@ import Foundation
 /// Minimal `CLIExecutor` double: canned stdout per `(command, args)`, and an
 /// optional error for a specific arg list. Mirrors the stub in
 /// `InstructionStoreTests.swift`.
-private final class StubExecutor: CLIExecutor, @unchecked Sendable {
-    private var outputs: [[String]: String] = [:]
-    private var errors: [[String]: CLIError] = [:]
-    private(set) var invocations: [[String]] = []
-    private let lock = NSLock()
-
-    private func withLock<T>(_ body: () -> T) -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return body()
-    }
-
-    func stub(args: [String], stdout: String) {
-        withLock { outputs[args] = stdout }
-    }
-
-    func stub(args: [String], error: CLIError) {
-        withLock { errors[args] = error }
-    }
-
-    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
-        let (error, stdout) = withLock { () -> (CLIError?, String?) in
-            invocations.append(args)
-            return (errors[args], outputs[args])
-        }
-        if let error { throw error }
-        guard let stdout else {
-            throw CLIError.nonZeroExit(command: command, exitCode: 128, stderr: "no stub")
-        }
-        return CLIOutput(stdout: stdout, stderr: "", exitCode: 0)
-    }
-
-    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
-        try await run(command: command, args: args, at: directory)
-    }
-}
-
-private let lsTreeArgs = ["ls-tree", "-r", "-z", "--name-only", "HEAD", ".graftty/"]
-
-/// `git ls-tree -z` terminates each path with NUL rather than newline.
-private func lsTreeOutput(_ paths: String...) -> String {
-    paths.map { $0 + "\0" }.joined()
-}
-
-/// Builds a two-member team: the repo's main worktree on `main`, and one
-/// linked worktree under `.worktrees/`. Mirrors the fixture pattern used by
-/// `TeamInstructionsRendererTests.makeView()`.
 private func makeTeam() -> TeamView {
     var repo = RepoEntry(path: "/r/acme", displayName: "acme-web")
     repo.worktrees.append(WorktreeEntry(path: "/r/acme", branch: "main"))
@@ -64,8 +17,8 @@ struct InstructionSessionTextTests {
 
     @Test func absentInstructionsDirectoryYieldsEmptyString() async {
         let team = makeTeam()
-        let exec = StubExecutor()
-        exec.stub(args: lsTreeArgs, stdout: "")
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: "")
 
         let text = await InstructionSessionText.render(
             team: team,
@@ -79,8 +32,8 @@ struct InstructionSessionTextTests {
 
     @Test func gitFailureYieldsEmptyString() async {
         let team = makeTeam()
-        let exec = StubExecutor()
-        exec.stub(args: lsTreeArgs,
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs,
                   error: .nonZeroExit(command: "git", exitCode: 128, stderr: "not a repo"))
 
         let text = await InstructionSessionText.render(
@@ -95,8 +48,8 @@ struct InstructionSessionTextTests {
 
     @Test func successfulRenderIncludesOwnAndOtherMembersSharedText() async {
         let team = makeTeam()
-        let exec = StubExecutor()
-        exec.stub(args: lsTreeArgs, stdout: lsTreeOutput(
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
             ".graftty/GRAFTTY.md",
             ".graftty/GRAFTTY.main.md",
             ".graftty/GRAFTTY.feature-login.md"
@@ -127,8 +80,8 @@ struct InstructionSessionTextTests {
 
     @Test func nilDefaultBranchLimitsTheMainCheckoutToTheRootFile() async {
         let team = makeTeam()
-        let exec = StubExecutor()
-        exec.stub(args: lsTreeArgs, stdout: lsTreeOutput(
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
             ".graftty/GRAFTTY.md",
             ".graftty/GRAFTTY.main.md"
         ))

@@ -16,7 +16,7 @@ public enum InstructionChain {
 
         // Ancestor group files, root-most first. Excludes the key's own
         // directory-form, which covers descendants only.
-        for depth in 1..<max(components.count, 1) {
+        for depth in 1..<components.count {
             let directory = components.prefix(depth).joined(separator: "/")
             result.append(directory + "/GRAFTTY.md")
         }

@@ -3832,11 +3832,9 @@ struct GrafttyApp: App {
             var instructions = ""
             if event == .sessionStart,
                teamsEnabled,
-               let caller = appState.wrappedValue.worktree(forPath: callerPath),
-               let team = TeamView.team(
-                   for: caller,
-                   in: appState.wrappedValue.repos,
-                   teamsEnabled: true
+               let team = TeamLookup.team(
+                   for: callerPath,
+                   in: appState.wrappedValue.repos
                ),
                let viewer = team.members.first(where: { $0.worktreePath == callerPath }) {
                 instructions = await InstructionSessionText.render(
