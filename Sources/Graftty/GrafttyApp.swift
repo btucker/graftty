@@ -3447,7 +3447,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamHook(let callerPath, let runtime, let event, let sessionID, let paneSessionName):
-            return handleTeamHook(
+            return await handleTeamHook(
                 callerPath: callerPath,
                 runtime: runtime,
                 event: event,
@@ -3809,7 +3809,7 @@ struct GrafttyApp: App {
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         terminalManager: TerminalManager
-    ) -> ResponseMessage {
+    ) async -> ResponseMessage {
         do {
             let presenceRecords = (try? TeamPresenceStorage(
                 rootDirectory: TeamPresenceStorage.defaultRoot()
@@ -3818,6 +3818,21 @@ struct GrafttyApp: App {
                 records: presenceRecords,
                 terminalManager: terminalManager
             )
+            var instructions = ""
+            if event == .sessionStart,
+               UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+               let caller = appState.wrappedValue.worktree(forPath: callerPath),
+               let team = TeamView.team(
+                   for: caller,
+                   in: appState.wrappedValue.repos,
+                   teamsEnabled: true
+               ),
+               let viewer = team.members.first(where: { $0.worktreePath == callerPath }) {
+                instructions = await InstructionSessionText.render(
+                    team: team,
+                    viewer: viewer
+                )
+            }
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
@@ -3845,7 +3860,8 @@ struct GrafttyApp: App {
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
                 repos: appState.wrappedValue.repos,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                instructions: instructions
             )
             if event == .stop {
                 recordAgentStop(

@@ -178,7 +178,8 @@ public final class TeamInboxRequestHandler {
         sessionID: String?,
         paneSessionName: String?,
         repos: [RepoEntry],
-        teamsEnabled: Bool
+        teamsEnabled: Bool,
+        instructions: String = ""
     ) throws -> String {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let sessionID = sessionID ?? "\(runtime.rawValue):\(context.sender.name):\(context.sender.worktreePath)"
@@ -223,6 +224,7 @@ public final class TeamInboxRequestHandler {
             let output = try TeamHookRenderer.sessionStart(
                 runtime: runtime,
                 teamContext: text,
+                instructions: instructions,
                 messages: pending
             )
             if let cursor {
