@@ -294,7 +294,7 @@ struct SocketIntegrationTests {
         defer { server.stop() }
         try await Task.sleep(for: .milliseconds(100))
 
-        let response = try sendRequest(
+        let response = try Self.sendRequest(
             socketPath: socketPath,
             json: #"{"type":"list_panes","path":"/tmp/wt"}"#
         )
@@ -303,6 +303,502 @@ struct SocketIntegrationTests {
                 PaneInfo(id: 1, title: "zmx", focused: true),
             ])
         )
+    }
+
+    @Test("""
+    @spec ATTN-2.12: While one control-socket client request handler is suspended, the application shall accept and handle independent client connections concurrently so a fast request is not delayed behind the slow request.
+    """)
+    func slowRequestDoesNotDelayIndependentFastRequest() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-hol-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (slowStarts, slowStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { slowStartContinuation.finish() }
+        let slowGate = AsyncGate()
+
+        let server = SocketServer(socketPath: socketPath)
+        server.onAsyncRequest = { message in
+            switch message {
+            case .listPanes:
+                slowStartContinuation.yield(())
+                await slowGate.wait()
+                return .paneList([])
+            case .teamMessage:
+                return .ok
+            default:
+                return .error("unexpected")
+            }
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let slowRequest = Task.detached {
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"list_panes","path":"/tmp/slow"}"#
+            )
+        }
+
+        try await expectSignal(from: slowStarts)
+
+        let (fastFinishes, fastFinishContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { fastFinishContinuation.finish() }
+        let fastRequest = Task.detached {
+            let result: Result<ResponseMessage, Error> = Result {
+                try Self.sendRequest(
+                    socketPath: socketPath,
+                    json: #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"hello"}"#
+                )
+            }
+            fastFinishContinuation.yield(())
+            return result
+        }
+
+        do {
+            // The slow handler remains explicitly gated. Completion itself,
+            // rather than a sub-second performance threshold, proves the fast
+            // connection did not queue behind it; the timeout is terminal
+            // protection for a broken implementation or test environment.
+            try await expectSignal(from: fastFinishes)
+        } catch {
+            await slowGate.open()
+            _ = await fastRequest.value
+            _ = try? await slowRequest.value
+            throw error
+        }
+        let fastResult = await fastRequest.value
+        await slowGate.open()
+
+        #expect(try fastResult.get() == .ok)
+        #expect(try await slowRequest.value == .paneList([]))
+    }
+
+    @Test("""
+    @spec ATTN-2.13: When one client connection sends multiple request lines, the application shall write their responses in request order even when an earlier handler suspends.
+    """)
+    func responsesRemainOrderedWithinOneConnection() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-order-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let server = SocketServer(socketPath: socketPath)
+        server.onAsyncRequest = { message in
+            switch message {
+            case .listPanes:
+                try? await Task.sleep(for: .milliseconds(100))
+                return .error("slow-first")
+            case .teamMessage:
+                return .ok
+            default:
+                return .error("unexpected")
+            }
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let responses = try Self.sendRequests(
+            socketPath: socketPath,
+            jsonLines: [
+                #"{"type":"list_panes","path":"/tmp/slow"}"#,
+                #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"hello"}"#,
+            ]
+        )
+
+        #expect(responses == [.error("slow-first"), .ok])
+    }
+
+    @Test("Request timeout terminates a multi-request connection")
+    func timeoutDoesNotMisattributeALaterResponse() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-timeout-order-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let laterRequestsHandled = MutableBox(0)
+        let server = SocketServer(socketPath: socketPath)
+        server.onRequestTimeout = .milliseconds(100)
+        server.onAsyncRequest = { message in
+            switch message {
+            case .listPanes:
+                try? await Task.sleep(for: .milliseconds(500))
+                return .error("too late")
+            case .teamMessage:
+                laterRequestsHandled.value += 1
+                return .ok
+            default:
+                return .error("unexpected")
+            }
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let responseBytes = try Self.exchangeRequests(
+            socketPath: socketPath,
+            jsonLines: [
+                #"{"type":"list_panes","path":"/tmp/slow"}"#,
+                #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"hello"}"#,
+            ]
+        )
+
+        #expect(responseBytes.isEmpty)
+        #expect(laterRequestsHandled.value == 0)
+    }
+
+    @Test("""
+    @spec ATTN-2.14: When the control-socket server stops, the application shall stop accepting connections, interrupt every active client's socket I/O and request wait, and release its connection workers without waiting for handler timeouts.
+    """)
+    func stopInterruptsActiveRequestAndReleasesServer() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-stop-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (slowStarts, slowStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { slowStartContinuation.finish() }
+
+        let postStopMessages = MutableBox(0)
+        var server: SocketServer? = SocketServer(socketPath: socketPath)
+        server?.maxConcurrentClients = 2
+        server?.onMessage = { message in
+            if case .notify(_, let text, _, _) = message,
+               text == "buffered" {
+                postStopMessages.value += 1
+            }
+        }
+        server?.onAsyncRequest = { message in
+            if case .listPanes = message {
+                slowStartContinuation.yield(())
+                try? await Task.sleep(for: .seconds(2))
+            }
+            return .ok
+        }
+        try server?.start()
+
+        let request = Task.detached {
+            try? Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"list_panes","path":"/tmp/slow"}"#
+            )
+        }
+        try await expectSignal(from: slowStarts)
+
+        let silentFD = try Self.connectSocket(to: socketPath)
+        defer { close(silentFD) }
+        try SocketIO.writeAll(
+            fd: silentFD,
+            string: #"{"type":"notify","path":"/tmp/wt","text":"buffered"}"# + "\n"
+        )
+
+        // Prove the silent socket reached the server's active-client table:
+        // with the slow request occupying the other configured slot, a probe
+        // must be rejected. Retrying avoids assuming a fixed accept latency.
+        var silentClientWasAdmitted = false
+        for _ in 0..<20 {
+            let probe = try? Self.exchangeRequests(
+                socketPath: socketPath,
+                jsonLines: [
+                    #"{"type":"team_message","caller_worktree":"/tmp/probe","recipient":"peer","text":"full"}"#,
+                ]
+            )
+            if probe?.isEmpty != false {
+                silentClientWasAdmitted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(silentClientWasAdmitted)
+
+        weak let weakServer = server
+        server?.stop()
+        server = nil
+
+        for _ in 0..<20 where weakServer != nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(
+            weakServer == nil,
+            "stop must wake request waiters instead of retaining the server until timeout"
+        )
+        _ = await request.value
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        setsockopt(
+            silentFD,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        var byte: UInt8 = 0
+        #expect(Darwin.read(silentFD, &byte, 1) == 0)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+        #expect(postStopMessages.value == 0)
+        #expect(!FileManager.default.fileExists(atPath: socketPath))
+    }
+
+    @Test("""
+    @spec ATTN-2.18: When control-socket shutdown begins during a message callback, the application shall return from `stop()` without waiting for arbitrary callback code and shall suppress request handlers still queued for the stopped generation.
+    """)
+    func stopDoesNotWaitForCallbackAndSuppressesQueuedHandler() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-stop-barrier-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (callbackStarts, callbackStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { callbackStartContinuation.finish() }
+        let releaseCallback = DispatchSemaphore(value: 0)
+        let handlerCalls = MutableBox(0)
+        let stopReturned = MutableBox(false)
+        let (stopStarts, stopStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { stopStartContinuation.finish() }
+        let (stopFinishes, stopFinishContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { stopFinishContinuation.finish() }
+
+        let server = SocketServer(socketPath: socketPath)
+        server.onMessage = { _ in
+            callbackStartContinuation.yield(())
+            releaseCallback.wait()
+        }
+        server.onRequest = { _ in
+            handlerCalls.value += 1
+            return .ok
+        }
+        try server.start()
+        defer {
+            releaseCallback.signal()
+            server.stop()
+        }
+
+        let client = Task.detached {
+            try Self.exchangeRequests(
+                socketPath: socketPath,
+                jsonLines: [
+                    #"{"type":"team_message","caller_worktree":"/tmp/old","recipient":"peer","text":"queued"}"#,
+                ]
+            )
+        }
+        try await expectSignal(from: callbackStarts)
+
+        let stopTask = Task.detached {
+            stopStartContinuation.yield(())
+            server.stop()
+            stopReturned.value = true
+            stopFinishContinuation.yield(())
+        }
+        try await expectSignal(from: stopStarts)
+        try await expectSignal(from: stopFinishes, timeout: .seconds(1))
+        #expect(stopReturned.value, "stop waited on arbitrary callback code")
+
+        releaseCallback.signal()
+        await stopTask.value
+        #expect((try await client.value).isEmpty)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+        #expect(handlerCalls.value == 0)
+    }
+
+    @Test("""
+    @spec ATTN-2.15: While 64 control-socket clients are active, the application shall reject additional clients promptly rather than admit unbounded connection workers, and it shall admit new clients again after capacity is released.
+    """)
+    func concurrentClientAdmissionIsBounded() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-admit-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let server = SocketServer(socketPath: socketPath)
+        #expect(server.maxConcurrentClients == 64)
+        server.maxConcurrentClients = 2
+        let gate = AsyncGate()
+        let handlersStarted = MutableBox(0)
+        server.onAsyncRequest = { _ in
+            handlersStarted.value += 1
+            await gate.wait()
+            return .ok
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let firstRequest = Task.detached {
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"team_message","caller_worktree":"/tmp/one","recipient":"peer","text":"one"}"#
+            )
+        }
+        let secondRequest = Task.detached {
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"team_message","caller_worktree":"/tmp/two","recipient":"peer","text":"two"}"#
+            )
+        }
+        for _ in 0..<100 where handlersStarted.value < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(
+            handlersStarted.value == 2,
+            "both configured client slots must be admitted"
+        )
+
+        let clock = ContinuousClock()
+        let rejectionStarted = clock.now
+        let rejected = try? Self.exchangeRequests(
+            socketPath: socketPath,
+            jsonLines: [
+                #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"full"}"#,
+            ]
+        )
+        let rejectionElapsed = rejectionStarted.duration(to: clock.now)
+        #expect(rejected?.isEmpty != false)
+        #expect(
+            rejectionElapsed < .seconds(1),
+            "excess client rejection took \(rejectionElapsed)"
+        )
+
+        await gate.open()
+        #expect(try await firstRequest.value == .ok)
+        #expect(try await secondRequest.value == .ok)
+        #expect(
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"space"}"#
+            ) == .ok
+        )
+    }
+
+    @Test("""
+    @spec ATTN-2.16: When a stopped control-socket server is stopped or deinitialized again after a successor has bound the same path, the application shall preserve the successor's live socket path.
+    """)
+    func repeatedStopDoesNotUnlinkSuccessorSocket() throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-owner-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        var first: SocketServer? = SocketServer(socketPath: socketPath)
+        try first?.start()
+        first?.stop()
+
+        let successor = SocketServer(socketPath: socketPath)
+        successor.onRequest = { _ in .ok }
+        try successor.start()
+        defer { successor.stop() }
+
+        first?.stop()
+        first = nil
+        #expect(
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"alive"}"#
+            ) == .ok
+        )
+    }
+
+    @Test("""
+    @spec ATTN-2.17: When a stopped control-socket server restarts, the application shall keep every prior-generation connection cancelled so its buffered messages and late handler results cannot enter the new server generation.
+    """)
+    func restartDoesNotReviveStoppedClientWork() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-generation-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (slowStarts, slowStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { slowStartContinuation.finish() }
+        let teamRequestsHandled = MutableBox(0)
+        let server = SocketServer(socketPath: socketPath)
+        server.onAsyncRequest = { message in
+            switch message {
+            case .listPanes:
+                slowStartContinuation.yield(())
+                try? await Task.sleep(for: .milliseconds(500))
+                return .paneList([])
+            case .teamMessage:
+                teamRequestsHandled.value += 1
+                return .ok
+            default:
+                return .error("unexpected")
+            }
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let oldRequest = Task.detached {
+            try Self.exchangeRequests(
+                socketPath: socketPath,
+                jsonLines: [
+                    #"{"type":"list_panes","path":"/tmp/slow"}"#,
+                    #"{"type":"team_message","caller_worktree":"/tmp/old","recipient":"peer","text":"stale"}"#,
+                ]
+            )
+        }
+        try await expectSignal(from: slowStarts)
+
+        server.stop()
+        try server.start()
+        #expect(
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"team_message","caller_worktree":"/tmp/new","recipient":"peer","text":"current"}"#
+            ) == .ok
+        )
+        #expect((try await oldRequest.value).isEmpty)
+        #expect(teamRequestsHandled.value == 1)
     }
 
     @Test func serverOmitsResponseWhenOnRequestUnset() async throws {
@@ -344,12 +840,11 @@ struct SocketIntegrationTests {
         _ = try await expectMessage(from: messages)
     }
 
-    /// `onRequest` runs on the main queue; if the main queue stalls
-    /// (modal dialog, long synchronous work, a main-actor reentrancy
-    /// bug), `semaphore.wait()` on the socket queue blocks forever and
-    /// pins every subsequent request behind it — same serial-queue
-    /// pile-up shape as `silentClientDoesNotBlockOtherClients` but at
-    /// the request/response path.
+    /// `onRequest` runs on the main queue; if the main actor stalls (modal
+    /// dialog, long synchronous work, a reentrancy bug), the connection
+    /// worker's `semaphore.wait()` would otherwise block forever. Independent
+    /// connection workers cannot make progress through a synchronously-stalled
+    /// main actor, so every request still needs a bounded terminal condition.
     ///
     /// The server shall cap its wait with a bounded timeout and, on
     /// expiry, close the client fd without a response. The CLI's
@@ -358,7 +853,7 @@ struct SocketIntegrationTests {
     /// EOF within the server's timeout window + small margin, not after
     /// onRequest's full duration.
     @Test("""
-    @spec ATTN-2.10: When a request-style socket message (`list_panes`, `add_pane`, `close_pane`) hands its handler to the main queue via `DispatchQueue.main.async`, the server shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) for the handler to return. If the handler has not completed within that window — main queue stalled by a modal dialog, heavy synchronous work, or a main-actor reentrancy bug — the server shall close the client fd without writing a response rather than pin its serial worker on `semaphore.wait()` indefinitely. The CLI's 2s client-side timeout (`ATTN-3.3`) then surfaces the event as a clean `socketTimeout`. The main-queue closure may still complete and write into the retained response box after the worker has returned; its `signal()` lands on a no-longer-awaited semaphore harmlessly.
+    @spec ATTN-2.10: When a request-style socket message hands its handler to the main actor, the application shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) before terminating that client connection without a response. The CLI's 2-second client timeout shall surface the event as `socketTimeout`, and neither later request lines nor a handler that completes late shall write to the closed connection.
     """)
     func slowOnRequestClosesClientFDAtTimeout() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-slow-\(UUID().uuidString.prefix(8))")
@@ -432,7 +927,7 @@ struct SocketIntegrationTests {
     /// kills a long-running shell unexpectedly" pain point in the
     /// server-accept-queue dimension.
     @Test("""
-    @spec ATTN-2.9: Each accepted client connection shall have `SO_RCVTIMEO` set to 2 seconds before the server enters its read loop. Without this, a silent peer (a `nc -U` that connects but never writes, a crashed CLI client whose kernel-level connection lingers, etc.) pins the server's serial dispatch queue on a blocking `read(2)` indefinitely — and since `acceptConnection` shares that queue, every subsequent `graftty notify` hangs for the duration. 2 seconds mirrors the CLI's client-side timeout (`ATTN-3.3`); JSON notify/pane messages are ≤~1 KB over a local socket, so any well-behaved client finishes in milliseconds.
+    @spec ATTN-2.9: When the application accepts a client connection, it shall set `SO_RCVTIMEO` to 2 seconds before reading so a silent peer releases its connection worker and fd within a bounded interval. The deadline shall remain per-client so one silent peer does not delay independent connections.
     """)
     func silentClientDoesNotBlockOtherClients() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-hang-\(UUID().uuidString.prefix(8))")
@@ -440,11 +935,16 @@ struct SocketIntegrationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let socketPath = dir.appendingPathComponent("s").path
-        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
-        defer { messageContinuation.finish() }
+        // The callback is the synchronization point for the independent
+        // client; socket state below proves it arrived before the silent
+        // client's own deadline without a tight wall-clock threshold.
+        let (events, eventContinuation) = AsyncStream.makeStream(of: Void.self)
+        defer { eventContinuation.finish() }
 
         let server = SocketServer(socketPath: socketPath)
-        server.onMessage = { messageContinuation.yield($0) }
+        #expect(server.clientReadTimeoutSeconds == 2)
+        server.clientReadTimeoutSeconds = 1
+        server.onMessage = { _ in eventContinuation.yield(()) }
         try server.start()
         defer { server.stop() }
 
@@ -467,9 +967,18 @@ struct SocketIntegrationTests {
         // Connection #1: silent — connect but neither write nor close
         // until test teardown. Pre-fix, this pins the serial queue on
         // `handleClient`'s blocking `read()` forever.
+        let clock = ContinuousClock()
+        let silentConnectedAt = clock.now
         let silentFD = connectClient()
         defer { close(silentFD) }
-
+        var rcvTimeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(
+            silentFD,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &rcvTimeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
         // Give the server a beat to accept + begin handling #1.
         try await Task.sleep(for: .milliseconds(100))
 
@@ -479,21 +988,102 @@ struct SocketIntegrationTests {
         msg.withCString { ptr in _ = Darwin.write(activeFD, ptr, strlen(ptr)) }
         close(activeFD)
 
-        // The callback itself is the synchronization point. This still covers
-        // the 2s server-side read timeout without assuming the main queue will
-        // run within an arbitrary post-send sleep window under full-suite load.
-        _ = try await expectMessage(from: messages)
+        try await expectSignal(from: events)
+        var peekByte: UInt8 = 0
+        errno = 0
+        let peekResult = Darwin.recv(
+            silentFD,
+            &peekByte,
+            1,
+            Int32(MSG_PEEK | MSG_DONTWAIT)
+        )
+        let peekErrno = errno
+        #expect(
+            peekResult == -1
+                && (peekErrno == EAGAIN || peekErrno == EWOULDBLOCK),
+            "silent socket closed before the independent callback"
+        )
+
+        // Independently prove the silent connection carries its configured
+        // per-client deadline. The production value is pinned above; using a
+        // one-second override keeps this behavioral check fast and precise.
+        var buffer = [UInt8](repeating: 0, count: 1)
+        let bytesRead = Darwin.read(silentFD, &buffer, buffer.count)
+        let silentLifetime = silentConnectedAt.duration(to: clock.now)
+        #expect(bytesRead == 0, "silent connection must close at its read deadline")
+        #expect(
+            silentLifetime >= .milliseconds(750)
+                && silentLifetime < .seconds(2),
+            "expected the 1s test deadline; silent client lived for \(silentLifetime)"
+        )
     }
 
     private struct MessageTimeoutError: Error {}
 
-    private func sendRequest(
+    private static func sendRequest(
         socketPath: String,
         json: String
     ) throws -> ResponseMessage {
+        guard let response = try sendRequests(
+            socketPath: socketPath,
+            jsonLines: [json]
+        ).first else {
+            throw POSIXError(.ECONNRESET)
+        }
+        return response
+    }
+
+    private static func sendRequests(
+        socketPath: String,
+        jsonLines: [String]
+    ) throws -> [ResponseMessage] {
+        let buffer = try exchangeRequests(
+            socketPath: socketPath,
+            jsonLines: jsonLines
+        )
+        guard !buffer.isEmpty else { throw POSIXError(.ECONNRESET) }
+        return try String(decoding: buffer, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { line in
+                try JSONDecoder().decode(
+                    ResponseMessage.self,
+                    from: Data(line.utf8)
+                )
+            }
+    }
+
+    private static func exchangeRequests(
+        socketPath: String,
+        jsonLines: [String]
+    ) throws -> Data {
+        let fd = try connectSocket(to: socketPath)
+        defer { close(fd) }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_SNDTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+
+        let payload = jsonLines.joined(separator: "\n") + "\n"
+        try SocketIO.writeAll(fd: fd, string: payload)
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        return SocketIO.readAll(fd: fd, cap: 1 * 1024 * 1024)
+    }
+
+    private static func connectSocket(to socketPath: String) throws -> Int32 {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(.ENOTSOCK) }
-        defer { close(fd) }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -516,22 +1106,40 @@ struct SocketIntegrationTests {
                 )
             }
         }
-        guard connected == 0 else { throw POSIXError(.ECONNREFUSED) }
-
-        let payload = json + "\n"
-        payload.withCString { ptr in
-            _ = Darwin.write(fd, ptr, strlen(ptr))
+        guard connected == 0 else {
+            close(fd)
+            throw POSIXError(.ECONNREFUSED)
         }
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
 
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let count = Darwin.read(fd, &buffer, buffer.count)
-        guard count > 0 else { throw POSIXError(.ECONNRESET) }
-        let line = String(decoding: buffer[0..<count], as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .first
-        guard let line else { throw POSIXError(.EBADMSG) }
-        return try JSONDecoder().decode(ResponseMessage.self, from: Data(line.utf8))
+        var noSigPipe: Int32 = 1
+        _ = setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+        return fd
+    }
+
+    private func expectSignal(
+        from stream: AsyncStream<Void>,
+        timeout: Duration = .seconds(5)
+    ) async throws {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return false
+            }
+            defer { group.cancelAll() }
+            guard try await group.next() == true else {
+                throw MessageTimeoutError()
+            }
+        }
     }
 
     private func expectMessage(
@@ -563,5 +1171,26 @@ final class MutableBox<T>: @unchecked Sendable {
     var value: T {
         get { lock.withLock { _value } }
         set { lock.withLock { _value = newValue } }
+    }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let continuations = waiters
+        waiters.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 }

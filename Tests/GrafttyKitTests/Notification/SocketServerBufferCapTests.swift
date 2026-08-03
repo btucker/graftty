@@ -67,36 +67,47 @@ struct SocketServerBufferCapTests {
         let fd = Self.connect(to: socketPath)
         defer { close(fd) }
 
-        // Each message: 44 bytes. With cap at 4 KB, the server reads at
-        // most ~93 messages worth before stopping. We'll send 500
-        // messages (~22 KB, well past the cap) and assert the server
-        // processed fewer than all of them — pin that the cap kicked
-        // in.
-        for i in 0..<500 {
-            let line = #"{"type":"notify","path":"/tmp/wt","text":"\#(i)"}"# + "\n"
-            line.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        let lines = (0..<500).map { index in
+            #"{"type":"notify","path":"/tmp/wt","text":"\#(index)"}"# + "\n"
         }
-        // Deliberately no explicit `close(fd)` here — the `defer` above
-        // runs the single close at function exit. An earlier version
-        // closed twice (explicit here + defer), and the kernel could
-        // reuse the freed FD number during the 400 ms sleep below —
-        // including for a NIO-owned accepted-child-channel FD in a
-        // concurrent `WebServer` suite. The defer's second `close` then
-        // closed NIO's FD out from under it, tripping NIO's EBADF
-        // precondition and crashing the whole test binary. The server's
-        // 4 KB per-client cap (ATTN-2.11) already stops its read loop
-        // without needing EOF from us, so the explicit close was
-        // redundant for the test's actual purpose.
+        let payload = lines.joined()
+        let cappedPayload = Data(payload.utf8.prefix(server.maxPerClientBytes))
+        let expectedTexts = String(decoding: cappedPayload, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { line -> String? in
+                guard let message = try? JSONDecoder().decode(
+                    NotificationMessage.self,
+                    from: Data(line.utf8)
+                ), case .notify(_, let text, _, _) = message else {
+                    return nil
+                }
+                return text
+            }
 
-        try await Task.sleep(for: .milliseconds(400))
+        // The server may close while this deliberately oversized write is in
+        // progress. SO_NOSIGPIPE above turns that expected condition into a
+        // normal EPIPE result.
+        try? SocketIO.writeAll(fd: fd, string: payload)
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        var byte: UInt8 = 0
+        #expect(Darwin.read(fd, &byte, 1) == 0)
 
-        #expect(
-            received.value.count < 500,
-            "server must stop reading at the per-client cap; got \(received.value.count) messages"
-        )
-        #expect(
-            !received.value.isEmpty,
-            "messages that fit within the cap should still be processed"
-        )
+        // Every onMessage block was queued before the worker closed its fd.
+        // Queue one sentinel behind them instead of sleeping an arbitrary time.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+
+        #expect(received.value == expectedTexts)
     }
 }
