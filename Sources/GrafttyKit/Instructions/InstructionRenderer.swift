@@ -16,8 +16,11 @@ public struct InstructionAudience: Sendable, Equatable {
 /// @spec INSTR-6.1
 /// Three blocks, each omitted when empty: the viewer's own stack, the shared
 /// portions of files applying to each other worktree, and files applying to no
-/// worktree at all. The repo-wide `GRAFTTY.md` is excluded from the
-/// other-worktrees block since every agent already carries it.
+/// worktree at all. Each file's shared text appears at most once in the whole
+/// output — a file already surfaced in the viewer's own stack (including the
+/// repo-wide `GRAFTTY.md`, which every agent carries) is skipped everywhere
+/// else, and a file shared between two other worktrees renders under the
+/// first one only.
 public enum InstructionRenderer {
 
     public static func render(
@@ -43,13 +46,11 @@ public enum InstructionRenderer {
         var otherEntries: [String] = []
         for other in others {
             let shared = paths(for: other.key)
-                .filter { $0 != rootPath }
                 .compactMap { path -> String? in
-                    guard let doc = set.documents[path], !doc.shared.isEmpty else {
-                        return nil
-                    }
+                    guard !claimed.contains(path) else { return nil }
+                    guard let text = sharedText(at: path, in: set) else { return nil }
                     claimed.insert(path)
-                    return doc.shared
+                    return text
                 }
             guard !shared.isEmpty else { continue }
             otherEntries.append(
@@ -64,10 +65,8 @@ public enum InstructionRenderer {
             .filter { !claimed.contains($0) }
             .sorted()
             .compactMap { path -> String? in
-                guard let doc = set.documents[path], !doc.shared.isEmpty else {
-                    return nil
-                }
-                return "- `.graftty/\(path)`:\n\n\(doc.shared)"
+                guard let text = sharedText(at: path, in: set) else { return nil }
+                return "- `.graftty/\(path)`:\n\n\(text)"
             }
         if !unmatched.isEmpty {
             blocks.append(
@@ -88,5 +87,13 @@ public enum InstructionRenderer {
     private static func paths(for key: String?) -> [String] {
         guard let key, !key.isEmpty else { return [rootPath] }
         return InstructionChain.paths(forKey: key)
+    }
+
+    /// The shared text at `path`, or nil when the file is undocumented or its
+    /// shared portion is empty (a file with private-only content has nothing
+    /// to contribute to a block that only ever shows shared text).
+    private static func sharedText(at path: String, in set: InstructionSet) -> String? {
+        guard let doc = set.documents[path], !doc.shared.isEmpty else { return nil }
+        return doc.shared
     }
 }

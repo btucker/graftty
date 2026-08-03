@@ -21,7 +21,8 @@ public enum InstructionSessionText {
 
         let defaultBranch = await GitOriginDefaultBranch.resolve(
             repoPath: team.repoPath,
-            timeout: InstructionStore.gitTimeout
+            deadline: GitCommandDeadline(timeout: InstructionStore.gitTimeout),
+            using: executor
         )
 
         func audience(_ member: TeamMember) -> InstructionAudience {

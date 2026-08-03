@@ -12,7 +12,7 @@ private func set(_ pairs: [String: String]) -> InstructionSet {
     return InstructionSet(documents: documents, files: files)
 }
 
-@Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, omitting any block that is empty and the whole section when nothing applies.")
+@Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, omitting any block that is empty and the whole section when nothing applies.")
 struct InstructionRendererTests {
 
     @Test func ownStackConcatenatesRootThroughLeafWithPrivateText() {
@@ -76,6 +76,18 @@ struct InstructionRendererTests {
             set: set(["GRAFTTY.md": "repo wide"])
         )
         #expect(text.contains("repo wide"))
+    }
+
+    @Test func sharedAncestorFileIsNotRepeatedForAnotherWorktree() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "research/vector-db", displayName: "vector-db"),
+            others: [.init(key: "research/api", displayName: "api")],
+            set: set([
+                "research/GRAFTTY.md": "research team charter",
+            ])
+        )
+        let occurrences = text.components(separatedBy: "research team charter").count - 1
+        #expect(occurrences == 1)
     }
 
     @Test func nothingApplicableRendersAnEmptySection() {
