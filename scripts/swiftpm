@@ -1,0 +1,92 @@
+#!/bin/bash
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: scripts/swiftpm <build|test|run> [arguments]
+
+Runs SwiftPM with Graftty's serialized, shared build directory. This wrapper
+is intended for local agent builds across Git worktrees; CI and release builds
+continue to use worktree-local .build directories.
+USAGE
+}
+
+LOCK_HELD=0
+if [[ "${1:-}" == '--graftty-swiftpm-lock-held' ]]; then
+  LOCK_HELD=1
+  shift
+fi
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 64
+fi
+
+SUBCOMMAND="$1"
+shift
+case "$SUBCOMMAND" in
+  build|test|run) ;;
+  *)
+    echo "unsupported SwiftPM subcommand: $SUBCOMMAND" >&2
+    usage
+    exit 64
+    ;;
+esac
+
+for argument in "$@"; do
+  if [[ "$argument" == '--' ]]; then
+    break
+  fi
+  case "$argument" in
+    --skip-build)
+      echo '--skip-build is unsafe with the shared cross-worktree build directory' >&2
+      exit 64
+      ;;
+    --package-path|--package-path=*|--scratch-path|--scratch-path=*|--build-path|--build-path=*)
+      echo "$argument conflicts with the shared cross-worktree build directory" >&2
+      exit 64
+      ;;
+    --auto-index-store|--enable-index-store)
+      echo "$argument conflicts with the shared build's disabled index store" >&2
+      exit 64
+      ;;
+  esac
+done
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo 'scripts/swiftpm must be run from a Graftty Git worktree' >&2
+  exit 64
+}
+
+if [[ -n "${GRAFTTY_SWIFTPM_SHARED_DIR:-}" ]]; then
+  CACHE_ROOT="$GRAFTTY_SWIFTPM_SHARED_DIR"
+elif [[ -n "${HOME:-}" ]]; then
+  CACHE_ROOT="$HOME/Library/Caches/Graftty/SwiftPM"
+else
+  echo 'HOME or GRAFTTY_SWIFTPM_SHARED_DIR must identify the shared cache' >&2
+  exit 64
+fi
+case "$CACHE_ROOT" in
+  /*) ;;
+  *)
+    echo "shared SwiftPM cache path must be absolute: $CACHE_ROOT" >&2
+    exit 64
+    ;;
+esac
+
+BUILD_DIR="$CACHE_ROOT/build"
+LOCK_FILE="$CACHE_ROOT/build.lock"
+mkdir -p "$CACHE_ROOT"
+
+if [[ "$LOCK_HELD" != 1 ]]; then
+  echo "→ shared SwiftPM build: $BUILD_DIR" >&2
+  exec /usr/bin/lockf -k "$LOCK_FILE" \
+    "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
+fi
+
+exec swift "$SUBCOMMAND" \
+  --package-path "$REPO_ROOT" \
+  --scratch-path "$BUILD_DIR" \
+  --disable-index-store \
+  "$@"

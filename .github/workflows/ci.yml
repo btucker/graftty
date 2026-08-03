@@ -62,6 +62,10 @@ jobs:
           swift --version
           xcodebuild -version
 
+      - name: Test shared SwiftPM wrapper
+        timeout-minutes: 2
+        run: scripts/test-swiftpm-shared.sh
+
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
