@@ -9,21 +9,22 @@ import Foundation
 /// its team context and queued messages.
 public enum InstructionSessionText {
 
+    /// `defaultBranch` is the main checkout's instruction key. It is supplied
+    /// by the caller from in-memory app state rather than resolved here:
+    /// `GitOriginDefaultBranch.resolve` costs up to four subprocesses when
+    /// `refs/remotes/origin/HEAD` is missing, which the session-start budget
+    /// cannot afford. A `nil` value means the main checkout gets the root
+    /// file only.
     public static func render(
         team: TeamView,
         viewer: TeamMember,
+        defaultBranch: String?,
         using executor: CLIExecutor? = nil
     ) async -> String {
         guard let set = await InstructionStore.load(
             repoPath: team.repoPath,
             using: executor
         ) else { return "" }
-
-        let defaultBranch = await GitOriginDefaultBranch.resolve(
-            repoPath: team.repoPath,
-            deadline: GitCommandDeadline(timeout: InstructionStore.gitTimeout),
-            using: executor
-        )
 
         func audience(_ member: TeamMember) -> InstructionAudience {
             InstructionAudience(
