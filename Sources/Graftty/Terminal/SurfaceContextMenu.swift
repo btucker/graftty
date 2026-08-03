@@ -1,5 +1,7 @@
 import AppKit
+import GrafttyCommandUI
 import GrafttyKit
+import GrafttyProtocol
 import GhosttyKit
 
 // MARK: - Context Menu
@@ -80,10 +82,26 @@ extension SurfaceNSView {
         }
 
         menu.addItem(.separator())
-        add("Split Right", #selector(splitRight(_:)), "rectangle.righthalf.inset.filled")
-        add("Split Left", #selector(splitLeft(_:)), "rectangle.leadinghalf.inset.filled")
-        add("Split Down", #selector(splitDown(_:)), "rectangle.bottomhalf.inset.filled")
-        add("Split Up", #selector(splitUp(_:)), "rectangle.tophalf.inset.filled")
+        add(
+            "Split Right",
+            #selector(splitRight(_:)),
+            GhosttySplitDirection.right.filledPaneSystemImageName
+        )
+        add(
+            "Split Left",
+            #selector(splitLeft(_:)),
+            GhosttySplitDirection.left.filledPaneSystemImageName
+        )
+        add(
+            "Split Down",
+            #selector(splitDown(_:)),
+            GhosttySplitDirection.down.filledPaneSystemImageName
+        )
+        add(
+            "Split Up",
+            #selector(splitUp(_:)),
+            GhosttySplitDirection.up.filledPaneSystemImageName
+        )
 
         // TERM-8.10: surface the same Move-to-worktree section the
         // sidebar pane row offers (PWD-1.1 / PWD-1.2 / PWD-1.3),

@@ -7,7 +7,8 @@ import SwiftUI
 /// @spec IPAD-1.1
 /// Regular-width iPad layout. NavigationSplitView with a worktree
 /// sidebar (host header + WorktreeListContent) and a detail column
-/// showing the focused pane via SingleSessionView.
+/// showing the selected worktree's actual live terminal panes in the same
+/// split tree supplied by the Mac.
 public struct IPadRootLayout: View {
     public static let paintsTerminalBackgroundBehindSidebar = true
 
@@ -111,6 +112,10 @@ public struct IPadRootLayout: View {
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
                             includeRemoteWorktrees: coordinator.isPaired(host),
+                            isReadyToLoad: LiveSessionReadiness.isActive(
+                                scene: scenePhase,
+                                gateUnlocked: gate.isUnlocked
+                            ),
                             remoteConnectionProvider: makeRemoteConnectionProvider(
                                 coordinator: coordinator,
                                 host: host,
@@ -177,7 +182,10 @@ public struct IPadRootLayout: View {
                     appState: appState,
                     coordinator: coordinator,
                     paneEnvironment: paneEnvironment,
-                    ghosttyCommandContext: ghosttyCommandContext
+                    ghosttyCommandContext: ghosttyCommandContext,
+                    onSelectPane: { sessionName in
+                        selectPane(sessionName: sessionName)
+                    }
                 )
                 .background(appState.theme.background)
             }
@@ -231,6 +239,14 @@ public struct IPadRootLayout: View {
     static func resolveSelectedHost(from hosts: [Host], selectedHostId: UUID?) -> Host? {
         guard let id = selectedHostId else { return nil }
         return hosts.first { $0.id == id }
+    }
+
+    static func resolveSelectedWorktree(
+        from worktrees: [WorktreePanes],
+        selectedPath: String?
+    ) -> WorktreePanes? {
+        guard let selectedPath else { return nil }
+        return worktrees.first { $0.path == selectedPath }
     }
 
     static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
@@ -389,6 +405,15 @@ public struct IPadRootLayout: View {
         applySelectedMobileCloseProjection()
     }
 
+    private func selectPane(sessionName: String) {
+        guard let leaf = selectedWorktreeLayout?.leaves.first(where: {
+            $0.sessionName == sessionName
+        }) else {
+            return
+        }
+        selectPane(leaf)
+    }
+
     private func selectWorktree(path: String) {
         guard let wt = appState.latestWorktrees.first(where: { $0.path == path }) else { return }
         selectWorktree(wt)
@@ -427,8 +452,10 @@ public struct IPadRootLayout: View {
     }
 
     private var selectedWorktreeLayout: PaneLayoutNode? {
-        guard let path = appState.selectedWorktreePath else { return nil }
-        return appState.latestWorktrees.first { $0.path == path }?.layout
+        Self.resolveSelectedWorktree(
+            from: appState.latestWorktrees,
+            selectedPath: appState.selectedWorktreePath
+        )?.layout
     }
 
     private func applySelectedMobileCloseProjection() {
@@ -1274,9 +1301,17 @@ private struct IPadDetailColumn: View {
     /// group on `paneControlClient` availability.
     let paneEnvironment: PaneEnvironment
     let ghosttyCommandContext: MobileGhosttyCommandContext
+    let onSelectPane: (String) -> Void
 
     var body: some View {
         content
+            // @spec IPAD-2.8
+            // Match the Mac window: the terminal tree owns the complete
+            // detail-column rectangle and extends beneath transparent
+            // navigation chrome. Split controls stay real toolbar commands,
+            // but float over the panes instead of shrinking them.
+            .ignoresSafeArea(.container, edges: .top)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole
                 // `ToolbarItem` (not just its body) so iOS doesn't
@@ -1297,22 +1332,38 @@ private struct IPadDetailColumn: View {
                         Button {
                             ghosttyCommandContext.perform(.ghostty(.newSplitRight))
                         } label: {
-                            Label("Split Right", systemImage: "rectangle.split.2x1")
+                            Label(
+                                "Split Right",
+                                systemImage: GhosttySplitDirection.right
+                                    .filledPaneSystemImageName
+                            )
                         }
                         Button {
                             ghosttyCommandContext.perform(.ghostty(.newSplitDown))
                         } label: {
-                            Label("Split Down", systemImage: "rectangle.split.1x2")
+                            Label(
+                                "Split Down",
+                                systemImage: GhosttySplitDirection.down
+                                    .filledPaneSystemImageName
+                            )
                         }
                         Button {
                             ghosttyCommandContext.perform(.ghostty(.newSplitLeft))
                         } label: {
-                            Label("Split Left", systemImage: "rectangle.split.2x1")
+                            Label(
+                                "Split Left",
+                                systemImage: GhosttySplitDirection.left
+                                    .filledPaneSystemImageName
+                            )
                         }
                         Button {
                             ghosttyCommandContext.perform(.ghostty(.newSplitUp))
                         } label: {
-                            Label("Split Up", systemImage: "rectangle.split.1x2")
+                            Label(
+                                "Split Up",
+                                systemImage: GhosttySplitDirection.up
+                                    .filledPaneSystemImageName
+                            )
                         }
                     }
                 }
@@ -1327,27 +1378,36 @@ private struct IPadDetailColumn: View {
                 systemImage: "server.rack",
                 description: Text("Tap the chevron at the top of the sidebar.")
             )
-        } else if let path = appState.selectedWorktreePath,
-                  let pane = appState.focusedPaneId,
-                  let host {
-            SingleSessionView(
-                step: SessionStep(host: host, sessionName: pane, title: pane),
-                navigationPath: .constant(NavigationPath()),
-                isFullScreen: false,
+        } else if let host, let worktree = selectedWorktree {
+            MultiPaneDetailView(
+                host: host,
+                worktree: worktree,
                 coordinator: coordinator,
-                externalPendingFocusRequests: appState.pendingFocusRequests,
-                onExternalFocusRequestsConsumed: { appState.consumeFocusRequests() },
+                theme: appState.theme,
+                focusedPaneId: appState.focusedPaneId,
+                pendingFocusRequests: appState.pendingFocusRequests,
+                onFocusRequestsConsumed: {
+                    appState.consumeFocusRequests()
+                },
                 autoTakeControlRequestCount: appState.ownershipRequestCount,
                 autoTakeControlPolicy: appState.autoTakeControlPolicy,
-                ghosttyCommandContext: ghosttyCommandContext
+                ghosttyCommandContext: ghosttyCommandContext,
+                onSelectPane: onSelectPane
             )
-            .id("\(host.id)-\(path)-\(pane)")
+            .id("\(host.id)-\(worktree.path)")
         } else {
             ContentUnavailableView(
                 "Pick a worktree",
                 systemImage: "list.bullet.indent"
             )
         }
+    }
+
+    private var selectedWorktree: WorktreePanes? {
+        IPadRootLayout.resolveSelectedWorktree(
+            from: appState.latestWorktrees,
+            selectedPath: appState.selectedWorktreePath
+        )
     }
 
     private var shouldShowAttentionDot: Bool {

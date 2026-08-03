@@ -486,7 +486,16 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             // type's concurrency contract, not from this Task's thread.
             loop.execute { [weak self] in
                 guard let self, !self.isShuttingDown else { return }
-                channel.close(promise: nil)
+                // A live child stream ending is terminal process EOF, not a
+                // transport interruption. Tell the SSH client explicitly
+                // before closing so it does not apply network reconnect policy
+                // and accidentally recreate the zmx session that just exited.
+                let exit = SSHChannelRequestEvent.ExitStatus(exitStatus: 0)
+                let sent = loop.makePromise(of: Void.self)
+                sent.futureResult.whenComplete { _ in
+                    channel.close(promise: nil)
+                }
+                channel.pipeline.triggerUserOutboundEvent(exit, promise: sent)
             }
         }
         inboundForwardingTask = task

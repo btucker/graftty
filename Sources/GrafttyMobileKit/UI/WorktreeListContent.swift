@@ -16,6 +16,7 @@ public struct WorktreeListContent: View {
     @State private var refreshError: String?
     @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
     @State private var selectionIntentGeneration: UInt64 = 0
+    @State private var loadedHostID: UUID?
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -58,6 +59,11 @@ public struct WorktreeListContent: View {
     /// bucket via `theme.paneTitle(isFocusedPane: true, …)`.
     public let focusedPaneId: String?
     public let includeRemoteWorktrees: Bool
+    /// Initial authenticated loading is deferred until the scene is active
+    /// and the biometric connection gate is open. Keying the load task on
+    /// this value makes unlock trigger the first fetch automatically instead
+    /// of leaving the failed pre-unlock attempt behind a Refresh button.
+    public let isReadyToLoad: Bool
     public let remoteConnectionProvider: RemoteConnectionProvider?
     public let remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?
     public let onSelect: (WorktreePanes) -> Void
@@ -71,6 +77,7 @@ public struct WorktreeListContent: View {
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
         includeRemoteWorktrees: Bool = false,
+        isReadyToLoad: Bool = true,
         remoteConnectionProvider: RemoteConnectionProvider? = nil,
         remoteSnapshotProvider: RemoteWorktreeSnapshotProvider? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
@@ -83,6 +90,7 @@ public struct WorktreeListContent: View {
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
         self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.isReadyToLoad = isReadyToLoad
         self.remoteConnectionProvider = remoteConnectionProvider
         self.remoteSnapshotProvider = remoteSnapshotProvider
         self.onSelect = onSelect
@@ -263,10 +271,25 @@ public struct WorktreeListContent: View {
                 Task { await handleCreated(response) }
             }
         }
-        // Keyed on host.id so switching hosts via `HostMenu` (IPAD-6.1)
-        // tears down the previous fetch and re-runs `load()` for the new
-        // host, refreshing worktrees and theme.
-        .task(id: host.id) { await load() }
+        // @spec IOS-4.30
+        // The readiness bit is part of the identity so an initial task that
+        // mounted behind the biometric gate re-runs as soon as unlock makes
+        // authenticated connections available. A successful host is latched
+        // to avoid replacing the list with a spinner after every transient
+        // `.inactive` → `.active` cycle.
+        .task(id: WorktreeListLoadKey(
+            hostID: host.id,
+            isReady: isReadyToLoad
+        )) {
+            guard Self.shouldAutomaticallyLoad(
+                hostID: host.id,
+                loadedHostID: loadedHostID,
+                isReady: isReadyToLoad
+            ) else {
+                return
+            }
+            await load()
+        }
         .task(id: externalRefreshToken) {
             guard externalRefreshToken != 0 else { return }
             await refresh()
@@ -284,9 +307,10 @@ public struct WorktreeListContent: View {
         }
         .task(id: RemotePollingKey(
             hostID: host.id,
-            enabled: includeRemoteWorktrees
+            enabled: includeRemoteWorktrees,
+            isReady: isReadyToLoad
         )) {
-            guard includeRemoteWorktrees else { return }
+            guard includeRemoteWorktrees, isReadyToLoad else { return }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(1))
@@ -296,9 +320,7 @@ public struct WorktreeListContent: View {
                         includeRemoteWorktrees: true
                     )
                     guard !Task.isCancelled else { return }
-                    state = .loaded(list)
-                    refreshError = nil
-                    onListChanged(list)
+                    applyLoadedList(list)
                 } catch is CancellationError {
                     return
                 } catch {
@@ -335,9 +357,7 @@ public struct WorktreeListContent: View {
                 includeRemoteWorktrees: includeRemoteWorktrees,
                 onProgress: onProgress
             )
-            state = .loaded(list)
-            refreshError = nil
-            onListChanged(list)
+            applyLoadedList(list)
         } catch WorktreePanesFetcher.FetchError.forbidden {
             applyRefreshFailure("Not authorized — is this device on your tailnet?")
         } catch WorktreePanesFetcher.FetchError.http(let code) {
@@ -366,6 +386,40 @@ public struct WorktreeListContent: View {
             return current
         }
         return .error(message)
+    }
+
+    static func shouldAutomaticallyLoad(
+        hostID: UUID,
+        loadedHostID: UUID?,
+        isReady: Bool
+    ) -> Bool {
+        isReady && loadedHostID != hostID
+    }
+
+    /// @spec IOS-4.31
+    /// The authenticated panes subscription is sampled once per second, but
+    /// most samples are identical. Suppressing those no-op writes keeps the
+    /// live multi-pane hierarchy and its `SessionClient`s out of SwiftUI's
+    /// update path until pane metadata or topology actually changes.
+    private func applyLoadedList(_ list: [WorktreePanes]) {
+        let next = LoadState.loaded(list)
+        let changed = Self.shouldPublishLoadedList(
+            current: state,
+            next: list
+        )
+        state = next
+        loadedHostID = host.id
+        refreshError = nil
+        if changed {
+            onListChanged(list)
+        }
+    }
+
+    static func shouldPublishLoadedList(
+        current: LoadState,
+        next: [WorktreePanes]
+    ) -> Bool {
+        current != .loaded(next)
     }
 
     private func fetchWorktrees(
@@ -661,6 +715,12 @@ public struct WorktreeListContent: View {
 private struct RemotePollingKey: Hashable {
     let hostID: UUID
     let enabled: Bool
+    let isReady: Bool
+}
+
+private struct WorktreeListLoadKey: Hashable {
+    let hostID: UUID
+    let isReady: Bool
 }
 
 private struct WorktreeBlock: View {

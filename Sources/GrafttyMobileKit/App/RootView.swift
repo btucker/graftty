@@ -70,9 +70,9 @@ public struct RootView: View {
                 // Control Center pulls / app-switcher / call banners, where
                 // tearing down every negotiated connection would force a
                 // needless full re-negotiation on the very next frame —
-                // the per-view `shouldTearDown` branches below still pause
-                // (client.stop() / previews.stopAll()) on `.inactive` per
-                // IOS-10.1, unchanged.
+                // Per-view terminal channels also survive `.inactive` per
+                // IOS-10.1, avoiding churn while the shared transport is
+                // intentionally kept alive.
                 updateConnectionAccess()
             case .active:
                 gate.applicationWillEnterForeground()
@@ -205,9 +205,12 @@ final class TerminalContainerBox {
 }
 
 /// Fullscreen terminal view for one session. Owns the authenticated terminal
-/// channel and `InMemoryTerminalSession`; both are torn down on `.background`
-/// and re-dialed on `.active` once the gate is unlocked.
+/// channel and `InMemoryTerminalSession`; both survive transient `.inactive`
+/// phases, but are torn down on `.background` and re-dialed on `.active` once
+/// the gate is unlocked.
 struct SingleSessionView: View {
+    static let sessionRole: SessionClient.Role = .fullscreen
+
     let step: SessionStep
     @Binding var navigationPath: NavigationPath
     /// True for the iPhone compact path (fullscreen route via
@@ -233,6 +236,15 @@ struct SingleSessionView: View {
     let onExternalFocusRequestsConsumed: (() -> Void)?
     let autoTakeControlRequestCount: Int
     let ghosttyCommandContext: MobileGhosttyCommandContext?
+    /// Regular-width iPad mounts one real `SingleSessionView` per pane. Only
+    /// the selected pane may own UIKit keyboard input and app shortcuts.
+    let isPaneFocused: Bool
+    /// Embedded panes let their shared multi-pane parent manage the keyboard
+    /// inset once for the whole split tree.
+    let isEmbeddedPane: Bool
+    /// Fired from the terminal's UIKit touch observer before focus/input is
+    /// attempted, allowing the split tree to select this leaf first.
+    let onPaneInteraction: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -307,8 +319,11 @@ struct SingleSessionView: View {
         clientIsOwner
     }
 
-    static func isTerminalKeyboardEligible(clientIsOwner: Bool) -> Bool {
-        clientIsOwner
+    static func isTerminalKeyboardEligible(
+        clientIsOwner: Bool,
+        isPaneFocused: Bool = true
+    ) -> Bool {
+        clientIsOwner && isPaneFocused
     }
 
     /// Reference type on purpose: the fulfillment latch must outlive any one
@@ -381,7 +396,10 @@ struct SingleSessionView: View {
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
         autoTakeControlRequestCount: Int = 0,
         autoTakeControlPolicy: AutoTakeControlPolicy = AutoTakeControlPolicy(),
-        ghosttyCommandContext: MobileGhosttyCommandContext? = nil
+        ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
+        isPaneFocused: Bool = true,
+        isEmbeddedPane: Bool = false,
+        onPaneInteraction: (() -> Void)? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -392,6 +410,9 @@ struct SingleSessionView: View {
         self.autoTakeControlRequestCount = autoTakeControlRequestCount
         self.autoTakeControlPolicy = autoTakeControlPolicy
         self.ghosttyCommandContext = ghosttyCommandContext
+        self.isPaneFocused = isPaneFocused
+        self.isEmbeddedPane = isEmbeddedPane
+        self.onPaneInteraction = onPaneInteraction
     }
 
     var body: some View {
@@ -401,8 +422,17 @@ struct SingleSessionView: View {
             // the terminal's color instead of system chrome. Ignores all
             // safe-area regions (incl. `.keyboard`) so it bleeds the full
             // screen; the keyboard-padded content sits on top of it.
-            themeBackgroundColor.ignoresSafeArea()
+            terminalBackground
             sessionView
+        }
+    }
+
+    @ViewBuilder
+    private var terminalBackground: some View {
+        if isFullScreen {
+            themeBackgroundColor.ignoresSafeArea()
+        } else {
+            themeBackgroundColor
         }
     }
 
@@ -424,7 +454,7 @@ struct SingleSessionView: View {
                         // lands at the keyboard top and the terminal inherently
                         // reserves its height — no PreferenceKey measurement, no
                         // overlay/keyboard-avoidance mismatch.
-                        if isKeyboardVisible {
+                        if isKeyboardVisible && isPaneFocused {
                             terminalChrome
                         }
                     }
@@ -437,7 +467,7 @@ struct SingleSessionView: View {
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
         // avoidance is unreliable when UITerminalView is the focused
         // responder, so we drive it ourselves.
-        .padding(.bottom, keyboardBottomInset)
+        .padding(.bottom, isEmbeddedPane ? 0 : keyboardBottomInset)
         // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
         // (under the notch, home indicator, landscape bands) and hides
         // the navigation bar so libghostty's background shows through.
@@ -465,7 +495,7 @@ struct SingleSessionView: View {
                 // float over the edge-to-edge terminal. When the keyboard is up
                 // the bar is laid out in-flow instead (see the `.live` VStack),
                 // so the terminal reserves its height.
-                if connection == .live, !isKeyboardVisible {
+                if connection == .live, !isKeyboardVisible, isPaneFocused {
                     terminalChrome
                 }
             }
@@ -536,6 +566,22 @@ struct SingleSessionView: View {
             .onChange(of: client?.isOwner) { _, _ in
                 attemptAutoTakeControl()
             }
+            .onChange(of: client?.connectionState) { _, state in
+                guard state == .ended else { return }
+                client?.stop()
+                client = nil
+                connection = .ended
+            }
+            .onChange(of: isPaneFocused) { _, isFocused in
+                if isFocused {
+                    attemptAutoTakeControl()
+                    if client?.isOwner == true, keyboardAllowed {
+                        focusRequestCount &+= 1
+                    }
+                } else {
+                    paneContainerBox.view?.terminalView.resignFirstResponder()
+                }
+            }
     }
 
     private var dialKey: DialKey {
@@ -556,10 +602,8 @@ struct SingleSessionView: View {
             client = nil
             if connection != .ended { connection = .suspended }
             // RootView's coordinator access gate tears down the negotiated
-            // connection only on `.background`, not here — this branch also
-            // fires on `.inactive` (IOS-10.1), where the shared connection
-            // must survive. The foreground provider re-negotiates after a
-            // background eviction.
+            // connection on the same `.background` transition. The
+            // foreground provider re-negotiates after that eviction.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -609,6 +653,7 @@ struct SingleSessionView: View {
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,
+            role: Self.sessionRole,
             // REMOTE-2.1 (substance; the spec ID itself lands in W4):
             // `makeRemoteConnectionProvider` captures the COORDINATOR +
             // host, not a pre-resolved connection — every dial
@@ -646,10 +691,12 @@ struct SingleSessionView: View {
         ContentUnavailableView {
             Label("Session no longer running", systemImage: "xmark.circle")
         } description: {
-            Text("This pane was stopped while the app was in the background.")
+            Text("This pane's process exited.")
         } actions: {
-            Button("Back to worktrees", action: popToParent)
-                .buttonStyle(.borderedProminent)
+            if !isEmbeddedPane {
+                Button("Back to worktrees", action: popToParent)
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .background(.regularMaterial)
     }
@@ -780,7 +827,7 @@ struct SingleSessionView: View {
     }
 
     private func attemptAutoTakeControl() {
-        guard let client else { return }
+        guard isPaneFocused, let client else { return }
         if autoTakeControlPolicy.shouldTakeControl(
             requestCount: autoTakeControlRequestCount,
             isOwner: client.isOwner,
@@ -887,15 +934,21 @@ struct SingleSessionView: View {
                 consumedFocusRequestCount = focusRequestCount
                 onExternalFocusRequestsConsumed?()
             },
-            committedSoftwareInput: Self.isTerminalKeyboardEligible(clientIsOwner: client.isOwner) ? .init(
+            committedSoftwareInput: Self.isTerminalKeyboardEligible(
+                clientIsOwner: client.isOwner,
+                isPaneFocused: isPaneFocused
+            ) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
-            hardwareKeyboardCommands: ghosttyCommandContext.map {
-                MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
-            } ?? [],
+            hardwareKeyboardCommands: isPaneFocused ? ghosttyCommandContext.map {
+                    MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
+                } ?? [] : [],
             renderPace: client.renderPace,
-            onUserInteraction: { [weak client] in client?.wakeRenderer() },
+            onUserInteraction: { [weak client] in
+                client?.wakeRenderer()
+                onPaneInteraction?()
+            },
             preferredInterfaceStyle: preferredStyle,
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
             // the application shall read `UIPasteboard.general.string` and, when
@@ -946,7 +999,7 @@ struct SingleSessionView: View {
                     wasOwner: wasOwner,
                     isOwner: isOwner,
                     keyboardAllowed: keyboardAllowed
-                ) {
+                ), isPaneFocused {
                     focusRequestCount += 1
                 }
             }

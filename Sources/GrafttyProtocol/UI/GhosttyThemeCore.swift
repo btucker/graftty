@@ -20,14 +20,26 @@ public struct GhosttyThemeColors: Sendable, Equatable {
 
     public let backgroundRGB: RGB
     public let foregroundRGB: RGB
+    public let unfocusedSplitFillRGB: RGB
+    public let unfocusedSplitOpacity: Double
 
-    public init(backgroundRGB: RGB, foregroundRGB: RGB) {
+    public init(
+        backgroundRGB: RGB,
+        foregroundRGB: RGB,
+        unfocusedSplitFillRGB: RGB? = nil,
+        unfocusedSplitOpacity: Double = 0.7
+    ) {
         self.backgroundRGB = backgroundRGB
         self.foregroundRGB = foregroundRGB
+        self.unfocusedSplitFillRGB = unfocusedSplitFillRGB ?? backgroundRGB
+        self.unfocusedSplitOpacity = min(1, max(0.15, unfocusedSplitOpacity))
     }
 
     public var background: Color { Self.color(backgroundRGB) }
     public var foreground: Color { Self.color(foregroundRGB) }
+    public var unfocusedSplitFill: Color {
+        Self.color(unfocusedSplitFillRGB)
+    }
     public var sidebarBackground: Color { Self.color(sidebarBackgroundRGB) }
 
     public var sidebarBackgroundRGB: RGB {

@@ -64,9 +64,9 @@ public struct WorktreeDetailView: View {
             preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
             baseConfig = text ?? ""
         }
-        // Re-keys on layout / scene-phase / gate transitions so we tear
-        // the pool down on `.background` and rebuild on `.active +
-        // unlocked`.
+        // Re-keys on layout / scene-phase / gate transitions. Transient
+        // `.inactive` phases preserve the pool; `.background` tears it down
+        // and `.active + unlocked` rebuilds it.
         .task(id: PoolKey(layout: worktree.layout, scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
             await driveLifecycle()
         }
@@ -85,9 +85,8 @@ public struct WorktreeDetailView: View {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
             // RootView's coordinator access gate tears down the negotiated
-            // connection only on `.background`, not here — this branch also
-            // fires on `.inactive`, where the shared connection must survive.
-            // The pool re-resolves a fresh connection after backgrounding.
+            // connection on the same `.background` transition. The pool
+            // re-resolves a fresh connection after foregrounding.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }

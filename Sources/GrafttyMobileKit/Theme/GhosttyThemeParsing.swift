@@ -12,6 +12,8 @@ public extension GhosttyThemeColors {
     init(parsingConfigText text: String) {
         var background: RGB?
         var foreground: RGB?
+        var unfocusedSplitFill: RGB?
+        var unfocusedSplitOpacity: Double?
 
         for line in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -25,14 +27,29 @@ public extension GhosttyThemeColors {
                 if let rgb = Self.parseHexColor(value) { background = rgb }
             case "foreground":
                 if let rgb = Self.parseHexColor(value) { foreground = rgb }
+            case "unfocused-split-fill":
+                if let rgb = Self.parseHexColor(value) {
+                    unfocusedSplitFill = rgb
+                }
+            case "unfocused-split-opacity":
+                if let opacity = Double(value) {
+                    unfocusedSplitOpacity = opacity
+                }
             default:
                 continue
             }
         }
 
+        let resolvedBackground = background
+            ?? GhosttyThemeColors.fallback.backgroundRGB
         self.init(
-            backgroundRGB: background ?? GhosttyThemeColors.fallback.backgroundRGB,
-            foregroundRGB: foreground ?? GhosttyThemeColors.fallback.foregroundRGB
+            backgroundRGB: resolvedBackground,
+            foregroundRGB: foreground
+                ?? GhosttyThemeColors.fallback.foregroundRGB,
+            unfocusedSplitFillRGB: unfocusedSplitFill
+                ?? resolvedBackground,
+            unfocusedSplitOpacity: unfocusedSplitOpacity
+                ?? GhosttyThemeColors.fallback.unfocusedSplitOpacity
         )
     }
 

@@ -203,6 +203,7 @@ public final class SessionClient {
     public enum ConnectionState: Equatable, Sendable {
         case live
         case reconnecting(attempt: Int)
+        case ended
     }
 
     /// @spec IOS-7.4
@@ -366,7 +367,14 @@ public final class SessionClient {
                 } catch is CancellationError {
                     return
                 } catch {
-                    // network error — fall through to backoff
+                    if Self.isTerminalSessionEnded(error) {
+                        // Process EOF is final for this pane. Retrying an SSH
+                        // `zmx attach` here can recreate the exited session
+                        // before the host's pane snapshot removes it.
+                        self.connectionState = .ended
+                        return
+                    }
+                    // Network error — fall through to backoff.
                 }
                 if self.stopped { return }
                 let delayIndex = min(attempt, self.backoffSchedule.count - 1)
@@ -386,6 +394,14 @@ public final class SessionClient {
                 _ = await reopenTask.value
             }
         }
+    }
+
+    private nonisolated static func isTerminalSessionEnded(_ error: any Error) -> Bool {
+        guard let error = error as? TerminalSessionClient.ClientError else {
+            return false
+        }
+        if case .sessionEnded = error { return true }
+        return false
     }
 
     /// Spawns a `@MainActor` Task that resolves the factory and assigns

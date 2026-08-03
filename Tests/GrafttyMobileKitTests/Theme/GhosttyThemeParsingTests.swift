@@ -78,5 +78,20 @@ struct GhosttyThemeParsingTests {
         let theme = GhosttyThemeColors(parsingConfigText: text)
         #expect(theme.backgroundRGB.r == 1.0)
     }
+
+    @Test("parses Mac unfocused split appearance")
+    func parsesUnfocusedSplitAppearance() {
+        let theme = GhosttyThemeColors(parsingConfigText: """
+        background = #101820
+        foreground = #f0f0f0
+        unfocused-split-fill = #123456
+        unfocused-split-opacity = 0.84
+        """)
+
+        #expect(abs(theme.unfocusedSplitFillRGB.r - 0x12 / 255.0) < 0.001)
+        #expect(abs(theme.unfocusedSplitFillRGB.g - 0x34 / 255.0) < 0.001)
+        #expect(abs(theme.unfocusedSplitFillRGB.b - 0x56 / 255.0) < 0.001)
+        #expect(theme.unfocusedSplitOpacity == 0.84)
+    }
 }
 #endif

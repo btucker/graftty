@@ -9,41 +9,6 @@ import Testing
 @Suite("IPAD — pending specs")
 struct IpadTodo {
     @Test("""
-@spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
-""", .disabled("not yet implemented"))
-    func ipad_2_1() async throws { }
-
-    @Test("""
-@spec IPAD-2.2: When `MultiPaneDetailView` renders a `.split(.horizontal, ratio, left, right)`, the application shall render an `HStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
-""", .disabled("not yet implemented"))
-    func ipad_2_2() async throws { }
-
-    @Test("""
-@spec IPAD-2.3: When `MultiPaneDetailView` renders a `.split(.vertical, ratio, left, right)`, the application shall render a `VStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
-""", .disabled("not yet implemented"))
-    func ipad_2_3() async throws { }
-
-    @Test("""
-@spec IPAD-2.4: When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
-""", .disabled("not yet implemented"))
-    func ipad_2_4() async throws { }
-
-    @Test("""
-@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
-""", .disabled("not yet implemented"))
-    func ipad_2_5() async throws { }
-
-    @Test("""
-@spec IPAD-2.6: When `IPadAppState.focusedPaneId == leaf.sessionName`, the application shall render a 2pt focus ring around the corresponding `PaneLeafView`.
-""", .disabled("not yet implemented"))
-    func ipad_2_6() async throws { }
-
-    @Test("""
-@spec IPAD-2.7: When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
-""", .disabled("not yet implemented"))
-    func ipad_2_7() async throws { }
-
-    @Test("""
 @spec IPAD-3.1: When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
 """, .disabled("not yet implemented"))
     func ipad_3_1() async throws { }

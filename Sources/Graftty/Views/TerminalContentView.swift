@@ -133,28 +133,6 @@ struct TerminalContentView: View {
     }
 }
 
-private struct PaneFocusDimmingModifier: ViewModifier {
-    let fill: Color
-    let style: PaneFocusDimmingStyle
-
-    func body(content: Content) -> some View {
-        content.overlay {
-            if style.isVisible {
-                Rectangle()
-                    .fill(fill.opacity(style.overlayOpacity))
-                    .clipped()
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-}
-
-private extension View {
-    func paneFocusDimming(fill: Color, style: PaneFocusDimmingStyle) -> some View {
-        modifier(PaneFocusDimmingModifier(fill: fill, style: style))
-    }
-}
-
 /// Helper to give SplitContainerView a @State for the ratio binding.
 private struct SplitRatioContainer<Left: View, Right: View>: View {
     let direction: SplitDirection
