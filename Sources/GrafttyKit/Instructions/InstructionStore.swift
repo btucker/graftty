@@ -60,7 +60,7 @@ public enum InstructionStore {
                   using: executor
               )
         else {
-            logger.info("listing .graftty at HEAD failed; omitting instructions")
+            logger.error("listing .graftty at HEAD failed; omitting instructions")
             return nil
         }
 
@@ -98,10 +98,11 @@ public enum InstructionStore {
         // what keeps the aggregate cost bounded in the meantime.
         var documents: [String: InstructionDocument] = [:]
         var byteBudget = totalByteCap
+        var failed: [String] = []
         for relative in ordered {
             guard byteBudget > 0 else { break }
             guard let remaining = try? deadline.remaining() else {
-                logger.info("git budget lapsed mid-read; omitting instructions")
+                logger.error("git budget lapsed mid-read; omitting instructions")
                 return nil
             }
             guard let body = try? await GitRunner.run(
@@ -109,10 +110,21 @@ public enum InstructionStore {
                 at: repoPath,
                 timeout: remaining,
                 using: executor
-            ) else { continue }
+            ) else {
+                failed.append(relative)
+                continue
+            }
             let capped = cap(body, to: min(perFileByteCap, byteBudget))
             byteBudget -= capped.utf8.count
             documents[relative] = InstructionDocument.parse(capped)
+        }
+        if !failed.isEmpty {
+            logger.error(
+                """
+                failed to read \(failed.count, privacy: .public) .graftty entries: \
+                \(failed.joined(separator: ", "))
+                """
+            )
         }
         guard !documents.isEmpty else { return nil }
         return InstructionSet(documents: documents)
