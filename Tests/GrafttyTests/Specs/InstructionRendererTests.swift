@@ -4,15 +4,13 @@ import Foundation
 
 private func set(_ pairs: [String: String]) -> InstructionSet {
     var documents: [String: InstructionDocument] = [:]
-    var files: [String: InstructionFile] = [:]
     for (path, body) in pairs {
         documents[path] = InstructionDocument.parse(body)
-        files[path] = InstructionFile.classify(relativePath: path)
     }
-    return InstructionSet(documents: documents, files: files)
+    return InstructionSet(documents: documents)
 }
 
-@Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, omitting any block that is empty and the whole section when nothing applies.")
+@Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, shall note in place of the shared text where a file has no shared portion, and shall omit any block that is empty and the whole section when nothing applies.")
 struct InstructionRendererTests {
 
     @Test func ownStackConcatenatesRootThroughLeafWithPrivateText() {
@@ -94,8 +92,30 @@ struct InstructionRendererTests {
         let text = InstructionRenderer.render(
             viewer: .init(key: "a", displayName: "a"),
             others: [],
-            set: InstructionSet(documents: [:], files: [:])
+            set: InstructionSet(documents: [:])
         )
         #expect(text.isEmpty)
+    }
+
+    @Test func privateOnlyFileForAnotherWorktreeRendersANote() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "a", displayName: "a"),
+            others: [.init(key: "b", displayName: "b")],
+            set: set(["GRAFTTY.b.md": "## Private\nb internals"])
+        )
+        #expect(text.contains("`b`"))
+        #expect(text.contains(InstructionRenderer.noSharedInstructionsNote))
+        #expect(!text.contains("b internals"))
+    }
+
+    @Test func privateOnlyFileMatchingNoWorktreeRendersANote() {
+        let text = InstructionRenderer.render(
+            viewer: .init(key: "a", displayName: "a"),
+            others: [],
+            set: set(["marketing/GRAFTTY.md": "## Private\nmarketing internals"])
+        )
+        #expect(text.contains("marketing/GRAFTTY.md"))
+        #expect(text.contains(InstructionRenderer.noSharedInstructionsNote))
+        #expect(!text.contains("marketing internals"))
     }
 }

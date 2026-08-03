@@ -17,8 +17,6 @@ public struct InstructionDocument: Equatable, Sendable {
         self.privateText = privateText
     }
 
-    public var isEmpty: Bool { shared.isEmpty && privateText.isEmpty }
-
     public static func parse(_ raw: String) -> InstructionDocument {
         let lines = raw.components(separatedBy: "\n")
         for (index, line) in lines.enumerated() where isPrivateMarker(line) {

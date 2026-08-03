@@ -20,7 +20,8 @@ public struct InstructionAudience: Sendable, Equatable {
 /// output — a file already surfaced in the viewer's own stack (including the
 /// repo-wide `GRAFTTY.md`, which every agent carries) is skipped everywhere
 /// else, and a file shared between two other worktrees renders under the
-/// first one only.
+/// first one only. A file whose whole body sits below the `Private` marker
+/// still renders, carrying a note in place of its absent shared text.
 public enum InstructionRenderer {
 
     public static func render(
@@ -82,6 +83,11 @@ public enum InstructionRenderer {
         return ([header] + blocks + [footer]).joined(separator: "\n\n")
     }
 
+    /// Stands in for a file whose whole body sits below the `Private` marker.
+    /// Rendering nothing at all would read as "this worktree has no
+    /// instruction file", which is a different and misleading fact.
+    static let noSharedInstructionsNote = "(no shared instructions)"
+
     private static let rootPath = "GRAFTTY.md"
 
     private static func paths(for key: String?) -> [String] {
@@ -89,11 +95,11 @@ public enum InstructionRenderer {
         return InstructionChain.paths(forKey: key)
     }
 
-    /// The shared text at `path`, or nil when the file is undocumented or its
-    /// shared portion is empty (a file with private-only content has nothing
-    /// to contribute to a block that only ever shows shared text).
+    /// The shared text at `path`, the no-shared-instructions note when the
+    /// file exists but keeps everything below its `Private` marker, or nil
+    /// when there is no such file at all.
     private static func sharedText(at path: String, in set: InstructionSet) -> String? {
-        guard let doc = set.documents[path], !doc.shared.isEmpty else { return nil }
-        return doc.shared
+        guard let doc = set.documents[path] else { return nil }
+        return doc.shared.isEmpty ? noSharedInstructionsNote : doc.shared
     }
 }

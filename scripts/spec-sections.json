@@ -25,6 +25,7 @@
     "IOS",
     "IPAD",
     "TEAM",
+    "INSTR",
     "EDITOR",
     "REMOTE",
     "URL"
@@ -54,6 +55,7 @@
     "IOS": "iOS App",
     "IPAD": "iPad Layout",
     "TEAM": "Agent Teams",
+    "INSTR": "Agent Instruction Files",
     "EDITOR": "Editor Integration",
     "REMOTE": "Secure Remote Access",
     "URL": "Worktree URL Handler"

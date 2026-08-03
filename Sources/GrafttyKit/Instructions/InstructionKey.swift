@@ -1,8 +1,12 @@
 import Foundation
 
 /// @spec INSTR-2.1
-/// The application shall derive a worktree instruction key from its path relative to the repository worktrees directory, from the resolved default branch for the main checkout, and shall produce no key for worktrees outside that directory.
-public struct InstructionKey {
+/// Keying is by worktree path, not by the branch checked out there: an agent
+/// can `git checkout` inside its own worktree, and branch keying would let it
+/// silently swap its own instruction set. The main checkout is the one
+/// exception — it has no stable path under `.worktrees/`, so its key is the
+/// resolved default branch name.
+public enum InstructionKey {
     /// Derives an instruction key for a worktree from its paths and default branch.
     /// - Returns: A string key representing either the relative path (for worktrees) or default branch (for main checkout), or nil if no key can be derived.
     public static func key(

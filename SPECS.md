@@ -1804,6 +1804,44 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-12.4** When a Codex app-server has one loaded root thread and one or more loaded subagent threads for the same worktree cwd, automatic team-message delivery shall use `thread/read` metadata to target the root thread. Spawned subagents are identified by `parentThreadId`; other subagent kinds are identified by their `source`. If more than one root thread matches, delivery shall remain ambiguous and shall not start a turn.
 
+## INSTR — Agent Instruction Files
+
+### INSTR-1.x
+
+**INSTR-1.1** The application shall read instruction files from the committed tree at HEAD in the repository main checkout rather than from the working tree, and shall produce no instruction set when the directory is absent or git fails.
+
+**INSTR-1.2** The application shall deliver the committed content of an instruction file even when the main checkout working tree holds a different uncommitted version of that file.
+
+### INSTR-2.x
+
+**INSTR-2.1** The application shall derive a worktree instruction key from its path relative to the repository worktrees directory, from the resolved default branch for the main checkout, and shall produce no key for worktrees outside that directory.
+
+### INSTR-3.x
+
+**INSTR-3.1** The application shall recognize exactly two instruction filename forms — a group file named GRAFTTY.md applying to every key beneath its directory, and a leaf file named GRAFTTY.<leaf>.md applying to the single key formed by its directory and leaf — and shall skip every other name.
+
+### INSTR-4.x
+
+**INSTR-4.1** The application shall split an instruction file at the first heading whose text is exactly Private, treating text above it as shared with every agent and text below it as private to the matching worktrees, and shall treat a file with no such heading as entirely shared.
+
+### INSTR-5.x
+
+**INSTR-5.1** The application shall resolve a worktree instruction stack as the group file at every ancestor level from the root inward, followed by the worktree leaf file located at its parent level.
+
+### INSTR-6.x
+
+**INSTR-6.1** The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, shall note in place of the shared text where a file has no shared portion, and shall omit any block that is empty and the whole section when nothing applies.
+
+**INSTR-6.2** When rendering the session-start instructions section for a team member, the application shall load and resolve `.graftty/` for the viewer's repository and yield the empty string on any failure to do so, so the session-start hook is never blocked by an instructions problem.
+
+**INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
+
+### INSTR-7.x
+
+**INSTR-7.1** The application shall bound one instruction load to at most 64 files, truncate any single file to 32768 bytes and the whole set to 131072 bytes, and mark every truncated file with a visible truncation marker.
+
+**INSTR-7.2** The application shall bound every git command of one instruction load by a single aggregate deadline, passing each command only the budget remaining, and shall produce no instruction set once that budget lapses.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
@@ -2123,38 +2161,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
-
-## INSTR — INSTR
-
-### INSTR-1.x
-
-**INSTR-1.1** The application shall read instruction files from the committed tree at HEAD in the repository main checkout rather than from the working tree, and shall produce no instruction set when the directory is absent or git fails.
-
-**INSTR-1.2** The application shall deliver the committed content of an instruction file even when the main checkout working tree holds a different uncommitted version of that file.
-
-### INSTR-2.x
-
-**INSTR-2.1** The application shall derive a worktree instruction key from its path relative to the repository worktrees directory, from the resolved default branch for the main checkout, and shall produce no key for worktrees outside that directory.
-
-### INSTR-3.x
-
-**INSTR-3.1** The application shall recognize exactly two instruction filename forms — a group file named GRAFTTY.md applying to every key beneath its directory, and a leaf file named GRAFTTY.<leaf>.md applying to the single key formed by its directory and leaf — and shall skip every other name.
-
-### INSTR-4.x
-
-**INSTR-4.1** The application shall split an instruction file at the first heading whose text is exactly Private, treating text above it as shared with every agent and text below it as private to the matching worktrees, and shall treat a file with no such heading as entirely shared.
-
-### INSTR-5.x
-
-**INSTR-5.1** The application shall resolve a worktree instruction stack as the group file at every ancestor level from the root inward, followed by the worktree leaf file located at its parent level.
-
-### INSTR-6.x
-
-**INSTR-6.1** The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, omitting any block that is empty and the whole section when nothing applies.
-
-**INSTR-6.2** When rendering the session-start instructions section for a team member, the application shall load and resolve `.graftty/` for the viewer's repository and yield the empty string on any failure to do so, so the session-start hook is never blocked by an instructions problem.
-
-**INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
 
 ## MEM — MEM
 
