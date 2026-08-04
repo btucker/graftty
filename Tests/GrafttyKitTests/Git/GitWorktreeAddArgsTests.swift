@@ -113,7 +113,22 @@ struct GitWorktreeAddArgsTests {
             """,
             at: repo
         ) == 0)
-        #expect(try shellInRepo("git commit --allow-empty -m caller", at: caller) == 0)
+        let instructionsDirectory = caller.appendingPathComponent(
+            ".graftty",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: instructionsDirectory,
+            withIntermediateDirectories: true
+        )
+        let leaf = instructionsDirectory.appendingPathComponent(
+            "GRAFTTY.from-caller-head.md"
+        )
+        try "child role".write(to: leaf, atomically: true, encoding: .utf8)
+        #expect(try shellInRepo(
+            "git add .graftty/GRAFTTY.from-caller-head.md && git commit -m caller",
+            at: caller
+        ) == 0)
 
         try await GitWorktreeAdd.add(
             repoPath: repo.path,
@@ -128,6 +143,12 @@ struct GitWorktreeAddArgsTests {
         let targetHead = try await GitRunner.run(args: ["rev-parse", "HEAD"], at: target.path)
         #expect(targetHead == callerHead)
         #expect(targetHead != mainHead)
+        #expect(try String(
+            contentsOf: target
+                .appendingPathComponent(".graftty", isDirectory: true)
+                .appendingPathComponent("GRAFTTY.from-caller-head.md"),
+            encoding: .utf8
+        ) == "child role")
     }
 
     @Test("@spec GIT-5.10: When BranchSelection.useExisting is submitted with a local source, the application shall verify that `refs/heads/<name>` exists and invoke `git worktree add -- <path> <name>` (no `-b` flag), so commit-ish values cannot create a detached worktree and option-shaped names cannot alter Git's parsing.")

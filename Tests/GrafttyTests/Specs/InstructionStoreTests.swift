@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("@spec INSTR-1.1: The application shall read instruction files from the committed tree at HEAD in the repository main checkout rather than from the working tree, and shall produce no instruction set when the directory is absent or git fails.")
+@Suite("@spec INSTR-1.1: When instruction files are loaded, the application shall read group and unmatched leaf files from the committed HEAD of the main checkout and each active worktree's leaf file from that worktree's committed HEAD, rather than from any working tree, and shall produce no instruction set when no committed instruction content can be read.")
 struct InstructionStoreTests {
 
     @Test func loadsAndParsesCommittedFiles() async {
@@ -38,6 +38,38 @@ struct InstructionStoreTests {
         #expect(await InstructionStore.load(repoPath: "/repo", using: exec) == nil)
     }
 
+    @Test func mainListingFailureStillAllowsAWorktreeLeaf() async {
+        let exec = InstructionStubExecutor()
+        exec.stub(
+            args: instructionLsTreeArgs,
+            error: .nonZeroExit(
+                command: "git",
+                exitCode: 128,
+                stderr: "ambiguous argument 'HEAD'"
+            )
+        )
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "branch-owned role"
+        )
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: "/repo/.worktrees/feature-login",
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            using: exec
+        )
+
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/feature-login"]?.shared
+                == "branch-owned role"
+        )
+    }
+
     @Test func unrecognizedFilenamesAreSkipped() async {
         let exec = InstructionStubExecutor()
         exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
@@ -52,6 +84,41 @@ struct InstructionStoreTests {
         #expect(set?.documents.count == 1)
         #expect(set?.documents["GRAFTTY.ok.md"]?.shared == "kept")
         #expect(!exec.invocations.contains(["show", "HEAD:.graftty/README.md"]))
+    }
+
+    @Test("Active leaf reads run in the owning worktree")
+    func activeLeafComesFromItsWorktreeHead() async {
+        let exec = InstructionStubExecutor()
+        exec.stub(args: instructionLsTreeArgs, stdout: instructionLsTreeOutput(
+            ".graftty/GRAFTTY.md"
+        ))
+        exec.stub(args: ["show", "HEAD:.graftty/GRAFTTY.md"], stdout: "repo wide")
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "branch-owned role"
+        )
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: "/repo/.worktrees/feature-login",
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            using: exec
+        )
+
+        #expect(set?.documents["GRAFTTY.md"]?.shared == "repo wide")
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/feature-login"]?.shared
+                == "branch-owned role"
+        )
+        let calls = Array(zip(exec.invocationDirectories, exec.invocations))
+        #expect(calls.contains { directory, args in
+            directory == "/repo/.worktrees/feature-login"
+                && args == ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"]
+        })
     }
 
     /// Real git, because the defect being guarded is git's own path quoting:
@@ -120,6 +187,107 @@ struct InstructionStoreLimitTests {
 
         #expect(total <= InstructionStore.totalByteCap)
         #expect(set?.documents.count == InstructionStore.totalByteCap / InstructionStore.perFileByteCap)
+    }
+
+    @Test func activeLeafPrecedesUnmatchedGroupsAtTheByteCap() async {
+        let exec = InstructionStubExecutor()
+        let groups = (0..<4).map { ".graftty/unmatched-\($0)/GRAFTTY.md" }
+        exec.stub(args: instructionLsTreeArgs, stdout: groups.map { $0 + "\0" }.joined())
+        for group in groups {
+            exec.stub(
+                args: ["show", "HEAD:\(group)"],
+                stdout: String(repeating: "x", count: InstructionStore.perFileByteCap)
+            )
+        }
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "active branch role"
+        )
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: "/repo/.worktrees/feature-login",
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            using: exec
+        )
+
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/feature-login"]?.shared
+                == "active branch role"
+        )
+    }
+
+    @Test func firstLeafSourcePrecedesGroupsExclusiveToLaterWorktrees() async {
+        let exec = InstructionStubExecutor()
+        let groups = (0..<4).map { ".graftty/peer-\($0)/GRAFTTY.md" }
+        exec.stub(args: instructionLsTreeArgs, stdout: groups.map { $0 + "\0" }.joined())
+        for group in groups {
+            exec.stub(
+                args: ["show", "HEAD:\(group)"],
+                stdout: String(repeating: "x", count: InstructionStore.perFileByteCap)
+            )
+        }
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.child.md"],
+            stdout: "viewer's own role"
+        )
+        let sources = [
+            InstructionLeafSource(
+                worktreePath: "/repo/.worktrees/child",
+                relativePath: "GRAFTTY.child.md"
+            ),
+        ] + (0..<4).map { index in
+            InstructionLeafSource(
+                worktreePath: "/repo/.worktrees/peer-\(index)/task",
+                relativePath: "peer-\(index)/GRAFTTY.task.md"
+            )
+        }
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: sources,
+            using: exec
+        )
+
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/child"]?.shared
+                == "viewer's own role"
+        )
+    }
+
+    @Test func activeLeafPrecedesUnmatchedGroupsAtTheFileCap() async {
+        let exec = InstructionStubExecutor()
+        let groups = (0..<InstructionStore.maxFiles)
+            .map { ".graftty/unmatched-\($0)/GRAFTTY.md" }
+        exec.stub(args: instructionLsTreeArgs, stdout: groups.map { $0 + "\0" }.joined())
+        for group in groups {
+            exec.stub(args: ["show", "HEAD:\(group)"], stdout: "unmatched")
+        }
+        exec.stub(
+            args: ["show", "HEAD:.graftty/GRAFTTY.feature-login.md"],
+            stdout: "active branch role"
+        )
+
+        let set = await InstructionStore.load(
+            repoPath: "/repo",
+            leafSources: [
+                InstructionLeafSource(
+                    worktreePath: "/repo/.worktrees/feature-login",
+                    relativePath: "GRAFTTY.feature-login.md"
+                ),
+            ],
+            using: exec
+        )
+
+        #expect(
+            set?.leafDocumentsByWorktreePath["/repo/.worktrees/feature-login"]?.shared
+                == "active branch role"
+        )
+        #expect(set?.documents.count == InstructionStore.maxFiles - 1)
     }
 
     @Test func truncatedDocumentStaysWithinPerFileCap() async {

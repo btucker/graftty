@@ -120,6 +120,39 @@ struct TeamInstructionsRendererTests {
         #expect(template.contains("{% for worktree in team.other_worktrees %}"))
     }
 
+    @Test("""
+    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, the root-only fallback when the main key is unresolved, their peer-visible role descriptions, when an agent may suggest or author them, the commit-then-`--base HEAD` workflow for configuring a child before its first session, and the distinct conditions under which main retains that leaf and a future same-key worktree receives it.
+    """)
+    func defaultTemplateExplainsInstructionFileAuthoring() {
+        let template = TeamInstructionsRenderer.defaultTemplate
+
+        #expect(template.contains(".graftty/GRAFTTY.md"))
+        #expect(template.contains("GRAFTTY.<leaf>.md"))
+        #expect(template.contains("path relative to the main checkout's `.worktrees/`"))
+        #expect(template.contains("main checkout's key is the repository's default branch"))
+        #expect(template.contains(
+            "If Graftty cannot resolve the default branch"
+        ))
+        #expect(template.contains(
+            "main checkout receives only `.graftty/GRAFTTY.md`"
+        ))
+        #expect(template.contains("shared section"))
+        #expect(template.contains("shown to peers"))
+        #expect(template.contains("reads only committed content"))
+        #expect(template.contains("commit its leaf file before starting it"))
+        #expect(template.contains(
+            "graftty worktree add <name> --base HEAD --agent <codex|claude>"
+        ))
+        #expect(template.contains(
+            "After that commit reaches the main checkout's `HEAD`"
+        ))
+        #expect(template.contains(
+            "when its starting commit contains the file"
+        ))
+        #expect(template.contains("suggest an appropriate instruction file"))
+        #expect(template.contains("only when authorized"))
+    }
+
     @Test func defaultRenderIncludesSharedCommandsExactlyOnce() {
         let view = makeView()
         for member in view.members {

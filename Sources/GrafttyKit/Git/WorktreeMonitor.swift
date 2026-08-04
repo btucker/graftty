@@ -233,7 +233,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
     /// metadata-only and never triggers materialization, so gating reads on
     /// this predicate is safe.
     static func isMaterializedRegularFile(_ st: stat) -> Bool {
-        (st.st_mode & S_IFMT) == S_IFREG && st.st_flags & UInt32(SF_DATALESS) == 0
+        MaterializedFilesystemEntry.isRegularFile(st)
     }
 
     /// Reads `path` only when a stat-check says the read cannot block on
