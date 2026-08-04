@@ -3477,7 +3477,7 @@ struct GrafttyApp: App {
                 appState: appState, terminalManager: terminalManager
             )
         case .teamMessage(let callerPath, let recipient, let text):
-            return handleTeamSend(
+            return await handleTeamSend(
                 callerPath: callerPath,
                 recipient: recipient,
                 text: text,
@@ -3487,7 +3487,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamSend(let callerPath, let recipient, let text, let priority):
-            return handleTeamSend(
+            return await handleTeamSend(
                 callerPath: callerPath,
                 recipient: recipient,
                 text: text,
@@ -3497,7 +3497,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamBroadcast(let callerPath, let text, let priority):
-            return handleTeamBroadcast(
+            return await handleTeamBroadcast(
                 callerPath: callerPath,
                 text: text,
                 priority: priority,
@@ -3519,7 +3519,7 @@ struct GrafttyApp: App {
                 remoteBranchStore: remoteBranchStore
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all, let beforeID, let limit):
-            return handleTeamInbox(
+            return await handleTeamInbox(
                 callerPath: callerPath,
                 worktree: worktree,
                 repo: repo,
@@ -3815,17 +3815,23 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
-    ) -> ResponseMessage {
+    ) async -> ResponseMessage {
         do {
             let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
-            _ = try handler.send(
-                callerWorktree: callerPath,
-                recipient: recipient,
-                text: text,
-                priority: priority,
-                repos: appState.wrappedValue.repos,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            )
+            let repos = appState.wrappedValue.repos
+            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            // ATTN-2.19: the append happens off the main actor so inbox
+            // file contention cannot wedge the control socket.
+            _ = try await OffMainIO.run {
+                try handler.send(
+                    callerWorktree: callerPath,
+                    recipient: recipient,
+                    text: text,
+                    priority: priority,
+                    repos: repos,
+                    teamsEnabled: teamsEnabled
+                )
+            }
             return .ok
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
@@ -3842,16 +3848,21 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
-    ) -> ResponseMessage {
+    ) async -> ResponseMessage {
         do {
             let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
-            _ = try handler.broadcast(
-                callerWorktree: callerPath,
-                text: text,
-                priority: priority,
-                repos: appState.wrappedValue.repos,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            )
+            let repos = appState.wrappedValue.repos
+            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            // ATTN-2.19: see handleTeamSend.
+            _ = try await OffMainIO.run {
+                try handler.broadcast(
+                    callerWorktree: callerPath,
+                    text: text,
+                    priority: priority,
+                    repos: repos,
+                    teamsEnabled: teamsEnabled
+                )
+            }
             return .ok
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
@@ -3881,14 +3892,18 @@ struct GrafttyApp: App {
             // was already true of any await on this path — the render only
             // widens the window — and a stale snapshot at worst hands
             // delivery to a pane that has just gone away.
-            let presenceRecords = (try? TeamPresenceStorage(
-                rootDirectory: TeamPresenceStorage.defaultRoot()
-            ).listAll()) ?? []
+            // ATTN-2.19: the presence read is file I/O, so it runs off the
+            // main actor like the inbox work below.
+            let presenceRecords = await OffMainIO.run {
+                (try? TeamPresenceStorage(
+                    rootDirectory: TeamPresenceStorage.defaultRoot()
+                ).listAll()) ?? []
+            }
             let liveSessionNames = Self.livePaneSessionNamesForAutomaticDelivery(
                 records: presenceRecords,
                 terminalManager: terminalManager
             )
-            var instructions = ""
+            let instructions: String
             if event == .sessionStart,
                teamsEnabled,
                let team = TeamLookup.team(
@@ -3905,8 +3920,10 @@ struct GrafttyApp: App {
                             .repo(forWorktreePath: callerPath)?.defaultBranchHint
                     )
                 )
+            } else {
+                instructions = ""
             }
-            let output = try teamInboxRequestHandler(
+            let handler = teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
@@ -3926,16 +3943,24 @@ struct GrafttyApp: App {
                     }
                     return owner.paneSessionName == paneSessionName
                 }
-            ).hook(
-                callerWorktree: callerPath,
-                runtime: runtime,
-                event: event,
-                sessionID: sessionID,
-                paneSessionName: paneSessionName,
-                repos: appState.wrappedValue.repos,
-                teamsEnabled: teamsEnabled,
-                instructions: instructions
             )
+            let repos = appState.wrappedValue.repos
+            // ATTN-2.19: hook delivery parses the full inbox history and
+            // can wait on the inter-process watermark lock; it fires on
+            // every PostToolUse of every agent, so on the main actor it
+            // wedged the control socket under agent activity.
+            let output = try await OffMainIO.run {
+                try handler.hook(
+                    callerWorktree: callerPath,
+                    runtime: runtime,
+                    event: event,
+                    sessionID: sessionID,
+                    paneSessionName: paneSessionName,
+                    repos: repos,
+                    teamsEnabled: teamsEnabled,
+                    instructions: instructions
+                )
+            }
             if event == .stop {
                 recordAgentStop(
                     callerPath: callerPath,
@@ -4044,20 +4069,27 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
-    ) -> ResponseMessage {
+    ) async -> ResponseMessage {
         do {
-            let page = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).diagnosticPage(
-                callerWorktree: callerPath,
-                worktree: worktree,
-                repo: repo,
-                member: member,
-                unread: unread,
-                all: all,
-                beforeID: beforeID,
-                limit: limit,
-                repos: appState.wrappedValue.repos,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            )
+            let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
+            let repos = appState.wrappedValue.repos
+            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            // ATTN-2.19: the inbox page parses the full message history
+            // off the main actor.
+            let page = try await OffMainIO.run {
+                try handler.diagnosticPage(
+                    callerWorktree: callerPath,
+                    worktree: worktree,
+                    repo: repo,
+                    member: member,
+                    unread: unread,
+                    all: all,
+                    beforeID: beforeID,
+                    limit: limit,
+                    repos: repos,
+                    teamsEnabled: teamsEnabled
+                )
+            }
             return .teamInbox(messages: page.messages, nextBeforeID: page.nextBeforeID)
         } catch let error as TeamInboxRequestError {
             return .error(error.description)

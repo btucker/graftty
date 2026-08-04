@@ -125,6 +125,14 @@ public struct TeamInboxWorktreeWatermark: Codable, Sendable, Equatable {
     }
 }
 
+/// @spec TEAM-11.6
+/// If the worktree watermark lock cannot be acquired within the configured
+/// timeout, the application shall throw a lock-timeout error instead of
+/// blocking the calling thread indefinitely.
+public enum TeamInboxError: Error, Equatable {
+    case watermarkLockTimeout
+}
+
 public final class TeamInbox {
     private static let worktreeWatermarkProcessLocksGuard = NSLock()
     private static var worktreeWatermarkProcessLocks: [String: NSLock] = [:]
@@ -134,15 +142,23 @@ public final class TeamInbox {
     private let now: () -> Date
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    /// TEAM-11.6: upper bound on how long a watermark operation may wait
+    /// for the inter-process lock. Callers that hit the bound fail with
+    /// `TeamInboxError.watermarkLockTimeout` and retry on their own
+    /// cadence (watchers poll; hooks redeliver) instead of blocking their
+    /// thread behind a stuck or convoying lock holder indefinitely.
+    private let watermarkLockTimeout: TimeInterval
 
     public init(
         rootDirectory: URL,
         idGenerator: @escaping () -> String = TeamInbox.defaultID,
-        now: @escaping () -> Date = { Date() }
+        now: @escaping () -> Date = { Date() },
+        watermarkLockTimeout: TimeInterval = 2.0
     ) {
         self.rootDirectory = rootDirectory
         self.idGenerator = idGenerator
         self.now = now
+        self.watermarkLockTimeout = watermarkLockTimeout
         self.encoder = JSONEncoder()
         self.encoder.dateEncodingStrategy = .iso8601
         self.decoder = JSONDecoder()
@@ -476,9 +492,12 @@ public final class TeamInbox {
         worktree: String,
         _ body: () throws -> T
     ) throws -> T {
+        let deadline = Date().addingTimeInterval(watermarkLockTimeout)
         let url = worktreeWatermarkLockURL(teamID: teamID, worktree: worktree)
         let processLock = Self.worktreeWatermarkProcessLock(for: url)
-        processLock.lock()
+        guard processLock.lock(before: deadline) else {
+            throw TeamInboxError.watermarkLockTimeout
+        }
         defer { processLock.unlock() }
 
         try ensureParentDirectory(for: url)
@@ -493,14 +512,35 @@ public final class TeamInbox {
         guard fd >= 0 else { throw currentPOSIXError() }
         defer { close(fd) }
 
+        try acquireRecordLock(fd: fd, deadline: deadline)
         #if canImport(Darwin)
-        guard Darwin.lockf(fd, F_LOCK, 0) == 0 else { throw currentPOSIXError() }
         defer { _ = Darwin.lockf(fd, F_ULOCK, 0) }
         #elseif canImport(Glibc)
-        guard Glibc.lockf(fd, F_LOCK, 0) == 0 else { throw currentPOSIXError() }
         defer { _ = Glibc.lockf(fd, F_ULOCK, 0) }
         #endif
         return try body()
+    }
+
+    /// TEAM-11.6: non-blocking `F_TLOCK` in a short retry loop instead of
+    /// an unbounded `F_LOCK`, so a stuck or convoying lock holder can
+    /// delay a caller by at most `watermarkLockTimeout`.
+    private func acquireRecordLock(fd: Int32, deadline: Date) throws {
+        while true {
+            #if canImport(Darwin)
+            let result = Darwin.lockf(fd, F_TLOCK, 0)
+            #elseif canImport(Glibc)
+            let result = Glibc.lockf(fd, F_TLOCK, 0)
+            #endif
+            if result == 0 { return }
+            if errno == EINTR { continue }
+            guard errno == EAGAIN || errno == EACCES else {
+                throw currentPOSIXError()
+            }
+            guard Date() < deadline else {
+                throw TeamInboxError.watermarkLockTimeout
+            }
+            usleep(10_000)
+        }
     }
 
     private static func worktreeWatermarkProcessLock(for url: URL) -> NSLock {

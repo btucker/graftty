@@ -568,6 +568,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.18** When control-socket shutdown begins during a message callback, the application shall return from `stop()` without waiting for arbitrary callback code and shall suppress request handlers still queued for the stopped generation.
 
+**ATTN-2.19** When a control-socket request requires team inbox file I/O, the application shall execute that work off the main thread so the main actor stays free to serve concurrent control-socket requests and UI events.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -1829,6 +1831,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-11.2** When a Claude asyncRewake inbox watcher reaches its 24-hour timeout without a message, the CLI shall exit cleanly without writing a timeout diagnostic to the hook's stderr pipe.
 
 **TEAM-11.3** If a Claude asyncRewake inbox watcher resolves after the hook's stderr reader has closed, the CLI shall discard the output failure rather than terminate from SIGPIPE or an NSFileHandle exception.
+
+**TEAM-11.4** When a watcher starts for a recipient worktree and runtime, the application shall write its PID to <root>/<teamID>/watchers/<worktree>.<runtime>.pid and SIGTERM any prior watcher PID recorded there, regardless of the prior watcher's session ID.
+
+**TEAM-11.5** While its original parent process is no longer alive, the inbox watcher shall resolve its outcome with exit code 0 at the next poll tick instead of continuing to watch.
+
+**TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
+
+**TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
+
+**TEAM-11.8** If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.
 
 ### TEAM-12.x
 

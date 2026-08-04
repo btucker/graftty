@@ -638,6 +638,68 @@ struct TeamInboxRequestHandlerTests {
         )?.lastDeliveredToAnySessionID == "0001")
     }
 
+    @Test("@spec TEAM-11.7: If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.")
+    func watermarkTimeoutDuringHookDeliveryDoesNotSkipMessages() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let aliceWorktree = "/repo/.worktrees/alice"
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate },
+            watermarkLockTimeout: 0.2
+        )
+        let handler = Self.makeHandler(inbox: inbox)
+
+        _ = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "urgent body",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        // Hold the inter-process watermark lock from a child process so the
+        // hook's watermark advance times out mid-delivery.
+        let holder = try TeamTestFixtures.holdWatermarkLock(
+            root: root,
+            teamID: "/repo",
+            worktree: aliceWorktree
+        )
+        defer { holder.release() }
+
+        #expect(throws: TeamInboxError.watermarkLockTimeout) {
+            try handler.hook(
+                callerWorktree: aliceWorktree,
+                runtime: .claude,
+                event: .postToolUse,
+                sessionID: "owner",
+                paneSessionName: nil,
+                repos: [repo],
+                teamsEnabled: true
+            )
+        }
+
+        // The failed delivery must not have advanced the session cursor
+        // past the message it never delivered.
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner")?.lastSeenID == nil)
+
+        // Once the lock is free again, the same hook redelivers the message.
+        holder.release()
+        let output = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .claude,
+            event: .postToolUse,
+            sessionID: "owner",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(output.contains("urgent body"))
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner")?.lastSeenID == "0001")
+    }
+
     @Test("Claude SessionStart anchors delivery to the worktree watermark at session start.")
     func claudeSessionStartAnchorsCursorToInitialWorktreeWatermark() throws {
         let root = try Self.temporaryDirectory()

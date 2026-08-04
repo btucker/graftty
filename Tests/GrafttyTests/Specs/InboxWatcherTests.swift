@@ -375,7 +375,7 @@ struct InboxWatcherTests {
         #expect(!result.stderr.contains("Codex-only head"))
     }
 
-    @Test("@spec TEAM-IDLE-1.3: Watcher writes a PID file at <root>/<teamID>/watchers/<session>.<runtime>.pid and SIGTERMs any prior PID it finds.")
+    @Test("@spec TEAM-11.4: When a watcher starts for a recipient worktree and runtime, the application shall write its PID to <root>/<teamID>/watchers/<worktree>.<runtime>.pid and SIGTERM any prior watcher PID recorded there, regardless of the prior watcher's session ID.")
     func supersedesPriorWatcher() async throws {
         let tmpRoot = try makeTmpDir()
         defer { try? FileManager.default.removeItem(at: tmpRoot) }
@@ -386,7 +386,10 @@ struct InboxWatcherTests {
         let pidRoot = tmpRoot.appendingPathComponent("teams", isDirectory: true)
 
         // Spawn a real, signal-killable child process to stand in for the
-        // prior watcher, write its PID where the new watcher will look.
+        // prior watcher (a *different* session's watcher for the same
+        // worktree + runtime), write its PID where the new watcher will
+        // look. The worktree-keyed PID file is what lets a new session
+        // supersede a dead session's lingering watcher.
         let prior = Process()
         prior.executableURL = URL(fileURLWithPath: "/bin/sleep")
         prior.arguments = ["30"]
@@ -396,7 +399,7 @@ struct InboxWatcherTests {
         let priorPidFile = pidRoot
             .appendingPathComponent(teamID, isDirectory: true)
             .appendingPathComponent("watchers", isDirectory: true)
-            .appendingPathComponent("test-session.claude.pid")
+            .appendingPathComponent("wt-foo-path.claude.pid")
         try FileManager.default.createDirectory(
             at: priorPidFile.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -431,6 +434,87 @@ struct InboxWatcherTests {
         // Prior child process should have been SIGTERMed and reaped.
         prior.waitUntilExit()
         #expect(!prior.isRunning)
+    }
+
+    @Test("@spec TEAM-11.8: If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.")
+    func retriesClaimAfterWatermarkLockTimeout() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+
+        let teamID = "team-x"
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+        let inbox = TeamInbox(rootDirectory: inboxRoot)
+        try seedSession(
+            in: inbox,
+            teamID: teamID,
+            sessionID: "test-session",
+            worktree: "wt-foo-path",
+            lastSeenID: nil
+        )
+        _ = try appendMessage(to: inbox, teamID: teamID, worktree: "wt-foo-path", body: "hello latch")
+
+        // Hold the lock before the watcher starts: its catch-up claim in
+        // the initial observer emit deterministically times out before
+        // whenReady() resolves.
+        let holder = try holdWatermarkLock(root: inboxRoot, teamID: teamID, worktree: "wt-foo-path")
+        defer { holder.release() }
+
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: "test-session",
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: tmpRoot.appendingPathComponent("teams", isDirectory: true),
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true)),
+            pollIntervalNanoseconds: 50_000_000,
+            watermarkLockTimeout: 0.2
+        )
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+        await watcher.whenReady()
+
+        // No further appends arrive and the watermark value never changed,
+        // so only the retry latch can deliver this message.
+        holder.release()
+        let result = try await outcome.wait(timeout: 5)
+        #expect(result.exitCode == 2)
+        #expect(result.stderr.contains("hello latch"))
+    }
+
+    @Test("@spec TEAM-11.5: While its original parent process is no longer alive, the inbox watcher shall resolve its outcome with exit code 0 at the next poll tick instead of continuing to watch.")
+    func exitsWhenParentDies() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+
+        let teamID = "team-x"
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+
+        let parentAlive = LockedFlag(true)
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: "test-session",
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: tmpRoot.appendingPathComponent("teams", isDirectory: true),
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true)),
+            pollIntervalNanoseconds: 50_000_000,
+            parentAliveCheck: { parentAlive.value }
+        )
+
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+        await watcher.whenReady()
+
+        parentAlive.value = false
+        let result = try await outcome.wait(timeout: 5)
+        #expect(result.exitCode == 0)
+        #expect(result.stderr.isEmpty)
     }
 
     private func makeWatcher(
@@ -495,5 +579,17 @@ struct InboxWatcherTests {
             .appendingPathComponent("graftty-watcher-test-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+/// Minimal lock-guarded boolean the parent-liveness closure can read while
+/// the test flips it from outside the watcher actor.
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Bool
+    init(_ value: Bool) { stored = value }
+    var value: Bool {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }
