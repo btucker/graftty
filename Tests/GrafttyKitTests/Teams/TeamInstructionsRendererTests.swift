@@ -121,7 +121,7 @@ struct TeamInstructionsRendererTests {
     }
 
     @Test("""
-    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, the root-only fallback when the main key is unresolved, their peer-visible role descriptions, when an agent may suggest or author them, the commit-then-`--base HEAD` workflow for configuring a child before its first session, and the distinct conditions under which main retains that leaf and a future same-key worktree receives it.
+    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the shared and per-worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place a leaf where a child can receive it in its first and later sessions.
     """)
     func defaultTemplateExplainsInstructionFileAuthoring() {
         let template = TeamInstructionsRenderer.defaultTemplate
@@ -138,17 +138,21 @@ struct TeamInstructionsRendererTests {
         ))
         #expect(template.contains("shared section"))
         #expect(template.contains("shown to peers"))
-        #expect(template.contains("reads only committed content"))
-        #expect(template.contains("commit its leaf file before starting it"))
+        #expect(template.contains(
+            "~/Library/Application Support/Graftty/.graftty"
+        ))
+        #expect(template.contains("this worktree's `.graftty`"))
+        #expect(template.contains("then the main checkout's `.graftty`"))
+        #expect(template.contains("Application Support overlay is machine-wide"))
+        #expect(template.contains("reads current filesystem bytes"))
+        #expect(template.contains("does not inspect Git"))
+        #expect(template.contains("staging or committing is not required"))
+        #expect(template.contains("evicted iCloud placeholders are ignored"))
+        #expect(template.contains("create its leaf where its first session can see it"))
         #expect(template.contains(
             "graftty worktree add <name> --base HEAD --agent <codex|claude>"
         ))
-        #expect(template.contains(
-            "After that commit reaches the main checkout's `HEAD`"
-        ))
-        #expect(template.contains(
-            "when its starting commit contains the file"
-        ))
+        #expect(template.contains("its own `.graftty` can tune later sessions"))
         #expect(template.contains("suggest an appropriate instruction file"))
         #expect(template.contains("only when authorized"))
     }

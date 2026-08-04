@@ -1856,11 +1856,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-1.x
 
-**INSTR-1.1** When instruction files are loaded, the application shall read group and unmatched leaf files from the committed HEAD of the main checkout and each active worktree's leaf file from that worktree's committed HEAD, rather than from any working tree, and shall produce no instruction set when no committed instruction content can be read.
+**INSTR-1.1** When instruction files are loaded for a worktree, the application shall discover them from `~/Library/Application Support/Graftty/.graftty`, the current worktree's `.graftty`, and the main checkout's `.graftty`, and shall resolve each relative path from the first readable regular file in that precedence order.
 
-**INSTR-1.2** The application shall deliver the committed content of an instruction file even when the main checkout working tree holds a different uncommitted version of that file.
-
-**INSTR-1.3** When an active worktree has a committed leaf instruction file, the application shall load that leaf from the worktree's own HEAD even when the main checkout does not contain it.
+**INSTR-1.2** When an instruction file is created or edited in the current worktree filesystem, the application shall use those current bytes at the next session start without requiring the file to be staged or committed.
 
 ### INSTR-2.x
 
@@ -1882,21 +1880,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.1** The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, shall note in place of the shared text where a file has no shared portion, and shall omit any block that is empty and the whole section when nothing applies.
 
-**INSTR-6.2** When rendering the session-start instructions section for a team member, the application shall resolve committed main-checkout and active-worktree instruction content, omit unavailable individual leaves, and yield the empty string when no committed content can be read, so an instructions problem never blocks the session-start hook.
+**INSTR-6.2** When rendering the session-start instructions section for a team member, the application shall resolve instruction content for that viewer from the filesystem overlay, omit unavailable files, and yield the empty string when no content can be read, so an instructions problem never blocks the session-start hook.
 
 **INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
 
-**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the committed shared and per-worktree instruction-file forms, the root-only fallback when the main key is unresolved, their peer-visible role descriptions, when an agent may suggest or author them, the commit-then-`--base HEAD` workflow for configuring a child before its first session, and the distinct conditions under which main retains that leaf and a future same-key worktree receives it.
+**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the shared and per-worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place a leaf where a child can receive it in its first and later sessions.
 
-**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's committed leaf from that new checkout so the child receives its role in the first session.
+**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's leaf from that new checkout's filesystem so the child receives its role in the first session.
 
-**INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's committed leaf ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
+**INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's instruction stack ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
 
 ### INSTR-7.x
 
 **INSTR-7.1** The application shall bound one instruction load to at most 64 files, truncate any single file to 32768 bytes and the whole set to 131072 bytes, and mark every truncated file with a visible truncation marker.
 
-**INSTR-7.2** The application shall bound every git command of one instruction load by a single aggregate deadline, passing each command only the budget remaining, and shall produce no instruction set once that budget lapses.
+**INSTR-7.2** When an instruction load exceeds the one-second response budget, the application shall produce no instruction set without awaiting late filesystem work.
 
 ## EDITOR — Editor Integration
 

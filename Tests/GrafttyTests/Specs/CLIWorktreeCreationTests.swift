@@ -536,7 +536,8 @@ struct CLIWorktreeCreationTests {
         #expect(primer.contains(
             "graftty worktree add <name> --base HEAD --agent <codex|claude>"
         ))
-        #expect(primer.contains("inherits the caller's committed leaf"))
+        #expect(primer.contains("inherits that file for its first session"))
+        #expect(primer.contains("its own `.graftty` can tune later sessions"))
         #expect(primer.contains("--prompt-stdin"))
         #expect(!primer.contains("Spawn a teammate"))
     }

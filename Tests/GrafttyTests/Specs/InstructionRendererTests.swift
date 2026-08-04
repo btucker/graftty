@@ -119,85 +119,23 @@ struct InstructionRendererTests {
         #expect(!text.contains("marketing internals"))
     }
 
-    @Test func resolvedWorktreeLeavesCanDifferAtTheSameInstructionPath() {
+    @Test func oneResolvedLeafIsSharedBySameKeyAudiences() {
         let text = InstructionRenderer.render(
-            viewer: .init(
-                key: "main",
-                displayName: "main",
-                worktreePath: "/repo"
-            ),
+            viewer: .init(key: "main", displayName: "main"),
             others: [
-                .init(
-                    key: "main",
-                    displayName: "linked-main",
-                    worktreePath: "/repo/.worktrees/main"
-                ),
+                .init(key: "main", displayName: "linked-main"),
             ],
             set: InstructionSet(
                 documents: [
-                    "GRAFTTY.main.md": .parse("STALE MAIN COPY"),
-                ],
-                leafDocumentsByWorktreePath: [
-                    "/repo": .parse("main role\n## Private\nmain private"),
-                    "/repo/.worktrees/main": .parse("linked role\n## Private\nlinked private"),
-                ],
-                resolvedLeafWorktreePaths: [
-                    "/repo", "/repo/.worktrees/main",
+                    "GRAFTTY.main.md": .parse(
+                        "main role\n## Private\nmain private"
+                    ),
                 ]
             )
         )
 
         #expect(text.contains("main role"))
         #expect(text.contains("main private"))
-        #expect(text.contains("linked role"))
-        #expect(!text.contains("linked private"))
-        #expect(!text.contains("STALE MAIN COPY"))
-    }
-
-    @Test func absentResolvedLeafDoesNotFallBackToMainCheckoutCopy() {
-        let text = InstructionRenderer.render(
-            viewer: .init(
-                key: "feature-login",
-                displayName: "feature-login",
-                worktreePath: "/repo/.worktrees/feature-login"
-            ),
-            others: [],
-            set: InstructionSet(
-                documents: [
-                    "GRAFTTY.md": .parse("repo wide"),
-                    "GRAFTTY.feature-login.md": .parse("STALE MAIN ROLE"),
-                ],
-                resolvedLeafWorktreePaths: [
-                    "/repo/.worktrees/feature-login",
-                ]
-            )
-        )
-
-        #expect(text.contains("repo wide"))
-        #expect(!text.contains("STALE MAIN ROLE"))
-        #expect(!text.contains("Instruction files matching no current worktree"))
-    }
-
-    @Test func suppliedLeafDocumentIsResolvedByConstruction() {
-        let worktreePath = "/repo/.worktrees/feature-login"
-        let text = InstructionRenderer.render(
-            viewer: .init(
-                key: "feature-login",
-                displayName: "feature-login",
-                worktreePath: worktreePath
-            ),
-            others: [],
-            set: InstructionSet(
-                documents: [
-                    "GRAFTTY.feature-login.md": .parse("STALE MAIN ROLE"),
-                ],
-                leafDocumentsByWorktreePath: [
-                    worktreePath: .parse("branch-owned role"),
-                ]
-            )
-        )
-
-        #expect(text.contains("branch-owned role"))
-        #expect(!text.contains("STALE MAIN ROLE"))
+        #expect(text.components(separatedBy: "main role").count - 1 == 1)
     }
 }
