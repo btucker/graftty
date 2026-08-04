@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import os
 
@@ -5,70 +6,25 @@ import os
 public struct InstructionSet: Sendable, Equatable {
     /// Parsed documents keyed by `.graftty/`-relative path.
     public let documents: [String: InstructionDocument]
-    /// Active leaf documents keyed by the worktree whose committed `HEAD`
-    /// supplied them.
-    public let leafDocumentsByWorktreePath: [String: InstructionDocument]
-    /// Worktrees whose leaf was resolved from their own `HEAD`, including
-    /// worktrees where that committed leaf does not exist. The latter matters:
-    /// an absent branch leaf must not fall back to a same-named main leaf.
-    public let resolvedLeafWorktreePaths: Set<String>
 
-    public init(
-        documents: [String: InstructionDocument],
-        leafDocumentsByWorktreePath: [String: InstructionDocument] = [:],
-        resolvedLeafWorktreePaths: Set<String> = []
-    ) {
+    public init(documents: [String: InstructionDocument]) {
         self.documents = documents
-        self.leafDocumentsByWorktreePath = leafDocumentsByWorktreePath
-        self.resolvedLeafWorktreePaths = resolvedLeafWorktreePaths.union(
-            leafDocumentsByWorktreePath.keys
-        )
     }
 }
 
-/// One active worktree leaf to read from that worktree's committed `HEAD`.
-public struct InstructionLeafSource: Sendable, Equatable {
-    public let worktreePath: String
-    public let relativePath: String
-
-    public init(worktreePath: String, relativePath: String) {
-        self.worktreePath = worktreePath
-        self.relativePath = relativePath
-    }
-}
-
-/// Reads `.graftty/` from committed Git trees.
+/// Reads `.graftty/` directly from the filesystem.
 ///
 /// @spec INSTR-1.1
-/// When instruction files are loaded, the application shall read group and
-/// unmatched leaf files from the committed HEAD of the main checkout and each
-/// active worktree's leaf file from that worktree's committed HEAD, rather
-/// than from any working tree, and shall produce no instruction set when no
-/// committed instruction content can be read.
+/// When instruction files are loaded for a worktree, the application shall
+/// discover them from `~/Library/Application Support/Graftty/.graftty`, the
+/// current worktree's `.graftty`, and the main checkout's `.graftty`, and
+/// shall resolve each relative path from the first readable regular file in
+/// that precedence order.
 public enum InstructionStore {
 
-    private enum ReadTarget {
-        case main(relativePath: String)
-        case leaf(InstructionLeafSource)
-
-        var relativePath: String {
-            switch self {
-            case let .main(relativePath): relativePath
-            case let .leaf(source): source.relativePath
-            }
-        }
-
-        var isLeafSource: Bool {
-            if case .leaf = self { return true }
-            return false
-        }
-
-        func checkoutPath(mainRepoPath: String) -> String {
-            switch self {
-            case .main: mainRepoPath
-            case let .leaf(source): source.worktreePath
-            }
-        }
+    private struct RootInventory: Sendable {
+        let instructionDirectory: URL
+        let discoveredPaths: Set<String>
     }
 
     private static let logger = Logger(
@@ -80,210 +36,310 @@ public enum InstructionStore {
     public static let totalByteCap = 131_072
     public static let maxFiles = 64
     public static let truncationMarker = "\n\n[graftty: instructions truncated]"
-
-    /// One absolute budget for *every* git subprocess of a single `load`,
-    /// not a per-command timeout. Sized well under the CLI's 2s socket
-    /// receive timeout: a session-start response that arrives late is not
-    /// merely slow, it is lost — the CLI gives up while the inbox cursor has
-    /// already advanced, discarding the team context and the queued peer
-    /// messages along with the instructions.
-    public static let gitBudget: Duration = .seconds(1)
-
     public static let directoryName = ".graftty"
+    public static let loadBudget: Duration = .seconds(1)
 
+    public static var defaultApplicationSupportDirectory: URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0].appendingPathComponent("Graftty", isDirectory: true)
+    }
+
+    /// Loads instruction bytes away from the caller's executor and abandons
+    /// the result after `budget`. Filesystem metadata and reads can still be
+    /// unexpectedly slow on networked or File Provider volumes; session-start
+    /// handling must neither pin the app's main actor nor await late I/O.
     public static func load(
         repoPath: String,
-        leafSources: [InstructionLeafSource] = [],
-        budget: Duration = gitBudget,
-        using executor: CLIExecutor? = nil
+        worktreePath: String,
+        applicationSupportDirectory: URL = defaultApplicationSupportDirectory,
+        preferredPaths: [String] = [],
+        budget: Duration = loadBudget
     ) async -> InstructionSet? {
-        let deadline = GitCommandDeadline(timeout: budget)
-        let prefix = directoryName + "/"
-
-        // `-z` because `ls-tree` otherwise C-quotes any path containing a
-        // non-ASCII byte, a quote, a backslash, or a control character —
-        // which would leave those files unmatched by the prefix filter below.
-        let listing: String
-        do {
-            listing = try await GitRunner.run(
-                args: ["ls-tree", "-r", "-z", "--name-only", "HEAD", prefix],
-                at: repoPath,
-                timeout: try deadline.remaining(),
-                using: executor
+        await loadWithinBudget(budget) {
+            loadSynchronously(
+                repoPath: repoPath,
+                worktreePath: worktreePath,
+                applicationSupportDirectory: applicationSupportDirectory,
+                preferredPaths: preferredPaths
             )
-        } catch let error as CLIError {
-            if case .timedOut = error {
-                logger.error("git budget lapsed during main listing; omitting instructions")
-                return nil
-            }
-            // A linked worktree may have a valid committed leaf even when the
-            // main checkout has no resolvable HEAD (for example, an unborn
-            // branch). Continue with an empty main listing and probe leaves.
-            logger.error(
-                "listing main .graftty at HEAD failed; continuing with worktree leaves"
+        }
+    }
+
+    /// @spec INSTR-7.2
+    /// When an instruction load exceeds the one-second response budget, the
+    /// application shall produce no instruction set without awaiting late
+    /// filesystem work.
+    static func loadWithinBudget(
+        _ budget: Duration,
+        operation: @escaping @Sendable () -> InstructionSet?
+    ) async -> InstructionSet? {
+        let (stream, continuation) = AsyncStream<InstructionSet?>.makeStream()
+        let loadTask = Task.detached(priority: .utility) {
+            let result = operation()
+            guard !Task.isCancelled else { return }
+            continuation.yield(result)
+        }
+        let duration = budget.components
+        let timeoutSeconds = max(
+            0,
+            Double(duration.seconds) + Double(duration.attoseconds) / 1e18
+        )
+        // A sleeping Swift task can itself be starved when filesystem work
+        // occupies the cooperative executor. Dispatch owns the deadline so
+        // the timeout remains independent of the blocked load task.
+        let timeoutWorkItem = DispatchWorkItem {
+            continuation.yield(nil)
+        }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + timeoutSeconds,
+            execute: timeoutWorkItem
+        )
+        defer {
+            loadTask.cancel()
+            timeoutWorkItem.cancel()
+            continuation.finish()
+        }
+        for await result in stream {
+            return result
+        }
+        return nil
+    }
+
+    private static func loadSynchronously(
+        repoPath: String,
+        worktreePath: String,
+        applicationSupportDirectory: URL,
+        preferredPaths: [String]
+    ) -> InstructionSet? {
+        guard !Task.isCancelled else { return nil }
+        let roots = uniqueRoots([
+            applicationSupportDirectory,
+            URL(fileURLWithPath: worktreePath, isDirectory: true),
+            URL(fileURLWithPath: repoPath, isDirectory: true),
+        ])
+
+        var inventories: [RootInventory] = []
+        var discovered: Set<String> = []
+        var skippedCount = 0
+        for root in roots {
+            guard !Task.isCancelled else { return nil }
+            let instructionDirectory = root.appendingPathComponent(
+                directoryName,
+                isDirectory: true
             )
-            listing = ""
-        } catch {
-            logger.error(
-                "listing main .graftty at HEAD failed; continuing with worktree leaves"
+            var rootPaths: Set<String> = []
+            discoverFiles(
+                beneath: instructionDirectory,
+                relativeDirectory: "",
+                discovered: &rootPaths,
+                skippedCount: &skippedCount
             )
-            listing = ""
+            discovered.formUnion(rootPaths)
+            inventories.append(
+                RootInventory(
+                    instructionDirectory: instructionDirectory,
+                    discoveredPaths: rootPaths
+                )
+            )
         }
-
-        let candidates = listing
-            .split(separator: "\0")
-            .map(String.init)
-            .filter { $0.hasPrefix(prefix) }
-            .map { String($0.dropFirst(prefix.count)) }
-
-        var seenWorktrees: Set<String> = []
-        let validLeafSources = leafSources.filter { source in
-            guard seenWorktrees.insert(source.worktreePath).inserted,
-                  case .leaf = InstructionFile.classify(
-                      relativePath: source.relativePath
-                  ) else { return false }
-            return true
-        }
-        let activeLeafPaths = Set(validLeafSources.map(\.relativePath))
-
-        var seenMainPaths: Set<String> = []
-        var mainGroups: [String] = []
-        var mainLeaves: [String] = []
-        var skipped: [String] = []
-        for candidate in candidates {
-            guard let kind = InstructionFile.classify(relativePath: candidate) else {
-                skipped.append(candidate)
-                continue
-            }
-            guard seenMainPaths.insert(candidate).inserted else { continue }
-            // An active worktree owns this leaf even when the file is absent
-            // on its branch. Never let the main checkout's copy act as an
-            // implicit fallback.
-            guard !activeLeafPaths.contains(candidate) else { continue }
-            switch kind {
-            case .group:
-                mainGroups.append(candidate)
-            case .leaf:
-                mainLeaves.append(candidate)
-            }
-        }
-        if !skipped.isEmpty {
+        if skippedCount > 0 {
             logger.info(
                 """
-                skipped \(skipped.count, privacy: .public) .graftty entries not named \
-                GRAFTTY.md or GRAFTTY.<leaf>.md: \(skipped.joined(separator: ", "))
+                skipped \(skippedCount, privacy: .public) .graftty entries not named \
+                GRAFTTY.md or GRAFTTY.<leaf>.md
                 """
             )
         }
-        // Each leaf source is preceded by its as-yet-unclaimed main-checkout
-        // groups. The caller supplies the viewer first, so its whole role
-        // chain is attempted before peer-only content can consume either cap.
-        // Unmatched main files remain available for org-chart discoverability
-        // after every live role. The existing caps still cover the combined
-        // plan, so adding worktrees cannot make prompts unbounded.
-        let availableMainGroups = Set(mainGroups)
-        var claimedMainGroups: Set<String> = []
-        var liveTargets: [ReadTarget] = []
-        for source in validLeafSources {
-            guard case let .leaf(key) = InstructionFile.classify(
-                relativePath: source.relativePath
-            ) else { continue }
-            for groupPath in InstructionChain.paths(forKey: key).dropLast()
-                where availableMainGroups.contains(groupPath)
-                    && claimedMainGroups.insert(groupPath).inserted {
-                liveTargets.append(.main(relativePath: groupPath))
-            }
-            liveTargets.append(.leaf(source))
-        }
-        let unmatchedMainGroups = mainGroups.filter {
-            !claimedMainGroups.contains($0)
-        }
-        let targets = Array(
-            (
-                liveTargets
-                    + unmatchedMainGroups.map(ReadTarget.main)
-                    + mainLeaves.map(ReadTarget.main)
-            ).prefix(maxFiles)
-        )
-        guard !targets.isEmpty else { return nil }
+        guard !discovered.isEmpty else { return nil }
 
-        // One `git show` per file. `git cat-file --batch` would read them all
-        // in a single count-independent subprocess, but `CLIExecutor` has no
-        // stdin channel to feed it object names; the shared deadline below is
-        // what keeps the aggregate cost bounded in the meantime.
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        for path in preferredPaths where discovered.contains(path) {
+            guard InstructionFile.classify(relativePath: path) != nil,
+                  seen.insert(path).inserted else { continue }
+            ordered.append(path)
+        }
+        for path in discovered.sorted() where seen.insert(path).inserted {
+            ordered.append(path)
+        }
+        ordered = Array(ordered.prefix(maxFiles))
+
         var documents: [String: InstructionDocument] = [:]
-        var leafDocuments: [String: InstructionDocument] = [:]
         var byteBudget = totalByteCap
-        var failed: [String] = []
-        for target in targets {
+        for relativePath in ordered {
+            guard !Task.isCancelled else { return nil }
             guard byteBudget > 0 else { break }
-            guard let remaining = try? deadline.remaining() else {
-                logger.error("git budget lapsed mid-read; omitting instructions")
+            let limit = min(perFileByteCap, byteBudget)
+            guard let body = firstReadableBody(
+                relativePath: relativePath,
+                inventories: inventories,
+                limit: limit
+            ) else { continue }
+            guard let capped = cap(body, to: limit) else { continue }
+            byteBudget -= capped.utf8.count
+            documents[relativePath] = InstructionDocument.parse(capped)
+        }
+
+        guard !documents.isEmpty else { return nil }
+        return InstructionSet(documents: documents)
+    }
+
+    private static func uniqueRoots(_ candidates: [URL]) -> [URL] {
+        var paths: Set<String> = []
+        return candidates.compactMap { candidate in
+            let root = candidate.standardizedFileURL
+            return paths.insert(root.path).inserted ? root : nil
+        }
+    }
+
+    /// Recursively discovers only materialized directories and regular files.
+    /// `lstat` is intentional: following a symlink here could escape an
+    /// instruction root or enter an unbounded directory cycle.
+    private static func discoverFiles(
+        beneath directory: URL,
+        relativeDirectory: String,
+        discovered: inout Set<String>,
+        skippedCount: inout Int
+    ) {
+        guard !Task.isCancelled,
+              isMaterializedDirectory(atPath: directory.path),
+              let names = try? FileManager.default.contentsOfDirectory(
+                  atPath: directory.path
+              ) else { return }
+
+        for name in names.sorted() {
+            guard !Task.isCancelled else { return }
+            let relativePath = relativeDirectory.isEmpty
+                ? name
+                : relativeDirectory + "/" + name
+            let entry = directory.appendingPathComponent(name)
+            var st = stat()
+            guard lstat(entry.path, &st) == 0 else { continue }
+            if isMaterializedDirectory(st) {
+                discoverFiles(
+                    beneath: entry,
+                    relativeDirectory: relativePath,
+                    discovered: &discovered,
+                    skippedCount: &skippedCount
+                )
+            } else if isMaterializedRegularFile(st) {
+                if InstructionFile.classify(relativePath: relativePath) != nil {
+                    discovered.insert(relativePath)
+                } else {
+                    skippedCount += 1
+                }
+            }
+        }
+    }
+
+    private static func firstReadableBody(
+        relativePath: String,
+        inventories: [RootInventory],
+        limit: Int
+    ) -> String? {
+        for inventory in inventories
+            where inventory.discoveredPaths.contains(relativePath) {
+            guard !Task.isCancelled else { return nil }
+            if let body = readMaterializedRegularFile(
+                relativePath: relativePath,
+                beneath: inventory.instructionDirectory,
+                limit: limit
+            ) {
+                return body
+            }
+        }
+        return nil
+    }
+
+    /// Opens the instruction root separately so system symlinks above that
+    /// trusted root (notably `/var` -> `/private/var`) remain valid, then uses
+    /// `O_NOFOLLOW_ANY` for the relative path so no symlink beneath the root
+    /// can expose arbitrary local files.
+    private static func readMaterializedRegularFile(
+        relativePath: String,
+        beneath instructionDirectory: URL,
+        limit: Int
+    ) -> String? {
+        let directoryDescriptor = open(
+            instructionDirectory.path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK
+        )
+        guard directoryDescriptor >= 0 else { return nil }
+        defer { close(directoryDescriptor) }
+
+        var directoryStat = stat()
+        guard fstat(directoryDescriptor, &directoryStat) == 0,
+              isMaterializedDirectory(directoryStat) else { return nil }
+
+        var beforeOpen = stat()
+        guard fstatat(
+            directoryDescriptor,
+            relativePath,
+            &beforeOpen,
+            AT_SYMLINK_NOFOLLOW
+        ) == 0,
+              isMaterializedRegularFile(beforeOpen) else { return nil }
+
+        let descriptor = openat(
+            directoryDescriptor,
+            relativePath,
+            O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY | O_NONBLOCK
+        )
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+
+        var afterOpen = stat()
+        guard fstat(descriptor, &afterOpen) == 0,
+              isMaterializedRegularFile(afterOpen) else { return nil }
+
+        // The extra bytes keep decoding away from the truncation boundary;
+        // the longest valid UTF-8 scalar is four bytes.
+        let readLimit = max(limit, 0) + 8
+        var data = Data()
+        data.reserveCapacity(readLimit)
+        var buffer = [UInt8](repeating: 0, count: min(8_192, readLimit))
+        while data.count < readLimit {
+            guard !Task.isCancelled else { return nil }
+            let requested = min(buffer.count, readLimit - data.count)
+            let count = read(descriptor, &buffer, requested)
+            if count > 0 {
+                data.append(buffer, count: count)
+            } else if count == 0 {
+                break
+            } else if errno == EINTR {
+                continue
+            } else {
                 return nil
             }
-            let body: String
-            do {
-                body = try await GitRunner.run(
-                    args: ["show", "HEAD:\(prefix)\(target.relativePath)"],
-                    at: target.checkoutPath(mainRepoPath: repoPath),
-                    timeout: remaining,
-                    using: executor
-                )
-            } catch let error as CLIError {
-                if case .timedOut = error {
-                    logger.error("git budget lapsed mid-read; omitting instructions")
-                    return nil
-                }
-                // Most worktrees will not opt into a leaf. `git show` reports
-                // an absent path as a normal non-zero exit, so omission is the
-                // expected result rather than a session-start error.
-                if case .nonZeroExit = error, target.isLeafSource {
-                    continue
-                }
-                failed.append(target.relativePath)
-                continue
-            } catch {
-                failed.append(target.relativePath)
-                continue
-            }
-            let capped = cap(body, to: min(perFileByteCap, byteBudget))
-            byteBudget -= capped.utf8.count
-            let document = InstructionDocument.parse(capped)
-            switch target {
-            case let .main(relativePath):
-                documents[relativePath] = document
-            case let .leaf(source):
-                leafDocuments[source.worktreePath] = document
-            }
         }
-        if !failed.isEmpty {
-            logger.error(
-                """
-                failed to read \(failed.count, privacy: .public) .graftty entries: \
-                \(failed.joined(separator: ", "))
-                """
-            )
-        }
-        guard !documents.isEmpty || !leafDocuments.isEmpty else { return nil }
-        return InstructionSet(
-            documents: documents,
-            leafDocumentsByWorktreePath: leafDocuments,
-            resolvedLeafWorktreePaths: Set(validLeafSources.map(\.worktreePath))
-        )
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func isMaterializedDirectory(atPath path: String) -> Bool {
+        var st = stat()
+        return lstat(path, &st) == 0 && isMaterializedDirectory(st)
+    }
+
+    private static func isMaterializedDirectory(_ st: stat) -> Bool {
+        MaterializedFilesystemEntry.isDirectory(st)
+    }
+
+    static func isMaterializedRegularFile(_ st: stat) -> Bool {
+        MaterializedFilesystemEntry.isRegularFile(st)
     }
 
     /// Truncates `text` to at most `limit` UTF-8 bytes, including the
-    /// appended `truncationMarker`. The slice always lands on a Unicode
-    /// scalar boundary — never mid-sequence — so truncation cannot corrupt a
-    /// multi-byte character into replacement characters (`U+FFFD`).
-    static func cap(_ text: String, to limit: Int) -> String {
+    /// appended `truncationMarker`. Returns nil when the marker itself cannot
+    /// fit, so a total-budget remainder never emits an unmarked fragment. The
+    /// slice always lands on a Unicode scalar boundary — never mid-sequence —
+    /// so truncation cannot corrupt a multi-byte character into replacement
+    /// characters (`U+FFFD`).
+    static func cap(_ text: String, to limit: Int) -> String? {
         guard text.utf8.count > limit else { return text }
         let markerBytes = truncationMarker.utf8.count
-        guard limit > markerBytes else {
-            // Not enough budget left to fit the marker itself; there is no
-            // sensible truncation marker to append, so just clamp the body.
-            return scalarPrefix(of: text, maxBytes: max(limit, 0))
-        }
+        guard limit >= markerBytes else { return nil }
         let head = scalarPrefix(of: text, maxBytes: limit - markerBytes)
         return head + truncationMarker
     }

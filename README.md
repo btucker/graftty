@@ -99,8 +99,7 @@ online in the same tailnet and the host must still be reachable on port
 ## Agent instructions
 
 Graftty can give the agents running in your worktrees durable, per-worktree
-instructions. Put shared and group files in the main checkout and leaf files
-on the branches that own them:
+instructions. Files use the same relative layout in any instruction root:
 
 ```
 .graftty/GRAFTTY.md                     # every worktree in the repo
@@ -117,20 +116,28 @@ applies to. Everything above it is shared with every agent in the repo, so
 it's the right place for what other worktrees need in order to coordinate
 with this one. A file with no such heading is entirely shared.
 
-Files are read from committed trees; uncommitted edits are ignored. The
-repo-wide file, group files, and unmatched leaf files come from the main
-checkout's `HEAD`. Each active worktree's leaf file comes from that worktree's
-own `HEAD`, so a worktree can commit its standing role on its branch before the
-file merges to main. If that leaf is absent on the branch, Graftty does not
-fall back to a same-named copy on main.
+For each relative path, Graftty uses the first readable regular file it finds
+in this order:
 
-This lets one agent configure another before launch: commit the new worktree's
-leaf on the caller's branch, then run
-`graftty worktree add <name> --base HEAD --agent <codex|claude>`. The child
-inherits that commit and receives the leaf in its first session. If the commit
-later reaches the main checkout's `HEAD`, main retains the leaf as durable team
-structure. A future worktree with the same key receives it when that worktree's
-starting commit contains the file.
+1. `~/Library/Application Support/Graftty/.graftty/`
+2. the current worktree's `.graftty/`
+3. the main checkout's `.graftty/`
+
+Resolution is per file, so a sparse higher-precedence overlay does not hide
+unrelated files below it. The Application Support root is machine-wide: a
+matching relative name overrides that file in every repository. Graftty reads
+current filesystem bytes and does not inspect Git, so an uncommitted edit takes
+effect at the next session start. Symlinks, non-regular files, and evicted
+iCloud placeholders are ignored.
+
+This lets one agent configure another before launch. Create the child's leaf
+where its first session can see it: in Application Support, in the main
+checkout, or in the child's starting tree. From a linked worktree, you can put
+the leaf in the starting tree by committing it and running
+`graftty worktree add <name> --base HEAD --agent <codex|claude>`; Git creates
+the child from that commit, but Graftty still reads the resulting filesystem
+file directly. Once the child exists, its own `.graftty/` can tune later
+sessions without a commit.
 
 The built-in team session prompt explains these forms and tells agents they may
 suggest concise instruction files when durable team structure would help, but

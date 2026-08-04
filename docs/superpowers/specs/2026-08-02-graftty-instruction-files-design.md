@@ -25,16 +25,16 @@ be visible to the other worktrees' agents that need to coordinate with it.
 
 ## Decision
 
-Add `.graftty/`, a directory of plain-markdown instruction files read from
-committed content and delivered to agent sessions at session start. Shared,
-group, and unmatched leaf files come from the repository's main checkout;
-each active worktree's leaf comes from that worktree's own committed tree.
+Add `.graftty/`, a directory of plain-markdown instruction files read directly
+from a filesystem overlay and delivered to agent sessions at session start.
+For each relative file, machine-wide Application Support can override the
+current worktree, which can override the main checkout.
 
 Files are matched to worktrees by **path**, using directory nesting for
 inheritance. Each file may split itself into a *shared* portion visible to every
 agent in the repo and a *private* portion visible only to the worktrees it
-applies to. Graftty never writes these files; they change through ordinary
-commits.
+applies to. Graftty never writes these files and never consults Git while
+loading them; current filesystem bytes take effect at the next session start.
 
 The mechanism is deliberately unopinionated about *why* worktrees are grouped.
 Nesting serves environment tiers, task classes, ownership, simulated
@@ -43,62 +43,47 @@ repo-wide file.
 
 ## Storage and resolution
 
-All files use the same `.graftty/` paths in Git. Their source checkout depends
-on their role:
+All sources use the same `.graftty/`-relative paths. For each path, Graftty
+uses the first readable, materialized regular file in this order:
 
-- `GRAFTTY.md`, nested group files, and leaf files matching no active worktree
-  come from the main checkout's committed `HEAD`.
-- Each active worktree's leaf file comes from that worktree's committed `HEAD`.
-  A missing worktree leaf does not fall back to a same-named main-checkout
-  file.
+1. `~/Library/Application Support/Graftty/.graftty/`
+2. the session viewer's current worktree `.graftty/`
+3. the repository's main checkout `.graftty/`
 
-Content is always read from a **committed tree at `HEAD`**, never from a
-working tree:
+Resolution is **per relative path**, not per directory. A sparse Application
+Support overlay can replace `GRAFTTY.md` without hiding a group file that
+exists only in the main checkout. Identical roots (the main checkout viewing
+itself) are deduplicated.
 
-```
-git ls-tree -r HEAD .graftty/       # discover main-checkout files
-git show HEAD:.graftty/<path>       # read each selected main file
-git show HEAD:.graftty/<leaf>       # run in each active worktree
-```
+Application Support is deliberately machine-wide rather than repo-scoped.
+This makes it useful for personal policy and emergency overrides, but creates
+an equally deliberate collision domain: a matching relative path overrides
+that file in every repository. The built-in session prompt calls this out.
 
-One listing plus at most one read per selected file. The combined read plan is
-bounded by the file-count, byte, and aggregate-time limits below.
+Only materialized regular files and directories participate. Graftty uses
+`lstat` and no-follow opens, rejects symlinks and special files, and checks
+`SF_DATALESS` before reading so an evicted iCloud/File Provider placeholder
+does not synchronously trigger hydration. Discovery and reads run away from
+the main actor. File-count and byte limits bound the resulting prompt.
 
 ### Configuring a child before launch
 
-An agent can define a new worktree's leaf on its own branch, commit it, and
-create the child from that exact commit:
+An agent configures a child by creating the child's leaf somewhere the first
+session can resolve it: Application Support, the main checkout, or the child's
+starting tree. A linked-worktree agent can choose to include the file in the
+starting tree by committing it and creating the child from that exact commit:
 
 ```
 graftty worktree add <name> --base HEAD --agent <codex|claude>
 ```
 
 The CLI resolves `HEAD` in the caller's worktree before creating the new
-branch, so the child owns the committed leaf immediately and receives it in
-its first session. Once the same file reaches the main checkout's `HEAD`, main
-retains it as durable team structure. A future worktree with the same key
-receives that leaf when its starting commit contains the file; an explicit
-older or unrelated `--base` does not fall back to main. This is not a separate
-hidden or ephemeral instruction tier.
-
-Reading committed content rather than the filesystem is load-bearing for three
-reasons:
-
-1. Instruction changes take effect only when committed; uncommitted experiments
-   remain invisible to current and peer sessions.
-2. Each individual file is observed as committed content rather than through a
-   partially written working-tree edit. One load does not pin a checkout's
-   `HEAD` across its several Git commands.
-3. Git's tree is case-sensitive on every platform, whereas APFS is usually
-   case-insensitive. A filesystem-based resolver would match `.graftty/Research/`
-   against key `research/…` locally but not in CI.
-
-The known cost: a shared or group change reaches agents only after the main
-checkout advances its `HEAD`. Keeping the main checkout current is the
-operator's job. A leaf change instead reaches the owning worktree at its next
-session as soon as it is committed there. Reading `origin/main` was considered
-and rejected — it trades a local-consistency problem for a fetch-freshness
-problem.
+branch, so Git happens to copy that file into the child. Graftty itself neither
+commits nor reads Git: the child's session reads the resulting filesystem file.
+Once the child exists, editing its own `.graftty/` changes later sessions
+without a commit. A main-checkout leaf is another useful pre-launch path: a
+new child that lacks its own copy falls back to the main checkout immediately,
+including when that main file is uncommitted.
 
 ## Worktree keys
 
@@ -213,7 +198,7 @@ A file that opens with the marker has no shared portion; the roster renders it
 with a no-shared-instructions note.
 
 Splitting inside one file rather than using two files per level keeps the two
-halves from drifting in separate commits, and makes a review diff show at a
+halves from drifting in separate edits, and makes a review diff show at a
 glance whether a change alters what other worktrees rely on (above the line) or
 only the applicable worktrees' own method (below it).
 
@@ -253,9 +238,9 @@ team context and the queued inbox messages:
   are listed by their path with their shared portion, as plain discoverability.
   No suggested command; what to do about them is the reader's call.
 
-If no relevant checkout contains committed instruction content, the section is
-omitted entirely and behavior is unchanged for repos that have not opted in. A
-branch-only active leaf is sufficient to opt in before main contains
+If no overlay root contains readable instruction content, the section is
+omitted entirely and behavior is unchanged for repos that have not opted in.
+A viewer-only leaf is sufficient to opt that worktree in before main contains
 `.graftty/`.
 
 ### Relationship to `teamSessionPrompt`
@@ -267,7 +252,7 @@ guarantee is amended to scope to the *team context section only*. Instructions
 become their own section, exactly as queued messages already are.
 
 Consequently, blanking the session template no longer suppresses instructions —
-committing their deletion does. Existing custom templates keep working
+removing them from every applicable overlay does. Existing custom templates keep working
 unchanged, and no template migration is required.
 
 Instruction files are **plain markdown, not Stencil templates**. Template
@@ -277,16 +262,17 @@ files do not obviously need.
 
 ### Trust
 
-Shared and group files reach an agent as repo-trusted instructions, on the same
-footing as `CLAUDE.md`, because they come from the main checkout's committed
-tree. A worktree's own leaf is branch-local trusted context, like other
-instruction files committed on that branch.
+Files in these roots reach the matching agent as local trusted instructions,
+on the same footing as other workspace instruction files. The higher roots are
+not intrinsically more trustworthy; precedence only selects which bytes win.
+Application Support is user-machine policy, the current-worktree tier is
+editable by that worktree, and the main-checkout tier is the shared fallback.
 
 Another worktree's shared leaf content is not an instruction to the reader. It
 is explicitly framed as that worktree's self-authored role description, and the
-rendered section directs coordination through `graftty team send`. This framing
-is load-bearing now that a worktree can publish its role before main-branch
-review.
+rendered section directs coordination through `graftty team send`. Under the
+filesystem model the org chart is the viewer's resolved overlay: it does not
+reach into peer worktrees to fetch their current bytes.
 
 ## Authoring
 
@@ -295,15 +281,12 @@ teaches agents the file forms, asks them to keep files concise, and permits them
 to suggest an appropriate file when durable structure would help. Agents create
 or modify files only when the user has authorized that work.
 
-Shared and group files change through ordinary commits to the default branch,
-normally by pull request. A worktree may author its own leaf in its own checkout
-and commit it on its branch; that committed leaf takes effect at the next
-session without waiting to merge. Agents never need to write into another
-worktree or dirty the main checkout.
-
-Because content is read from `HEAD`, an agent's in-progress edits do not take
-effect. This preserves a clear boundary between drafting a role and activating
-it.
+Repository files may still change through ordinary reviewed commits, but that
+is an authoring policy rather than a loader requirement. A worktree may author
+its own leaf in its own checkout and the current bytes take effect in its next
+session. To configure a not-yet-created child, an agent uses Application
+Support, the main checkout, or arranges for the file to exist in the child's
+starting tree. Agents never need to write into an existing peer worktree.
 
 ## Failure handling and limits
 
@@ -311,21 +294,20 @@ The governing rule is to degrade to omission and never block session start.
 
 | Condition | Behavior |
 |---|---|
-| No committed instruction content in any relevant checkout | Omit the section |
-| One checkout's non-timeout `git` read fails | Omit its unavailable content, log, continue with other checkouts |
-| The aggregate `git` deadline expires | Omit the section, log, proceed |
+| No readable instruction content in any overlay root | Omit the section |
+| Higher-precedence candidate is absent, unreadable, or unsafe | Continue to the same path in the next root |
+| Symlink, FIFO, socket, device, or other non-regular entry | Skip without opening it |
+| Evicted iCloud/File Provider (`SF_DATALESS`) entry | Skip without reading it |
+| The aggregate filesystem load exceeds one second | Omit the section without awaiting the late I/O |
 | Filename not matching `GRAFTTY.md` / `GRAFTTY.<leaf>.md` | Skip, log |
 | Empty leaf component (`GRAFTTY..md`) | Skip, log |
 | Main checkout with unresolved default branch | Root file only, no leaf file |
 | Worktree outside the repo's worktrees directory | Root file only |
 | Per-file size cap exceeded | Truncate with a visible marker |
 | Total stack size cap exceeded | Truncate with a visible marker |
+| The remaining total budget cannot fit the truncation marker | Omit that file rather than emit an unmarked fragment |
 | Several `Private` headings | First one splits; the rest are ordinary content |
 | File begins with the `Private` heading | No shared portion; roster notes this |
-
-The bounded timeout is load-bearing rather than defensive: `CLIRunner` has
-historically lacked a subprocess timeout, and an unbounded `git` call on the
-session-start path would hang session start rather than fail it.
 
 Size caps follow the precedent of the 131072-byte initial-prompt cap in
 `AGENT-5.1`.
@@ -342,21 +324,22 @@ Three pure units and one I/O unit, each testable in isolation:
   skippable. No I/O.
 - **`InstructionDocument`** — splits raw markdown into shared and private
   portions. No I/O.
-- **`InstructionStore`** — lists main-checkout files, reads each active leaf in
-  its owning checkout, applies one aggregate timeout and size budget, and
-  returns main documents plus worktree-keyed leaf documents.
+- **`InstructionStore`** — discovers valid paths across the three filesystem
+  roots, resolves each path by precedence, rejects unsafe or unmaterialized
+  entries, and applies file-count and byte budgets.
 
 `TeamHookRenderer.sessionStart` gains an instructions parameter.
-`InstructionSessionText` supplies the active worktree sources to the store and
-the resulting audience-specific documents to `InstructionRenderer`.
+`InstructionSessionText` supplies the viewer worktree, main checkout, and
+viewer-first path preferences to the store, then sends the resolved documents
+to `InstructionRenderer`.
 `TeamInstructionsRenderer`'s built-in prompt gains the concise authoring guide.
 
 ## Specs
 
 A new `INSTR — Agent Instruction Files` section in `SPECS.md`:
 
-- **INSTR-1.x** — storage location, `HEAD`-committed reads, absent-directory
-  behavior
+- **INSTR-1.x** — filesystem roots, per-path precedence, current-byte reads,
+  absent-directory behavior
 - **INSTR-2.x** — worktree key derivation, including the main checkout and
   out-of-tree cases
 - **INSTR-3.x** — the two filename forms, descendants-only semantics for group
@@ -382,24 +365,21 @@ names containing dots and the rejected forms; the split marker at each heading
 level, with no marker, and as the first line; and renderer output for own-stack,
 roster, and unmatched-entry cases.
 
-`InstructionStore` tests inject a fake command runner to cover checkout
-selection, cap truncation, git failure, timeout, and malformed `ls-tree` output
-without needing a repo.
-
-Two integration cases earn their keep: a main-checkout instruction committed
-and then edited dirty, and a leaf committed in a linked worktree but absent from
-main and then edited dirty. Both assert that delivery uses the appropriate
-**committed** text. These are the behavioral proofs of the `HEAD`-read decision
-that a fake runner cannot establish.
+`InstructionStore` tests create isolated filesystem roots to cover per-path
+precedence, current uncommitted bytes, absent roots, malformed names, caps and
+ragged cap remainders, the one-second deadline, ancestor and final-component
+symlink rejection, case-distinct overlay paths, FIFO rejection, and the
+`SF_DATALESS` materialization predicate.
+Session rendering tests use the same real-filesystem behavior to prove that a
+creating child receives its current-worktree leaf in its first session and
+that viewer paths win prompt limits.
 
 ## Non-goals
 
-- A machine-local, uncommitted instruction tier. `.graftty/` can be gitignored
-  per repo if local-only instructions are wanted; an Application Support overlay
-  keyed by repo identity is deliberately deferred.
+- A repo-scoped Application Support namespace. The Application Support overlay
+  is intentionally machine-wide; avoiding collisions is the author's job.
 - Mid-session refresh when instructions change. Files are read at session start;
-  a committed change in the relevant checkout reaches an agent on its next
-  session.
+  a filesystem change in the resolved overlay reaches an agent on its next session.
 - Any Graftty-side writing, creation, or editing UI for instruction files.
 - Stencil templating within instruction files.
 - Wildcard or glob patterns in filenames.
