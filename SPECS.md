@@ -1840,6 +1840,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
 
+**TEAM-11.8** If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.
+
 ### TEAM-12.x
 
 **TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.

@@ -436,6 +436,54 @@ struct InboxWatcherTests {
         #expect(!prior.isRunning)
     }
 
+    @Test("@spec TEAM-11.8: If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.")
+    func retriesClaimAfterWatermarkLockTimeout() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+
+        let teamID = "team-x"
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+        let inbox = TeamInbox(rootDirectory: inboxRoot)
+        try seedSession(
+            in: inbox,
+            teamID: teamID,
+            sessionID: "test-session",
+            worktree: "wt-foo-path",
+            lastSeenID: nil
+        )
+        _ = try appendMessage(to: inbox, teamID: teamID, worktree: "wt-foo-path", body: "hello latch")
+
+        // Hold the lock before the watcher starts: its catch-up claim in
+        // the initial observer emit deterministically times out before
+        // whenReady() resolves.
+        let holder = try holdWatermarkLock(root: inboxRoot, teamID: teamID, worktree: "wt-foo-path")
+        defer { holder.release() }
+
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: "test-session",
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: tmpRoot.appendingPathComponent("teams", isDirectory: true),
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true)),
+            pollIntervalNanoseconds: 50_000_000,
+            watermarkLockTimeout: 0.2
+        )
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+        await watcher.whenReady()
+
+        // No further appends arrive and the watermark value never changed,
+        // so only the retry latch can deliver this message.
+        holder.release()
+        let result = try await outcome.wait(timeout: 5)
+        #expect(result.exitCode == 2)
+        #expect(result.stderr.contains("hello latch"))
+    }
+
     @Test("@spec TEAM-11.5: While its original parent process is no longer alive, the inbox watcher shall resolve its outcome with exit code 0 at the next poll tick instead of continuing to watch.")
     func exitsWhenParentDies() async throws {
         let tmpRoot = try makeTmpDir()

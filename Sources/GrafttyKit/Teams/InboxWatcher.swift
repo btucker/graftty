@@ -52,6 +52,7 @@ public actor WatcherOutcome {
 /// @spec TEAM-11.1
 /// @spec TEAM-11.4
 /// @spec TEAM-11.5
+/// @spec TEAM-11.8
 /// Long-running watcher used by Claude's `asyncRewake` Stop hook. Writes
 /// its own PID to `<pidFileRoot>/<teamID>/watchers/<worktree>.<runtime>.pid`,
 /// SIGTERMing whatever PID was previously there (one watcher per worktree
@@ -82,6 +83,7 @@ public actor InboxWatcher {
     public let pidFileRoot: URL
     public let eventLog: TeamEventLog?
     private let pollIntervalNanoseconds: UInt64
+    private let watermarkLockTimeout: TimeInterval
     private let parentAliveCheck: @Sendable () -> Bool
 
     private var observerCancellable: TeamInboxObserver.Cancellable?
@@ -99,6 +101,10 @@ public actor InboxWatcher {
     private var readyContinuations: [CheckedContinuation<Void, Never>] = []
     private var hasObservedWatermark = false
     private var observedWatermarkID: String?
+    /// TEAM-11.8: set when a claim attempt threw (lock timeout); the next
+    /// poll tick retries the claim directly instead of waiting for a
+    /// watermark value change that may never come.
+    private var claimRetryPending = false
 
     public init(
         sessionID: String,
@@ -109,6 +115,7 @@ public actor InboxWatcher {
         pidFileRoot: URL,
         eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
         pollIntervalNanoseconds: UInt64 = 1_000_000_000,
+        watermarkLockTimeout: TimeInterval = 2.0,
         parentAliveCheck: (@Sendable () -> Bool)? = nil
     ) {
         self.sessionID = sessionID
@@ -119,7 +126,15 @@ public actor InboxWatcher {
         self.pidFileRoot = pidFileRoot
         self.eventLog = eventLog
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.watermarkLockTimeout = watermarkLockTimeout
         self.parentAliveCheck = parentAliveCheck ?? Self.defaultParentAliveCheck()
+    }
+
+    private func makeInbox() -> TeamInbox {
+        TeamInbox(
+            rootDirectory: inboxRootDirectory,
+            watermarkLockTimeout: watermarkLockTimeout
+        )
     }
 
     /// TEAM-11.5: the production liveness probe compares the parent PID
@@ -198,7 +213,16 @@ public actor InboxWatcher {
             // messages.jsonl. Retry while armed so the next eligible row
             // does not wait for an unrelated future append.
             if sawInitialEmit {
-                await claimIfWatermarkAdvanced()
+                // TEAM-11.8: a claim that failed outright (watermark lock
+                // timeout) leaves an obligation the watermark-value gate
+                // cannot see — the value may never change again. The latch,
+                // not the value edge, carries that obligation.
+                if claimRetryPending {
+                    claimRetryPending = false
+                    await claimAndFire()
+                } else {
+                    await claimIfWatermarkAdvanced()
+                }
             }
         }
 
@@ -234,7 +258,7 @@ public actor InboxWatcher {
             // such a message away: the persisted cursor tells us it is new
             // to this session even though it was present in the observer's
             // first snapshot.
-            let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+            let inbox = makeInbox()
             if (try? inbox.cursor(teamID: teamID, sessionID: sessionID)) != nil {
                 await claimAndFire()
             } else {
@@ -270,15 +294,24 @@ public actor InboxWatcher {
 
     private func claimAndFire() async {
         guard !hasFired else { return }
-        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
-        guard let match = try? inbox.claimNextUnreadMessage(
+        let inbox = makeInbox()
+        let claimed: TeamInboxMessage?
+        do {
+            claimed = try inbox.claimNextUnreadMessage(
                 teamID: teamID,
                 sessionID: sessionID,
                 recipientWorktree: recipient.worktree,
                 runtime: recipient.runtime.rawValue
-              ) else {
+            )
+        } catch {
+            // TEAM-11.8: distinguish "claim failed" (typically
+            // watermarkLockTimeout under a lock convoy) from "nothing to
+            // claim". Swallowing the failure would strand an armed watcher:
+            // no future append or watermark edge is guaranteed to arrive.
+            claimRetryPending = true
             return
         }
+        guard let match = claimed else { return }
         hasFired = true
         emit(.watcherWoke, detail: [
             "session": sessionID,
@@ -289,7 +322,7 @@ public actor InboxWatcher {
     }
 
     private func captureCurrentWatermark() {
-        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        let inbox = makeInbox()
         do {
             observedWatermarkID = try inbox.worktreeWatermark(
                 teamID: teamID,
@@ -303,7 +336,7 @@ public actor InboxWatcher {
 
     private func claimIfWatermarkAdvanced() async {
         guard !hasFired else { return }
-        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        let inbox = makeInbox()
         let currentID: String?
         do {
             currentID = try inbox.worktreeWatermark(
