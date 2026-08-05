@@ -317,10 +317,21 @@ final class AppServices {
         self.socketServer = SocketServer(socketPath: socketPath)
 
         self.worktreeMonitor = WorktreeMonitor()
-        self.statsStore = WorktreeStatsStore()
-        let remoteBranchStore = RemoteBranchStore()
+        // The 5s stats, 10s remote-ref, and 30s PR ticks align every
+        // 30 seconds. Share one cap so twelve repositories produce four
+        // background process pipelines, not three independent bursts.
+        let backgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
+        self.statsStore = WorktreeStatsStore(
+            backgroundProcessLimiter: backgroundProcessLimiter
+        )
+        let remoteBranchStore = RemoteBranchStore(
+            backgroundProcessLimiter: backgroundProcessLimiter
+        )
         self.remoteBranchStore = remoteBranchStore
-        self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
+        self.prStatusStore = PRStatusStore(
+            remoteBranchStore: remoteBranchStore,
+            backgroundProcessLimiter: backgroundProcessLimiter
+        )
         self.claudeSessionRegistry = ClaudeSessionRegistry()
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
@@ -1511,16 +1522,13 @@ struct GrafttyApp: App {
         let prStatusStore = services.prStatusStore
         remoteBranchStore.onChange = { repoPath, old, new in
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
-
-            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
-                if old.contains(wt.branch) && !new.contains(wt.branch) {
-                    prStatusStore.clear(worktreePath: wt.path)
-                }
-            }
-
-            if !new.subtracting(old).isEmpty {
-                prStatusStore.pulse()
-            }
+            RemoteBranchPRRefreshRouter.route(
+                repo: repo,
+                oldBranches: old,
+                newBranches: new,
+                clear: { prStatusStore.clear(worktreePath: $0) },
+                pulseRepo: { prStatusStore.pulse(repoPath: $0) }
+            )
         }
 
         let bridge = WorktreeMonitorBridge(
@@ -1581,8 +1589,8 @@ struct GrafttyApp: App {
         // Start the stats safety-net poller: HEAD and origin-ref events
         // provide the prompt path, while this 5s ticker catches
         // coalesced or missed filesystem events. Per-repo, it gates the
-        // 30-second `git fetch` cadence (DIVERGE-4.3) and unconditionally
-        // refreshes every running worktree on every tick (DIVERGE-4.6).
+        // 30-second `git fetch` cadence (DIVERGE-4.3); otherwise it rotates
+        // through four running worktrees per tick (DIVERGE-4.6 / PERF-1.11).
         // Keeps polling while Graftty is backgrounded (DIVERGE-4.8) —
         // the user's Claude / editor session is often in a different
         // frontmost app, and that's exactly when a `git add` in an
@@ -1597,10 +1605,11 @@ struct GrafttyApp: App {
             getRepos: { [appState] in appState.repos }
         )
 
-        // Local remote-ref scans are cheap (`git for-each-ref`) and seed
-        // PR polling's pushed-branch gate. The immediate refresh plus
-        // onChange pulse above prevents an empty startup cache from
-        // suppressing initial PR checks until the next normal PR cadence.
+        // Local remote-ref scans seed PR polling's pushed-branch gate. Each
+        // scan is one `git for-each-ref`, and the ticker rotates through four
+        // repos per tick. PollingTicker fires immediately, so `start` seeds
+        // the first batch without a second explicit refresh pass; onChange
+        // pulses PR polling as results land.
         let remoteBranchTicker = PollingTicker(
             interval: .seconds(10),
             pauseWhenInactive: { false }
@@ -1609,9 +1618,6 @@ struct GrafttyApp: App {
             ticker: remoteBranchTicker,
             getRepos: { binding.wrappedValue.repos }
         )
-        for repo in binding.wrappedValue.repos {
-            services.remoteBranchStore.refresh(repoPath: repo.path)
-        }
 
         // The PR poller drives `gh pr list`, a GraphQL call metered
         // against a separate 5,000-point/hour budget. Unlike the stats
@@ -1622,9 +1628,11 @@ struct GrafttyApp: App {
         // firing while Graftty is backgrounded (PR-7.6): `gh pr list`
         // is the only channel for an open→merged transition that
         // happens on GitHub without a local `git fetch`, and at 60s the
-        // background cost is genuinely negligible. The 30s wake stays
-        // below the 60s gate so cadence jitter can't stretch the
-        // effective interval toward 120s.
+        // background cost is genuinely negligible. The 60s cadence is a
+        // per-repo eligibility floor; ordinary ticks rotate through four
+        // repos at a time, so larger workspaces trade additional safety-net
+        // latency for bounded query volume. Explicit pulses still cover every
+        // repo, while remote-ref changes pulse only their affected repo.
         let prTicker = PollingTicker(
             interval: .seconds(30),
             pauseWhenInactive: { false }

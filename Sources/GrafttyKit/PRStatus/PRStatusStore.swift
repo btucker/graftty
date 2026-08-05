@@ -35,6 +35,7 @@ public final class PRStatusStore {
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
     @ObservationIgnored private let remoteBranchStore: RemoteBranchStore?
+    @ObservationIgnored private let backgroundProcessLimiter: BackgroundProcessLimiter
 
     @ObservationIgnored private var hostByRepo: [String: HostingOrigin?] = [:]
 
@@ -88,8 +89,15 @@ public final class PRStatusStore {
     /// tick's per-repo dispatches past the cadence gate (see `pulse()`,
     /// PR-8.25).
     @ObservationIgnored private var forceNextTick = false
+    /// Repo-scoped pulses from remote-ref changes. Keeping these paths
+    /// separate from `forceNextTick` prevents one repo's initial ref scan from
+    /// bypassing the cadence gate for every repo in a large workspace.
+    @ObservationIgnored private var forcedRepoPaths: Set<String> = []
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
+    @ObservationIgnored private var pollCursor = RoundRobinBatchCursor()
+    @ObservationIgnored private var forcedPollCursor = RoundRobinBatchCursor()
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
+    private static let pollBatchSize = 4
 
     /// Fires when a worktree's PR cache transitions into a terminal
     /// resolved state — either `.merged` or `.closed` (closed without
@@ -117,10 +125,12 @@ public final class PRStatusStore {
         executor: CLIExecutor = CLIRunner(),
         fetcherFor: ((HostingProvider) -> PRFetcher?)? = nil,
         detectHost: (@Sendable (String) async throws -> HostingOrigin?)? = nil,
-        remoteBranchStore: RemoteBranchStore? = nil
+        remoteBranchStore: RemoteBranchStore? = nil,
+        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
     ) {
         self.executor = executor
         self.remoteBranchStore = remoteBranchStore
+        self.backgroundProcessLimiter = backgroundProcessLimiter
         if let fetcherFor {
             self.fetcherFor = fetcherFor
         } else {
@@ -240,10 +250,32 @@ public final class PRStatusStore {
         state.generation += 1
         fetchStateByRepo[repoPath] = state
         let gen = state.generation
+        let backgroundProcessLimiter = self.backgroundProcessLimiter
 
-        Task { [weak self] in
-            await self?.performRepoFetch(repoPath: repoPath, fetchGeneration: gen)
+        Task {
+            await backgroundProcessLimiter.run { [weak self] in
+                guard let self,
+                      await self.beginLimitedRepoFetch(
+                        repoPath: repoPath,
+                        fetchGeneration: gen
+                      ) else { return }
+                await self.performRepoFetch(repoPath: repoPath, fetchGeneration: gen)
+            }
         }
+        return true
+    }
+
+    private func beginLimitedRepoFetch(
+        repoPath: String,
+        fetchGeneration: Int
+    ) -> Bool {
+        guard fetchStateByRepo[repoPath]?.generation == fetchGeneration else {
+            return false
+        }
+        // A request may have waited behind other pollers in the shared
+        // process pool. Give the actual host query its full abandonment
+        // window instead of counting time spent suspended in the queue.
+        fetchStateByRepo[repoPath]?.inFlightSince = Date()
         return true
     }
 
@@ -281,6 +313,9 @@ public final class PRStatusStore {
         defer {
             if fetchStateByRepo[repoPath]?.generation == fetchGeneration {
                 fetchStateByRepo[repoPath]?.inFlightSince = nil
+                if !forcedRepoPaths.isEmpty {
+                    ticker?.pulse()
+                }
             }
         }
 
@@ -528,16 +563,18 @@ extension PRStatusStore {
         .seconds(20)
     }
 
-    /// Per-repo polling cadence. Base value 60s: `gh pr list
+    /// Per-repo polling eligibility floor. Base value 60s: `gh pr list
     /// --json statusCheckRollup,mergeable` is a GraphQL query (counted
     /// against the 5,000-point/hour GraphQL budget, separate from
     /// REST), and PR/CI/merge state changes on a minute scale, so a
     /// tighter cadence only burns quota — a 5s cadence exhausted the
     /// entire GraphQL budget on a single repo. Window focus and push
     /// events still `pulse()` an immediate fetch, so perceived
-    /// freshness is unaffected. Failures back off exponentially up to
-    /// 300s so a `403` rate-limit rejection retries every five minutes
-    /// rather than every minute. @spec PR-8.19
+    /// freshness is unaffected. Ordinary polling visits four repositories per
+    /// 30-second tick, so workspaces larger than eight repositories can revisit
+    /// a repo later than this floor. Failures back off exponentially up to 300s
+    /// so a `403` rate-limit rejection is eligible no more often than every five
+    /// minutes. @spec PR-8.19
     nonisolated static func cadenceFor(failureStreak: Int) -> Duration {
         ExponentialBackoff.scale(
             base: .seconds(60),
@@ -577,15 +614,85 @@ extension PRStatusStore {
         ticker?.pulse()
     }
 
+    /// Force the next tick for one repository. Remote-ref scans use this path
+    /// because a newly observed branch can make that repo eligible for PR/MR
+    /// lookup without making unrelated repositories stale. @spec PR-8.28
+    public func pulse(repoPath: String) {
+        forcedRepoPaths.insert(repoPath)
+        ticker?.pulse()
+    }
+
     private func tick() async {
         let force = forceNextTick
         forceNextTick = false
+        let scopedForcePaths = forcedRepoPaths
+        forcedRepoPaths.removeAll()
         let repos = getRepos()
         pruneStaleRepoState(currentRepoPaths: Set(repos.map(\.path)))
-        for repo in repos where repo.isGitTracked
-                && repo.worktrees.contains(where: { $0.state.hasOnDiskWorktree }) {
-            dispatchRepoFetch(repoPath: repo.path, force: force)
+
+        let candidates = repos.filter {
+            $0.isGitTracked
+                && $0.worktrees.contains(where: { $0.state.hasOnDiskWorktree })
         }
+
+        // An all-repo pulse retains its force-through-cadence semantics, but
+        // joins repo-scoped pulses in the same bounded selection path.
+        if force {
+            forcedRepoPaths.formUnion(candidates.map(\.path))
+        }
+
+        forcedRepoPaths.formUnion(scopedForcePaths)
+        let candidatePaths = Set(candidates.map(\.path))
+        forcedRepoPaths.formIntersection(candidatePaths)
+
+        let now = Date()
+        let inFlightCap = Double(Self.refreshCadence().components.seconds)
+        let liveInFlightPaths: Set<String> = Set(fetchStateByRepo.compactMap { repoPath, state in
+            guard let started = state.inFlightSince,
+                  now.timeIntervalSince(started) < inFlightCap else { return nil }
+            return repoPath
+        })
+        let availableDispatches = max(
+            0,
+            Self.pollBatchSize - liveInFlightPaths.count
+        )
+        let forcedCandidates = candidates.filter {
+            forcedRepoPaths.contains($0.path)
+                && !liveInFlightPaths.contains($0.path)
+        }
+        let forcedBatch: [RepoEntry] = availableDispatches > 0
+            ? forcedPollCursor.nextBatch(
+                from: forcedCandidates,
+                maximumCount: availableDispatches,
+                path: \.path
+            )
+            : []
+        let forcedBatchPaths = Set(forcedBatch.map(\.path))
+        forcedRepoPaths.subtract(forcedBatchPaths)
+        for repo in forcedBatch {
+            dispatchRepoFetch(repoPath: repo.path, force: true)
+        }
+
+        let ordinaryBudget = availableDispatches - forcedBatch.count
+        if ordinaryBudget > 0 {
+            let ordinaryCandidates = candidates.filter {
+                !forcedBatchPaths.contains($0.path)
+                    && !liveInFlightPaths.contains($0.path)
+            }
+            let batch = pollCursor.nextBatch(
+                from: ordinaryCandidates,
+                maximumCount: ordinaryBudget,
+                path: \.path
+            )
+            for repo in batch {
+                dispatchRepoFetch(repoPath: repo.path, force: false)
+            }
+        }
+
+        // A single ticker wake can coalesce changes from more repositories
+        // than fit in one batch. The completion path pulses the ticker to
+        // drain the remainder only after a host-query slot becomes available,
+        // preventing forced refreshes from filling the shared FIFO queue.
     }
 
     /// Drop bookkeeping for repos no longer in the model. Without

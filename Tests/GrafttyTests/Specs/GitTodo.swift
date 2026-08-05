@@ -39,11 +39,6 @@ struct GitTodo {
     func git_2_4() async throws { }
 
     @Test("""
-@spec GIT-2.8: While a repository is in the sidebar, the application shall scan local `refs/remotes/origin/*` every 10 seconds without contacting the network, maintaining a repo-scoped set of locally-known remote branch names. The scan shall use local git ref metadata only; it shall not replace the repo-level fetch cadence that discovers branches created from another clone.
-""", .disabled("not yet implemented"))
-    func git_2_8() async throws { }
-
-    @Test("""
 @spec GIT-2.9: When the origin-ref watcher from `GIT-2.5` observes a remote-tracking ref movement, the application shall refresh the repo's local remote-branch set before deciding which worktrees should receive PR/MR polling.
 """, .disabled("not yet implemented"))
     func git_2_9() async throws { }

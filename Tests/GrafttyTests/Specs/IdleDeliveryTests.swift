@@ -6,7 +6,7 @@ import GrafttyProtocol
 
 @Suite("GrafttyApp — Codex app-server inbox delivery wiring")
 struct CodexAppServerInboxDeliveryWiringTests {
-    @Test("New inbox messages trigger one Codex app-server delivery per recipient worktree.")
+    @Test("New inbox messages trigger exactly one Codex app-server delivery per recipient worktree, regardless of concurrent fan-out order.")
     func newMessagesTriggerDeliveryPerRecipientWorktree() async {
         let delivery = RecordingCodexDelivery()
         let state = GrafttyApp.CodexAppServerInboxObserverDeliveryState(lastSeenCount: 1)
@@ -24,10 +24,12 @@ struct CodexAppServerInboxDeliveryWiringTests {
             delivery: delivery
         )
 
-        #expect(await delivery.calls == [
+        let calls = await delivery.calls
+        #expect(calls.count == 2)
+        #expect(Set(calls) == Set([
             .init(team: "/repo", worktree: "/repo/.worktrees/alice"),
             .init(team: "/repo", worktree: "/repo/.worktrees/bob"),
-        ])
+        ]))
     }
 
     @Test("Production observer state treats its initial full inbox snapshot as already seen.")

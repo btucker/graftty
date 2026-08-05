@@ -14,28 +14,113 @@ struct RemoteBranchStoreTests {
         _ = try await list("/repo")
 
         let invocations = executor.recordedInvocations
-        #expect(invocations.count == 3)
+        #expect(invocations.count == 1)
         #expect(invocations.allSatisfy {
             guard let timeout = $0 else { return false }
             return timeout > .zero && timeout <= .seconds(20)
         })
     }
 
-    @Test func parseUpstreamsMapsLocalHeadsToOriginRemoteBranches() {
-        // Branches without upstream emit an empty trailing column;
-        // non-origin upstreams (e.g. `upstream/main`) are dropped.
-        let raw = """
-        main\torigin/main
-        feature/foo\torigin/feature/bar
-        no-upstream\t
-        upstream-tracker\tupstream/main
+    @Test("""
+    @spec PERF-1.12: When the recurring remote-branch poll reads a repository's refs, the application shall obtain remote branches, local branches, upstream mappings, and the origin default branch with one Git subprocess.
+    """)
+    func defaultListCombinesRefMetadataIntoOneGitInvocation() async throws {
+        let executor = CombinedRefScanExecutor()
+        let list = RemoteBranchStore.makeDefaultList(executor: executor)
 
-        """
+        let snapshot = try await list("/repo")
 
-        #expect(RemoteBranchStore.parseUpstreamsForTesting(raw) == [
-            "main": "main",
-            "feature/foo": "feature/bar",
+        #expect(executor.invocationCount == 1)
+        #expect(Set(snapshot.remoteBranches.map(\.name)) == ["main", "feature/remote"])
+        #expect(Set(snapshot.localBranches.map(\.name)) == [
+            "main", "feature/local", "non-origin",
         ])
+        #expect(snapshot.upstreams == [
+            "main": "main",
+            "feature/local": "feature/remote",
+        ])
+        #expect(snapshot.defaultBranch == "main")
+        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime(
+            "2026-05-10T12:30:00-05:00"
+        )
+        #expect(
+            snapshot.remoteBranches.first { $0.name == "main" }?.lastCommitDate
+                == expectedMainDate
+        )
+    }
+
+    @Test func combinedRefScanFallsBackToConventionalDefaultBranch() {
+        let snapshot = RemoteBranchStore.parseCombinedRefs("""
+        refs/remotes/origin/master\t2026-05-10T12:30:00-05:00\t\t
+
+        """)
+
+        #expect(snapshot.defaultBranch == "master")
+    }
+
+    @MainActor
+    @Test("""
+    @spec PERF-1.9: When remote-branch polling scans more than four repositories, the application shall dispatch at most four repositories per ten-second tick and rotate fairly so twelve repositories require three ticks rather than twelve scans on every tick.
+    """)
+    func pollingBatchesAndRotatesAcrossRepositories() async throws {
+        let lister = ConcurrencyRecordingRemoteBranchLister(delay: .milliseconds(100))
+        let ticker = CapturingTicker()
+        let store = RemoteBranchStore(list: lister.list)
+        let repos = (0..<12).map {
+            RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
+        }
+
+        store.start(ticker: ticker, getRepos: { repos })
+
+        for expectedCompletedCount in [4, 8, 12] {
+            await ticker.fire()
+            let dispatchedCount = repos.filter {
+                store.isInFlightForTesting($0.path)
+            }.count
+            try #require(dispatchedCount == 4)
+            try await waitUntil(timeout: 3.0) {
+                lister.completedCount == expectedCompletedCount
+            }
+        }
+
+        #expect(lister.calledPaths == Set(repos.map(\.path)))
+        #expect(lister.maximumConcurrentCount <= 4)
+    }
+
+    @MainActor
+    @Test("@spec GIT-2.8: While repositories are in the sidebar, the application shall scan local `refs/remotes/origin/*` for at most four repositories per ten-second tick without contacting the network and advance a round-robin cursor so every repository is scanned within `ceil(repoCount / 4)` ticks. The scan shall maintain repo-scoped locally-known remote branch names and shall not replace the repo-level fetch cadence that discovers branches created from another clone.")
+    func recurringPollBatchesLocalRefScansWithoutNetwork() async throws {
+        let executor = CombinedRefScanExecutor()
+        let store = RemoteBranchStore(
+            list: RemoteBranchStore.makeDefaultList(executor: executor)
+        )
+        let ticker = CapturingTicker()
+        let repos = (0..<5).map {
+            RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
+        }
+        store.start(ticker: ticker, getRepos: { repos })
+
+        await ticker.fire()
+        try await waitUntil(timeout: 1.0) {
+            executor.invocations.count == 4
+                && store.branchesByRepo.count == 4
+        }
+        await ticker.fire()
+        try await waitUntil(timeout: 1.0) {
+            executor.invocations.count == 8
+                && store.branchesByRepo.count == 5
+        }
+
+        let invocations = executor.invocations
+        #expect(Set(invocations.map(\.directory)) == Set(repos.map(\.path)))
+        #expect(invocations.allSatisfy {
+            $0.command == "git"
+                && $0.args.first == "for-each-ref"
+                && !$0.args.contains("fetch")
+        })
+        #expect(repos.allSatisfy {
+            store.hasRemote(repoPath: $0.path, branch: "main")
+        })
     }
 
     @MainActor
@@ -153,6 +238,38 @@ struct RemoteBranchStoreTests {
             completed
         }
         #expect(!store.hasRemote(repoPath: "/repo", branch: "main"))
+    }
+
+    @MainActor
+    @Test func clearSkipsARefreshStillWaitingForAPermit() async throws {
+        let limiter = BackgroundProcessLimiter(capacity: 1)
+        let blocker = PermitBlocker()
+        let occupyingTask = Task {
+            await limiter.run {
+                await blocker.wait()
+            }
+        }
+        try await waitUntil(timeout: 1.0) { blocker.isWaiting }
+
+        let lister = RecordingRemoteBranchLister(results: [
+            "/repo": .success(["main"]),
+        ])
+        let store = RemoteBranchStore(
+            list: lister.list,
+            backgroundProcessLimiter: limiter
+        )
+        var completionRan = false
+
+        store.refresh(repoPath: "/repo") {
+            completionRan = true
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        store.clear(repoPath: "/repo")
+        blocker.resume()
+        await occupyingTask.value
+
+        try await waitUntil(timeout: 1.0) { completionRan }
+        #expect(lister.invocationCount(for: "/repo") == 0)
     }
 
     @MainActor
@@ -366,34 +483,6 @@ struct RemoteBranchStoreTests {
         #expect(ticker.pulseCallCount == 1)
     }
 
-    @Test func parseLocalBranchesWithDatesExtractsNameAndDate() {
-        let raw = """
-        main\t2026-05-10T12:30:00-05:00\torigin/main
-        feature/foo\t2026-05-13T09:15:00-05:00\torigin/feature/bar
-        no-upstream\t2026-04-01T00:00:00Z\t
-
-        """
-        let parsed = RemoteBranchStore.parseLocalBranchesWithDatesForTesting(raw)
-        let names = parsed.map(\.name)
-        #expect(names == ["main", "feature/foo", "no-upstream"])
-        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime("2026-05-10T12:30:00-05:00")
-        #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate == expectedMainDate)
-    }
-
-    @Test func parseRemoteBranchesWithDatesStripsOriginAndKeepsDate() {
-        let raw = """
-        origin/HEAD\t2026-05-13T09:15:00-05:00
-        origin/main\t2026-05-10T12:30:00-05:00
-        origin/feature/foo\t2026-05-13T09:15:00-05:00
-
-        """
-        let parsed = RemoteBranchStore.parseRemoteBranchesWithDatesForTesting(raw)
-        let names = parsed.map(\.name).sorted()
-        #expect(names == ["feature/foo", "main"])
-        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime("2026-05-10T12:30:00-05:00")
-        #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate == expectedMainDate)
-    }
-
     private func waitUntil(
         timeout: TimeInterval,
         condition: @escaping @MainActor @Sendable () -> Bool
@@ -451,6 +540,77 @@ private final class RemoteBranchTimeoutRecordingExecutor: CLIExecutor, @unchecke
     }
 }
 
+private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
+    struct Invocation: Sendable {
+        let command: String
+        let args: [String]
+        let directory: String
+    }
+
+    private let lock = NSLock()
+    private var _invocations: [Invocation] = []
+
+    var invocationCount: Int {
+        lock.withLock { _invocations.count }
+    }
+
+    var invocations: [Invocation] {
+        lock.withLock { _invocations }
+    }
+
+    private let output = """
+    refs/heads/feature/local\t2026-05-13T09:15:00-05:00\trefs/remotes/origin/feature/remote\t
+    refs/heads/main\t2026-05-10T12:30:00-05:00\trefs/remotes/origin/main\t
+    refs/heads/non-origin\t2026-05-09T12:30:00-05:00\trefs/remotes/upstream/main\t
+    refs/remotes/origin/HEAD\t2026-05-10T12:30:00-05:00\t\trefs/remotes/origin/main
+    refs/remotes/origin/feature/remote\t2026-05-13T09:15:00-05:00\t\t
+    refs/remotes/origin/main\t2026-05-10T12:30:00-05:00\t\t
+
+    """
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        recordInvocation(command: command, args: args, directory: directory)
+        return CLIOutput(stdout: output, stderr: "", exitCode: 0)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func capture(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        recordInvocation(command: command, args: args, directory: directory)
+        return CLIOutput(stdout: output, stderr: "", exitCode: 0)
+    }
+
+    private func recordInvocation(
+        command: String,
+        args: [String],
+        directory: String
+    ) {
+        lock.withLock {
+            _invocations.append(Invocation(
+                command: command,
+                args: args,
+                directory: directory
+            ))
+        }
+    }
+}
+
 @MainActor
 private final class CapturingTicker: PollingTickerLike {
     private var onTick: (@MainActor () async -> Void)?
@@ -479,6 +639,32 @@ private enum TestError: Error {
 }
 
 private final class CompletionToken {}
+
+private final class PermitBlocker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    var isWaiting: Bool {
+        lock.withLock { continuation != nil }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.withLock {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func resume() {
+        let continuation = lock.withLock {
+            let continuation = self.continuation
+            self.continuation = nil
+            return continuation
+        }
+        continuation?.resume()
+    }
+}
 
 private extension ISO8601DateFormatter {
     static func dateFromInternetDateTime(_ s: String) -> Date? {
@@ -559,5 +745,55 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
         }
 
         return try result.get()
+    }
+}
+
+private final class ConcurrencyRecordingRemoteBranchLister: @unchecked Sendable {
+    private let lock = NSLock()
+    private let delay: Duration
+    private var activeCount = 0
+    private var _completedCount = 0
+    private var _maximumConcurrentCount = 0
+    private var _calledPaths: Set<String> = []
+
+    init(delay: Duration) {
+        self.delay = delay
+    }
+
+    var completedCount: Int {
+        lock.withLock { _completedCount }
+    }
+
+    var maximumConcurrentCount: Int {
+        lock.withLock { _maximumConcurrentCount }
+    }
+
+    var calledPaths: Set<String> {
+        lock.withLock { _calledPaths }
+    }
+
+    var list: RemoteBranchStore.ListFunction {
+        { [weak self] repoPath in
+            guard let self else { return RemoteBranchSnapshot() }
+            self.recordStart(repoPath: repoPath)
+            try await Task.sleep(for: self.delay)
+            self.recordCompletion()
+            return RemoteBranchSnapshot()
+        }
+    }
+
+    private func recordStart(repoPath: String) {
+        lock.withLock {
+            activeCount += 1
+            _maximumConcurrentCount = max(_maximumConcurrentCount, activeCount)
+            _calledPaths.insert(repoPath)
+        }
+    }
+
+    private func recordCompletion() {
+        lock.withLock {
+            activeCount -= 1
+            _completedCount += 1
+        }
     }
 }

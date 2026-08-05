@@ -61,8 +61,10 @@ struct ZmxRunnerTests {
             args: [
                 "-c",
                 """
-                /usr/bin/yes o | /usr/bin/head -c \(byteCount)
-                /usr/bin/yes e | /usr/bin/head -c \(byteCount) >&2
+                # `yes` may diagnose EPIPE after `head` has collected enough
+                # bytes, so discard generator diagnostics from the measured streams.
+                /usr/bin/yes o 2>/dev/null | /usr/bin/head -c \(byteCount)
+                /usr/bin/yes e 2>/dev/null | /usr/bin/head -c \(byteCount) >&2
                 """,
             ],
             env: [:],
