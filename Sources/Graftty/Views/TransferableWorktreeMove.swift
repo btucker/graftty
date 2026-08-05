@@ -13,6 +13,17 @@ struct TransferableWorktreeMove: Codable, Transferable {
 
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
+    let parentFolderPath: String?
+
+    init(
+        repoID: RepoEntry.ID,
+        worktreeID: WorktreeEntry.ID,
+        parentFolderPath: String? = nil
+    ) {
+        self.repoID = repoID
+        self.worktreeID = worktreeID
+        self.parentFolderPath = parentFolderPath
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: contentType)
@@ -36,10 +47,12 @@ enum WorktreeDropReorder {
     static func apply(
         _ payload: TransferableWorktreeMove,
         targetWorktreeID: WorktreeEntry.ID,
+        targetParentFolderPath: String? = nil,
         placement: WorktreeDropPlacement,
         to appState: inout AppState
     ) -> Bool {
         guard payload.worktreeID != targetWorktreeID else { return false }
+        guard payload.parentFolderPath == targetParentFolderPath else { return false }
         guard let repoIndex = appState.repos.firstIndex(where: { $0.id == payload.repoID }) else {
             return false
         }
@@ -98,6 +111,7 @@ enum WorktreeDropReorder {
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
+    let parentFolderPath: String?
     @Binding var appState: AppState
     @State private var rowHeight: CGFloat = 28
 
@@ -114,12 +128,17 @@ struct WorktreeReorderTarget: ViewModifier {
                         }
                 }
             }
-            .draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID))
+            .draggable(TransferableWorktreeMove(
+                repoID: repoID,
+                worktreeID: worktreeID,
+                parentFolderPath: parentFolderPath
+            ))
             .dropDestination(for: TransferableWorktreeMove.self) { items, location in
                 guard let item = items.first else { return false }
                 return WorktreeDropReorder.apply(
                     item,
                     targetWorktreeID: worktreeID,
+                    targetParentFolderPath: parentFolderPath,
                     placement: WorktreeDropPlacement.fromRowDropLocation(
                         location,
                         rowHeight: rowHeight
@@ -134,11 +153,13 @@ extension View {
     func worktreeReorderTarget(
         repoID: RepoEntry.ID,
         worktreeID: WorktreeEntry.ID,
+        parentFolderPath: String? = nil,
         appState: Binding<AppState>
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID,
             worktreeID: worktreeID,
+            parentFolderPath: parentFolderPath,
             appState: appState
         ))
     }

@@ -59,6 +59,31 @@ struct WorktreeDropReorderTests {
         #expect(state.repos[0].worktrees.map(\.branch) == ["a", "b", "main"])
     }
 
+    @Test("@spec LAYOUT-2.34: If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.")
+    func dropsAcrossHierarchyParentsAreRejected() {
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/repo/.worktrees/research/lead", branch: "research/lead"),
+            WorktreeEntry(path: "/repo/.worktrees/research/notes", branch: "research/notes"),
+            WorktreeEntry(path: "/repo/.worktrees/solo", branch: "solo"),
+        ])
+        var state = AppState(repos: [repo])
+
+        let changed = WorktreeDropReorder.apply(
+            TransferableWorktreeMove(
+                repoID: repo.id,
+                worktreeID: repo.worktrees[0].id,
+                parentFolderPath: "research"
+            ),
+            targetWorktreeID: repo.worktrees[2].id,
+            targetParentFolderPath: nil,
+            placement: .before,
+            to: &state
+        )
+
+        #expect(!changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == ["research/lead", "research/notes", "solo"])
+    }
+
     @Test("Drops from another repo are ignored")
     func crossRepoDropIsIgnored() {
         let first = RepoEntry(path: "/repo-a", displayName: "repo-a", worktrees: [

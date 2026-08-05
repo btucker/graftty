@@ -80,6 +80,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.31** The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
 
+**LAYOUT-2.32** When at least two linked worktrees beneath `<repo>/.worktrees` share a directory component in their relative names, the sidebar shall collect them beneath a recursively expandable folder row for that component and label each worktree relative to that folder. If fewer than two worktrees share a component, the sidebar shall render the worktree ungrouped with its full relative name.
+
+**LAYOUT-2.33** When at least two linked worktrees outside `<repo>/.worktrees` diverge beneath the same directory that is at least two components below the filesystem root and is neither the user's home nor an ancestor of the main checkout, the sidebar shall infer that directory as an additional expandable folder root. Worktrees without such a shared root shall remain ungrouped.
+
+**LAYOUT-2.34** If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

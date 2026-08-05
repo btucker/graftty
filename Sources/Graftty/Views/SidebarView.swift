@@ -187,10 +187,13 @@ struct SidebarView: View {
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
         )
-        let worktreeLabels = SidebarWorktreeLabel.texts(
+        let worktreeNodes = SidebarWorktreeHierarchy.nodes(
             for: repo.worktrees,
             inRepoAtPath: repo.path,
             defaultBranch: resolvedDefaultBranch
+        )
+        let parentFolderPaths = SidebarWorktreeHierarchy.parentFolderPaths(
+            in: worktreeNodes
         )
         DisclosureGroup(
             isExpanded: Binding(
@@ -202,33 +205,18 @@ struct SidebarView: View {
                 }
             )
         ) {
-            ForEach(repo.worktrees) { worktree in
-                worktreeBlock(
-                    worktree,
+            OutlineGroup(worktreeNodes, children: \.children) { node in
+                worktreeNode(
+                    node,
                     repo: repo,
-                    displayName: worktreeLabels[worktree.id] ?? SidebarWorktreeLabel.text(
-                        for: worktree,
-                        inRepoAtPath: repo.path,
-                        siblingPaths: repo.worktrees.map(\.path),
-                        defaultBranch: resolvedDefaultBranch
-                    )
-                )
-                    // Outdent the worktree rows so each row's state
-                    // indicator lines up under the parent repo's folder
-                    // icon rather than sitting further right than the
-                    // repo's disclosure label. -20pt counters the
-                    // DisclosureGroup child indent minus the leading
-                    // width of the icon column on the repo header.
-                    .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
-            }
-            .onMove { fromOffsets, toOffset in
-                WorktreeDropReorder.applyListMove(
-                    inRepoID: repo.id,
-                    fromOffsets: fromOffsets,
-                    toOffset: toOffset,
-                    to: &appState
+                    parentFolderPaths: parentFolderPaths
                 )
             }
+            // Outdent the hierarchy roots so their state indicator or
+            // folder icon lines up beneath the repository label. OutlineGroup
+            // adds its own relative indentation for descendants, so nested
+            // worktrees still sit one level beneath their virtual folder.
+            .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
         } label: {
             // No leading glyph — the top level is always projects, so
             // a folder icon would be tautological noise, and even an
@@ -283,6 +271,33 @@ struct SidebarView: View {
         }
     }
 
+    @ViewBuilder
+    private func worktreeNode(
+        _ node: SidebarWorktreeNode,
+        repo: RepoEntry,
+        parentFolderPaths: [WorktreeEntry.ID: String]
+    ) -> some View {
+        switch node {
+        case .worktree(let worktree, let displayName):
+            worktreeBlock(
+                worktree,
+                repo: repo,
+                displayName: displayName,
+                reorderParentFolderPath: parentFolderPaths[worktree.id]
+            )
+        case .folder(_, let name, _):
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.sidebarDimIcon)
+                Text(name)
+                    .lineLimit(1)
+                    .foregroundColor(theme.sidebarPrimaryText(isActive: false))
+            }
+            .contentShape(Rectangle())
+        }
+    }
+
     /// Renders a worktree and its pane children as one visually-unified
     /// block. When the worktree is active, the whole block (worktree row +
     /// every pane row underneath) gets a single rounded highlight — the
@@ -294,7 +309,8 @@ struct SidebarView: View {
     private func worktreeBlock(
         _ worktree: WorktreeEntry,
         repo: RepoEntry,
-        displayName: String
+        displayName: String,
+        reorderParentFolderPath: String?
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let attention = SidebarAttentionLayout.layout(for: worktree)
@@ -327,7 +343,12 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
-            .worktreeReorderTarget(repoID: repo.id, worktreeID: worktree.id, appState: $appState)
+            .worktreeReorderTarget(
+                repoID: repo.id,
+                worktreeID: worktree.id,
+                parentFolderPath: reorderParentFolderPath,
+                appState: $appState
+            )
             // PWD-1.4: same-repo drop target. Sources are sidebar pane
             // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
             // are rejected so a user can't accidentally hop a pane

@@ -6,9 +6,10 @@ import Foundation
 SidebarWorktreeLabel
 
 The shared label helper for sidebar-adjacent worktree surfaces (row
-label + right-click "Move to <name>" menu items). For linked
-worktrees, the label is derived from the path basename. For the
-main checkout, the label is the resolved default branch name —
+label + right-click "Move to <name>" menu items). For managed linked
+worktrees, the label is the full path relative to `<repo>/.worktrees`;
+external linked worktrees retain basename disambiguation. For the main
+checkout, the label is the resolved default branch name —
 application-controlled, never user-controlled — so BIDI-override
 sanitization (GIT-2.10) is unnecessary on this surface for the
 main-checkout path. The secondary caption rendered by `WorktreeRow`
@@ -50,6 +51,22 @@ struct SidebarWorktreeLabelTests {
             defaultBranch: "trunk"
         )
         #expect(label == "feature-x")
+    }
+
+    @Test("managed nested worktree label preserves its full relative name")
+    func managedNestedWorktreeLabelPreservesFullRelativeName() {
+        let entry = WorktreeEntry(
+            path: "/repo/.worktrees/research/lead",
+            branch: "research/lead"
+        )
+        let label = SidebarWorktreeLabel.text(
+            for: entry,
+            inRepoAtPath: "/repo",
+            siblingPaths: ["/repo", entry.path],
+            defaultBranch: "main"
+        )
+
+        #expect(label == "research/lead")
     }
 
     @Test func mainCheckoutLabelDoesNotReadWorktreeBranch() {
