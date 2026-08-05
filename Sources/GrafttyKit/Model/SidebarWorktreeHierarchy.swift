@@ -33,6 +33,43 @@ public indirect enum SidebarWorktreeNode: Equatable, Identifiable, Sendable {
     }
 }
 
+/// Repository-scoped identity for a virtual sidebar folder. Folder paths are
+/// only unique within one repository (`research` can exist in many repos), so
+/// expansion state must carry both pieces.
+public struct SidebarWorktreeFolderID: Hashable, Sendable {
+    public let repositoryID: UUID
+    public let path: String
+
+    public init(repositoryID: UUID, path: String) {
+        self.repositoryID = repositoryID
+        self.path = path
+    }
+}
+
+/// Session-local disclosure state for virtual worktree folders. Storing only
+/// collapsed IDs makes newly discovered folders expanded by default without a
+/// synchronization pass when the hierarchy changes.
+public struct SidebarWorktreeFolderExpansion: Equatable, Sendable {
+    private var collapsedFolderIDs: Set<SidebarWorktreeFolderID> = []
+
+    public init() {}
+
+    public func isExpanded(_ folderID: SidebarWorktreeFolderID) -> Bool {
+        !collapsedFolderIDs.contains(folderID)
+    }
+
+    public mutating func setExpanded(
+        _ isExpanded: Bool,
+        for folderID: SidebarWorktreeFolderID
+    ) {
+        if isExpanded {
+            collapsedFolderIDs.remove(folderID)
+        } else {
+            collapsedFolderIDs.insert(folderID)
+        }
+    }
+}
+
 /// Builds the virtual folder structure used by the macOS sidebar.
 ///
 /// Graftty-created worktrees have an explicit namespace root at
@@ -79,6 +116,38 @@ public enum SidebarWorktreeHierarchy {
         var result: [WorktreeEntry.ID: String] = [:]
         collectParentFolderPaths(in: nodes, parentPath: nil, into: &result)
         return result
+    }
+
+    /// Sums the already-computed Git statistics for every descendant
+    /// worktree. Missing entries are omitted just as their individual rows
+    /// omit the gutter while stats are unresolved; the aggregate converges as
+    /// `WorktreeStatsStore` publishes each result.
+    public static func aggregateStats(
+        in node: SidebarWorktreeNode,
+        statsByWorktreePath: [String: WorktreeStats]
+    ) -> WorktreeStats? {
+        let stats = descendantWorktreePaths(in: node).compactMap {
+            statsByWorktreePath[$0]
+        }
+        guard !stats.isEmpty else { return nil }
+        return WorktreeStats(
+            ahead: stats.reduce(0) { $0 + $1.ahead },
+            behind: stats.reduce(0) { $0 + $1.behind },
+            insertions: stats.reduce(0) { $0 + $1.insertions },
+            deletions: stats.reduce(0) { $0 + $1.deletions },
+            hasUncommittedChanges: stats.contains(where: \.hasUncommittedChanges)
+        )
+    }
+
+    private static func descendantWorktreePaths(
+        in node: SidebarWorktreeNode
+    ) -> [String] {
+        switch node {
+        case .worktree(let worktree, _):
+            return [worktree.path]
+        case .folder(_, _, let children):
+            return children.flatMap { descendantWorktreePaths(in: $0) }
+        }
     }
 
     private static func collectParentFolderPaths(

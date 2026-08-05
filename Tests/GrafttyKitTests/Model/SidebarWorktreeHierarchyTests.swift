@@ -35,6 +35,66 @@ struct SidebarWorktreeHierarchyTests {
         ])
     }
 
+    @Test("@spec LAYOUT-2.36: When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.")
+    func foldersDefaultExpandedAndAggregateDescendantStatsWhenCollapsed() {
+        let repositoryID = UUID()
+        let folderID = SidebarWorktreeFolderID(
+            repositoryID: repositoryID,
+            path: "research"
+        )
+        var expansion = SidebarWorktreeFolderExpansion()
+
+        #expect(expansion.isExpanded(folderID))
+        expansion.setExpanded(false, for: folderID)
+        #expect(!expansion.isExpanded(folderID))
+        expansion.setExpanded(true, for: folderID)
+        #expect(expansion.isExpanded(folderID))
+
+        let lead = WorktreeEntry(
+            path: "/repo/.worktrees/research/lead",
+            branch: "research/lead"
+        )
+        let maps = WorktreeEntry(
+            path: "/repo/.worktrees/research/maps",
+            branch: "research/maps"
+        )
+        let node = SidebarWorktreeNode.folder(
+            path: "research",
+            name: "research",
+            children: [
+                .worktree(lead, displayName: "lead"),
+                .worktree(maps, displayName: "maps"),
+            ]
+        )
+
+        let aggregate = SidebarWorktreeHierarchy.aggregateStats(
+            in: node,
+            statsByWorktreePath: [
+                lead.path: WorktreeStats(
+                    ahead: 2,
+                    behind: 3,
+                    insertions: 20,
+                    deletions: 4
+                ),
+                maps.path: WorktreeStats(
+                    ahead: 5,
+                    behind: 7,
+                    insertions: 11,
+                    deletions: 9,
+                    hasUncommittedChanges: true
+                ),
+            ]
+        )
+
+        #expect(aggregate == WorktreeStats(
+            ahead: 7,
+            behind: 10,
+            insertions: 31,
+            deletions: 13,
+            hasUncommittedChanges: true
+        ))
+    }
+
     @Test("nested shared prefixes become nested folders")
     func recursivelyGroupsSharedManagedPrefixes() {
         let lead = WorktreeEntry(
