@@ -86,6 +86,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.34** If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.
 
+**LAYOUT-2.35** When worktree rows sharing a virtual-folder parent occupy noncontiguous persisted positions, the application shall reorder only those sibling rows within their existing positions so unrelated rows do not move.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

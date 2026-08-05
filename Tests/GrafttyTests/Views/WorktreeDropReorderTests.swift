@@ -69,19 +69,47 @@ struct WorktreeDropReorderTests {
         var state = AppState(repos: [repo])
 
         let changed = WorktreeDropReorder.apply(
-            TransferableWorktreeMove(
-                repoID: repo.id,
-                worktreeID: repo.worktrees[0].id,
-                parentFolderPath: "research"
-            ),
+            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[0].id),
             targetWorktreeID: repo.worktrees[2].id,
-            targetParentFolderPath: nil,
             placement: .before,
             to: &state
         )
 
         #expect(!changed)
         #expect(state.repos[0].worktrees.map(\.branch) == ["research/lead", "research/notes", "solo"])
+    }
+
+    @Test("@spec LAYOUT-2.35: When worktree rows sharing a virtual-folder parent occupy noncontiguous persisted positions, the application shall reorder only those sibling rows within their existing positions so unrelated rows do not move.")
+    func sameFolderDropPreservesUnrelatedRawPositions() {
+        let lead = WorktreeEntry(
+            path: "/repo/.worktrees/research/lead",
+            branch: "research/lead"
+        )
+        let solo = WorktreeEntry(path: "/repo/.worktrees/solo", branch: "solo")
+        let notes = WorktreeEntry(
+            path: "/repo/.worktrees/research/notes",
+            branch: "research/notes"
+        )
+        let repo = RepoEntry(
+            path: "/repo",
+            displayName: "repo",
+            worktrees: [lead, solo, notes]
+        )
+        var state = AppState(repos: [repo])
+
+        let changed = WorktreeDropReorder.apply(
+            TransferableWorktreeMove(repoID: repo.id, worktreeID: lead.id),
+            targetWorktreeID: notes.id,
+            placement: .after,
+            to: &state
+        )
+
+        #expect(changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == [
+            "research/notes",
+            "solo",
+            "research/lead",
+        ])
     }
 
     @Test("Drops from another repo are ignored")
@@ -137,37 +165,8 @@ struct WorktreeDropReorderTests {
         #expect(targetState.repos[0].worktrees.map(\.branch) == ["main", "creating", "deleting", "feature"])
     }
 
-    @Test("Native list moves use the same in-flight guards")
-    func nativeListMovesUseInFlightGuards() {
-        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
-            WorktreeEntry(path: "/repo", branch: "main"),
-            WorktreeEntry(path: "/repo/.worktrees/creating", branch: "creating", state: .creating),
-            WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature"),
-        ])
-        var sourceState = AppState(repos: [repo])
-        var targetState = AppState(repos: [repo])
-
-        let sourceChanged = WorktreeDropReorder.applyListMove(
-            inRepoID: repo.id,
-            fromOffsets: IndexSet(integer: 1),
-            toOffset: 0,
-            to: &sourceState
-        )
-        let targetChanged = WorktreeDropReorder.applyListMove(
-            inRepoID: repo.id,
-            fromOffsets: IndexSet(integer: 2),
-            toOffset: 1,
-            to: &targetState
-        )
-
-        #expect(!sourceChanged)
-        #expect(!targetChanged)
-        #expect(sourceState.repos[0].worktrees.map(\.branch) == ["main", "creating", "feature"])
-        #expect(targetState.repos[0].worktrees.map(\.branch) == ["main", "creating", "feature"])
-    }
-
-    @Test("Custom drops use the native list-move in-flight destination guard")
-    func customDropsUseListMoveInFlightDestinationGuard() {
+    @Test("Custom drops reject in-flight destination neighbors")
+    func customDropsRejectInFlightDestinationNeighbors() {
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
             WorktreeEntry(path: "/repo", branch: "main"),
             WorktreeEntry(path: "/repo/.worktrees/creating", branch: "creating", state: .creating),

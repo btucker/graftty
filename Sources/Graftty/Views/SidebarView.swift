@@ -192,9 +192,6 @@ struct SidebarView: View {
             inRepoAtPath: repo.path,
             defaultBranch: resolvedDefaultBranch
         )
-        let parentFolderPaths = SidebarWorktreeHierarchy.parentFolderPaths(
-            in: worktreeNodes
-        )
         DisclosureGroup(
             isExpanded: Binding(
                 get: { !repo.isCollapsed },
@@ -206,11 +203,7 @@ struct SidebarView: View {
             )
         ) {
             OutlineGroup(worktreeNodes, children: \.children) { node in
-                worktreeNode(
-                    node,
-                    repo: repo,
-                    parentFolderPaths: parentFolderPaths
-                )
+                worktreeNode(node, repo: repo)
             }
             // Outdent the hierarchy roots so their state indicator or
             // folder icon lines up beneath the repository label. OutlineGroup
@@ -274,16 +267,14 @@ struct SidebarView: View {
     @ViewBuilder
     private func worktreeNode(
         _ node: SidebarWorktreeNode,
-        repo: RepoEntry,
-        parentFolderPaths: [WorktreeEntry.ID: String]
+        repo: RepoEntry
     ) -> some View {
         switch node {
         case .worktree(let worktree, let displayName):
             worktreeBlock(
                 worktree,
                 repo: repo,
-                displayName: displayName,
-                reorderParentFolderPath: parentFolderPaths[worktree.id]
+                displayName: displayName
             )
         case .folder(_, let name, _):
             HStack(spacing: 6) {
@@ -309,8 +300,7 @@ struct SidebarView: View {
     private func worktreeBlock(
         _ worktree: WorktreeEntry,
         repo: RepoEntry,
-        displayName: String,
-        reorderParentFolderPath: String?
+        displayName: String
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let attention = SidebarAttentionLayout.layout(for: worktree)
@@ -346,7 +336,6 @@ struct SidebarView: View {
             .worktreeReorderTarget(
                 repoID: repo.id,
                 worktreeID: worktree.id,
-                parentFolderPath: reorderParentFolderPath,
                 appState: $appState
             )
             // PWD-1.4: same-repo drop target. Sources are sidebar pane

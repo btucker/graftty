@@ -184,6 +184,10 @@ public enum SidebarWorktreeHierarchy {
         let components: [String]
         var descendantIDs: Set<WorktreeEntry.ID>
         var branches: Set<String>
+
+        var namedComponents: [String] {
+            components.filter { $0 != "/" }
+        }
     }
 
     /// Infers independent external roots from branching points in the path
@@ -285,10 +289,11 @@ public enum SidebarWorktreeHierarchy {
         for candidate: RootCandidate,
         among candidates: [RootCandidate]
     ) -> String {
-        for length in 1...candidate.components.count {
-            let suffix = candidate.components.suffix(length)
+        let components = candidate.namedComponents
+        for length in 1...components.count {
+            let suffix = components.suffix(length)
             let collides = candidates.contains {
-                $0.path != candidate.path && $0.components.suffix(length) == suffix
+                $0.path != candidate.path && $0.namedComponents.suffix(length) == suffix
             }
             if !collides { return suffix.joined(separator: "/") }
         }

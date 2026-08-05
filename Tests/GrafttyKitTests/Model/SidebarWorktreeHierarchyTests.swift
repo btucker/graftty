@@ -116,6 +116,29 @@ struct SidebarWorktreeHierarchyTests {
         #expect(secondName == "design")
     }
 
+    @Test("colliding inferred root suffixes do not duplicate the filesystem slash")
+    func inferredRootLabelsDoNotDuplicateFilesystemSlash() {
+        let shortFirst = WorktreeEntry(path: "/a/shared/one", branch: "one")
+        let shortSecond = WorktreeEntry(path: "/a/shared/two", branch: "two")
+        let longFirst = WorktreeEntry(path: "/x/a/shared/red", branch: "red")
+        let longSecond = WorktreeEntry(path: "/x/a/shared/blue", branch: "blue")
+
+        let nodes = SidebarWorktreeHierarchy.nodes(
+            for: [shortFirst, shortSecond, longFirst, longSecond],
+            inRepoAtPath: "/repo",
+            defaultBranch: "main"
+        )
+
+        guard nodes.count == 2,
+              case .folder(_, let shortName, _) = nodes[0],
+              case .folder(_, let longName, _) = nodes[1] else {
+            Issue.record("expected two disambiguated inferred roots")
+            return
+        }
+        #expect(shortName == "/a/shared")
+        #expect(longName == "x/a/shared")
+    }
+
     @Test("a broad ancestor shared with the main checkout is not inferred")
     func doesNotInferMainCheckoutAncestor() {
         let first = WorktreeEntry(path: "/Users/me/alpha/one", branch: "one")
