@@ -43,7 +43,9 @@ public enum TeamInstructionsRenderer {
     Dirty files require `--force`.
 
     Coordinate:
-    - `graftty team list`; `graftty team inbox` for manual inspection.
+    - `graftty team list`; `graftty team inbox` reads the oldest unread page and marks displayed rows read after successful output. Add `--keep-unread` (`--unread` is an alias) to peek, or `--history` to inspect prior messages.
+    - Inbox worktree, repository, and member selectors are diagnostic peeks and do not mark messages read.
+    - Never edit Graftty state files to change inbox delivery positions; rerun the supported inbox command if advancement fails.
     - Reply to `worktree message from <address>:` with `graftty team send --stdin <address>`.
     - Send message bodies via stdin, never shell arguments. Use a fresh quoted high-entropy heredoc delimiter absent from the body:
       graftty team send --stdin <address> <<'GRAFTTY_<random>'

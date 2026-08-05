@@ -173,8 +173,11 @@ graftty team list                        # see teammates, worktrees, and running
 graftty team list --json                 # stable machine-readable roster
 graftty team send --stdin <member>       # read a direct message literally from stdin
 graftty team broadcast --stdin           # read a broadcast literally from stdin
-graftty team inbox                       # read your newest 100 incoming messages
-graftty team inbox --all                 # fetch all team traffic page by page
+graftty team inbox                       # read the oldest 100 unread rows and mark them read
+graftty team inbox --all                 # consume the current unread snapshot page by page
+graftty team inbox --keep-unread         # peek without changing delivery state
+graftty team inbox --unread              # compatibility alias for --keep-unread
+graftty team inbox --history             # inspect prior incoming messages without mutation
 ```
 
 Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
@@ -194,9 +197,23 @@ The team inbox is an append-only JSONL log. Hook and watcher delivery track two
 positions: a cursor for each runtime session and a shared watermark for each
 worktree. Those paths advance both positions; a new session begins at the
 worktree watermark. Codex app-server delivery uses the worktree watermark as
-its authoritative position and does not maintain a session cursor. Manual
-`graftty team inbox` reads are diagnostic and advance neither position.
-Pagination bounds each socket response; it does not delete or archive records.
+its authoritative position and does not maintain a session cursor. A normal
+`graftty team inbox` read writes the oldest unread page and then advances the
+current worktree's shared watermark through the last displayed row. It does not
+change a session cursor. `--all` consumes a fixed upper snapshot, so rows
+appended while pages are being fetched remain unread for the next invocation.
+
+`--keep-unread` (and its compatibility alias `--unread`) peeks without changing
+delivery state. `--history` is also nonmutating. Supplying `--worktree`,
+`--repo`, or `--member` makes the read a diagnostic peek because a command must
+not consume another scope's inbox. Graftty emits the supported consuming command
+on stderr for those diagnostic reads while leaving stdout machine-readable.
+
+The shared watermark advances only after stdout accepts the complete output.
+If output fails, nothing advances. If the subsequent advance fails, the command
+returns nonzero and asks the caller to rerun `graftty team inbox`; direct edits
+to Graftty state files are unsupported. Pagination bounds each socket response;
+it does not delete or archive records.
 
 Both positions store a message ID that acts as an anchor into the log's append
 order. If an external archive removes an anchor record, the reader cannot infer

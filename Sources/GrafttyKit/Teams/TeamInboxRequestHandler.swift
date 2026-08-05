@@ -37,37 +37,71 @@ public struct TeamInboxDiagnosticPage: Sendable, Equatable {
 
     public let messages: [TeamInboxMessage]
     public let nextBeforeID: String?
+    public let nextAfterID: String?
+    public let snapshotThroughID: String?
 
-    public init(messages: [TeamInboxMessage], nextBeforeID: String?) {
+    public init(
+        messages: [TeamInboxMessage],
+        nextBeforeID: String? = nil,
+        nextAfterID: String? = nil,
+        snapshotThroughID: String? = nil
+    ) {
         self.messages = messages
         self.nextBeforeID = nextBeforeID
+        self.nextAfterID = nextAfterID
+        self.snapshotThroughID = snapshotThroughID
     }
 }
 
 enum TeamInboxDiagnosticPaginator {
+    private static func boundedPage<S: Sequence>(
+        from candidates: S,
+        countLimit: Int,
+        encodedByteLimit: Int
+    ) throws -> [TeamInboxMessage] where S.Element == TeamInboxMessage {
+        let encoder = JSONEncoder()
+        var messages: [TeamInboxMessage] = []
+        var encodedBytes = 0
+
+        for message in candidates {
+            if !messages.isEmpty, messages.count >= countLimit {
+                break
+            }
+            let separatorBytes = messages.isEmpty ? 0 : 1
+            let messageBytes = try encoder.encode(message).count + separatorBytes
+            if !messages.isEmpty, encodedBytes + messageBytes > encodedByteLimit {
+                break
+            }
+            messages.append(message)
+            encodedBytes += messageBytes
+        }
+
+        return messages
+    }
+
+    static func oldestPage(
+        from candidates: ArraySlice<TeamInboxMessage>,
+        countLimit: Int,
+        encodedByteLimit: Int
+    ) throws -> [TeamInboxMessage] {
+        try boundedPage(
+            from: candidates,
+            countLimit: countLimit,
+            encodedByteLimit: encodedByteLimit
+        )
+    }
+
     static func newestPage(
         from candidates: ArraySlice<TeamInboxMessage>,
         countLimit: Int,
         encodedByteLimit: Int
     ) throws -> [TeamInboxMessage] {
-        let encoder = JSONEncoder()
-        var newestFirst: [TeamInboxMessage] = []
-        var encodedBytes = 0
-
-        for message in candidates.reversed() {
-            if !newestFirst.isEmpty, newestFirst.count >= countLimit {
-                break
-            }
-            let separatorBytes = newestFirst.isEmpty ? 0 : 1
-            let messageBytes = try encoder.encode(message).count + separatorBytes
-            if !newestFirst.isEmpty, encodedBytes + messageBytes > encodedByteLimit {
-                break
-            }
-            newestFirst.append(message)
-            encodedBytes += messageBytes
-        }
-
-        return newestFirst.reversed()
+        let newestFirst = try boundedPage(
+            from: candidates.reversed(),
+            countLimit: countLimit,
+            encodedByteLimit: encodedByteLimit
+        )
+        return Array(newestFirst.reversed())
     }
 }
 
@@ -166,6 +200,24 @@ public final class TeamInboxRequestHandler {
         return zip(recipients, messages).map { TeamInboxDelivery(recipient: $0.0, message: $0.1) }
     }
 
+    public func advanceRead(
+        callerWorktree: String,
+        throughID: String,
+        repos: [RepoEntry],
+        teamsEnabled: Bool
+    ) throws {
+        let context = try teamContext(
+            callerWorktree: callerWorktree,
+            repos: repos,
+            teamsEnabled: teamsEnabled
+        )
+        try inbox.advanceRead(
+            teamID: teamID(context.team),
+            recipientWorktree: context.sender.worktreePath,
+            throughID: throughID
+        )
+    }
+
     public func members(
         callerWorktree: String?,
         worktree: String?,
@@ -200,6 +252,9 @@ public final class TeamInboxRequestHandler {
         unread: Bool,
         all: Bool,
         beforeID: String?,
+        afterID: String? = nil,
+        snapshotThroughID: String? = nil,
+        forwardPagination: Bool? = nil,
         limit: Int?,
         repos: [RepoEntry],
         teamsEnabled: Bool
@@ -218,22 +273,82 @@ public final class TeamInboxRequestHandler {
             repos: repos,
             teamsEnabled: teamsEnabled
         )
-        var messages = try inbox.messages(teamID: teamID(context.team))
-        if let member {
-            messages = messages.filter { $0.to.member == member || $0.from.member == member }
-        } else if unread || !all {
-            messages = messages.filter { $0.to.worktree == context.viewer.worktreePath }
-        }
+        let resolvedTeamID = teamID(context.team)
         let pageLimit = min(
             max(limit, 1),
             TeamInboxDiagnosticPage.maximumLimit
         )
+
+        if unread {
+            guard forwardPagination == true else {
+                throw TeamInboxRequestError.paginationRequired
+            }
+            let messages: [TeamInboxMessage]
+            let effectiveSnapshotID: String?
+            if let afterID {
+                let allMessages = try inbox.messages(teamID: resolvedTeamID)
+                guard let snapshotThroughID else {
+                    throw TeamInboxRequestError.paginationRequired
+                }
+                guard let afterIndex = allMessages.lastIndex(where: { $0.id == afterID }) else {
+                    throw TeamInboxRequestError.paginationCursorNotFound(afterID)
+                }
+                guard let snapshotIndex = allMessages.lastIndex(where: { $0.id == snapshotThroughID }) else {
+                    throw TeamInboxRequestError.paginationCursorNotFound(snapshotThroughID)
+                }
+                guard afterIndex < snapshotIndex else {
+                    throw TeamInboxRequestError.paginationCursorNotFound(afterID)
+                }
+                messages = allMessages[(afterIndex + 1)...snapshotIndex].filter {
+                    $0.to.worktree == context.viewer.worktreePath
+                }
+                effectiveSnapshotID = snapshotThroughID
+            } else {
+                let snapshot = try inbox.worktreeUnreadSnapshot(
+                    teamID: resolvedTeamID,
+                    recipientWorktree: context.viewer.worktreePath
+                )
+                messages = snapshot.messages
+                effectiveSnapshotID = snapshot.throughID
+            }
+
+            let filteredMessages: [TeamInboxMessage]
+            if let member {
+                filteredMessages = messages.filter {
+                    $0.to.member == member || $0.from.member == member
+                }
+            } else {
+                filteredMessages = messages
+            }
+            let candidates = filteredMessages[...]
+            let pageMessages = try TeamInboxDiagnosticPaginator.oldestPage(
+                from: candidates,
+                countLimit: pageLimit,
+                encodedByteLimit: TeamInboxDiagnosticPage.maximumEncodedBytes
+            )
+            let nextAfterID = candidates.count > pageMessages.count
+                ? pageMessages.last?.id
+                : nil
+            return TeamInboxDiagnosticPage(
+                messages: pageMessages,
+                nextAfterID: nextAfterID,
+                snapshotThroughID: effectiveSnapshotID
+            )
+        }
+
+        var messages = try inbox.messages(teamID: resolvedTeamID)
+        if let member {
+            messages = messages.filter { $0.to.member == member || $0.from.member == member }
+        } else if !all {
+            messages = messages.filter { $0.to.worktree == context.viewer.worktreePath }
+        }
         let candidates: ArraySlice<TeamInboxMessage>
         if let beforeID {
-            guard let index = messages.lastIndex(where: { $0.id == beforeID }) else {
+            if let index = messages.lastIndex(where: { $0.id == beforeID }) {
+                candidates = messages[..<index]
+            } else {
                 throw TeamInboxRequestError.paginationCursorNotFound(beforeID)
             }
-            candidates = messages[..<index]
         } else {
             candidates = messages[...]
         }
@@ -279,17 +394,23 @@ public final class TeamInboxRequestHandler {
                 worktree: context.sender.worktreePath,
                 runtime: runtime
             ) : nil
-            let pending: [TeamInboxMessage] = try cursor.map { cursor in
-                let allUnread = try inbox.unreadMessages(
+            let readPosition: String?
+            let pending: [TeamInboxMessage]
+            if let cursor {
+                let unread = try inbox.hookUnreadMessages(
                     teamID: teamID,
                     recipientWorktree: context.sender.worktreePath,
-                    after: cursor.lastSeenID
+                    sessionLastSeenID: cursor.lastSeenID
                 )
-                return TeamInbox.runtimeDeliverablePrefix(
-                    allUnread,
+                readPosition = unread.readPosition
+                pending = TeamInbox.runtimeDeliverablePrefix(
+                    unread.messages,
                     runtime: runtime.rawValue
                 )
-            } ?? []
+            } else {
+                readPosition = nil
+                pending = []
+            }
             let text: String
             if let sessionPromptRenderer {
                 // A configured session template owns the complete prompt.
@@ -307,7 +428,7 @@ public final class TeamInboxRequestHandler {
                 instructions: instructions,
                 messages: pending
             )
-            if let cursor {
+            if cursor != nil {
                 try advanceCursorAcrossDeliveredPrefix(
                     delivered: pending,
                     allUnread: pending,
@@ -315,7 +436,7 @@ public final class TeamInboxRequestHandler {
                     sessionID: sessionID,
                     worktree: context.sender.worktreePath,
                     runtime: runtime,
-                    after: cursor.lastSeenID
+                    after: readPosition
                 )
             }
             return output
@@ -337,16 +458,20 @@ public final class TeamInboxRequestHandler {
                 worktree: context.sender.worktreePath,
                 runtime: runtime
             )
-            let allUnread = try inbox.unreadMessages(
+            let unread = try inbox.hookUnreadMessages(
                 teamID: teamID,
                 recipientWorktree: context.sender.worktreePath,
-                after: cursor.lastSeenID
+                sessionLastSeenID: cursor.lastSeenID
             )
             let deliverableUnread = TeamInbox.runtimeDeliverablePrefix(
-                allUnread,
+                unread.messages,
                 runtime: runtime.rawValue
             )
             let messages = deliverableUnread.filter { $0.priority == .urgent }
+            let output = try TeamHookRenderer.postToolUse(
+                runtime: runtime,
+                messages: messages
+            )
             try advanceCursorAcrossDeliveredPrefix(
                 delivered: messages,
                 allUnread: deliverableUnread,
@@ -354,9 +479,9 @@ public final class TeamInboxRequestHandler {
                 sessionID: sessionID,
                 worktree: context.sender.worktreePath,
                 runtime: runtime,
-                after: cursor.lastSeenID
+                after: unread.readPosition
             )
-            return try TeamHookRenderer.postToolUse(runtime: runtime, messages: messages)
+            return output
         case .stop:
             // Stop renderer is a no-op (`{}`) for both runtimes —
             // neither runtime's Stop schema accepts

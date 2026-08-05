@@ -1764,7 +1764,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.6** When a team member-list command is invoked with `--json`, the CLI shall emit a Codable document with `team` and `members`, using the existing snake_case `TeamListMember` wire keys rather than human-formatted rows.
 
-**TEAM-4.7** When a team inbox request omits the pagination limit, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.
+**TEAM-4.7** When a team inbox request omits pagination support required for its read direction, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.
+
+**TEAM-4.8** When `graftty team inbox` displays unread messages for the calling worktree, the application shall advance that worktree's shared delivery watermark through the last displayed row only after stdout accepts the complete output.
+
+**TEAM-4.9** When a team inbox read uses `--keep-unread`, its `--unread` alias, or a diagnostic selector, the application shall leave delivery state unchanged and explain on stderr how the target worktree can perform a consuming read.
+
+**TEAM-4.10** When an unread team inbox read spans pages, the application shall return the oldest rows first from a fixed upper snapshot so only displayed rows are eligible for advancement and later arrivals remain unread.
+
+**TEAM-4.11** When a nonempty unread team inbox response lacks the fixed-snapshot capability, the CLI shall reject it before output or advancement rather than risk misordered or silently truncated delivery.
 
 ### TEAM-5.x — `team_*` Inbox Events
 
@@ -1841,6 +1849,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
 
 **TEAM-11.8** If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.
+
+**TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
 
 ### TEAM-12.x
 

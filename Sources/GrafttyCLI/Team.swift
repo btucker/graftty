@@ -185,10 +185,17 @@ struct TeamHook: ParsableCommand {
     }
 }
 
+enum TeamInboxReadMode: Equatable {
+    case consumeUnread
+    case peekUnread
+    case history
+}
+
 struct TeamInbox: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "inbox",
-        abstract: "Read team inbox messages without advancing agent cursors"
+        abstract: "Read unread team messages; marks displayed messages read",
+        discussion: "Use --keep-unread to peek without changing delivery state, or --history to inspect prior messages. Diagnostic selectors also peek."
     )
 
     @Option(name: .long, help: "Worktree path or member name to inspect")
@@ -200,8 +207,14 @@ struct TeamInbox: ParsableCommand {
     @Option(name: .long, help: "Member name to inspect")
     var member: String?
 
-    @Flag(name: .long, help: "Show unread messages only")
-    var unread: Bool = false
+    @Flag(
+        name: [.customLong("keep-unread"), .customLong("unread")],
+        help: "Peek at unread messages without marking them read (--unread is a compatibility alias)"
+    )
+    var keepUnread: Bool = false
+
+    @Flag(name: .long, help: "Inspect message history without changing delivery state")
+    var history: Bool = false
 
     @Flag(name: .long, help: "Show all matching messages by fetching every page")
     var all: Bool = false
@@ -209,61 +222,154 @@ struct TeamInbox: ParsableCommand {
     @Flag(name: .long, help: "Print JSON")
     var json: Bool = false
 
+    var readMode: TeamInboxReadMode {
+        if history { return .history }
+        if keepUnread || hasDiagnosticSelector {
+            return .peekUnread
+        }
+        return .consumeUnread
+    }
+
+    private var hasDiagnosticSelector: Bool {
+        worktree != nil || repo != nil || member != nil
+    }
+
+    func validate() throws {
+        if history, keepUnread {
+            throw ValidationError("--history cannot be combined with --keep-unread or --unread")
+        }
+    }
+
     func run() throws {
-        let callerWorktree = try TeamDiagnosticScope.resolveCaller(worktree: worktree, repo: repo)
+        let callerWorktree: String? = if readMode == .consumeUnread {
+            try CLIEnv.resolveWorktree()
+        } else {
+            try TeamDiagnosticScope.resolveCaller(worktree: worktree, repo: repo)
+        }
+        try execute(
+            callerWorktree: callerWorktree,
+            sendRequest: CLIEnv.sendRequest,
+            writeOutput: { try FileHandle.standardOutput.write(contentsOf: $0) },
+            writeError: CLIEnv.printError
+        )
+    }
+
+    func execute(
+        callerWorktree: String?,
+        sendRequest: (NotificationMessage) throws -> ResponseMessage,
+        writeOutput: (Data) throws -> Void,
+        writeError: (String) -> Void
+    ) throws {
         var pages: [[TeamInboxMessage]] = []
         var beforeID: String?
+        var afterID: String?
+        var snapshotThroughID: String?
         var seenCursors: Set<String> = []
 
         while true {
-            let response = try CLIEnv.sendRequest(
-                .teamInbox(
+            let response = try sendRequest(
+                .teamInbox(TeamInboxPageRequest(
                     callerWorktree: callerWorktree,
                     worktree: worktree,
                     repo: repo,
                     member: member,
-                    unread: unread,
+                    unread: readMode != .history,
                     all: all,
                     beforeID: beforeID,
+                    afterID: afterID,
+                    snapshotThroughID: snapshotThroughID,
+                    forwardPagination: readMode == .history ? nil : true,
                     limit: all
                         ? TeamInboxDiagnosticPage.maximumLimit
                         : TeamInboxDiagnosticPage.defaultLimit
-                )
+                ))
             )
             switch response {
-            case .teamInbox(let messages, let nextBeforeID):
-                pages.append(messages)
-                guard all, let nextBeforeID else {
-                    beforeID = nil
-                    break
-                }
-                guard seenCursors.insert(nextBeforeID).inserted else {
-                    CLIEnv.printError("Team inbox pagination returned a repeated cursor")
+            case .teamInbox(let messages, let nextBeforeID, let nextAfterID, let responseSnapshotThroughID):
+                guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
+                    writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
                     throw ExitCode(1)
                 }
-                beforeID = nextBeforeID
+                pages.append(messages)
+                if snapshotThroughID == nil {
+                    snapshotThroughID = responseSnapshotThroughID
+                }
+                let nextCursor = readMode == .history ? nextBeforeID : nextAfterID
+                guard all, let nextCursor else { break }
+                guard seenCursors.insert(nextCursor).inserted else {
+                    writeError("Team inbox pagination returned a repeated cursor")
+                    throw ExitCode(1)
+                }
+                if readMode == .history {
+                    beforeID = nextCursor
+                } else {
+                    afterID = nextCursor
+                }
                 continue
             case .error(let msg):
-                CLIEnv.printError(msg)
+                writeError(msg)
                 throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .worktreeCreate, .worktreeRemove:
-                CLIEnv.printError("Unexpected response for team inbox")
+                writeError("Unexpected response for team inbox")
                 throw ExitCode(1)
             }
             break
         }
 
-        let messages = pages.reversed().flatMap { $0 }
+        let messages = readMode == .history
+            ? pages.reversed().flatMap { $0 }
+            : pages.flatMap { $0 }
+        let output: Data
         if json {
-            let data = try JSONEncoder().encode(messages)
-            print(String(data: data, encoding: .utf8) ?? "[]")
+            var data = try JSONEncoder().encode(messages)
+            data.append(0x0A)
+            output = data
         } else {
-            for message in messages {
-                print(TeamOutput.inboxLine(message))
+            let text = messages.map(TeamOutput.inboxLine).joined(separator: "\n")
+            output = Data((text.isEmpty ? "" : text + "\n").utf8)
+        }
+        try writeOutput(output)
+
+        guard readMode == .consumeUnread, let throughID = messages.last?.id else {
+            if readMode == .peekUnread || hasDiagnosticSelector {
+                writeError(Self.peekGuidance)
+            } else if messages.isEmpty, !json, readMode != .history {
+                writeError("no unread team messages")
             }
+            return
+        }
+        guard let callerWorktree else {
+            writeError("Cannot advance team inbox outside a tracked worktree")
+            throw ExitCode(1)
+        }
+        let response: ResponseMessage
+        do {
+            response = try sendRequest(
+                .teamInboxAdvance(callerWorktree: callerWorktree, throughID: throughID)
+            )
+        } catch {
+            writeError(Self.advanceFailureGuidance)
+            writeError("Failed to advance team inbox: \(error)")
+            throw ExitCode(1)
+        }
+        switch response {
+        case .ok:
+            return
+        case .error(let message):
+            writeError(Self.advanceFailureGuidance)
+            writeError(message)
+            throw ExitCode(1)
+        case .paneList, .paneShow, .teamList, .teamHookOutput,
+             .teamInbox, .worktreeCreate, .worktreeRemove:
+            writeError(Self.advanceFailureGuidance)
+            writeError("Unexpected response while advancing team inbox")
+            throw ExitCode(1)
         }
     }
+
+    private static let peekGuidance = "Inbox left unread. To mark that worktree's messages read, run `graftty team inbox` from that worktree without peek or diagnostic flags. Do not edit Graftty state files."
+    private static let advanceFailureGuidance = "Messages were displayed but remain unread; rerun `graftty team inbox`. Do not edit Graftty state files."
 }
 
 struct TeamMsg: ParsableCommand {
