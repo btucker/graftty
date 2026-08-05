@@ -38,7 +38,12 @@ struct PRStatusStorePrsByRepoBranchTests {
 
         store.refresh(worktreePath: "/r/main", repoPath: "/r", branch: "main")
 
-        let deadline = Date().addingTimeInterval(1.0)
+        // The shared background-process limiter adds an actor hop before the
+        // fetch. Under the full parallel suite the cooperative executor can
+        // delay that hop for several seconds, so keep this behavioral wait
+        // comfortably above scheduler contention without changing production
+        // cadence or timeout behavior.
+        let deadline = Date().addingTimeInterval(10.0)
         while Date() < deadline {
             if store.prsByRepoBranch["/r"] != nil { break }
             try await Task.sleep(for: .milliseconds(25))

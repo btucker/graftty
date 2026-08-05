@@ -72,7 +72,7 @@ public final class WorktreeStatsStore {
     /// bare `Set` would then latch the repo's path forever:
     /// every poll short-circuits at the in-flight check, Gate B is
     /// skipped, and the divergence gutter freezes until relaunch. The
-    /// timestamp lets `maybeDispatchRepoFetch` treat a slot older than
+    /// timestamp lets `repoFetchDisposition` treat a slot older than
     /// `inFlightAbandonmentThreshold` as abandoned and dispatch a fresh
     /// fetch (DIVERGE-4.11 — the async-hang sibling of the synchronous
     /// latch closed by DIVERGE-4.10). Mirrors `inFlight`'s DIVERGE-4.4
@@ -86,6 +86,31 @@ public final class WorktreeStatsStore {
     @ObservationIgnored
     private var getRepos: @MainActor () -> [RepoEntry] = { [] }
 
+    @ObservationIgnored
+    private var pollCursor = RoundRobinBatchCursor()
+
+    /// Network fetches use a separate cursor so a due tick cannot enqueue the
+    /// whole workspace ahead of remote-ref, PR, or event-driven stats work.
+    @ObservationIgnored
+    private var repoFetchCursor = RoundRobinBatchCursor()
+
+    private struct PollCandidate {
+        let worktreePath: String
+        let repoPath: String
+        let branch: String
+    }
+
+    private enum RepoFetchDisposition {
+        case inFlight
+        case due
+        case notDue
+    }
+
+    /// Event-driven file-system refreshes are the prompt path. The recurring
+    /// poll is only a repair mechanism for missed events, so cap its dispatch
+    /// volume as well as the number of pipelines allowed to run concurrently.
+    private static let pollBatchSize = 4
+
     /// The compute function invoked off-main to resolve the default
     /// branch and divergence stats. Injected so tests can supply a
     /// controllable stub (yielding at a chosen point, returning canned
@@ -94,6 +119,13 @@ public final class WorktreeStatsStore {
     /// defaults to `Self.defaultCompute` which uses the real GitRunner.
     @ObservationIgnored
     private let compute: ComputeFunction
+
+    /// Bounds the number of five-subprocess divergence pipelines that can be
+    /// active at once. Together with `pollBatchSize`, a large workspace no
+    /// longer turns a safety-net tick or event burst into an unbounded group
+    /// of `git` children competing with terminal input.
+    @ObservationIgnored
+    private let backgroundProcessLimiter: BackgroundProcessLimiter
 
     /// Signature of the compute injection point. Sendable so the
     /// detached-from-MainActor Task can invoke it safely. `branch` is
@@ -139,10 +171,12 @@ public final class WorktreeStatsStore {
 
     public init(
         compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute,
-        fetch: @escaping FetchFunction = WorktreeStatsStore.defaultFetch
+        fetch: @escaping FetchFunction = WorktreeStatsStore.defaultFetch,
+        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
     ) {
         self.compute = compute
         self.fetch = fetch
+        self.backgroundProcessLimiter = backgroundProcessLimiter
     }
 
     func generationForTesting(_ worktreePath: String) -> Int {
@@ -249,9 +283,24 @@ public final class WorktreeStatsStore {
         let cached = defaultBranchByRepo[repoPath] ?? nil
         let fetchGeneration = generation[worktreePath, default: 0]
         let compute = self.compute
+        let backgroundProcessLimiter = self.backgroundProcessLimiter
 
         Task {
-            let computed = await compute(worktreePath, repoPath, branch, cached)
+            let computed: ComputeResult? = await backgroundProcessLimiter.run { [weak self] in
+                // The in-flight timestamp starts when refresh() queues the
+                // work so later requests coalesce while it waits. Reset it
+                // once a permit is obtained, giving the actual subprocess
+                // pipeline its full abandonment window. If clear() or an
+                // abandoned-task replacement changed the generation while
+                // this request waited, skip the now-obsolete work entirely.
+                guard let self,
+                      await self.beginLimitedCompute(
+                        worktreePath: worktreePath,
+                        fetchGeneration: fetchGeneration
+                      ) else { return nil }
+                return await compute(worktreePath, repoPath, branch, cached)
+            }
+            guard let computed else { return }
             self.apply(
                 worktreePath: worktreePath,
                 repoPath: repoPath,
@@ -259,6 +308,17 @@ public final class WorktreeStatsStore {
                 fetchGeneration: fetchGeneration
             )
         }
+    }
+
+    private func beginLimitedCompute(
+        worktreePath: String,
+        fetchGeneration: Int
+    ) -> Bool {
+        guard generation[worktreePath, default: 0] == fetchGeneration else {
+            return false
+        }
+        inFlight[worktreePath] = Date()
+        return true
     }
 
     public func clear(worktreePath: String) {
@@ -455,33 +515,76 @@ public final class WorktreeStatsStore {
 
     private func pollTick(repos: [RepoEntry]) async {
         let now = Date()
-        for repo in repos where repo.isGitTracked {
-            // Gate A: network `git fetch` on the repo-level cadence
-            // (DIVERGE-4.3). On success, performRepoFetch also kicks
-            // per-worktree refreshes, so we don't double-fire them in
-            // Gate B below for the same tick.
-            let didDispatchRepoFetch = maybeDispatchRepoFetch(repo: repo, now: now)
+        var fetchCandidates: [RepoEntry] = []
+        var statsCandidates: [PollCandidate] = []
 
-            // Gate B: refresh every running worktree on every tick
-            // (DIVERGE-4.6 / PERF-1.3). The compute pipeline is local
-            // and cheap; `inFlight` (DIVERGE-4.4) coalesces overlap.
-            // Skipped when the repo-fetch dispatch already scheduled
-            // a refresh for these worktrees — `performRepoFetch` calls
-            // `refresh` for each non-stale worktree after its fetch
-            // resolves.
-            if didDispatchRepoFetch { continue }
-            for wt in repo.worktrees where shouldPollStats(for: wt) {
-                refresh(worktreePath: wt.path, repoPath: repo.path, branch: wt.branch)
+        for repo in repos where repo.isGitTracked {
+            switch repoFetchDisposition(repo: repo, now: now) {
+            case .inFlight:
+                // The live fetch will recompute this repo's worktrees.
+                continue
+            case .due:
+                fetchCandidates.append(repo)
+            case .notDue:
+                appendStatsCandidates(for: repo, to: &statsCandidates)
             }
+        }
+
+        let liveFetchCount = inFlightRepos.values.filter {
+            now.timeIntervalSince($0)
+                < Double(Self.inFlightAbandonmentThreshold().components.seconds)
+        }.count
+        let availableFetchSlots = max(0, Self.pollBatchSize - liveFetchCount)
+        let fetchBatch = availableFetchSlots > 0
+            ? repoFetchCursor.nextBatch(
+                from: fetchCandidates,
+                maximumCount: availableFetchSlots,
+                path: \.path
+            )
+            : []
+        let fetchedRepoPaths = Set(fetchBatch.map(\.path))
+        for repo in fetchBatch {
+            dispatchRepoFetch(repo: repo, now: now)
+        }
+
+        // A due repo outside this tick's network batch remains eligible for a
+        // cheap local recompute. Only repos with an active or newly dispatched
+        // fetch are skipped because their fetch handler owns the recompute.
+        for repo in fetchCandidates where !fetchedRepoPaths.contains(repo.path) {
+            appendStatsCandidates(for: repo, to: &statsCandidates)
+        }
+
+        let statsBatch = pollCursor.nextBatch(
+            from: statsCandidates,
+            maximumCount: Self.pollBatchSize,
+            path: \.worktreePath
+        )
+        for candidate in statsBatch {
+            refresh(
+                worktreePath: candidate.worktreePath,
+                repoPath: candidate.repoPath,
+                branch: candidate.branch
+            )
         }
     }
 
-    /// Returns true if a repo-level fetch was dispatched this tick. The
-    /// pollTick caller uses that to skip its per-worktree Gate B, since
-    /// `performRepoFetch` will itself refresh every worktree in the repo
-    /// after the fetch — double-firing would waste subprocess work and
-    /// bump `inFlight` churn unnecessarily.
-    private func maybeDispatchRepoFetch(repo: RepoEntry, now: Date) -> Bool {
+    private func appendStatsCandidates(
+        for repo: RepoEntry,
+        to candidates: inout [PollCandidate]
+    ) {
+        for worktree in repo.worktrees where shouldPollStats(for: worktree) {
+            candidates.append(PollCandidate(
+                worktreePath: worktree.path,
+                repoPath: repo.path,
+                branch: worktree.branch
+            ))
+        }
+    }
+
+    private func repoFetchDisposition(
+        repo: RepoEntry,
+        now: Date
+    ) -> RepoFetchDisposition {
         // Defer to an in-flight fetch only while it's plausibly still
         // running. Although `git fetch` has a 20-second subprocess
         // deadline, task scheduling or termination delivery can still be
@@ -494,35 +597,62 @@ public final class WorktreeStatsStore {
         let cap = Double(Self.inFlightAbandonmentThreshold().components.seconds)
         if let started = inFlightRepos[repo.path],
            now.timeIntervalSince(started) < cap {
-            return true
+            return .inFlight
         }
         let streak = repoFailureStreak[repo.path] ?? 0
         let interval = Self.repoFetchCadence(failureStreak: streak)
         if let last = lastRepoFetch[repo.path],
            now.timeIntervalSince(last) < Double(interval.components.seconds) {
-            return false
+            return .notDue
         }
         // DIVERGE-4.10: claiming an `inFlightRepos` slot here without a
         // matching `performRepoFetch` (whose `defer` releases the slot)
-        // permanently latches the repo — every subsequent poll then
-        // short-circuits at the contains-check above and Gate B never
-        // re-fires for a worktree the user later opens.
-        guard repo.worktrees.contains(where: shouldPollStats) else { return false }
+        // permanently latches the repo — every subsequent poll then classifies
+        // it as active and Gate B never re-fires for a worktree the user later
+        // opens.
+        guard repo.worktrees.contains(where: shouldPollStats) else {
+            return .notDue
+        }
+        return .due
+    }
+
+    private func dispatchRepoFetch(repo: RepoEntry, now: Date) {
         inFlightRepos[repo.path] = now
         let dispatchedAt = now
         let repoPath = repo.path
         let worktrees = repo.worktrees
             .filter(shouldPollStats)
             .map { (path: $0.path, branch: $0.branch) }
+        let backgroundProcessLimiter = self.backgroundProcessLimiter
 
-        Task { [weak self] in
-            await self?.performRepoFetch(
-                repoPath: repoPath,
-                worktrees: worktrees,
-                dispatchedAt: dispatchedAt
-            )
+        Task {
+            await backgroundProcessLimiter.run { [weak self] in
+                guard let self,
+                      let startedAt = await self.beginLimitedRepoFetch(
+                        repoPath: repoPath,
+                        dispatchedAt: dispatchedAt
+                      ) else { return }
+                await self.performRepoFetch(
+                    repoPath: repoPath,
+                    worktrees: worktrees,
+                    dispatchedAt: startedAt
+                )
+            }
         }
-        return true
+    }
+
+    private func beginLimitedRepoFetch(
+        repoPath: String,
+        dispatchedAt: Date
+    ) -> Date? {
+        // The slot may have been superseded while this fetch waited behind
+        // other background work. Skip obsolete requests; otherwise reset the
+        // timestamp so the actual network process gets its full abandonment
+        // window rather than counting time suspended in the limiter queue.
+        guard inFlightRepos[repoPath] == dispatchedAt else { return nil }
+        let startedAt = Date()
+        inFlightRepos[repoPath] = startedAt
+        return startedAt
     }
 
     private func shouldPollStats(for worktree: WorktreeEntry) -> Bool {
@@ -535,10 +665,10 @@ public final class WorktreeStatsStore {
         dispatchedAt: Date
     ) async {
         // Release the slot only if it's still the one this Task claimed.
-        // The dispatch timestamp doubles as the ownership token: if this
+        // The slot timestamp doubles as the ownership token: if this
         // fetch hung past `inFlightAbandonmentThreshold` and a later tick
         // superseded it, that tick overwrote `inFlightRepos[repoPath]` with
-        // its own (strictly later — ticks are ≥5s apart) timestamp, so the
+        // its own later timestamp, so the
         // equality fails here and the stale Task declines to clear the live
         // slot. Same intent as `apply`'s generation guard (DIVERGE-4.5),
         // expressed with the unique dispatch `Date` rather than an Int
