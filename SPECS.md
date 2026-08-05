@@ -848,6 +848,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-5** The application shall invoke every external tool (`git`, `gh`, `glab`, `zmx`) with `LC_ALL=C` in the child environment so output parsers written against English strings (e.g. `git diff --shortstat` "insertion"/"deletion" markers, `gh pr checks` bucket names) keep working when the user's shell locale is non-English. This is a forcing function — the alternative (locale-robust parsers across multiple tools) is fragile and brittle.
 
+### TECH-6.x
+
+**TECH-6.1** If an iOS CI test shard loses its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling
