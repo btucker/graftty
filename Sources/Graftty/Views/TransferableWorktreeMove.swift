@@ -43,55 +43,80 @@ enum WorktreeDropReorder {
         guard let repoIndex = appState.repos.firstIndex(where: { $0.id == payload.repoID }) else {
             return false
         }
-        let worktrees = appState.repos[repoIndex].worktrees
+        let repo = appState.repos[repoIndex]
+        let worktrees = repo.worktrees
         guard let sourceIndex = worktrees.firstIndex(where: { $0.id == payload.worktreeID }),
               let targetIndex = worktrees.firstIndex(where: { $0.id == targetWorktreeID })
         else {
             return false
         }
 
-        let destination = placement == .before ? targetIndex : targetIndex + 1
-        return applyListMove(
-            inRepoID: payload.repoID,
-            fromOffsets: IndexSet(integer: sourceIndex),
-            toOffset: destination,
-            to: &appState
+        let nodes = SidebarWorktreeHierarchy.nodes(
+            for: worktrees,
+            inRepoAtPath: repo.path,
+            defaultBranch: nil
         )
+        let parentFolderPaths = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
+        let sourceParent = parentFolderPaths[payload.worktreeID]
+        let targetParent = parentFolderPaths[targetWorktreeID]
+        guard sourceParent == targetParent else { return false }
+
+        // The hierarchy can collect worktrees that are noncontiguous in the
+        // persisted flat array. Reorder the visible siblings within their
+        // existing slots so a child-only move cannot shift an unrelated row
+        // or the virtual folder's root position.
+        let siblingIndices = worktrees.indices.filter {
+            parentFolderPaths[worktrees[$0].id] == sourceParent
+        }
+        let siblings = siblingIndices.map { worktrees[$0] }
+        guard let sourceSiblingIndex = siblingIndices.firstIndex(of: sourceIndex),
+              let targetSiblingIndex = siblingIndices.firstIndex(of: targetIndex)
+        else { return false }
+        let destination = placement == .before
+            ? targetSiblingIndex
+            : targetSiblingIndex + 1
+        guard let reorderedSiblings = reorderedWorktrees(
+            siblings,
+            fromOffsets: IndexSet(integer: sourceSiblingIndex),
+            toOffset: destination
+        ) else { return false }
+
+        var reordered = worktrees
+        for (index, sibling) in zip(siblingIndices, reorderedSiblings) {
+            reordered[index] = sibling
+        }
+        appState.repos[repoIndex].worktrees = reordered
+        return true
     }
 
-    @discardableResult
-    static func applyListMove(
-        inRepoID repoID: RepoEntry.ID,
+    private static func reorderedWorktrees(
+        _ worktrees: [WorktreeEntry],
         fromOffsets: IndexSet,
-        toOffset: Int,
-        to appState: inout AppState
-    ) -> Bool {
-        guard !fromOffsets.isEmpty else { return false }
-        guard let repoIndex = appState.repos.firstIndex(where: { $0.id == repoID }) else {
-            return false
-        }
-        let worktrees = appState.repos[repoIndex].worktrees
-        guard fromOffsets.allSatisfy({ worktrees.indices.contains($0) }) else { return false }
-        guard toOffset >= 0, toOffset <= worktrees.count else { return false }
+        toOffset: Int
+    ) -> [WorktreeEntry]? {
+        guard !fromOffsets.isEmpty else { return nil }
+        guard fromOffsets.allSatisfy({ worktrees.indices.contains($0) }) else { return nil }
+        guard toOffset >= 0, toOffset <= worktrees.count else { return nil }
 
         let movingIDs = fromOffsets.map { worktrees[$0].id }
         guard movingIDs.allSatisfy({ id in
             worktrees.first(where: { $0.id == id })?.state.isInFlight == false
         }) else {
-            return false
+            return nil
         }
 
         let neighborIndices = [toOffset - 1, toOffset]
             .filter { worktrees.indices.contains($0) && !fromOffsets.contains($0) }
         guard neighborIndices.allSatisfy({ !worktrees[$0].state.isInFlight }) else {
-            return false
+            return nil
         }
 
-        return appState.moveWorktrees(
-            inRepoID: repoID,
-            movingWorktreeIDs: movingIDs,
+        guard let reordered = WorktreeOrdering.move(
+            worktrees,
+            movingIDs: movingIDs,
             toIndex: toOffset
-        )
+        ), reordered != worktrees else { return nil }
+        return reordered
     }
 }
 

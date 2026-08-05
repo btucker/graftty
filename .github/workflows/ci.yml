@@ -241,7 +241,7 @@ jobs:
     # Fresh simulator boot can spend several minutes in Apple data migration.
     # Give provisioning and testing independent canaries below; this outer
     # ceiling only catches a job that overruns both budgets plus setup time.
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -293,21 +293,11 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Test GrafttyMobile shard without rebuilding
-        timeout-minutes: 10
+        timeout-minutes: 15
         env:
+          SHARD_NAME: ${{ matrix.shard }}
           TEST_ARGUMENTS: ${{ matrix.test-arguments }}
-        run: |
-          XCTESTRUN_PATHS=(.derivedData/Build/Products/*.xctestrun)
-          if [[ ! -e "${XCTESTRUN_PATHS[0]}" ]]; then
-            echo "::error::build-for-testing did not produce an .xctestrun file"
-            exit 1
-          fi
-          read -r -a TEST_ARGUMENTS_ARRAY <<< "$TEST_ARGUMENTS"
-          xcodebuild \
-            -xctestrun "${XCTESTRUN_PATHS[0]}" \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
-            "${TEST_ARGUMENTS_ARRAY[@]}" \
-            test-without-building
+        run: scripts/run-ios-test-shard.sh
 
   # Preserve the original required-check name while the implementation runs
   # as one build job plus a test matrix.

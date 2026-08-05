@@ -64,6 +64,11 @@ struct SidebarView: View {
     /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
 
+    /// Virtual folders start expanded. Only explicit user collapses are
+    /// retained, scoped by repository so same-named folders do not share UI
+    /// state across projects.
+    @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
+
     var body: some View {
         // Explicit dependency: the titles live on TerminalManager, while this
         // lightweight observable scopes invalidation to the sidebar.
@@ -187,7 +192,7 @@ struct SidebarView: View {
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
         )
-        let worktreeLabels = SidebarWorktreeLabel.texts(
+        let worktreeNodes = SidebarWorktreeHierarchy.nodes(
             for: repo.worktrees,
             inRepoAtPath: repo.path,
             defaultBranch: resolvedDefaultBranch
@@ -202,32 +207,22 @@ struct SidebarView: View {
                 }
             )
         ) {
-            ForEach(repo.worktrees) { worktree in
-                worktreeBlock(
-                    worktree,
-                    repo: repo,
-                    displayName: worktreeLabels[worktree.id] ?? SidebarWorktreeLabel.text(
-                        for: worktree,
-                        inRepoAtPath: repo.path,
-                        siblingPaths: repo.worktrees.map(\.path),
-                        defaultBranch: resolvedDefaultBranch
+            ForEach(worktreeNodes) { node in
+                SidebarWorktreeNodeRow(
+                    node: node,
+                    depth: 0,
+                    repositoryID: repo.id,
+                    expansion: $worktreeFolderExpansion,
+                    statsByWorktreePath: statsStore.stats,
+                    theme: theme
+                ) { worktree, displayName in
+                    worktreeBlock(
+                        worktree,
+                        repo: repo,
+                        displayName: displayName
                     )
-                )
-                    // Outdent the worktree rows so each row's state
-                    // indicator lines up under the parent repo's folder
-                    // icon rather than sitting further right than the
-                    // repo's disclosure label. -20pt counters the
-                    // DisclosureGroup child indent minus the leading
-                    // width of the icon column on the repo header.
-                    .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
-            }
-            .onMove { fromOffsets, toOffset in
-                WorktreeDropReorder.applyListMove(
-                    inRepoID: repo.id,
-                    fromOffsets: fromOffsets,
-                    toOffset: toOffset,
-                    to: &appState
-                )
+                }
+                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0))
             }
         } label: {
             // No leading glyph — the top level is always projects, so
@@ -327,7 +322,11 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
-            .worktreeReorderTarget(repoID: repo.id, worktreeID: worktree.id, appState: $appState)
+            .worktreeReorderTarget(
+                repoID: repo.id,
+                worktreeID: worktree.id,
+                appState: $appState
+            )
             // PWD-1.4: same-repo drop target. Sources are sidebar pane
             // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
             // are rejected so a user can't accidentally hop a pane
@@ -530,5 +529,101 @@ struct SidebarView: View {
             }
         }
         return true
+    }
+}
+
+/// Worktree rows use a compact List outdent relative to their parent. Keep
+/// that treatment on leaf rows at every depth: a folder owns a native
+/// disclosure column, while its worktree children should advance by the same
+/// visual amount that a direct worktree advances beneath a repository.
+private struct SidebarWorktreeRowInsets: ViewModifier {
+    let node: SidebarWorktreeNode
+    let depth: Int
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
+            content.listRowInsets(
+                EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
+            )
+        } else {
+            content
+        }
+    }
+}
+
+/// Recursive row renderer with caller-owned disclosure state. `OutlineGroup`
+/// owns its expansion state internally and starts folders collapsed; using
+/// explicit `DisclosureGroup` bindings makes the initial state deterministic
+/// and lets the folder label react to collapse by showing aggregate stats.
+private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
+    let node: SidebarWorktreeNode
+    let depth: Int
+    let repositoryID: UUID
+    @Binding var expansion: SidebarWorktreeFolderExpansion
+    let statsByWorktreePath: [String: WorktreeStats]
+    let theme: GhosttyTheme
+    let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
+
+    @ViewBuilder
+    var body: some View {
+        switch node {
+        case .worktree(let worktree, let displayName):
+            worktreeContent(worktree, displayName)
+
+        case .folder(let path, let name, let children):
+            let folderID = SidebarWorktreeFolderID(
+                repositoryID: repositoryID,
+                path: path
+            )
+            let isExpanded = expansion.isExpanded(folderID)
+            let aggregate = SidebarWorktreeHierarchy.aggregateStats(
+                in: node,
+                statsByWorktreePath: statsByWorktreePath
+            )
+            DisclosureGroup(
+                isExpanded: Binding(
+                    get: { expansion.isExpanded(folderID) },
+                    set: { expansion.setExpanded($0, for: folderID) }
+                )
+            ) {
+                ForEach(children) { child in
+                    SidebarWorktreeNodeRow(
+                        node: child,
+                        depth: depth + 1,
+                        repositoryID: repositoryID,
+                        expansion: $expansion,
+                        statsByWorktreePath: statsByWorktreePath,
+                        theme: theme,
+                        worktreeContent: worktreeContent
+                    )
+                    .modifier(SidebarWorktreeRowInsets(
+                        node: child,
+                        depth: depth + 1
+                    ))
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.sidebarDimIcon)
+                    Text(name)
+                        .lineLimit(1)
+                        .foregroundColor(theme.sidebarPrimaryText(isActive: false))
+                    Spacer()
+                    if !isExpanded {
+                        WorktreeRowGutter(
+                            stats: aggregate,
+                            baseRef: nil,
+                            theme: theme
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+        }
     }
 }
