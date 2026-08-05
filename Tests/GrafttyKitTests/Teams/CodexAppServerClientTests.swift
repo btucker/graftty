@@ -284,8 +284,8 @@ struct CodexAppServerClientTests {
         }
     }
 
-    @Test("Writing a large request times out when the proxy stops reading stdin.")
-    func writeTimeoutWhenProxyStopsReading() async throws {
+    @Test("Delivery times out when the proxy stops reading stdin.")
+    func deliveryTimesOutWhenProxyStopsReading() async throws {
         let fake = try makeFakeProxy(
             threads: ["thread-123"],
             cwd: "/repo/.worktrees/alice",
@@ -294,7 +294,12 @@ struct CodexAppServerClientTests {
         let client = CodexAppServerClient(timeout: 0.3)
         let largeMessage = String(repeating: "x", count: 2_000_000)
 
-        try await expectDeliveryThrows(containing: "write timed out") {
+        // Darwin may buffer the whole request before the deadline, so this
+        // can time out either while writing or while awaiting the response.
+        try await expectDeliveryThrows(containingAnyOf: [
+            "write timed out",
+            "timed out waiting for a response",
+        ]) {
             _ = try await client.deliver(
                 binaryPath: fake.binaryPath.path,
                 socketPath: "/tmp/graftty-codex.sock",
@@ -645,11 +650,22 @@ struct CodexAppServerClientTests {
         containing expectedDescription: String,
         operation: () async throws -> Void
     ) async throws {
+        try await expectDeliveryThrows(
+            containingAnyOf: [expectedDescription],
+            operation: operation
+        )
+    }
+
+    private func expectDeliveryThrows(
+        containingAnyOf expectedDescriptions: [String],
+        operation: () async throws -> Void
+    ) async throws {
         do {
             try await operation()
             Issue.record("Expected delivery to throw.")
         } catch {
-            #expect(String(describing: error).contains(expectedDescription))
+            let description = String(describing: error)
+            #expect(expectedDescriptions.contains { description.contains($0) })
         }
     }
 }

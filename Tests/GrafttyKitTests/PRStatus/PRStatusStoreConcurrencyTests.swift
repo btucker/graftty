@@ -44,6 +44,7 @@ struct PRStatusStoreConcurrencyTests {
             try #require(dispatchedCount == 4)
             try await waitUntil(timeout: 3.0) {
                 fetcher.completedCount == expectedCompletedCount
+                    && repos.allSatisfy { !store.isInFlightForTesting($0.path) }
             }
         }
 

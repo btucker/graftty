@@ -12,9 +12,13 @@ struct WebSessionTests {
         let termFile = dir.appendingPathComponent("term.txt").path
         let body = """
         #!/bin/sh
-        printf '%s\\n' "$@" > \(PTYFixtureTestSupport.shellQuoted(argvFile))
-        printf '%s\\n' "$ZMX_DIR" > \(PTYFixtureTestSupport.shellQuoted(zmxDirFile))
+        printf '%s\\n' "$@" > \(PTYFixtureTestSupport.shellQuoted(argvFile)).tmp
+        printf '%s\\n' "$ZMX_DIR" > \(PTYFixtureTestSupport.shellQuoted(zmxDirFile)).tmp
+        /bin/mv \(PTYFixtureTestSupport.shellQuoted(zmxDirFile)).tmp \(PTYFixtureTestSupport.shellQuoted(zmxDirFile))
         trap 'printf TERM > \(PTYFixtureTestSupport.shellQuoted(termFile)); exit 0' TERM
+        # Publish argv last as the readiness marker: once it exists, both
+        # capture files are complete and the TERM trap is armed.
+        /bin/mv \(PTYFixtureTestSupport.shellQuoted(argvFile)).tmp \(PTYFixtureTestSupport.shellQuoted(argvFile))
         while :; do sleep 0.05; done
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
@@ -95,7 +99,7 @@ struct WebSessionTests {
             .split(separator: "\n")
             .map(String.init)
         // ZMX-6.6: attach now relies on zmx's default login spawn (no positional shell).
-        #expect(argv.count == 2)
+        try #require(argv.count == 2)
         #expect(argv[0] == "attach")
         #expect(argv[1] == "graftty-abcdef12")
 

@@ -10,7 +10,8 @@ struct BackgroundProcessLimiterIntegrationTests {
     """)
     func alignedPollersShareOneAggregateLimit() async throws {
         let limiter = BackgroundProcessLimiter(capacity: 4)
-        let recorder = AlignedPollerRecorder(delay: .milliseconds(50))
+        let recorder = AlignedPollerRecorder()
+        defer { recorder.resumeAll() }
         let origin = HostingOrigin(
             provider: .github,
             host: "github.com",
@@ -83,6 +84,12 @@ struct BackgroundProcessLimiterIntegrationTests {
         await prTicker.fire()
 
         try await waitUntil(timeout: 3.0) {
+            recorder.activeCount >= 4
+        }
+        try #require(recorder.activeCount == 4)
+        recorder.resumeAll()
+
+        try await waitUntil(timeout: 3.0) {
             recorder.completedCount == 24
         }
 
@@ -110,14 +117,15 @@ struct BackgroundProcessLimiterIntegrationTests {
 
 private final class AlignedPollerRecorder: @unchecked Sendable {
     private let lock = NSLock()
-    private let delay: Duration
-    private var activeCount = 0
+    private var _activeCount = 0
     private var _completedCount = 0
     private var _maximumConcurrentCount = 0
     private var counts: [String: Int] = [:]
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var released = false
 
-    init(delay: Duration) {
-        self.delay = delay
+    var activeCount: Int {
+        lock.withLock { _activeCount }
     }
 
     var completedCount: Int {
@@ -133,17 +141,41 @@ private final class AlignedPollerRecorder: @unchecked Sendable {
     }
 
     func record<T: Sendable>(_ label: String, returning value: T) async -> T {
-        lock.withLock {
-            activeCount += 1
-            _maximumConcurrentCount = max(_maximumConcurrentCount, activeCount)
+        let shouldWait = lock.withLock {
+            _activeCount += 1
+            _maximumConcurrentCount = max(_maximumConcurrentCount, _activeCount)
+            return !released
         }
-        try? await Task.sleep(for: delay)
+        if shouldWait {
+            await withCheckedContinuation { continuation in
+                let resumeImmediately = lock.withLock {
+                    if released { return true }
+                    continuations.append(continuation)
+                    return false
+                }
+                if resumeImmediately {
+                    continuation.resume()
+                }
+            }
+        }
         lock.withLock {
-            activeCount -= 1
+            _activeCount -= 1
             _completedCount += 1
             counts[label, default: 0] += 1
         }
         return value
+    }
+
+    func resumeAll() {
+        let pending = lock.withLock {
+            released = true
+            let pending = continuations
+            continuations.removeAll()
+            return pending
+        }
+        for continuation in pending {
+            continuation.resume()
+        }
     }
 }
 

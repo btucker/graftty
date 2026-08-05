@@ -84,21 +84,29 @@ struct SocketServerBufferCapTests {
                 return text
             }
 
-        // The server may close while this deliberately oversized write is in
-        // progress. SO_NOSIGPIPE above turns that expected condition into a
-        // normal EPIPE result.
-        try? SocketIO.writeAll(fd: fd, string: payload)
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            &timeout,
-            socklen_t(MemoryLayout<timeval>.size)
-        )
-        var byte: UInt8 = 0
-        #expect(Darwin.read(fd, &byte, 1) == 0)
+        // Keep deliberately blocking socket I/O off Swift's cooperative
+        // executor. Under the full parallel suite, filling this socket on an
+        // async-test worker could starve the server worker that must close it.
+        let readResult = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                // The server may close while this deliberately oversized write
+                // is in progress. SO_NOSIGPIPE above turns that expected
+                // condition into a normal EPIPE result.
+                try? SocketIO.writeAll(fd: fd, string: payload)
+                _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+                var timeout = timeval(tv_sec: 2, tv_usec: 0)
+                setsockopt(
+                    fd,
+                    SOL_SOCKET,
+                    SO_RCVTIMEO,
+                    &timeout,
+                    socklen_t(MemoryLayout<timeval>.size)
+                )
+                var byte: UInt8 = 0
+                continuation.resume(returning: Darwin.read(fd, &byte, 1))
+            }
+        }
+        #expect(readResult == 0)
 
         // Every onMessage block was queued before the worker closed its fd.
         // Queue one sentinel behind them instead of sleeping an arbitrary time.
