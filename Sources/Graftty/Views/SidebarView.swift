@@ -210,6 +210,7 @@ struct SidebarView: View {
             ForEach(worktreeNodes) { node in
                 SidebarWorktreeNodeRow(
                     node: node,
+                    depth: 0,
                     repositoryID: repo.id,
                     expansion: $worktreeFolderExpansion,
                     statsByWorktreePath: statsStore.stats,
@@ -221,7 +222,7 @@ struct SidebarView: View {
                         displayName: displayName
                     )
                 }
-                .modifier(SidebarWorktreeRootRowInsets(node: node))
+                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0))
             }
         } label: {
             // No leading glyph — the top level is always projects, so
@@ -531,16 +532,17 @@ struct SidebarView: View {
     }
 }
 
-/// A repository's direct worktree rows historically use a compact List
-/// outdent. Keep that treatment on leaf rows only: a folder owns a native
-/// disclosure column, and its descendants already inherit the correct
-/// relative indentation from `DisclosureGroup`.
-private struct SidebarWorktreeRootRowInsets: ViewModifier {
+/// Worktree rows use a compact List outdent relative to their parent. Keep
+/// that treatment on leaf rows at every depth: a folder owns a native
+/// disclosure column, while its worktree children should advance by the same
+/// visual amount that a direct worktree advances beneath a repository.
+private struct SidebarWorktreeRowInsets: ViewModifier {
     let node: SidebarWorktreeNode
+    let depth: Int
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: 0) {
+        if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
             content.listRowInsets(
                 EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
             )
@@ -556,6 +558,7 @@ private struct SidebarWorktreeRootRowInsets: ViewModifier {
 /// and lets the folder label react to collapse by showing aggregate stats.
 private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let node: SidebarWorktreeNode
+    let depth: Int
     let repositoryID: UUID
     @Binding var expansion: SidebarWorktreeFolderExpansion
     let statsByWorktreePath: [String: WorktreeStats]
@@ -587,12 +590,17 @@ private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                 ForEach(children) { child in
                     SidebarWorktreeNodeRow(
                         node: child,
+                        depth: depth + 1,
                         repositoryID: repositoryID,
                         expansion: $expansion,
                         statsByWorktreePath: statsByWorktreePath,
                         theme: theme,
                         worktreeContent: worktreeContent
                     )
+                    .modifier(SidebarWorktreeRowInsets(
+                        node: child,
+                        depth: depth + 1
+                    ))
                 }
             } label: {
                 HStack(spacing: 6) {

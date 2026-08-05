@@ -32,14 +32,13 @@ public indirect enum SidebarWorktreeNode: Equatable, Identifiable, Sendable {
     }
 }
 
-/// Keeps the sidebar's established compact position for ungrouped worktrees
-/// without applying that outdent to disclosure rows or nested descendants.
+/// Keeps the sidebar's established compact row position for worktrees at
+/// every hierarchy depth without applying that outdent to disclosure rows.
 public enum SidebarWorktreeRowIndentation {
     public static func shouldOutdent(
         _ node: SidebarWorktreeNode,
         depth: Int
     ) -> Bool {
-        guard depth == 0 else { return false }
         if case .worktree = node { return true }
         return false
     }

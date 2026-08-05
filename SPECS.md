@@ -90,7 +90,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.36** When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
 
-**LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall preserve the established leading position of each top-level ungrouped worktree while applying disclosure indentation only to folders and their descendants.
+**LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
 
 ### LAYOUT-3.x — Adding Repositories
 
