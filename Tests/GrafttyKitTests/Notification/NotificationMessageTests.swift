@@ -170,7 +170,7 @@ struct NotificationMessageTests {
     }
 
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {
-        let original: NotificationMessage = .teamInbox(
+        let original: NotificationMessage = .teamInbox(TeamInboxPageRequest(
             callerWorktree: "/r/a",
             worktree: "feature-auth",
             repo: "/r",
@@ -178,8 +178,11 @@ struct NotificationMessageTests {
             unread: true,
             all: false,
             beforeID: "m0100",
+            afterID: "m0001",
+            snapshotThroughID: "m0200",
+            forwardPagination: true,
             limit: 100
-        )
+        ))
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_inbox")
@@ -190,10 +193,27 @@ struct NotificationMessageTests {
         #expect(json["unread"] as? Bool == true)
         #expect(json["all"] as? Bool == false)
         #expect(json["before_id"] as? String == "m0100")
+        #expect(json["after_id"] as? String == "m0001")
+        #expect(json["snapshot_through_id"] as? String == "m0200")
+        #expect(json["forward_pagination"] as? Bool == true)
         #expect(json["limit"] as? Int == 100)
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test func teamInboxAdvanceRequestRoundTrips() throws {
+        let request = NotificationMessage.teamInboxAdvance(
+            callerWorktree: "/r/a",
+            throughID: "message-123"
+        )
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = try JSONSerialization.jsonObject(with: requestData) as! [String: Any]
+        #expect(requestJSON["type"] as? String == "team_inbox_advance")
+        #expect(requestJSON["caller_worktree"] as? String == "/r/a")
+        #expect(requestJSON["through_id"] as? String == "message-123")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: requestData) == request)
+
     }
 
     @Test func teamMembersRoundTripsDiagnosticScope() throws {
@@ -464,7 +484,9 @@ struct NotificationMessageTests {
         )
         let original = ResponseMessage.teamInbox(
             messages: [message],
-            nextBeforeID: "0001"
+            nextBeforeID: "0001",
+            nextAfterID: "0002",
+            snapshotThroughID: "0010"
         )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -472,6 +494,8 @@ struct NotificationMessageTests {
         let messages = json["messages"] as! [[String: Any]]
         #expect(messages.count == 1)
         #expect(json["next_before_id"] as? String == "0001")
+        #expect(json["next_after_id"] as? String == "0002")
+        #expect(json["snapshot_through_id"] as? String == "0010")
 
         let decoded = try JSONDecoder().decode(ResponseMessage.self, from: data)
         #expect(decoded == original)
@@ -480,13 +504,18 @@ struct NotificationMessageTests {
     @Test func finalTeamInboxPageDecodesWithoutPaginationCursor() throws {
         let json = #"{"type":"team_inbox","messages":[]}"#
         let decoded = try JSONDecoder().decode(ResponseMessage.self, from: Data(json.utf8))
-        #expect(decoded == .teamInbox(messages: [], nextBeforeID: nil))
+        #expect(decoded == .teamInbox(
+            messages: [],
+            nextBeforeID: nil,
+            nextAfterID: nil,
+            snapshotThroughID: nil
+        ))
     }
 
     @Test func teamInboxRequestWithoutPaginationFieldsDecodesForExplicitRejection() throws {
         let json = #"{"type":"team_inbox","caller_worktree":"/r","unread":false,"all":true}"#
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: Data(json.utf8))
-        #expect(decoded == .teamInbox(
+        #expect(decoded == .teamInbox(TeamInboxPageRequest(
             callerWorktree: "/r",
             worktree: nil,
             repo: nil,
@@ -494,8 +523,11 @@ struct NotificationMessageTests {
             unread: false,
             all: true,
             beforeID: nil,
+            afterID: nil,
+            snapshotThroughID: nil,
+            forwardPagination: nil,
             limit: nil
-        ))
+        )))
     }
 
     @Test("@spec TEAM-4.6: When a team member-list command is invoked with `--json`, the CLI shall emit a Codable document with `team` and `members`, using the existing snake_case `TeamListMember` wire keys rather than human-formatted rows.")

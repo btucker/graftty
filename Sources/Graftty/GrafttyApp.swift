@@ -3407,7 +3407,7 @@ struct GrafttyApp: App {
                 }
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
-             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
+             .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
@@ -3518,16 +3518,17 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 remoteBranchStore: remoteBranchStore
             )
-        case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all, let beforeID, let limit):
+        case .teamInbox(let request):
             return await handleTeamInbox(
+                request: request,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
+            )
+        case .teamInboxAdvance(let callerPath, let throughID):
+            return await handleTeamInboxAdvance(
                 callerPath: callerPath,
-                worktree: worktree,
-                repo: repo,
-                member: member,
-                unread: unread,
-                all: all,
-                beforeID: beforeID,
-                limit: limit,
+                throughID: throughID,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
@@ -4058,14 +4059,7 @@ struct GrafttyApp: App {
 
     @MainActor
     private static func handleTeamInbox(
-        callerPath: String?,
-        worktree: String?,
-        repo: String?,
-        member: String?,
-        unread: Bool,
-        all: Bool,
-        beforeID: String?,
-        limit: Int?,
+        request: TeamInboxPageRequest,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
@@ -4078,23 +4072,66 @@ struct GrafttyApp: App {
             // off the main actor.
             let page = try await OffMainIO.run {
                 try handler.diagnosticPage(
-                    callerWorktree: callerPath,
-                    worktree: worktree,
-                    repo: repo,
-                    member: member,
-                    unread: unread,
-                    all: all,
-                    beforeID: beforeID,
-                    limit: limit,
+                    callerWorktree: request.callerWorktree,
+                    worktree: request.worktree,
+                    repo: request.repo,
+                    member: request.member,
+                    unread: request.unread,
+                    all: request.all,
+                    beforeID: request.beforeID,
+                    afterID: request.afterID,
+                    snapshotThroughID: request.snapshotThroughID,
+                    forwardPagination: request.forwardPagination,
+                    limit: request.limit,
                     repos: repos,
                     teamsEnabled: teamsEnabled
                 )
             }
-            return .teamInbox(messages: page.messages, nextBeforeID: page.nextBeforeID)
+            return .teamInbox(
+                messages: page.messages,
+                nextBeforeID: page.nextBeforeID,
+                nextAfterID: page.nextAfterID,
+                snapshotThroughID: page.snapshotThroughID
+            )
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
         } catch {
             return .error("failed to read team inbox: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamInboxAdvance(
+        callerPath: String,
+        throughID: String,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
+    ) async -> ResponseMessage {
+        do {
+            let handler = teamInboxRequestHandler(
+                inbox: teamInbox,
+                dispatcher: teamEventDispatcher
+            )
+            let repos = appState.wrappedValue.repos
+            let teamsEnabled = UserDefaults.standard.bool(
+                forKey: SettingsKeys.agentTeamsEnabled
+            )
+            try await OffMainIO.run {
+                try handler.advanceRead(
+                    callerWorktree: callerPath,
+                    throughID: throughID,
+                    repos: repos,
+                    teamsEnabled: teamsEnabled
+                )
+            }
+            return .ok
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch let error as TeamInboxError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to advance team inbox: \(error)")
         }
     }
 

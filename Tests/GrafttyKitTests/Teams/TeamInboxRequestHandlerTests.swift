@@ -215,7 +215,7 @@ struct TeamInboxRequestHandlerTests {
         #expect(page.map(\.id) == ["0003"])
     }
 
-    @Test("@spec TEAM-4.7: When a team inbox request omits the pagination limit, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.")
+    @Test("@spec TEAM-4.7: When a team inbox request omits pagination support required for its read direction, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.")
     func diagnosticInboxRequestWithoutPaginationIsRejected() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(
@@ -255,6 +255,22 @@ struct TeamInboxRequestHandlerTests {
                 all: false,
                 beforeID: nil,
                 limit: nil,
+                repos: [repo],
+                teamsEnabled: true
+            )
+        }
+
+        #expect(throws: TeamInboxRequestError.paginationRequired) {
+            try Self.makeHandler(inbox: inbox).diagnosticPage(
+                callerWorktree: "/repo/.worktrees/alice",
+                worktree: nil,
+                repo: nil,
+                member: nil,
+                unread: true,
+                all: true,
+                beforeID: nil,
+                forwardPagination: nil,
+                limit: 100,
                 repos: [repo],
                 teamsEnabled: true
             )
@@ -700,8 +716,8 @@ struct TeamInboxRequestHandlerTests {
         #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner")?.lastSeenID == "0001")
     }
 
-    @Test("Claude SessionStart anchors delivery to the worktree watermark at session start.")
-    func claudeSessionStartAnchorsCursorToInitialWorktreeWatermark() throws {
+    @Test("An existing Claude session honors later worktree watermark advances.")
+    func existingClaudeSessionHonorsLaterWorktreeWatermark() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001", "0002"]), now: { Self.fixedDate })
@@ -761,8 +777,11 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(!output.contains("already delivered"))
-        #expect(output.contains("newer urgent"))
-        #expect(try inbox.cursor(teamID: "/repo", sessionID: "session-anchored")?.lastSeenID == newer.message.id)
+        #expect(!output.contains("newer urgent"))
+        #expect(try inbox.cursor(
+            teamID: "/repo",
+            sessionID: "session-anchored"
+        )?.lastSeenID == initial.message.id)
     }
 
     @Test("Non-owner PostToolUse does not render urgent inbox messages or advance delivery state.")

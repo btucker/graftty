@@ -129,8 +129,21 @@ public struct TeamInboxWorktreeWatermark: Codable, Sendable, Equatable {
 /// If the worktree watermark lock cannot be acquired within the configured
 /// timeout, the application shall throw a lock-timeout error instead of
 /// blocking the calling thread indefinitely.
-public enum TeamInboxError: Error, Equatable {
+public enum TeamInboxError: Error, Equatable, CustomStringConvertible {
     case watermarkLockTimeout
+    case advanceTargetNotFound(String)
+    case advanceTargetNotAddressed(messageID: String, worktree: String)
+
+    public var description: String {
+        switch self {
+        case .watermarkLockTimeout:
+            return "timed out waiting for the team inbox delivery lock"
+        case .advanceTargetNotFound(let messageID):
+            return "team inbox message not found: \(messageID)"
+        case .advanceTargetNotAddressed(let messageID, let worktree):
+            return "team inbox message \(messageID) is not addressed to \(worktree)"
+        }
+    }
 }
 
 public final class TeamInbox {
@@ -241,8 +254,36 @@ public final class TeamInbox {
         priorities: Set<TeamInboxPriority>? = nil
     ) throws -> [TeamInboxMessage] {
         let allMessages = try messages(teamID: teamID)
+        return unreadMessages(
+            from: allMessages,
+            recipientWorktree: recipientWorktree,
+            after: lastSeenID,
+            priorities: priorities
+        )
+    }
+
+    func unreadMessages(
+        from allMessages: [TeamInboxMessage],
+        recipientWorktree: String,
+        after lastSeenID: String?,
+        priorities: Set<TeamInboxPriority>? = nil
+    ) -> [TeamInboxMessage] {
+        unreadMessages(
+            from: allMessages,
+            recipientWorktree: recipientWorktree,
+            afterIndex: messageIndex(lastSeenID, in: allMessages),
+            priorities: priorities
+        )
+    }
+
+    private func unreadMessages(
+        from allMessages: [TeamInboxMessage],
+        recipientWorktree: String,
+        afterIndex: Int?,
+        priorities: Set<TeamInboxPriority>? = nil
+    ) -> [TeamInboxMessage] {
         let candidates: ArraySlice<TeamInboxMessage>
-        if let lastSeenID, let index = allMessages.lastIndex(where: { $0.id == lastSeenID }) {
+        if let index = afterIndex {
             candidates = allMessages[allMessages.index(after: index)...]
         } else {
             candidates = allMessages[...]
@@ -307,6 +348,116 @@ public final class TeamInbox {
         let url = watermarkURL(teamID: teamID, worktree: worktree)
         guard let data = try dataIfFileExists(at: url) else { return nil }
         return try decoder.decode(TeamInboxWorktreeWatermark.self, from: data)
+    }
+
+    /// Selects an unread snapshot while holding the same lock used by all
+    /// shared-watermark writers. A committed watermark can therefore never
+    /// refer to a row newer than the log snapshot used for this read.
+    func worktreeUnreadSnapshot(
+        teamID: String,
+        recipientWorktree: String
+    ) throws -> (messages: [TeamInboxMessage], throughID: String?) {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
+            let watermarkID = try worktreeWatermark(
+                teamID: teamID,
+                worktree: recipientWorktree
+            )?.lastDeliveredToAnySessionID
+            let allMessages = try messages(teamID: teamID)
+            let unread = unreadMessages(
+                from: allMessages,
+                recipientWorktree: recipientWorktree,
+                after: watermarkID
+            )
+            return (unread, unread.last?.id)
+        }
+    }
+
+    public func advanceRead(
+        teamID: String,
+        recipientWorktree: String,
+        throughID: String
+    ) throws {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
+            let allMessages = try messages(teamID: teamID)
+            let currentID = try worktreeWatermark(
+                teamID: teamID,
+                worktree: recipientWorktree
+            )?.lastDeliveredToAnySessionID
+
+            guard let targetIndex = allMessages.lastIndex(where: { $0.id == throughID }) else {
+                throw TeamInboxError.advanceTargetNotFound(throughID)
+            }
+            let target = allMessages[targetIndex]
+            guard target.to.worktree == recipientWorktree else {
+                throw TeamInboxError.advanceTargetNotAddressed(
+                    messageID: throughID,
+                    worktree: recipientWorktree
+                )
+            }
+
+            let currentIndex = messageIndex(currentID, in: allMessages)
+            if let currentIndex, currentIndex >= targetIndex {
+                return
+            }
+
+            try writeWorktreeWatermarkUnlocked(
+                TeamInboxWorktreeWatermark(
+                    worktree: recipientWorktree,
+                    lastDeliveredToAnySessionID: target.id
+                ),
+                teamID: teamID
+            )
+        }
+    }
+
+    /// Reads the log once and chooses the later known append-order anchor for
+    /// hook delivery. If a persisted non-nil anchor is absent from the
+    /// retained log, preserve the legacy session-cursor fallback instead of
+    /// guessing its former order.
+    func hookUnreadMessages(
+        teamID: String,
+        recipientWorktree: String,
+        sessionLastSeenID: String?
+    ) throws -> (readPosition: String?, messages: [TeamInboxMessage]) {
+        let watermarkID = try worktreeWatermark(
+            teamID: teamID,
+            worktree: recipientWorktree
+        )?.lastDeliveredToAnySessionID
+        let allMessages = try messages(teamID: teamID)
+        let readPosition = effectiveHookReadPosition(
+            sessionLastSeenID: sessionLastSeenID,
+            watermarkID: watermarkID,
+            messages: allMessages
+        )
+        return (
+            readPosition.id,
+            unreadMessages(
+                from: allMessages,
+                recipientWorktree: recipientWorktree,
+                afterIndex: readPosition.index
+            )
+        )
+    }
+
+    private func effectiveHookReadPosition(
+        sessionLastSeenID: String?,
+        watermarkID: String?,
+        messages: [TeamInboxMessage]
+    ) -> (id: String?, index: Int?) {
+        let sessionIndex = messageIndex(sessionLastSeenID, in: messages)
+        if sessionLastSeenID != nil, sessionIndex == nil {
+            return (sessionLastSeenID, nil)
+        }
+
+        let watermarkIndex = messageIndex(watermarkID, in: messages)
+        if watermarkID != nil, watermarkIndex == nil {
+            return (sessionLastSeenID, sessionIndex)
+        }
+
+        if (watermarkIndex ?? -1) > (sessionIndex ?? -1) {
+            return (watermarkID, watermarkIndex)
+        }
+        return (sessionLastSeenID, sessionIndex)
     }
 
     /// Atomically claims the next durable message that this runtime can
