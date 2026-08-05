@@ -90,6 +90,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.36** When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
 
+**LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall preserve the established leading position of each top-level ungrouped worktree while applying disclosure indentation only to folders and their descendants.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

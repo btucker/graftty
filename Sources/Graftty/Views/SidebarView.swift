@@ -221,6 +221,7 @@ struct SidebarView: View {
                         displayName: displayName
                     )
                 }
+                .modifier(SidebarWorktreeRootRowInsets(node: node))
             }
         } label: {
             // No leading glyph — the top level is always projects, so
@@ -527,6 +528,25 @@ struct SidebarView: View {
             }
         }
         return true
+    }
+}
+
+/// A repository's direct worktree rows historically use a compact List
+/// outdent. Keep that treatment on leaf rows only: a folder owns a native
+/// disclosure column, and its descendants already inherit the correct
+/// relative indentation from `DisclosureGroup`.
+private struct SidebarWorktreeRootRowInsets: ViewModifier {
+    let node: SidebarWorktreeNode
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: 0) {
+            content.listRowInsets(
+                EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
+            )
+        } else {
+            content
+        }
     }
 }
 

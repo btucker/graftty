@@ -95,6 +95,23 @@ struct SidebarWorktreeHierarchyTests {
         ))
     }
 
+    @Test("@spec LAYOUT-2.37: When virtual folders coexist with ungrouped worktrees, the sidebar shall preserve the established leading position of each top-level ungrouped worktree while applying disclosure indentation only to folders and their descendants.")
+    func onlyTopLevelUngroupedWorktreesUseTheEstablishedOutdent() {
+        let worktree = SidebarWorktreeNode.worktree(
+            WorktreeEntry(path: "/repo", branch: "main"),
+            displayName: "main"
+        )
+        let folder = SidebarWorktreeNode.folder(
+            path: "research",
+            name: "research",
+            children: [worktree]
+        )
+
+        #expect(SidebarWorktreeRowIndentation.shouldOutdent(worktree, depth: 0))
+        #expect(!SidebarWorktreeRowIndentation.shouldOutdent(folder, depth: 0))
+        #expect(!SidebarWorktreeRowIndentation.shouldOutdent(worktree, depth: 1))
+    }
+
     @Test("nested shared prefixes become nested folders")
     func recursivelyGroupsSharedManagedPrefixes() {
         let lead = WorktreeEntry(

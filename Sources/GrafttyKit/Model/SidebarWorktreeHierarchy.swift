@@ -20,9 +20,8 @@ public indirect enum SidebarWorktreeNode: Equatable, Identifiable, Sendable {
         }
     }
 
-    /// `OutlineGroup` treats a non-nil value as an expandable node and nil
-    /// as a leaf. Folder children are never empty because folders are only
-    /// formed from two or more descendant worktrees.
+    /// Folder children are never empty because folders are only formed from
+    /// two or more descendant worktrees.
     public var children: [SidebarWorktreeNode]? {
         switch self {
         case .worktree:
@@ -30,6 +29,19 @@ public indirect enum SidebarWorktreeNode: Equatable, Identifiable, Sendable {
         case .folder(_, _, let children):
             return children
         }
+    }
+}
+
+/// Keeps the sidebar's established compact position for ungrouped worktrees
+/// without applying that outdent to disclosure rows or nested descendants.
+public enum SidebarWorktreeRowIndentation {
+    public static func shouldOutdent(
+        _ node: SidebarWorktreeNode,
+        depth: Int
+    ) -> Bool {
+        guard depth == 0 else { return false }
+        if case .worktree = node { return true }
+        return false
     }
 }
 
