@@ -954,6 +954,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.4** The build script shall codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/graftty`, `Contents/MacOS/Graftty`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`. The signing identity is chosen by the `CODESIGN_IDENTITY` environment variable (defaulting to `-` for ad-hoc); when set to a Developer ID Application identity, the script shall additionally enable hardened runtime (`--options runtime`), secure timestamping (`--timestamp`), and apply `scripts/entitlements/Graftty.entitlements` to the main executable.
 
+**DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
+
 ### DIST-2.x — Release Automation
 
 **DIST-2.1** When a git tag matching `v*` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
