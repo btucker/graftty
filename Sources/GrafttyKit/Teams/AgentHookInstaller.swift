@@ -340,6 +340,26 @@ public struct AgentHookInstaller: Sendable {
         codexHomeDirectory: String,
         codexSourceDirectory: String = CodexHomeMirror.defaultSourceDirectory().path
     ) -> String {
+        wrapperScript(
+            runtime: runtime,
+            wrapperDirectory: wrapperDirectory,
+            realCommandName: realCommandName,
+            grafttyCLIPath: grafttyCLIPath,
+            codexHomeDirectory: codexHomeDirectory,
+            codexSourceDirectory: codexSourceDirectory,
+            codexLockCommandPath: "/usr/bin/lockf"
+        )
+    }
+
+    static func wrapperScript(
+        runtime: TeamHookRuntime,
+        wrapperDirectory: String,
+        realCommandName: String,
+        grafttyCLIPath: String,
+        codexHomeDirectory: String,
+        codexSourceDirectory: String,
+        codexLockCommandPath: String
+    ) -> String {
         let resolveBlock = realBinaryResolutionShell(
             wrapperDirectory: wrapperDirectory,
             realCommandName: realCommandName
@@ -416,6 +436,11 @@ public struct AgentHookInstaller: Sendable {
         case .codex:
             let codexHomeLiteral = shellLiteral(codexHomeDirectory)
             let codexSourceLiteral = shellLiteral(codexSourceDirectory)
+            let codexLockLiteral = shellLiteral(
+                URL(fileURLWithPath: codexHomeDirectory)
+                    .appendingPathComponent(".graftty-mirror.lock")
+                    .path
+            )
             runtimeBlock = """
             _graftty_codex_sync_status=0
             _graftty_codex_runtime_home=\(codexHomeLiteral)
@@ -495,7 +520,7 @@ public struct AgentHookInstaller: Sendable {
                     --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
                       shift
                       ;;
-                    plugin|mcp|features)
+                    login|logout|plugin|mcp|features)
                       return 0
                       ;;
                     -*)
@@ -628,6 +653,24 @@ public struct AgentHookInstaller: Sendable {
                 done
                 return 1
               }
+              _graftty_codex_run_administration() (
+                _graftty_codex_admin_home=$1
+                shift
+                if [ "$_graftty_codex_admin_home" = \(codexSourceLiteral) ] &&
+                   [ -f \(codexLockLiteral) ] &&
+                   [ -r \(codexLockLiteral) ]; then
+                  exec 9<\(codexLockLiteral) || exit $?
+                  \(shellCommandToken(codexLockCommandPath)) -s 9
+                  _graftty_codex_lock_status=$?
+                  if [ "$_graftty_codex_lock_status" -ge 128 ]; then
+                    exit "$_graftty_codex_lock_status"
+                  elif [ "$_graftty_codex_lock_status" -ne 0 ]; then
+                    printf '%s\\n' "graftty: could not lock the managed Codex home; continuing durable administration without rebuild coordination" >&2
+                    exec 9<&-
+                  fi
+                fi
+                env CODEX_HOME="$_graftty_codex_admin_home" "$real_binary" "$@"
+              )
               if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               if [ "${CODEX_HOME:-}" != \(codexHomeLiteral) ]; then
                 \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home || _graftty_codex_sync_status=$?
@@ -637,7 +680,7 @@ public struct AgentHookInstaller: Sendable {
                 printf '%s\\n' "graftty: could not prepare the managed Codex home; starting without Graftty's managed hook configuration" >&2
               fi
               if _graftty_codex_uses_durable_home "$@"; then
-                env CODEX_HOME=\(codexSourceLiteral) "$real_binary" "$@"
+                _graftty_codex_run_administration \(codexSourceLiteral) "$@"
                 _graftty_codex_command_status=$?
                 if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
                   printf '%s\\n' "graftty: reload the agent or start a new session for Codex configuration changes to take effect" >&2
@@ -685,7 +728,7 @@ public struct AgentHookInstaller: Sendable {
                 if [ "$_graftty_codex_admin_home" = \(codexHomeLiteral) ]; then
                   _graftty_codex_admin_home=\(codexSourceLiteral)
                 fi
-                env CODEX_HOME="$_graftty_codex_admin_home" "$real_binary" "$@"
+                _graftty_codex_run_administration "$_graftty_codex_admin_home" "$@"
                 _graftty_codex_command_status=$?
                 if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
                   printf '%s\\n' "graftty: reload the agent or start a new session for Codex configuration changes to take effect" >&2

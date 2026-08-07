@@ -195,6 +195,110 @@ struct AgentHookInstallerWrapperTests {
         #expect(run.forwardedArgs == arguments)
     }
 
+    @Test(
+        """
+        @spec TEAM-10.10: When a wrapped Codex login, login status, or logout command runs, the application shall execute it against the durable Codex home so authentication state survives managed mirror rebuilds.
+        """,
+        arguments: [
+            ["login"],
+            ["login", "status"],
+            ["logout"],
+        ]
+    )
+    func codexAuthenticationAdministrationUsesDurableHome(arguments: [String]) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: arguments,
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.forwardedArgs == arguments)
+        #expect(!run.standardError.localizedCaseInsensitiveContains("reload"))
+    }
+
+    @Test("Durable Codex administration waits for an in-progress managed-home rebuild.")
+    func codexAdministrationWaitsForManagedHomeLock() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            holdManagedHomeLock: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.wasBlockedByManagedHomeLock)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+    }
+
+    @Test("Durable Codex administration still waits for the shared lock after mirror sync fails.")
+    func codexAdministrationWaitsForLockAfterSyncFailure() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: false,
+            syncExitStatus: 13,
+            holdManagedHomeLock: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.didSync)
+        #expect(run.wasBlockedByManagedHomeLock)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+    }
+
+    @Test("A pre-upgrade managed home without a lock file still runs durable Codex administration.")
+    func legacyManagedHomeWithoutLockStillRunsAdministration() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            makeManagedHomeUnwritable: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.forwardedArgs == ["plugin", "list"])
+    }
+
+    @Test("Locked durable Codex administration preserves a signal-derived command status.")
+    func codexAdministrationPreservesSignalStatus() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            createManagedHomeLock: true,
+            codexTerminatesWithSIGTERM: true
+        )
+
+        #expect(run.terminationStatus == 128 + SIGTERM)
+    }
+
+    @Test("""
+    @spec TEAM-10.12: If the filesystem rejects an otherwise-readable managed Codex home lock, then the application shall warn and continue durable administration without coordination rather than suppress the command.
+    """)
+    func lockAcquisitionFailureWarnsAndContinuesAdministration() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            createManagedHomeLock: true,
+            lockCommandExitStatus: 71
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedArgs == ["plugin", "list"])
+        #expect(run.standardError.contains("without rebuild coordination"))
+    }
+
+    @Test("An interrupted lock acquisition preserves its signal-derived status and suppresses Codex.")
+    func lockAcquisitionInterruptionStopsAdministration() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            createManagedHomeLock: true,
+            lockCommandTerminatesWithSIGTERM: true
+        )
+
+        #expect(run.terminationStatus == 128 + SIGTERM)
+        #expect(run.forwardedArgs.isEmpty)
+    }
+
     @Test("Disabling agent hooks does not redirect Codex configuration changes into the managed snapshot.")
     func disabledHooksStillUseDurableHomeForConfigurationMutations() throws {
         let run = try runCodexWrapperCommand(
@@ -714,7 +818,13 @@ struct AgentHookInstallerWrapperTests {
         codexExitStatus: Int32 = 0,
         syncExitStatus: Int32 = 0,
         hooksDisabled: Bool = false,
-        inheritCustomCodexHome: Bool = false
+        inheritCustomCodexHome: Bool = false,
+        holdManagedHomeLock: Bool = false,
+        createManagedHomeLock: Bool = false,
+        makeManagedHomeUnwritable: Bool = false,
+        codexTerminatesWithSIGTERM: Bool = false,
+        lockCommandExitStatus: Int32? = nil,
+        lockCommandTerminatesWithSIGTERM: Bool = false
     ) throws -> (
         terminationStatus: Int32,
         forwardedArgs: [String],
@@ -722,7 +832,8 @@ struct AgentHookInstallerWrapperTests {
         managedCodexHome: String,
         durableCodexHome: String,
         standardError: String,
-        didSync: Bool
+        didSync: Bool,
+        wasBlockedByManagedHomeLock: Bool
     ) {
         let root = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -772,12 +883,33 @@ struct AgentHookInstallerWrapperTests {
               exit $?
             fi
             printf '%s\\n' "$@" > "$GRAFTTY_TEST_ARGS_FILE"
+            if [ "$GRAFTTY_TEST_CODEX_SIGTERM" = "1" ]; then
+              kill -TERM "$$"
+            fi
             exit "$GRAFTTY_TEST_CODEX_EXIT_STATUS"
             """,
             to: realDirectory.appendingPathComponent("codex")
         )
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        let lockCommand: String
+        if let lockCommandExitStatus {
+            let fakeLockCommand = root.appendingPathComponent("lockf")
+            try writeExecutable(
+                "#!/bin/sh\nexit \(lockCommandExitStatus)\n",
+                to: fakeLockCommand
+            )
+            lockCommand = fakeLockCommand.path
+        } else if lockCommandTerminatesWithSIGTERM {
+            let fakeLockCommand = root.appendingPathComponent("lockf")
+            try writeExecutable(
+                "#!/bin/sh\nkill -TERM \"$$\"\n",
+                to: fakeLockCommand
+            )
+            lockCommand = fakeLockCommand.path
+        } else {
+            lockCommand = "/usr/bin/lockf"
+        }
         try writeExecutable(
             AgentHookInstaller.wrapperScript(
                 runtime: .codex,
@@ -785,7 +917,8 @@ struct AgentHookInstallerWrapperTests {
                 realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: codexHome.path,
-                codexSourceDirectory: codexSource.path
+                codexSourceDirectory: codexSource.path,
+                codexLockCommandPath: lockCommand
             ),
             to: wrapper
         )
@@ -800,6 +933,7 @@ struct AgentHookInstallerWrapperTests {
             "GRAFTTY_TEST_SYNC_MARKER": syncMarker.path,
             "GRAFTTY_TEST_SYNC_EXIT_STATUS": String(syncExitStatus),
             "GRAFTTY_TEST_CODEX_EXIT_STATUS": String(codexExitStatus),
+            "GRAFTTY_TEST_CODEX_SIGTERM": codexTerminatesWithSIGTERM ? "1" : "0",
         ]
         if inheritManagedCodexHome {
             environment["CODEX_HOME"] = codexHome.path
@@ -812,12 +946,52 @@ struct AgentHookInstallerWrapperTests {
         process.environment = environment
         let stderr = Pipe()
         process.standardError = stderr
+
+        var lockFD: Int32 = -1
+        if holdManagedHomeLock || createManagedHomeLock {
+            lockFD = Darwin.open(
+                codexHome.appendingPathComponent(".graftty-mirror.lock").path,
+                O_RDWR | O_CREAT,
+                S_IRUSR | S_IWUSR
+            )
+            try #require(lockFD >= 0)
+            if holdManagedHomeLock {
+                try #require(flock(lockFD, LOCK_EX) == 0)
+            } else {
+                _ = Darwin.close(lockFD)
+                lockFD = -1
+            }
+        }
+        if makeManagedHomeUnwritable {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o555))],
+                ofItemAtPath: codexHome.path
+            )
+        }
+        defer {
+            if lockFD >= 0 {
+                _ = flock(lockFD, LOCK_UN)
+                _ = Darwin.close(lockFD)
+            }
+        }
+
         try process.run()
+        let wasBlockedByManagedHomeLock: Bool
+        if holdManagedHomeLock {
+            wasBlockedByManagedHomeLock = !waitUntil(timeout: 1.0) {
+                FileManager.default.fileExists(atPath: argsFile.path)
+            }
+            _ = flock(lockFD, LOCK_UN)
+            _ = Darwin.close(lockFD)
+            lockFD = -1
+        } else {
+            wasBlockedByManagedHomeLock = false
+        }
         process.waitUntilExit()
 
-        var forwardedArgs = try String(contentsOf: argsFile, encoding: .utf8)
+        var forwardedArgs = (try? String(contentsOf: argsFile, encoding: .utf8))?
             .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+            .map(String.init) ?? []
         if forwardedArgs.last == "" {
             forwardedArgs.removeLast()
         }
@@ -828,12 +1002,13 @@ struct AgentHookInstallerWrapperTests {
         return (
             process.terminationStatus,
             forwardedArgs,
-            try String(contentsOf: codexHomeFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
+            (try? String(contentsOf: codexHomeFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
             codexHome.path,
             codexSource.path,
             standardError,
-            FileManager.default.fileExists(atPath: syncMarker.path)
+            FileManager.default.fileExists(atPath: syncMarker.path),
+            wasBlockedByManagedHomeLock
         )
     }
 

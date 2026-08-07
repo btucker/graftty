@@ -215,22 +215,23 @@ struct CodexHomeMirrorTests {
     }
 
     @Test("""
-    @spec TEAM-10.9: When Graftty upgrades a legacy managed Codex home, the application shall migrate real non-generated state entries into the durable Codex home before replacing them with symlinks.
+    @spec TEAM-10.9: When Graftty rebuilds a managed Codex home, the application shall migrate real non-generated managed entries into the durable Codex home before replacing them with symlinks or pruning stale entries.
     """)
-    func legacyOnlyPluginCacheIsMigratedBeforePruning() throws {
+    func runtimePluginCacheIsMigratedBeforePruning() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
         try writeFile(src.appendingPathComponent("config.toml"), "model = \"o3\"\n")
-        try writeFile(dst.appendingPathComponent("config.toml"), "model = \"o3\"\n")
-        let legacyPlugin = dst.appendingPathComponent("plugins/cache/runpod/plugin.json")
-        try writeFile(legacyPlugin, "{\"version\":1}")
-
-        try CodexHomeMirror(
+        let mirror = CodexHomeMirror(
             sourceDirectory: src,
             mirrorDirectory: dst,
             grafttyCLIPath: "/usr/local/bin/graftty"
-        ).rebuild()
+        )
+        try mirror.rebuild()
+
+        let legacyPlugin = dst.appendingPathComponent("plugins/cache/runpod/plugin.json")
+        try writeFile(legacyPlugin, "{\"version\":1}")
+
+        try mirror.rebuild()
 
         let durablePlugin = src.appendingPathComponent("plugins/cache/runpod/plugin.json")
         #expect(try String(contentsOf: durablePlugin) == "{\"version\":1}")
@@ -275,6 +276,7 @@ struct CodexHomeMirrorTests {
         let durable = src.appendingPathComponent("config.toml")
         try writeFile(durable, """
         model = "o3"
+        mcp_servers.stale.url = "https://stale.example.com/"
         [features] # durable preferences
         "hooks" = false
         durable_only = true
@@ -288,6 +290,7 @@ struct CodexHomeMirrorTests {
         let legacy = dst.appendingPathComponent("config.toml")
         try writeFile(legacy, """
         model = "o3"
+        mcp_servers.runpod.url = "https://mcp.getrunpod.io/"
         [features] # legacy managed snapshot
         hooks = true
         experimental_mode = true
@@ -306,6 +309,8 @@ struct CodexHomeMirrorTests {
 
         let durableText = try String(contentsOf: durable)
         #expect(durableText.contains("[plugins.\"runpod@runpod\"]"))
+        #expect(durableText.contains("mcp_servers.runpod.url = \"https://mcp.getrunpod.io/\""))
+        #expect(!durableText.contains("mcp_servers.stale.url"))
         #expect(durableText.contains("\"hooks\" = false"))
         #expect(!durableText.contains("hooks = true"))
         #expect(durableText.contains("durable_only = true"))
@@ -327,6 +332,8 @@ struct CodexHomeMirrorTests {
         let durable = src.appendingPathComponent("config.toml")
         try writeFile(durable, """
         model = "o3"
+        mcp_servers.dotted.url = "https://dotted.getrunpod.io/"
+        plugins = { legacy = { enabled = true } }
         [features]
         hooks = false
         [mcp_servers . runpod] # production
@@ -341,6 +348,7 @@ struct CodexHomeMirrorTests {
         [features]
         hooks = true
         """)
+        try writeFile(dst.appendingPathComponent(".graftty-mirror-version"), "2\n")
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(2)],
             ofItemAtPath: legacy.path
@@ -355,9 +363,76 @@ struct CodexHomeMirrorTests {
         let migrated = try String(contentsOf: durable)
         #expect(!migrated.contains("[mcp_servers . runpod]"))
         #expect(!migrated.contains("mcp.getrunpod.io"))
+        #expect(!migrated.contains("dotted.getrunpod.io"))
+        #expect(!migrated.contains("plugins ="))
         #expect(!migrated.contains("runpod@runpod"))
         #expect(migrated.contains("hooks = false"))
         #expect(!migrated.contains("hooks = true"))
+    }
+
+    @Test("""
+    @spec TEAM-10.11: While a managed Codex home rebuild and durable administration can access the same coordination lock, the application shall serialize them so one finishes before the other begins.
+    """)
+    func rebuildWaitsForSharedAdministrationLock() async throws {
+        let (src, dst) = try makeMirrorSandbox()
+        let root = src.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+
+        let ready = root.appendingPathComponent("lock-ready")
+        let release = root.appendingPathComponent("lock-release")
+        let holderScript = root.appendingPathComponent("hold-lock.sh")
+        try writeFile(holderScript, """
+        #!/bin/sh
+        /usr/bin/touch "$GRAFTTY_TEST_LOCK_READY"
+        while [ ! -f "$GRAFTTY_TEST_LOCK_RELEASE" ]; do
+          /bin/sleep 0.02
+        done
+        """)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o755))],
+            ofItemAtPath: holderScript.path
+        )
+
+        let holder = Process()
+        holder.executableURL = URL(fileURLWithPath: "/usr/bin/lockf")
+        holder.arguments = [
+            "-k",
+            dst.appendingPathComponent(".graftty-mirror.lock").path,
+            holderScript.path,
+        ]
+        holder.environment = [
+            "GRAFTTY_TEST_LOCK_READY": ready.path,
+            "GRAFTTY_TEST_LOCK_RELEASE": release.path,
+        ]
+        try holder.run()
+        defer {
+            try? Data().write(to: release, options: .atomic)
+            if holder.isRunning {
+                holder.terminate()
+                holder.waitUntilExit()
+            }
+        }
+        #expect(await waitForFile(ready, timeout: 2.0))
+
+        let releaseTask = Task.detached {
+            try await Task.sleep(for: .milliseconds(400))
+            try Data().write(to: release, options: .atomic)
+        }
+        let mirror = CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        )
+        let startedAt = Date()
+        try mirror.rebuild()
+        let elapsed = Date().timeIntervalSince(startedAt)
+        try await releaseTask.value
+        holder.waitUntilExit()
+        #expect(elapsed >= 0.25)
+        #expect(FileManager.default.fileExists(
+            atPath: dst.appendingPathComponent(".graftty-mirror-version").path
+        ))
     }
 
     @Test("Migration ignores table-like text inside multiline TOML strings.")
@@ -467,6 +542,17 @@ struct CodexHomeMirrorTests {
     private func writeFile(_ url: URL, _ content: String) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func waitForFile(_ url: URL, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     private func commands(in groups: [[String: Any]]) -> [String] {

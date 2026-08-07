@@ -20,6 +20,7 @@ public struct CodexHomeMirror: Sendable {
         ".graftty-mirror-version",
         ".graftty-mirror.lock",
     ]
+    private static let currentMirrorVersion = "3"
     private static let basicQuote: UInt8 = 34
     private static let literalQuote: UInt8 = 39
     private static let commentMarker: UInt8 = 35
@@ -52,16 +53,20 @@ public struct CodexHomeMirror: Sendable {
         let lockFD = try acquireRebuildLock()
         defer {
             #if canImport(Darwin)
-            _ = Darwin.lockf(lockFD, F_ULOCK, 0)
+            _ = flock(lockFD, LOCK_UN)
             _ = Darwin.close(lockFD)
             #elseif canImport(Glibc)
-            _ = Glibc.lockf(lockFD, F_ULOCK, 0)
+            _ = flock(lockFD, LOCK_UN)
             _ = Glibc.close(lockFD)
             #endif
         }
         try fm.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
 
-        try migrateLegacyStateIfNeeded()
+        // A managed runtime can create new state after an earlier sync. Rescue
+        // every real entry before source inventory and pruning, even when the
+        // mirror schema marker is already current.
+        try migrateManagedMirrorEntries()
+        try migrateLegacyConfigIfNeeded()
 
         // Inventory failures must abort the rebuild. Treating an unreadable
         // directory as empty could prune valid mirror state and still advance
@@ -88,7 +93,7 @@ public struct CodexHomeMirror: Sendable {
         // Pass 3: write Graftty-owned files.
         try writeManagedConfig()
         try writeMergedHooks()
-        try "2\n".write(
+        try "\(Self.currentMirrorVersion)\n".write(
             to: mirrorDirectory.appendingPathComponent(".graftty-mirror-version"),
             atomically: true,
             encoding: .utf8
@@ -180,11 +185,7 @@ public struct CodexHomeMirror: Sendable {
         #error("Unsupported platform")
         #endif
         guard fd >= 0 else { throw currentPOSIXError() }
-        #if canImport(Darwin)
-        let result = Darwin.lockf(fd, F_LOCK, 0)
-        #elseif canImport(Glibc)
-        let result = Glibc.lockf(fd, F_LOCK, 0)
-        #endif
+        let result = flock(fd, LOCK_EX)
         guard result == 0 else {
             #if canImport(Darwin)
             _ = Darwin.close(fd)
@@ -200,23 +201,22 @@ public struct CodexHomeMirror: Sendable {
         NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
 
-    /// Migrates state and configuration mutations left in the generated home
-    /// used by releases before mirror version 2. The old wrapper refreshed its
-    /// config from the durable copy immediately before running Codex, so a
-    /// newer legacy file contains the post-mutation administration state. If
-    /// the durable file is newer, preserve a sanitized recovery copy instead
-    /// of guessing which concurrent edits should win.
-    private func migrateLegacyStateIfNeeded() throws {
+    /// Migrates configuration mutations left in the generated home by older
+    /// wrapper releases. The old wrapper refreshed its config from the durable
+    /// copy immediately before running Codex, so a newer legacy file contains
+    /// the post-mutation administration state. If the durable file is newer,
+    /// preserve a sanitized recovery copy instead of guessing which concurrent
+    /// edits should win.
+    private func migrateLegacyConfigIfNeeded() throws {
         let marker = mirrorDirectory.appendingPathComponent(".graftty-mirror-version")
         let version = (try? String(contentsOf: marker, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard version != "2" else { return }
+        guard version != Self.currentMirrorVersion else { return }
 
-        try migrateLegacyMirrorEntries()
         try migrateLegacyConfigIfPresent()
     }
 
-    private func migrateLegacyMirrorEntries() throws {
+    private func migrateManagedMirrorEntries() throws {
         let fm = FileManager.default
         let entries = try fm.contentsOfDirectory(atPath: mirrorDirectory.path)
         for name in entries where !Self.generatedEntryNames.contains(name) {
@@ -425,10 +425,12 @@ public struct CodexHomeMirror: Sendable {
         }
         let durableSections = tomlSections(in: durable)
         let legacySections = tomlSections(in: legacy)
+        let legacyRoot = legacySections[0]
+        let durableRoot = durableSections[0]
         let legacyFeatures = legacySections.first { $0.table == ["features"] }
         let durableFeatures = durableSections.first { $0.table == ["features"] }
         let retained = durableSections.filter { section in
-            guard let table = section.table else { return true }
+            guard let table = section.table else { return false }
             return !isCodexAdministrationTable(table)
                 && (table != ["features"] || legacyFeatures == nil)
         }
@@ -436,7 +438,10 @@ public struct CodexHomeMirror: Sendable {
             guard let table = section.table else { return false }
             return isCodexAdministrationTable(table)
         }
-        var lines = retained.flatMap(\.lines)
+        var lines = mergingLegacyRootAssignments(legacyRoot, into: durableRoot).lines
+        for section in retained {
+            appendSection(section, to: &lines)
+        }
         if let legacyFeatures {
             appendSection(
                 mergingLegacyFeatures(legacyFeatures, into: durableFeatures),
@@ -447,6 +452,37 @@ public struct CodexHomeMirror: Sendable {
             appendSection(section, to: &lines)
         }
         return Data(lines.joined(separator: "\n").utf8)
+    }
+
+    /// Root dotted-key and inline-table assignments are semantically the same
+    /// administration namespaces as their table-header forms. Keep unrelated
+    /// durable root assignments, but let the legacy snapshot's presence or
+    /// absence determine the administrative ones.
+    private static func mergingLegacyRootAssignments(
+        _ legacy: TOMLSection,
+        into durable: TOMLSection
+    ) -> TOMLSection {
+        let legacyLayout = tomlAssignmentLayout(in: legacy.lines)
+        let durableLayout = tomlAssignmentLayout(in: durable.lines)
+        let retainedDurable = durableLayout.blocks.filter {
+            !isCodexAdministrationAssignment($0.key)
+        }
+        let legacyAdministration = legacyLayout.blocks.filter {
+            isCodexAdministrationAssignment($0.key)
+        }
+        return TOMLSection(
+            table: nil,
+            lines: durableLayout.prefixLines
+                + retainedDurable.flatMap(\.lines)
+                + legacyAdministration.flatMap(\.lines)
+        )
+    }
+
+    private static func isCodexAdministrationAssignment(_ key: [String]) -> Bool {
+        guard let namespace = key.first else { return false }
+        return namespace == "marketplaces"
+            || namespace == "plugins"
+            || namespace == "mcp_servers"
     }
 
     /// The legacy snapshot began as a copy of the durable config, so its
@@ -505,11 +541,21 @@ public struct CodexHomeMirror: Sendable {
         var lines: [String]
     }
 
+    private struct TOMLAssignmentLayout {
+        var prefixLines: [String]
+        var blocks: [TOMLAssignmentBlock]
+    }
+
     /// Groups a top-level assignment with every continuation line up to the
     /// next top-level assignment. This preserves multiline strings and arrays
     /// when durable-only feature values are carried into the legacy section.
     private static func tomlAssignmentBlocks(in lines: [String]) -> [TOMLAssignmentBlock] {
+        tomlAssignmentLayout(in: lines).blocks
+    }
+
+    private static func tomlAssignmentLayout(in lines: [String]) -> TOMLAssignmentLayout {
         let scannedLines = scanningTOMLLines(in: lines.joined(separator: "\n"))
+        var prefixLines: [String] = []
         var blocks: [TOMLAssignmentBlock] = []
         var current: TOMLAssignmentBlock?
         for line in scannedLines {
@@ -520,12 +566,14 @@ public struct CodexHomeMirror: Sendable {
                 current = TOMLAssignmentBlock(key: key, lines: [line.text])
             } else if current != nil {
                 current?.lines.append(line.text)
+            } else {
+                prefixLines.append(line.text)
             }
         }
         if let current {
             blocks.append(current)
         }
-        return blocks
+        return TOMLAssignmentLayout(prefixLines: prefixLines, blocks: blocks)
     }
 
     private static func appendSection(_ section: TOMLSection, to lines: inout [String]) {
