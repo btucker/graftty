@@ -1854,15 +1854,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.3** When a wrapped Codex feature, plugin, marketplace, or MCP mutation runs, the application shall execute it against the user's durable Codex home so configuration and cache changes survive managed mirror rebuilds.
 
-**TEAM-10.4** When the Codex wrapper runs with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on every managed Codex launch with a launch-scoped override.
+**TEAM-10.4** When the Codex wrapper runs a non-administrative command with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on that managed Codex launch with a launch-scoped override.
 
 **TEAM-10.5** When a wrapped Codex feature, plugin, marketplace, or MCP mutation succeeds, the application shall tell the caller that running Codex sessions must be reloaded before the configuration change is available.
 
-**TEAM-10.6** When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall migrate it while restoring the user's durable hooks setting before replacing it with a managed snapshot.
+**TEAM-10.6** When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall reconcile its feature and Codex administration tables into the durable config while restoring the user's durable hooks setting and retaining unrelated durable settings.
 
-**TEAM-10.7** If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve the legacy bytes in the durable home as a recovery backup.
+**TEAM-10.7** If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve a recovery copy of the legacy config with Graftty's generated hook override removed.
 
 **TEAM-10.8** While a wrapped Codex feature, plugin, marketplace, or MCP read command runs, the application shall execute it against the durable Codex home so it observes the latest administrative state.
+
+**TEAM-10.9** When Graftty rebuilds a managed Codex home, the application shall migrate real non-generated managed entries into the durable Codex home before replacing them with symlinks or pruning stale entries.
+
+**TEAM-10.10** When a wrapped Codex login, login status, or logout command runs, the application shall execute it against the durable Codex home so authentication state survives managed mirror rebuilds.
+
+**TEAM-10.11** While a managed Codex home rebuild and durable administration can access the same coordination lock, the application shall serialize them so one finishes before the other begins.
+
+**TEAM-10.12** If the filesystem rejects an otherwise-readable managed Codex home lock, then the application shall warn and continue durable administration without coordination rather than suppress the command.
 
 ### TEAM-11.x — Idle Delivery
 

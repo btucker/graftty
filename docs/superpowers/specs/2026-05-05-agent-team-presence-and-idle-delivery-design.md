@@ -37,7 +37,7 @@ Both runtimes (Claude, Codex) need to participate. Codex hook wiring is incomple
 
 ### 1. Codex hook completion via `CODEX_HOME` mirror
 
-The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks for every entry except `hooks.json` and `config.toml`, which graftty generates. Feature, plugin, marketplace, and MCP administration is routed to the durable home instead of the generated snapshot; a later managed-session launch refreshes the snapshot and symlinks any newly created plugin cache.
+The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks for every entry except `hooks.json` and `config.toml`, which graftty generates. Authentication plus feature, plugin, marketplace, and MCP administration is routed to the durable home instead of the generated snapshot; a later managed-session launch refreshes the snapshot and symlinks any newly created plugin cache.
 
 ```
 ~/.graftty/agent-hooks/codex-home/
@@ -58,32 +58,37 @@ The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirro
 GRAFTTY_HOME="$HOME/.graftty/agent-hooks/codex-home"
 
 cleanup() { graftty team unregister --runtime codex 2>/dev/null || true; }
-trap cleanup EXIT
 
 if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
   [ "${CODEX_HOME:-}" = "$GRAFTTY_HOME" ] || graftty internal sync-codex-home
-  if is_config_administration "$@"; then
-    ( exec env CODEX_HOME="$HOME/.codex" "$real_codex" --enable hooks "$@" )
+  if uses_durable_home "$@"; then
+    run_durable_administration "$HOME/.codex" "$@"
     # Print reload guidance here only when the successful command mutated state.
   else
-    ( exec env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" --enable hooks "$@" )
+    env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" --enable hooks "$@"
   fi
 else
-  ( exec "$real_codex" "$@" )
+  if uses_durable_home "$@" && [ "${CODEX_HOME:-$GRAFTTY_HOME}" = "$GRAFTTY_HOME" ]; then
+    run_durable_administration "$HOME/.codex" "$@"
+  else
+    "$real_codex" "$@"
+  fi
 fi
-exit $?
+runtime_status=$?
+cleanup
+exit "$runtime_status"
 ```
 
-The subshell with `exec` preserves the lifecycle semantics (signals propagate to the agent, the wrapper holds no extra state) while keeping the parent shell alive long enough to fire the `EXIT` trap. The `cleanup` function runs on any exit path the trap can observe — normal exit, `SIGINT` from Ctrl-C, `SIGTERM`, `SIGHUP`. `SIGKILL` is the only path it can't catch; for that case, graftty's process monitor (which knows the agent's PID from launch) is the fallback that clears stale presence on next observation.
+The wrapper runs Codex as a foreground child, records its status, performs explicit runtime cleanup, and returns the same status. Keeping the wrapper process alive until the child exits lets it unregister presence and stop any app-server proxy without interposing on terminal stdin. If the wrapper itself is killed before cleanup, graftty's process monitor (which knows the registered wrapper PID) clears stale presence on next observation.
 
-**`graftty internal sync-codex-home`** is fast (directory walk + symlink ops), idempotent, and runs when entering a managed Codex session. A wrapper invoked from an existing managed session inherits the same `CODEX_HOME` and skips the redundant write, which also avoids attempting an Application Support write from inside the active agent sandbox:
+**`graftty internal sync-codex-home`** is fast (directory walk + symlink ops), idempotent, and runs before the first enabled wrapper invocation, including configuration administration, so one-time legacy state is recovered before durable mutations proceed. A wrapper invoked from an existing managed session inherits the same `CODEX_HOME` and skips the redundant write, which also avoids attempting an Application Support write from inside the active agent sandbox:
 
-1. For every entry in `~/.codex/`, ensure a symlink in graftty home pointing to it. Skip `hooks.json` and `config.toml`.
-2. Build `<graftty home>/hooks.json` as the union merge of user's `~/.codex/hooks.json` (if any) and graftty's hooks for `SessionStart`, `PostToolUse`, `Stop`. Sentinel-based: graftty's entries are the ones whose handler `command` starts with the literal `graftty team hook codex`. On rebuild, strip stale graftty entries first, then append fresh ones.
-3. Snapshot durable `config.toml` into the managed home. On the first upgrade from the legacy generated config, migrate a newer legacy copy while restoring the user's durable `features.hooks` setting; if the durable file is newer, preserve the legacy bytes as a backup rather than overwriting newer configuration.
+1. Before every rebuild, move real non-generated state entries created in the managed home into the durable home, preserving merge conflicts in recovery paths. Then, for every entry in `~/.codex/`, ensure a symlink in graftty home pointing to it, skipping `hooks.json` and `config.toml`.
+2. Build `<graftty home>/hooks.json` as the union merge of user's `~/.codex/hooks.json` (if any) and graftty's current `SessionStart` hook. Sentinel-based: graftty's entries are the ones whose handler `command` starts with the literal `graftty team hook codex`. On rebuild, strip stale graftty delivery entries from every event first, then append the current `SessionStart` entry.
+3. Snapshot durable `config.toml` into the managed home. On the first upgrade from the legacy generated config, reconcile a newer legacy copy's feature and Codex administration tables into the durable config while restoring the user's durable `features.hooks` setting and retaining unrelated durable settings; if the durable file is newer, preserve a recovery copy with Graftty's generated hook override removed rather than overwriting newer configuration.
 4. Prune dangling symlinks (entries the user has since deleted from `~/.codex/`).
 
-The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override. It prints reload guidance after successful feature, plugin, marketplace, or MCP mutations because running sessions discover configuration and tools at startup. A sandboxed agent may still require the normal filesystem approval to mutate user-global `~/.codex` state; the wrapper does not bypass that security boundary.
+The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override. `run_durable_administration` opens the pre-existing mirror lock read-only, asks `/usr/bin/lockf` to lock that inherited descriptor, and keeps it open while Codex runs; this shares the mirror rebuild's BSD lock without obscuring signal-derived command status. It attempts that lock even if this invocation's mirror sync failed, because another process may already be rebuilding. Pre-upgrade managed homes with no readable lock file run directly rather than trying to create Graftty-owned state from the agent sandbox. If the filesystem rejects an exclusive lock on the read-only descriptor, the wrapper warns and continues without coordination rather than suppressing the requested Codex command. The same durable routing applies when hooks are disabled unless the caller supplied a custom `CODEX_HOME`. It prints reload guidance after successful feature, plugin, marketplace, or MCP mutations because running sessions discover configuration and tools at startup; login and logout do not need that guidance. A sandboxed agent may still require the normal filesystem approval to mutate user-global `~/.codex` state; the wrapper does not bypass that security boundary.
 
 **Why this shape:**
 
@@ -99,18 +104,17 @@ The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override
 The Claude wrapper passes the entire hook configuration as an inline JSON string via `--settings`, which Claude Code documents as "load **additional** settings from" (additive, not replacing).
 
 ```sh
-cleanup() { graftty team unregister --runtime claude 2>/dev/null || true; }
-trap cleanup EXIT
-
 if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-  ( exec "$real_claude" --settings "$GRAFTTY_CLAUDE_SETTINGS_JSON" "$@" )
+  "$real_claude" --settings "$GRAFTTY_CLAUDE_SETTINGS_JSON" "$@"
 else
-  ( exec "$real_claude" "$@" )
+  "$real_claude" "$@"
 fi
-exit $?
+runtime_status=$?
+graftty team unregister --runtime claude 2>/dev/null || true
+exit "$runtime_status"
 ```
 
-Same trap-and-subshell pattern as the Codex wrapper. The cleanup is identical except for the `--runtime claude` argument.
+Like the Codex wrapper, Claude remains a foreground child and the wrapper explicitly unregisters it after preserving the child's exit status. The cleanup is identical except for the `--runtime claude` argument and Codex app-server resources.
 
 The inline JSON is generated at install time and embedded directly in the wrapper script. This eliminates `~/.graftty/agent-hooks/claude-settings.json` from the on-disk surface — there is no separate settings file to keep in sync.
 
@@ -145,8 +149,8 @@ Small (~250 tokens) and identical for both runtimes — the renderer already pro
 
 **Clear:** layered cleanup, in order of likelihood:
 
-1. **Wrapper trap.** The wrapper script registers an `EXIT` trap that runs `graftty team unregister --runtime <claude|codex>` whenever the wrapper exits, including signal-induced exits (`SIGINT`/`SIGTERM`/`SIGHUP`). This is the primary cleanup path and handles every clean and most signal-driven shutdowns.
-2. **Graftty process monitor (fallback).** If the wrapper itself is killed with `SIGKILL` (or otherwise dies before its trap can fire), the trap doesn't run and presence stays on disk pointing at a dead PID. Graftty's process monitor — which already tracks each agent's PID from launch — clears the presence record on its next observation cycle.
+1. **Wrapper teardown.** After the foreground runtime child exits, the wrapper preserves its exit status and runs `graftty team unregister --runtime <claude|codex>`. This is the primary cleanup path for normal shutdowns.
+2. **Graftty process monitor (fallback).** If the wrapper dies before explicit teardown, presence stays on disk pointing at a dead PID. Graftty's process monitor — which already tracks each agent's PID from launch — clears the presence record on its next observation cycle.
 
 A new CLI subcommand `graftty team unregister --runtime <claude|codex>` reads the worktree from cwd and removes the matching presence file. Idempotent (no-op if the file is already gone, e.g. when the agent never registered before being killed). No heartbeat.
 
@@ -299,7 +303,7 @@ Per `CLAUDE.md`'s "When removing features" workflow:
 - `Sources/Graftty/Views/SidebarView.swift` — drop `TeamRepoBadge` invocation, "Show Team Members…" menu item, `TeamMembersPopover` struct, and the `teamPopoverWorktreePath` state.
 - `Tests/GrafttyTests/Specs/TeamTodo.swift` — delete the `@spec TEAM-6.1` and `@spec TEAM-6.2` entries.
 - `SPECS.md` — regenerated from updated `@spec` annotations.
-- Add a TOML parsing dependency (e.g. `swift-toml` or similar) if one is not already available, for the `config.toml` merge in `CodexHomeMirror`.
+- `CodexHomeMirror` uses a scoped, line-preserving TOML structural scanner for administrative table and assignment reconciliation; adopt a full parser if a future migration must transform value syntax beyond those covered shapes.
 
 ## Open follow-ups (not blocking v1)
 
