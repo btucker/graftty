@@ -173,6 +173,30 @@ struct CodexHomeMirrorTests {
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dstConfig.path)) == nil)
     }
 
+    @Test(
+        "A durable managed-input read failure aborts the rebuild without advancing its marker.",
+        arguments: ["config.toml", "hooks.json"]
+    )
+    func durableManagedInputReadFailureAbortsRebuild(filename: String) throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(
+            at: src.appendingPathComponent(filename),
+            withIntermediateDirectories: true
+        )
+
+        #expect(throws: (any Error).self) {
+            try CodexHomeMirror(
+                sourceDirectory: src,
+                mirrorDirectory: dst,
+                grafttyCLIPath: "/usr/local/bin/graftty"
+            ).rebuild()
+        }
+        #expect(!FileManager.default.fileExists(
+            atPath: dst.appendingPathComponent(".graftty-mirror-version").path
+        ))
+    }
+
     @Test("Plugin cache created in the durable home after an initial rebuild is mirrored on the next rebuild.")
     func durablePluginCacheCreatedLaterSurvivesRebuild() throws {
         let (src, dst) = try makeMirrorSandbox()
@@ -191,7 +215,59 @@ struct CodexHomeMirrorTests {
     }
 
     @Test("""
-    @spec TEAM-10.6: When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall migrate it while restoring the user's durable hooks setting before replacing it with a managed snapshot.
+    @spec TEAM-10.9: When Graftty upgrades a legacy managed Codex home, the application shall migrate real non-generated state entries into the durable Codex home before replacing them with symlinks.
+    """)
+    func legacyOnlyPluginCacheIsMigratedBeforePruning() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        try writeFile(src.appendingPathComponent("config.toml"), "model = \"o3\"\n")
+        try writeFile(dst.appendingPathComponent("config.toml"), "model = \"o3\"\n")
+        let legacyPlugin = dst.appendingPathComponent("plugins/cache/runpod/plugin.json")
+        try writeFile(legacyPlugin, "{\"version\":1}")
+
+        try CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        ).rebuild()
+
+        let durablePlugin = src.appendingPathComponent("plugins/cache/runpod/plugin.json")
+        #expect(try String(contentsOf: durablePlugin) == "{\"version\":1}")
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(
+                atPath: dst.appendingPathComponent("plugins").path
+            ) == src.appendingPathComponent("plugins").path
+        )
+    }
+
+    @Test("Legacy state merges missing entries and preserves conflicts as recovery files.")
+    func legacyStateConflictsArePreservedDuringMigration() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        try writeFile(src.appendingPathComponent("config.toml"), "model = \"o3\"\n")
+        try writeFile(dst.appendingPathComponent("config.toml"), "model = \"o3\"\n")
+        try writeFile(src.appendingPathComponent("plugins/cache/shared/version"), "durable")
+        try writeFile(dst.appendingPathComponent("plugins/cache/shared/version"), "legacy")
+        try writeFile(dst.appendingPathComponent("plugins/cache/runpod/plugin.json"), "runpod")
+
+        try CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        ).rebuild()
+
+        #expect(try String(contentsOf: src.appendingPathComponent("plugins/cache/shared/version")) == "durable")
+        #expect(try String(contentsOf: src.appendingPathComponent("plugins/cache/runpod/plugin.json")) == "runpod")
+        #expect(
+            try String(contentsOf: src.appendingPathComponent("plugins.graftty-legacy/cache/shared/version"))
+                == "legacy"
+        )
+    }
+
+    @Test("""
+    @spec TEAM-10.6: When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall reconcile its feature and Codex administration tables into the durable config while restoring the user's durable hooks setting and retaining unrelated durable settings.
     """)
     func newerLegacyConfigIsMigratedBeforeRefresh() throws {
         let (src, dst) = try makeMirrorSandbox()
@@ -199,9 +275,12 @@ struct CodexHomeMirrorTests {
         let durable = src.appendingPathComponent("config.toml")
         try writeFile(durable, """
         model = "o3"
-        [features]
-        hooks = false
+        [features] # durable preferences
+        "hooks" = false
         durable_only = true
+        durable_notes = '''
+        preserve the whole durable value
+        '''
         [desktop]
         notifications = true
         """)
@@ -209,9 +288,12 @@ struct CodexHomeMirrorTests {
         let legacy = dst.appendingPathComponent("config.toml")
         try writeFile(legacy, """
         model = "o3"
-        [features]
+        [features] # legacy managed snapshot
         hooks = true
         experimental_mode = true
+        release_notes = '''
+        durable_only = false
+        '''
         [plugins."runpod@runpod"]
         enabled = true
         """)
@@ -224,31 +306,137 @@ struct CodexHomeMirrorTests {
 
         let durableText = try String(contentsOf: durable)
         #expect(durableText.contains("[plugins.\"runpod@runpod\"]"))
-        #expect(durableText.contains("hooks = false"))
+        #expect(durableText.contains("\"hooks\" = false"))
         #expect(!durableText.contains("hooks = true"))
         #expect(durableText.contains("durable_only = true"))
+        #expect(durableText.contains("""
+        durable_notes = '''
+        preserve the whole durable value
+        '''
+        """))
         #expect(durableText.contains("experimental_mode = true"))
         #expect(durableText.contains("[desktop]"))
         #expect(durableText.contains("notifications = true"))
         #expect(try String(contentsOf: dst.appendingPathComponent("config.toml")) == durableText)
     }
 
-    @Test("""
-    @spec TEAM-10.7: If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve the legacy bytes in the durable home as a recovery backup.
-    """)
-    func newerDurableConfigPreservesLegacyRecoveryBackup() throws {
+    @Test("Legacy administration removal recognizes table headers with trailing comments.")
+    func commentedAdministrationTableIsRemovedDuringLegacyMigration() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         let durable = src.appendingPathComponent("config.toml")
-        try writeFile(durable, "model = \"gpt-5\"\n")
+        try writeFile(durable, """
+        model = "o3"
+        [features]
+        hooks = false
+        [mcp_servers . runpod] # production
+        url = "https://mcp.getrunpod.io/"
+        ["plugins"."runpod@runpod"]
+        enabled = true
+        """)
         try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
         let legacy = dst.appendingPathComponent("config.toml")
         try writeFile(legacy, """
         model = "o3"
         [features]
         hooks = true
-        [mcp_servers.runpod]
-        url = "https://mcp.getrunpod.io/"
+        """)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(2)],
+            ofItemAtPath: legacy.path
+        )
+
+        try CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        ).rebuild()
+
+        let migrated = try String(contentsOf: durable)
+        #expect(!migrated.contains("[mcp_servers . runpod]"))
+        #expect(!migrated.contains("mcp.getrunpod.io"))
+        #expect(!migrated.contains("runpod@runpod"))
+        #expect(migrated.contains("hooks = false"))
+        #expect(!migrated.contains("hooks = true"))
+    }
+
+    @Test("Migration ignores table-like text inside multiline TOML strings.")
+    func multilineStringsRemainIntactDuringLegacyMigration() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durable = src.appendingPathComponent("config.toml")
+        try writeFile(durable, #"""
+        instructions = """
+        keep basic string content
+        [plugins.not-a-table]
+        hooks = "not a setting"
+        """
+        literal_instructions = '''
+        [mcp_servers.also-not-a-table]
+        keep literal string content
+        '''
+        [features]
+        hooks = false
+        [desktop]
+        notifications = true
+        """#)
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        let legacy = dst.appendingPathComponent("config.toml")
+        try writeFile(legacy, """
+        [features]
+        hooks = true
+        [plugins.\"runpod@runpod\"]
+        enabled = true
+        """)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(2)],
+            ofItemAtPath: legacy.path
+        )
+
+        try CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        ).rebuild()
+
+        let migrated = try String(contentsOf: durable)
+        #expect(migrated.contains(#"""
+        instructions = """
+        keep basic string content
+        [plugins.not-a-table]
+        hooks = "not a setting"
+        """
+        """#))
+        #expect(migrated.contains(#"""
+        literal_instructions = '''
+        [mcp_servers.also-not-a-table]
+        keep literal string content
+        '''
+        """#))
+        #expect(migrated.contains("[desktop]"))
+        #expect(migrated.contains("[plugins.\"runpod@runpod\"]"))
+    }
+
+    @Test("""
+    @spec TEAM-10.7: If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve a recovery copy of the legacy config with Graftty's generated hook override removed.
+    """)
+    func newerDurableConfigPreservesLegacyRecoveryBackup() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durable = src.appendingPathComponent("config.toml")
+        try writeFile(durable, """
+        model = "gpt-5"
+
+        [features]
+        hooks = false
+        """)
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        let legacy = dst.appendingPathComponent("config.toml")
+        try writeFile(legacy, """
+        model = "o3"
+
+        [features]
+        hooks = true
         """)
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-2)],
@@ -257,12 +445,14 @@ struct CodexHomeMirrorTests {
 
         try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
 
-        #expect(try String(contentsOf: durable) == "model = \"gpt-5\"\n")
+        let durableText = try String(contentsOf: durable)
+        #expect(durableText.contains("model = \"gpt-5\""))
+        #expect(durableText.contains("hooks = false"))
         let backup = src.appendingPathComponent("config.toml.graftty-legacy")
         let backupText = try String(contentsOf: backup)
-        #expect(backupText.contains("[mcp_servers.runpod]"))
+        #expect(backupText.contains("model = \"o3\""))
         #expect(!backupText.contains("hooks = true"))
-        #expect(try String(contentsOf: dst.appendingPathComponent("config.toml")) == "model = \"gpt-5\"\n")
+        #expect(try String(contentsOf: dst.appendingPathComponent("config.toml")) == durableText)
     }
 
     private func makeMirrorSandbox() throws -> (URL, URL) {

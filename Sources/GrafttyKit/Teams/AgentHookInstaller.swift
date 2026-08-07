@@ -428,7 +428,22 @@ public struct AgentHookInstaller: Sendable {
                     --remote|--remote=*)
                       return 1
                       ;;
-                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                    -i|--image)
+                      shift
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          --)
+                            return 0
+                            ;;
+                          --help|-h|--version|-V|--remote|--remote=*)
+                            return 1
+                            ;;
+                        esac
+                        shift
+                      done
+                      return 0
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir)
                       shift
                       [ "$#" -gt 0 ] && shift
                       continue
@@ -470,7 +485,10 @@ public struct AgentHookInstaller: Sendable {
                     --help|-h|--version|-V|--)
                       return 1
                       ;;
-                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                    -i|--image)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir)
                       shift
                       [ "$#" -gt 0 ] && shift
                       ;;
@@ -496,7 +514,10 @@ public struct AgentHookInstaller: Sendable {
                 fi
                 while [ "$#" -gt 0 ]; do
                   case "$1" in
-                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                    -i|--image)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir)
                       shift
                       [ "$#" -gt 0 ] && shift
                       ;;
@@ -616,7 +637,7 @@ public struct AgentHookInstaller: Sendable {
                 printf '%s\\n' "graftty: could not prepare the managed Codex home; starting without Graftty's managed hook configuration" >&2
               fi
               if _graftty_codex_uses_durable_home "$@"; then
-                env CODEX_HOME=\(codexSourceLiteral) "$real_binary" --enable hooks "$@"
+                env CODEX_HOME=\(codexSourceLiteral) "$real_binary" "$@"
                 _graftty_codex_command_status=$?
                 if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
                   printf '%s\\n' "graftty: reload the agent or start a new session for Codex configuration changes to take effect" >&2

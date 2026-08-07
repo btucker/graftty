@@ -79,7 +79,7 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test("""
-    @spec TEAM-10.4: When the Codex wrapper runs with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on every managed Codex launch with a launch-scoped override.
+    @spec TEAM-10.4: When the Codex wrapper runs a non-administrative command with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on that managed Codex launch with a launch-scoped override.
     """)
     func codexWrapperReusesInheritedMirrorAndEnablesHooksAtLaunch() throws {
         let run = try runCodexWrapperCommand(
@@ -104,6 +104,7 @@ struct AgentHookInstallerWrapperTests {
 
         #expect(run.terminationStatus == 0)
         #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.forwardedArgs == ["plugin", "add", "runpod@runpod"])
     }
 
     @Test(
@@ -180,6 +181,7 @@ struct AgentHookInstallerWrapperTests {
             ["mcp", "list"],
             ["mcp", "get", "runpod"],
             ["features", "list"],
+            ["--image=/tmp/image.png", "plugin", "list"],
         ]
     )
     func codexConfigurationAdministrationUsesDurableHome(arguments: [String]) throws {
@@ -190,6 +192,7 @@ struct AgentHookInstallerWrapperTests {
 
         #expect(run.terminationStatus == 0)
         #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.forwardedArgs == arguments)
     }
 
     @Test("Disabling agent hooks does not redirect Codex configuration changes into the managed snapshot.")
@@ -252,7 +255,8 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains(#"while [ "$#" -gt 0 ]; do"#))
         #expect(script.contains(#"--help|-h|--version|-V)"#))
         #expect(script.contains(#"--remote|--remote=*)"#))
-        #expect(script.contains(#"-c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)"#))
+        #expect(script.contains(#"-i|--image)"#))
+        #expect(script.contains(#"-c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir)"#))
         #expect(script.contains(#"app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)"#))
         #expect(script.contains(#"if ! _graftty_codex_should_use_app_server "$@"; then"#))
         #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks "$@""#))
@@ -508,7 +512,8 @@ struct AgentHookInstallerWrapperTests {
             ["--disable=some-feature", "mcp", "list"],
             ["--remote-auth-token-env", "TOKEN", "doctor"],
             ["--add-dir", "/tmp/extra", "apply"],
-            ["--image", "/tmp/image.png", "review"],
+            ["--image=/tmp/image.png", "review"],
+            ["--image", "/tmp/image.png", "--help"],
             ["--help"],
             ["--version"],
             ["--remote", "unix:///tmp/external.sock"],
@@ -551,6 +556,10 @@ struct AgentHookInstallerWrapperTests {
             ["--full-auto"],
             ["--unknown-option"],
             ["--yolo", "--unknown-option", "a prompt"],
+            ["--image", "/tmp/image.png", "review"],
+            ["-i", "/tmp/image.png", "plugin", "list"],
+            ["--image", "/tmp/image.png", "mcp", "list"],
+            ["--image", "/tmp/image.png", "features", "list"],
             ["--", "review"],
         ]
     )

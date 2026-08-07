@@ -14,6 +14,17 @@ import Glibc
 public struct CodexHomeMirror: Sendable {
     public static let grafttyCommandPrefix = "graftty team hook codex"
 
+    private static let generatedEntryNames: Set<String> = [
+        "hooks.json",
+        "config.toml",
+        ".graftty-mirror-version",
+        ".graftty-mirror.lock",
+    ]
+    private static let basicQuote: UInt8 = 34
+    private static let literalQuote: UInt8 = 39
+    private static let commentMarker: UInt8 = 35
+    private static let backslash: UInt8 = 92
+
     public let sourceDirectory: URL
     public let mirrorDirectory: URL
     public let grafttyCLIPath: String
@@ -50,16 +61,13 @@ public struct CodexHomeMirror: Sendable {
         }
         try fm.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
 
-        try migrateLegacyConfigIfNeeded()
+        try migrateLegacyStateIfNeeded()
 
-        let sourceEntries: [String] = (try? fm.contentsOfDirectory(atPath: sourceDirectory.path)) ?? []
-        let owned: Set<String> = [
-            "hooks.json",
-            "config.toml",
-            ".graftty-mirror-version",
-            ".graftty-mirror.lock",
-        ]
-        let mirroredEntries = sourceEntries.filter { !owned.contains($0) }
+        // Inventory failures must abort the rebuild. Treating an unreadable
+        // directory as empty could prune valid mirror state and still advance
+        // the migration marker, preventing a safe retry.
+        let sourceEntries = try fm.contentsOfDirectory(atPath: sourceDirectory.path)
+        let mirroredEntries = sourceEntries.filter { !Self.generatedEntryNames.contains($0) }
 
         // Pass 1: write/refresh symlinks for every durable source entry.
         for name in mirroredEntries {
@@ -70,9 +78,10 @@ public struct CodexHomeMirror: Sendable {
 
         // Pass 2: prune mirror entries that no longer belong to the durable
         // source, excluding Graftty's generated files.
-        let mirrorEntries: [String] = (try? fm.contentsOfDirectory(atPath: mirrorDirectory.path)) ?? []
+        let mirrorEntries = try fm.contentsOfDirectory(atPath: mirrorDirectory.path)
         let mirroredSet = Set(mirroredEntries)
-        for name in mirrorEntries where !owned.contains(name) && !mirroredSet.contains(name) {
+        for name in mirrorEntries
+        where !Self.generatedEntryNames.contains(name) && !mirroredSet.contains(name) {
             try? fm.removeItem(at: mirrorDirectory.appendingPathComponent(name))
         }
 
@@ -108,7 +117,7 @@ public struct CodexHomeMirror: Sendable {
     private func writeMergedHooks() throws {
         let userHooksURL = sourceDirectory.appendingPathComponent("hooks.json")
         var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: userHooksURL),
+        if let data = try readDataIfPresent(at: userHooksURL),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             root = parsed
         }
@@ -153,7 +162,7 @@ public struct CodexHomeMirror: Sendable {
         let fm = FileManager.default
         let source = sourceDirectory.appendingPathComponent("config.toml")
         let destination = mirrorDirectory.appendingPathComponent("config.toml")
-        let data = (try? Data(contentsOf: source)) ?? Data()
+        let data = try readDataIfPresent(at: source) ?? Data()
         if (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil {
             try fm.removeItem(at: destination)
         }
@@ -191,16 +200,103 @@ public struct CodexHomeMirror: Sendable {
         NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
 
-    /// Migrates configuration mutations left in the generated config used by
-    /// releases before mirror version 2. The old wrapper refreshed that file
-    /// from the durable config immediately before running Codex, so a newer
-    /// legacy file is the authoritative post-mutation copy. If the durable file
-    /// is newer, preserve the legacy bytes beside it instead of guessing which
-    /// concurrent edits should win.
-    private func migrateLegacyConfigIfNeeded() throws {
-        let fm = FileManager.default
+    /// Migrates state and configuration mutations left in the generated home
+    /// used by releases before mirror version 2. The old wrapper refreshed its
+    /// config from the durable copy immediately before running Codex, so a
+    /// newer legacy file contains the post-mutation administration state. If
+    /// the durable file is newer, preserve a sanitized recovery copy instead
+    /// of guessing which concurrent edits should win.
+    private func migrateLegacyStateIfNeeded() throws {
         let marker = mirrorDirectory.appendingPathComponent(".graftty-mirror-version")
-        guard !fm.fileExists(atPath: marker.path) else { return }
+        let version = (try? String(contentsOf: marker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard version != "2" else { return }
+
+        try migrateLegacyMirrorEntries()
+        try migrateLegacyConfigIfPresent()
+    }
+
+    private func migrateLegacyMirrorEntries() throws {
+        let fm = FileManager.default
+        let entries = try fm.contentsOfDirectory(atPath: mirrorDirectory.path)
+        for name in entries where !Self.generatedEntryNames.contains(name) {
+            let legacy = mirrorDirectory.appendingPathComponent(name)
+            guard (try? fm.destinationOfSymbolicLink(atPath: legacy.path)) == nil else {
+                continue
+            }
+            let durable = sourceDirectory.appendingPathComponent(name)
+            if !entryExists(at: durable) {
+                try fm.moveItem(at: legacy, to: durable)
+                continue
+            }
+
+            let backup = availableBackupURL(named: "\(name).graftty-legacy")
+            try mergeLegacyEntry(from: legacy, into: durable, backupAt: backup)
+        }
+    }
+
+    private func mergeLegacyEntry(from legacy: URL, into durable: URL, backupAt backup: URL) throws {
+        let fm = FileManager.default
+        guard entryExists(at: durable) else {
+            try fm.createDirectory(at: durable.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: legacy, to: durable)
+            return
+        }
+
+        let legacyValues = try legacy.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        let durableValues = try durable.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        if legacyValues.isDirectory == true,
+           legacyValues.isSymbolicLink != true,
+           durableValues.isDirectory == true,
+           durableValues.isSymbolicLink != true {
+            for name in try fm.contentsOfDirectory(atPath: legacy.path) {
+                try mergeLegacyEntry(
+                    from: legacy.appendingPathComponent(name),
+                    into: durable.appendingPathComponent(name),
+                    backupAt: backup.appendingPathComponent(name)
+                )
+            }
+            if (try fm.contentsOfDirectory(atPath: legacy.path)).isEmpty {
+                try fm.removeItem(at: legacy)
+            }
+            return
+        }
+
+        try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.moveItem(at: legacy, to: backup)
+    }
+
+    private func entryExists(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+    }
+
+    /// Absence is a valid empty configuration, but every other read failure
+    /// must abort the sync so the wrapper can fall back to the durable home.
+    private func readDataIfPresent(at url: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain,
+               nsError.code == NSFileReadNoSuchFileError {
+                return nil
+            }
+            if nsError.domain == NSPOSIXErrorDomain,
+               nsError.code == Int(ENOENT) {
+                return nil
+            }
+            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+               underlying.domain == NSPOSIXErrorDomain,
+               underlying.code == Int(ENOENT) {
+                return nil
+            }
+            throw error
+        }
+    }
+
+    private func migrateLegacyConfigIfPresent() throws {
+        let fm = FileManager.default
 
         let legacy = mirrorDirectory.appendingPathComponent("config.toml")
         guard fm.fileExists(atPath: legacy.path),
@@ -210,7 +306,7 @@ public struct CodexHomeMirror: Sendable {
 
         let durable = sourceDirectory.appendingPathComponent("config.toml")
         let legacyData = try Data(contentsOf: legacy)
-        let durableData = (try? Data(contentsOf: durable)) ?? Data()
+        let durableData = try readDataIfPresent(at: durable) ?? Data()
         let migratedData = Self.restoringDurableHooksSetting(
             in: legacyData,
             durableConfig: durableData
@@ -219,20 +315,23 @@ public struct CodexHomeMirror: Sendable {
             from: migratedData,
             into: durableData
         )
-        guard reconciledData != durableData else { return }
-
         let legacyDate = try legacy.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate ?? .distantPast
         let durableDate = (try? durable.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate ?? .distantPast
 
         if legacyDate >= durableDate {
+            if migratedData != reconciledData {
+                let backup = availableBackupURL(named: "config.toml.graftty-legacy")
+                try migratedData.write(to: backup, options: .atomic)
+            }
+            guard reconciledData != durableData else { return }
             if fm.fileExists(atPath: durable.path) {
                 let backup = availableBackupURL(named: "config.toml.graftty-pre-migration")
                 try fm.copyItem(at: durable, to: backup)
             }
             try reconciledData.write(to: durable, options: .atomic)
-        } else {
+        } else if migratedData != durableData {
             let backup = availableBackupURL(named: "config.toml.graftty-legacy")
             try migratedData.write(to: backup, options: .atomic)
         }
@@ -267,10 +366,12 @@ public struct CodexHomeMirror: Sendable {
 
     private static func hooksSettingLine(in config: String) -> String? {
         var inFeatures = false
-        for line in config.components(separatedBy: "\n") {
+        for scannedLine in scanningTOMLLines(in: config) {
+            guard scannedLine.isStructural else { continue }
+            let line = scannedLine.text
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                inFeatures = trimmed == "[features]"
+            if let table = tomlTableName(in: line) {
+                inFeatures = table == ["features"]
             } else if inFeatures, isHooksSetting(trimmed) {
                 return line
             }
@@ -282,10 +383,15 @@ public struct CodexHomeMirror: Sendable {
         var inFeatures = false
         var didRestore = false
         var output: [String] = []
-        for line in config.components(separatedBy: "\n") {
+        for scannedLine in scanningTOMLLines(in: config) {
+            let line = scannedLine.text
+            guard scannedLine.isStructural else {
+                output.append(line)
+                continue
+            }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                inFeatures = trimmed == "[features]"
+            if let table = tomlTableName(in: line) {
+                inFeatures = table == ["features"]
                 output.append(line)
                 continue
             }
@@ -302,11 +408,11 @@ public struct CodexHomeMirror: Sendable {
     }
 
     private static func isHooksSetting(_ line: String) -> Bool {
-        line.hasPrefix("hooks ") || line.hasPrefix("hooks=") || line.hasPrefix("hooks\t")
+        tomlAssignmentKey(in: line) == ["hooks"]
     }
 
-    /// Legacy plugin commands changed only Codex's administrative table
-    /// families. Replace those tables as one newer snapshot while retaining
+    /// Legacy administration commands changed Codex's feature and
+    /// administrative table families. Reconcile those values while retaining
     /// unrelated durable settings that may have changed independently.
     private static func mergingLegacyAdministrationState(
         from legacyConfig: Data,
@@ -319,12 +425,12 @@ public struct CodexHomeMirror: Sendable {
         }
         let durableSections = tomlSections(in: durable)
         let legacySections = tomlSections(in: legacy)
-        let legacyFeatures = legacySections.first { $0.table == "features" }
-        let durableFeatures = durableSections.first { $0.table == "features" }
+        let legacyFeatures = legacySections.first { $0.table == ["features"] }
+        let durableFeatures = durableSections.first { $0.table == ["features"] }
         let retained = durableSections.filter { section in
             guard let table = section.table else { return true }
             return !isCodexAdministrationTable(table)
-                && (table != "features" || legacyFeatures == nil)
+                && (table != ["features"] || legacyFeatures == nil)
         }
         let administration = legacySections.filter { section in
             guard let table = section.table else { return false }
@@ -351,11 +457,10 @@ public struct CodexHomeMirror: Sendable {
         into durable: TOMLSection?
     ) -> TOMLSection {
         guard let durable else { return legacy }
-        let legacyKeys = Set(legacy.lines.compactMap(tomlAssignmentKey))
-        let durableOnly = durable.lines.filter { line in
-            guard let key = tomlAssignmentKey(in: line) else { return false }
-            return !legacyKeys.contains(key)
-        }
+        let legacyKeys = Set(tomlAssignmentBlocks(in: legacy.lines).map(\.key))
+        let durableOnly = tomlAssignmentBlocks(in: durable.lines)
+            .filter { !legacyKeys.contains($0.key) }
+            .flatMap(\.lines)
         guard !durableOnly.isEmpty else { return legacy }
 
         var lines = legacy.lines
@@ -370,15 +475,57 @@ public struct CodexHomeMirror: Sendable {
         return TOMLSection(table: legacy.table, lines: lines)
     }
 
-    private static func tomlAssignmentKey(in line: String) -> String? {
+    private static func tomlAssignmentKey(in line: String) -> [String]? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty,
-              !trimmed.hasPrefix("#"),
-              let equals = trimmed.firstIndex(of: "=") else {
+              !trimmed.hasPrefix("#") else {
             return nil
         }
-        let key = trimmed[..<equals].trimmingCharacters(in: .whitespaces)
-        return key.isEmpty ? nil : key
+        let bytes = Array(trimmed.utf8)
+        var quote: UInt8?
+        for index in bytes.indices {
+            if let activeQuote = quote {
+                if bytes[index] == activeQuote,
+                   activeQuote == literalQuote || !isEscaped(bytes, at: index) {
+                    quote = nil
+                }
+            } else if bytes[index] == basicQuote || bytes[index] == literalQuote {
+                quote = bytes[index]
+            } else if bytes[index] == 61 {
+                return tomlDottedKeyComponents(in: bytes[..<index])
+            } else if bytes[index] == commentMarker {
+                return nil
+            }
+        }
+        return nil
+    }
+
+    private struct TOMLAssignmentBlock {
+        let key: [String]
+        var lines: [String]
+    }
+
+    /// Groups a top-level assignment with every continuation line up to the
+    /// next top-level assignment. This preserves multiline strings and arrays
+    /// when durable-only feature values are carried into the legacy section.
+    private static func tomlAssignmentBlocks(in lines: [String]) -> [TOMLAssignmentBlock] {
+        let scannedLines = scanningTOMLLines(in: lines.joined(separator: "\n"))
+        var blocks: [TOMLAssignmentBlock] = []
+        var current: TOMLAssignmentBlock?
+        for line in scannedLines {
+            if line.isStructural, let key = tomlAssignmentKey(in: line.text) {
+                if let current {
+                    blocks.append(current)
+                }
+                current = TOMLAssignmentBlock(key: key, lines: [line.text])
+            } else if current != nil {
+                current?.lines.append(line.text)
+            }
+        }
+        if let current {
+            blocks.append(current)
+        }
+        return blocks
     }
 
     private static func appendSection(_ section: TOMLSection, to lines: inout [String]) {
@@ -389,13 +536,23 @@ public struct CodexHomeMirror: Sendable {
     }
 
     private struct TOMLSection {
-        let table: String?
+        let table: [String]?
         var lines: [String]
+    }
+
+    private struct TOMLScannedLine {
+        let text: String
+        let isStructural: Bool
     }
 
     private static func tomlSections(in config: String) -> [TOMLSection] {
         var sections = [TOMLSection(table: nil, lines: [])]
-        for line in config.components(separatedBy: "\n") {
+        for scannedLine in scanningTOMLLines(in: config) {
+            let line = scannedLine.text
+            guard scannedLine.isStructural else {
+                sections[sections.count - 1].lines.append(line)
+                continue
+            }
             if let table = tomlTableName(in: line) {
                 sections.append(TOMLSection(table: table, lines: [line]))
             } else {
@@ -405,21 +562,228 @@ public struct CodexHomeMirror: Sendable {
         return sections
     }
 
-    private static func tomlTableName(in line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+    /// Identifies lines whose apparent TOML structure is outside multiline
+    /// basic or literal strings. The migration only needs table boundaries and
+    /// one boolean key; preserving original lines keeps every other byte-level
+    /// representation intact.
+    private static func scanningTOMLLines(in config: String) -> [TOMLScannedLine] {
+        var multilineQuote: UInt8?
+        return config.components(separatedBy: "\n").map { line in
+            let scanned = TOMLScannedLine(text: line, isStructural: multilineQuote == nil)
+            updateMultilineQuoteState(in: line, multilineQuote: &multilineQuote)
+            return scanned
+        }
+    }
+
+    private static func updateMultilineQuoteState(
+        in line: String,
+        multilineQuote: inout UInt8?
+    ) {
+        let bytes = Array(line.utf8)
+        var singleLineQuote: UInt8?
+        var index = 0
+        while index < bytes.count {
+            if let quote = multilineQuote {
+                if hasTripleQuote(bytes, at: index, quote: quote),
+                   quote == literalQuote || !isEscaped(bytes, at: index) {
+                    multilineQuote = nil
+                    index += 3
+                } else {
+                    index += 1
+                }
+                continue
+            }
+
+            if let quote = singleLineQuote {
+                if bytes[index] == quote,
+                   quote == literalQuote || !isEscaped(bytes, at: index) {
+                    singleLineQuote = nil
+                }
+                index += 1
+                continue
+            }
+
+            if bytes[index] == commentMarker {
+                break
+            }
+            if bytes[index] == basicQuote || bytes[index] == literalQuote {
+                let quote = bytes[index]
+                if hasTripleQuote(bytes, at: index, quote: quote) {
+                    multilineQuote = quote
+                    index += 3
+                } else {
+                    singleLineQuote = quote
+                    index += 1
+                }
+                continue
+            }
+            index += 1
+        }
+    }
+
+    private static func hasTripleQuote(_ bytes: [UInt8], at index: Int, quote: UInt8) -> Bool {
+        index + 2 < bytes.count
+            && bytes[index] == quote
+            && bytes[index + 1] == quote
+            && bytes[index + 2] == quote
+    }
+
+    private static func isEscaped(_ bytes: [UInt8], at index: Int) -> Bool {
+        var backslashCount = 0
+        var cursor = index
+        while cursor > 0, bytes[cursor - 1] == backslash {
+            backslashCount += 1
+            cursor -= 1
+        }
+        return backslashCount.isMultiple(of: 2) == false
+    }
+
+    private static func tomlTableName(in line: String) -> [String]? {
+        let trimmed = tomlContentBeforeComment(in: line)
+            .trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("[["), trimmed.hasSuffix("]]"), trimmed.count > 4 {
-            return String(trimmed.dropFirst(2).dropLast(2))
+            return tomlDottedKeyComponents(in: trimmed.dropFirst(2).dropLast(2).utf8)
         }
         if trimmed.hasPrefix("["), trimmed.hasSuffix("]"), trimmed.count > 2 {
-            return String(trimmed.dropFirst().dropLast())
+            return tomlDottedKeyComponents(in: trimmed.dropFirst().dropLast().utf8)
         }
         return nil
     }
 
-    private static func isCodexAdministrationTable(_ table: String) -> Bool {
-        ["marketplaces", "plugins", "mcp_servers"].contains { namespace in
-            table == namespace || table.hasPrefix("\(namespace).")
+    /// Parses the semantic components of a TOML dotted key so whitespace and
+    /// quoted spellings do not change namespace matching.
+    private static func tomlDottedKeyComponents<C: Collection>(in bytes: C) -> [String]?
+    where C.Element == UInt8 {
+        let bytes = Array(bytes)
+        var components: [String] = []
+        var index = 0
+
+        func skipWhitespace() {
+            while index < bytes.count, bytes[index] == 32 || bytes[index] == 9 {
+                index += 1
+            }
         }
+
+        skipWhitespace()
+        while index < bytes.count {
+            let component: String
+            if bytes[index] == basicQuote {
+                guard let parsed = parseBasicQuotedKey(in: bytes, index: &index) else { return nil }
+                component = parsed
+            } else if bytes[index] == literalQuote {
+                index += 1
+                let start = index
+                while index < bytes.count, bytes[index] != literalQuote {
+                    index += 1
+                }
+                guard index < bytes.count else { return nil }
+                component = String(decoding: bytes[start..<index], as: UTF8.self)
+                index += 1
+            } else {
+                let start = index
+                while index < bytes.count, isBareTOMLKeyByte(bytes[index]) {
+                    index += 1
+                }
+                guard index > start else { return nil }
+                component = String(decoding: bytes[start..<index], as: UTF8.self)
+            }
+            components.append(component)
+            skipWhitespace()
+            guard index < bytes.count else { break }
+            guard bytes[index] == 46 else { return nil }
+            index += 1
+            skipWhitespace()
+            guard index < bytes.count else { return nil }
+        }
+        return components.isEmpty ? nil : components
+    }
+
+    private static func parseBasicQuotedKey(in bytes: [UInt8], index: inout Int) -> String? {
+        index += 1
+        var result = ""
+        var literalStart = index
+
+        func appendLiteral(until end: Int) {
+            guard literalStart < end else { return }
+            result += String(decoding: bytes[literalStart..<end], as: UTF8.self)
+        }
+
+        while index < bytes.count {
+            if bytes[index] == basicQuote {
+                appendLiteral(until: index)
+                index += 1
+                return result
+            }
+            guard bytes[index] == backslash else {
+                index += 1
+                continue
+            }
+
+            appendLiteral(until: index)
+            index += 1
+            guard index < bytes.count else { return nil }
+            switch bytes[index] {
+            case 34: result.append("\"")
+            case 92: result.append("\\")
+            case 98: result.append("\u{8}")
+            case 102: result.append("\u{C}")
+            case 110: result.append("\n")
+            case 114: result.append("\r")
+            case 116: result.append("\t")
+            case 117, 85:
+                let digitCount = bytes[index] == 117 ? 4 : 8
+                let start = index + 1
+                let end = start + digitCount
+                guard end <= bytes.count,
+                      let scalarValue = UInt32(String(decoding: bytes[start..<end], as: UTF8.self), radix: 16),
+                      let scalar = UnicodeScalar(scalarValue) else {
+                    return nil
+                }
+                result.unicodeScalars.append(scalar)
+                index = end - 1
+            default:
+                return nil
+            }
+            index += 1
+            literalStart = index
+        }
+        return nil
+    }
+
+    private static func isBareTOMLKeyByte(_ byte: UInt8) -> Bool {
+        (byte >= 65 && byte <= 90)
+            || (byte >= 97 && byte <= 122)
+            || (byte >= 48 && byte <= 57)
+            || byte == 95
+            || byte == 45
+    }
+
+    /// Removes a TOML comment without treating `#` inside quoted keys as a
+    /// delimiter. This lets table headers retain trailing comments while the
+    /// reconciliation scanner continues to preserve their original text.
+    private static func tomlContentBeforeComment(in line: String) -> String {
+        let bytes = Array(line.utf8)
+        var quote: UInt8?
+        var index = 0
+        while index < bytes.count {
+            if let activeQuote = quote {
+                if bytes[index] == activeQuote,
+                   activeQuote == literalQuote || !isEscaped(bytes, at: index) {
+                    quote = nil
+                }
+            } else if bytes[index] == basicQuote || bytes[index] == literalQuote {
+                quote = bytes[index]
+            } else if bytes[index] == commentMarker {
+                return String(decoding: bytes[..<index], as: UTF8.self)
+            }
+            index += 1
+        }
+        return line
+    }
+
+    private static func isCodexAdministrationTable(_ table: [String]) -> Bool {
+        guard let namespace = table.first else { return false }
+        return ["marketplaces", "plugins", "mcp_servers"].contains(namespace)
     }
 
 }
