@@ -238,12 +238,12 @@ public enum LiveSessionReadiness {
     }
 
     /// @spec IOS-10.1
-    /// Returns true when the application must release terminal channels.
+    /// Returns true when the application must suspend terminal channels.
     /// Transient `.inactive` phases preserve the live channel so Control
     /// Center, app-switcher transitions, and system interruptions do not
-    /// manufacture a reconnect. A true `.background` transition still tears
-    /// down every terminal and the coordinator's authenticated transport.
-    public static func shouldTearDown(scene: ScenePhase) -> Bool {
+    /// manufacture a reconnect. A true `.background` transition closes
+    /// transport while the mounted terminal surface remains alive.
+    public static func shouldSuspendTransport(scene: ScenePhase) -> Bool {
         scene == .background
     }
 }

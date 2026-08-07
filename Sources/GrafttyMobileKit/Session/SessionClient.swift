@@ -84,6 +84,12 @@ public final class SessionClient {
     }
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
+    /// Invalidates async work from an earlier transport lifetime. A WebSocket
+    /// factory or receive operation is allowed to ignore task cancellation;
+    /// generation checks keep that stale work from attaching after a rapid
+    /// background-to-foreground resume.
+    @ObservationIgnored
+    private var transportGeneration: UInt64 = 0
     /// Last (cols, rows) libghostty reported for the iOS-side view.
     /// Sent with hello/takeover and, while owner, owner resize.
     /// `@ObservationIgnored` — hot-path bookkeeping written on every
@@ -325,7 +331,15 @@ public final class SessionClient {
     }
 
     public func start() {
+        guard !stopped, receiveTask == nil else { return }
+        startTransport()
+    }
+
+    private func startTransport() {
+        transportGeneration &+= 1
+        let generation = transportGeneration
         lastActivityAt = clock.now
+        renderPace = .full
         startPaceWatchdog()
         // Eagerly install a Task that opens the first WS. Outbound
         // writes that fire between `start()` returning and the factory
@@ -335,14 +349,14 @@ public final class SessionClient {
         // preserves the in-process test contract on the URL fallback
         // path (factory there resolves without suspending so writes
         // emitted right after `start()` still land).
-        let openTask = spawnOpenTask()
+        let openTask = spawnOpenTask(generation: generation)
         receiveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var attempt = 0
             // Wait for the eagerly-spawned open Task to finish so the
             // receive loop sees a coherent `ws` snapshot.
             _ = await openTask.value
-            while !self.stopped {
+            while self.isCurrentTransport(generation) {
                 if self.connectionState != .live {
                     self.connectionState = .live
                 }
@@ -350,8 +364,13 @@ public final class SessionClient {
                     guard let ws = self.currentWS() else {
                         throw URLError(.cannotConnectToHost)
                     }
-                    while !self.stopped {
+                    while self.isCurrentTransport(generation) {
                         let frame = try await ws.receive()
+                        // A transport implementation may park in a checked
+                        // continuation and ignore Task cancellation. Reject a
+                        // late frame before it can mutate the preserved
+                        // terminal session or ownership state after resume.
+                        guard self.isCurrentTransport(generation) else { return }
                         // Receiving a frame means we're truly connected;
                         // reset the backoff counter so the next failure
                         // starts again at the schedule's first entry.
@@ -367,6 +386,10 @@ public final class SessionClient {
                 } catch is CancellationError {
                     return
                 } catch {
+                    // As above, a cancellation-insensitive receive can fail
+                    // after a newer transport is already live. In particular,
+                    // stale process EOF must not end the resumed client.
+                    guard self.isCurrentTransport(generation) else { return }
                     if Self.isTerminalSessionEnded(error) {
                         // Process EOF is final for this pane. Retrying an SSH
                         // `zmx attach` here can recreate the exited session
@@ -376,7 +399,7 @@ public final class SessionClient {
                     }
                     // Network error — fall through to backoff.
                 }
-                if self.stopped { return }
+                guard self.isCurrentTransport(generation) else { return }
                 let delayIndex = min(attempt, self.backoffSchedule.count - 1)
                 let delay = self.backoffSchedule[delayIndex]
                 attempt += 1
@@ -386,14 +409,18 @@ public final class SessionClient {
                 } catch {
                     return
                 }
-                if self.stopped { return }
+                guard self.isCurrentTransport(generation) else { return }
                 // Refresh `wsReadyTask` so outbound writes that fired
                 // during the backoff sleep are released as soon as the
                 // reconnect's WS is in place.
-                let reopenTask = self.spawnOpenTask()
+                let reopenTask = self.spawnOpenTask(generation: generation)
                 _ = await reopenTask.value
             }
         }
+    }
+
+    private func isCurrentTransport(_ generation: UInt64) -> Bool {
+        !stopped && transportGeneration == generation
     }
 
     private nonisolated static func isTerminalSessionEnded(_ error: any Error) -> Bool {
@@ -414,12 +441,14 @@ public final class SessionClient {
     /// doesn't leak past the requested shutdown.
     @MainActor
     @discardableResult
-    private func spawnOpenTask() -> Task<WebSocketClient?, Never> {
+    private func spawnOpenTask(
+        generation: UInt64
+    ) -> Task<WebSocketClient?, Never> {
         let task: Task<WebSocketClient?, Never> = Task { @MainActor [weak self] in
             guard let self else { return nil }
             do {
                 let client = try await self.webSocketFactory()
-                if self.stopped {
+                if !self.isCurrentTransport(generation) {
                     client.close()
                     return nil
                 }
@@ -430,9 +459,15 @@ public final class SessionClient {
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.setWS(client)
                 await self.sendHelloIfSupported(on: client)
+                guard self.isCurrentTransport(generation) else {
+                    client.close()
+                    return nil
+                }
                 return client
             } catch {
-                self.setWS(nil)
+                if self.isCurrentTransport(generation) {
+                    self.setWS(nil)
+                }
                 return nil
             }
         }
@@ -592,14 +627,23 @@ public final class SessionClient {
     }
 
     public func stop() {
+        suspend()
+    }
+
+    /// Close authenticated transport without releasing `session`. The same
+    /// client can resume after foreground verification, which keeps the
+    /// `UITerminalView` and Ghostty renderer mounted across scene suspension.
+    public func suspend() {
         guard !stopped else { return }
         stopped = true
+        transportGeneration &+= 1
         receiveTask?.cancel()
         receiveTask = nil
         currentWSReadyTask()?.cancel()
         setWSReadyTask(nil)
         paceWatchdogTask?.cancel()
         paceWatchdogTask = nil
+        renderPace = .reduced(interval: Self.reducedRenderPaceInterval)
         clearPendingInput()
         currentWS()?.close()
         setWS(nil)
@@ -607,8 +651,23 @@ public final class SessionClient {
         ownershipSnapshot = nil
     }
 
+    public func resume(
+        reclaimControlOnOwnerlessConnect: Bool = false
+    ) {
+        // Process EOF is terminal, not a transport interruption. In
+        // particular, retained preview clients must not reattach an exited
+        // zmx session merely because a background/foreground cycle calls
+        // suspendAll()/resumeAll().
+        guard stopped, connectionState != .ended else { return }
+        stopped = false
+        if reclaimControlOnOwnerlessConnect {
+            self.reclaimControlOnOwnerlessConnect = true
+        }
+        startTransport()
+    }
+
     public func forceReconnectNow() {
-        guard !stopped else { return }
+        guard !stopped, connectionState != .ended else { return }
         currentWSReadyTask()?.cancel()
         setWSReadyTask(nil)
         currentWS()?.close()
@@ -634,12 +693,14 @@ public final class SessionClient {
 
     private func requestTakeControl() {
         guard !pendingInput.takeoverRequested, !stopped else { return }
+        let generation = transportGeneration
         let grid = helloGrid()
         pendingInput.takeoverBaseEpoch = ownershipSnapshot?.epoch
         pendingInput.takeoverRequested = true
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else {
+            guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else {
+                guard self.isCurrentTransport(generation) else { return }
                 // The takeover frame could not be sent (no live owner-aware
                 // socket). Drop the latch so a later keystroke re-requests
                 // instead of queueing input behind a request that never went
@@ -667,10 +728,11 @@ public final class SessionClient {
     }
 
     private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, epoch: UInt64) {
-        Task { [weak self] in
+        let generation = transportGeneration
+        Task { @MainActor [weak self] in
             guard let self else { return }
             let clientID = await MainActor.run { self.displayClientID }
-            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
             await ws.ownerResize(
                 clientID: clientID,
                 epoch: epoch,
@@ -690,28 +752,31 @@ public final class SessionClient {
     private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
         let frames = pendingInput.drain()
         let clientID = displayClientID
-        Task { [weak self] in
+        let generation = transportGeneration
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
             await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
-            await Self.sendBinaryFrames(frames, on: ws)
+            await self.sendBinaryFrames(frames, on: ws, generation: generation)
         }
     }
 
     private func sendLegacyResizeToServer(cols: UInt16, rows: UInt16) {
-        Task { [weak self] in
+        let generation = transportGeneration
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let ws = await self.awaitWS(), !ws.supportsWebControlTextFrames else { return }
+            guard let ws = await self.awaitWS(for: generation), !ws.supportsWebControlTextFrames else { return }
             await ws.resize(cols: Int(cols), rows: Int(rows))
         }
     }
 
-    nonisolated private func sendBinary(_ data: Data) {
+    private func sendBinary(_ data: Data) {
         sendBinaryFrames([data])
     }
 
-    nonisolated private func sendBinaryFrames(_ frames: [Data]) {
+    private func sendBinaryFrames(_ frames: [Data]) {
         guard !frames.isEmpty else { return }
+        let generation = transportGeneration
         // Await the in-flight WS open so writes emitted before the
         // factory resolves still land. On the synchronous URL path
         // (`URLSessionWebSocketClient`) the open Task completes
@@ -719,14 +784,19 @@ public final class SessionClient {
         // SSH-over-WebRTC path the SSH child-channel open is genuinely
         // async and this delay is what prevents the first keystroke
         // from being silently dropped.
-        Task { [weak self] in
-            guard let ws = await self?.awaitWS() else { return }
-            await Self.sendBinaryFrames(frames, on: ws)
+        Task { @MainActor [weak self] in
+            guard let self, let ws = await self.awaitWS(for: generation) else { return }
+            await self.sendBinaryFrames(frames, on: ws, generation: generation)
         }
     }
 
-    nonisolated private static func sendBinaryFrames(_ frames: [Data], on ws: WebSocketClient) async {
+    private func sendBinaryFrames(
+        _ frames: [Data],
+        on ws: WebSocketClient,
+        generation: UInt64
+    ) async {
         for data in frames {
+            guard isCurrentTransport(generation) else { return }
             try? await ws.send(.binary(data))
         }
     }
@@ -735,11 +805,16 @@ public final class SessionClient {
     /// resolve immediately if `ws` is already set and no reconnect is
     /// pending). Returns nil if `start()` hasn't run or the factory
     /// failed.
-    nonisolated private func awaitWS() async -> WebSocketClient? {
+    private func awaitWS(for generation: UInt64) async -> WebSocketClient? {
+        guard isCurrentTransport(generation) else { return nil }
+        let client: WebSocketClient?
         if let pending = currentWSReadyTask() {
-            return await pending.value
+            client = await pending.value
+        } else {
+            client = currentWS()
         }
-        return currentWS()
+        guard isCurrentTransport(generation) else { return nil }
+        return client
     }
 
     internal func handleTextFrame(_ text: String) {

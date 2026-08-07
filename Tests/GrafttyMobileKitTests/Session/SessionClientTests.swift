@@ -9,6 +9,121 @@ import GrafttyProtocol
 @MainActor
 struct SessionClientTests {
 
+    final class DelayedFirstWebSocketFactory: @unchecked Sendable {
+        private let lock = NSLock()
+        private let first: FakeWS
+        private let second: FakeWS
+        private var callCount = 0
+        private var firstContinuation: CheckedContinuation<FakeWS, Never>?
+
+        init(first: FakeWS, second: FakeWS) {
+            self.first = first
+            self.second = second
+        }
+
+        var calls: Int { lock.withLock { callCount } }
+
+        func make() async -> FakeWS {
+            let call = lock.withLock {
+                callCount += 1
+                return callCount
+            }
+            guard call == 1 else { return second }
+            return await withCheckedContinuation { continuation in
+                lock.withLock {
+                    firstContinuation = continuation
+                }
+            }
+        }
+
+        func releaseFirst() {
+            let continuation = lock.withLock {
+                defer { firstContinuation = nil }
+                return firstContinuation
+            }
+            continuation?.resume(returning: first)
+        }
+    }
+
+    final class WebSocketSequence: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sockets: [any WebSocketClient]
+
+        init(_ sockets: [any WebSocketClient]) {
+            self.sockets = sockets
+        }
+
+        func next() throws -> any WebSocketClient {
+            try lock.withLock {
+                guard !sockets.isEmpty else {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return sockets.removeFirst()
+            }
+        }
+    }
+
+    final class DelayedReceiveWS: WebSocketClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _sent: [WebSocketFrame] = []
+        private var receiveContinuation: CheckedContinuation<WebSocketFrame, any Error>?
+        private var receiveCallCount = 0
+        var sent: [WebSocketFrame] { lock.withLock { _sent } }
+        var receiveCalls: Int { lock.withLock { receiveCallCount } }
+        var supportsWebControlTextFrames: Bool { true }
+        var closed = false
+
+        func send(_ frame: WebSocketFrame) async throws {
+            lock.withLock { _sent.append(frame) }
+        }
+
+        func receive() async throws -> WebSocketFrame {
+            lock.withLock { receiveCallCount += 1 }
+            return try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    receiveContinuation = continuation
+                }
+            }
+        }
+
+        func close() { closed = true }
+
+        func sendHello(
+            clientID: DisplayClientID,
+            kind: DisplayClientKind,
+            role: DisplayClientRole,
+            visible: Bool,
+            cols: Int,
+            rows: Int
+        ) async {
+            let payload = WebControlEnvelope.hello(
+                clientID: clientID,
+                kind: kind,
+                role: role,
+                visible: visible,
+                cols: UInt16(cols),
+                rows: UInt16(rows)
+            ).encoded()
+            try? await send(.text(payload))
+        }
+
+        func deliver(_ frame: WebSocketFrame) {
+            let continuation = lock.withLock {
+                defer { receiveContinuation = nil }
+                return receiveContinuation
+            }
+            continuation?.resume(returning: frame)
+        }
+
+        func fail(_ error: any Error) {
+            let continuation = lock.withLock {
+                defer { receiveContinuation = nil }
+                return receiveContinuation
+            }
+            continuation?.resume(throwing: error)
+        }
+    }
+
     final class FakeWS: WebSocketClient, @unchecked Sendable {
         private let lock = NSLock()
         private var _sent: [WebSocketFrame] = []
@@ -63,6 +178,143 @@ struct SessionClientTests {
                 rows: UInt16(rows)
             ).encoded()
             try? await send(.text(payload))
+        }
+    }
+
+    @Test("""
+@spec IOS-7.1: When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
+""")
+    func backgroundSuspensionClosesTransportAndPreservesSession() async throws {
+        let first = FakeWS()
+        let sequence = WebSocketSequence([first])
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { try sequence.next() }
+        )
+        client.start()
+        defer { client.stop() }
+        _ = try await waitForHelloClientID(first)
+        let session = client.session
+
+        client.suspend()
+
+        #expect(first.closed)
+        #expect(client.session === session)
+        #expect(client.renderPace == .reduced(interval: SessionClient.reducedRenderPaceInterval))
+    }
+
+    @Test("""
+@spec IOS-10.1: While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. When the scene enters `.background`, the application shall close terminal channels and suspend every paired host connection while keeping live `TerminalPaneView` instances mounted; when the scene becomes active and unlocked, it shall resume transport through the same `SessionClient` and `InMemoryTerminalSession` so foregrounding does not free and remount Ghostty renderers during a QuartzCore transaction.
+""")
+    func suspendAndResumePreservesMountedSessionIdentity() async throws {
+        let first = FakeWS()
+        let second = FakeWS()
+        let sequence = WebSocketSequence([first, second])
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { try sequence.next() }
+        )
+        client.start()
+        defer { client.stop() }
+        _ = try await waitForHelloClientID(first)
+        let session = client.session
+
+        #expect(!LiveSessionReadiness.shouldSuspendTransport(scene: .inactive))
+        #expect(LiveSessionReadiness.shouldSuspendTransport(scene: .background))
+        #expect(SingleSessionView.ConnectionState.suspended.presentation == .terminal)
+        client.suspend()
+        #expect(first.closed)
+        #expect(client.renderPace == .reduced(interval: SessionClient.reducedRenderPaceInterval))
+        client.resume()
+        _ = try await waitForHelloClientID(second)
+
+        #expect(client.session === session)
+        #expect(client.renderPace == .full)
+    }
+
+    @Test("a cancelled pre-background dial cannot attach after resume")
+    func staleDialIsRejectedAfterResume() async throws {
+        let first = FakeWS()
+        let second = FakeWS()
+        let factory = DelayedFirstWebSocketFactory(first: first, second: second)
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { await factory.make() }
+        )
+        client.start()
+        defer {
+            factory.releaseFirst()
+            client.stop()
+        }
+        try await waitUntil("the first dial to begin") {
+            factory.calls == 1
+        }
+
+        client.suspend()
+        client.resume()
+        _ = try await waitForHelloClientID(second)
+        factory.releaseFirst()
+        try await waitUntil("the stale dial to be rejected") {
+            first.closed
+        }
+
+        #expect(first.closed)
+        #expect(!second.closed)
+    }
+
+    @Test("a cancelled pre-background receive cannot apply state after resume")
+    func staleReceiveFrameIsRejectedAfterResume() async throws {
+        let first = DelayedReceiveWS()
+        let second = FakeWS()
+        let sequence = WebSocketSequence([first, second])
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { try sequence.next() }
+        )
+        client.start()
+        defer { client.stop() }
+        try await waitUntil("the first receive to begin") {
+            first.receiveCalls == 1
+        }
+
+        client.suspend()
+        client.resume()
+        _ = try await waitForHelloClientID(second)
+        let staleSnapshot = try DisplayOwnershipSnapshot(
+            sessionName: "s",
+            ownerClientID: DisplayClientID("stale-owner"),
+            ownerKind: .mac,
+            grid: DisplayGrid(cols: 80, rows: 24),
+            epoch: 1,
+            revision: 1
+        )
+        first.deliver(.text(WebControlEnvelope.ownership(staleSnapshot).encoded()))
+        try await expectNever("stale ownership or connection state") {
+            client.ownershipSnapshot != nil || client.connectionState != .live
+        }
+    }
+
+    @Test("a cancelled pre-background receive cannot end the resumed transport")
+    func staleReceiveEndIsRejectedAfterResume() async throws {
+        let first = DelayedReceiveWS()
+        let second = FakeWS()
+        let sequence = WebSocketSequence([first, second])
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { try sequence.next() }
+        )
+        client.start()
+        defer { client.stop() }
+        try await waitUntil("the first receive to begin") {
+            first.receiveCalls == 1
+        }
+
+        client.suspend()
+        client.resume()
+        _ = try await waitForHelloClientID(second)
+        first.fail(TerminalSessionClient.ClientError.sessionEnded(exitStatus: 0))
+        try await expectNever("stale terminal end") {
+            client.connectionState != .live || second.closed
         }
     }
 

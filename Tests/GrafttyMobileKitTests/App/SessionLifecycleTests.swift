@@ -7,9 +7,7 @@ import GrafttyProtocol
 @Suite
 struct LiveSessionReadinessTests {
 
-    @Test("""
-@spec IOS-7.1: When the application enters the background, it shall close every active authenticated terminal channel, invalidate each paired host connection, and tear down every `InMemoryTerminalSession`. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session.
-""")
+    @Test("foreground readiness requires an active unlocked scene")
     func isActiveOnlyWhenForegroundedAndUnlocked() {
         // Foreground + unlocked: dial.
         #expect(LiveSessionReadiness.isActive(scene: .active, gateUnlocked: true))
@@ -20,13 +18,11 @@ struct LiveSessionReadinessTests {
         #expect(!LiveSessionReadiness.isActive(scene: .inactive, gateUnlocked: true))
     }
 
-@Test("""
-@spec IOS-10.1: While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. Entering `.background` shall close terminal channels, unmount live `TerminalPaneView` instances, and suspend every paired host connection; the biometric gate continues to prevent authenticated dialing while locked.
-""")
-    func tearsDownOnlyOnBackground() {
-        #expect(!LiveSessionReadiness.shouldTearDown(scene: .active))
-        #expect(!LiveSessionReadiness.shouldTearDown(scene: .inactive))
-        #expect(LiveSessionReadiness.shouldTearDown(scene: .background))
+    @Test("transport suspension is scoped to the background phase")
+    func suspendsTransportOnlyOnBackground() {
+        #expect(!LiveSessionReadiness.shouldSuspendTransport(scene: .active))
+        #expect(!LiveSessionReadiness.shouldSuspendTransport(scene: .inactive))
+        #expect(LiveSessionReadiness.shouldSuspendTransport(scene: .background))
     }
 }
 
@@ -49,7 +45,7 @@ terminal to the legacy unauthenticated `/ws` transport.
 struct SessionRehydrationTests {
 
     @Test("""
-@spec IOS-7.2: When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall fetch a fresh authenticated panes-state snapshot for each paired Mac whose panes were previously active and re-dial every pane whose session name is still present, re-mounting its `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
+@spec IOS-7.2: When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall fetch a fresh authenticated panes-state snapshot for each paired Mac whose panes were previously active and re-dial every pane whose session name is still present through its preserved `SessionClient` and mounted `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
 """)
     func dialsWhenSessionStillListed() {
         let worktrees = [worktree(withSessions: ["alpha", "beta"])]

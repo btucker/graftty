@@ -110,6 +110,32 @@ struct SessionReconnectTests {
         #expect(factory.creations == 1)
     }
 
+    @Test("a terminally ended client cannot be revived by reconnect or lifecycle resume")
+    func terminallyEndedClientCannotBeRevived() async {
+        let factory = FactoryRecorder()
+        factory.nextProvider = { EndedWS() }
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { factory.make() },
+            backoffSchedule: [1]
+        )
+        defer { client.stop() }
+        client.start()
+        await waitUntil {
+            client.connectionState == .ended
+        }
+        #expect(client.connectionState == .ended)
+
+        client.forceReconnectNow()
+        await quiesce()
+        client.suspend()
+        client.resume(reclaimControlOnOwnerlessConnect: false)
+        await quiesce()
+
+        #expect(client.connectionState == .ended)
+        #expect(factory.creations == 1)
+    }
+
     @Test
     func backoffEscalatesAcrossRepeatedFailures() async throws {
         let clock = VirtualClock()
