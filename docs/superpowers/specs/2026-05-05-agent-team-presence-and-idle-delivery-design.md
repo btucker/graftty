@@ -37,7 +37,7 @@ Both runtimes (Claude, Codex) need to participate. Codex hook wiring is incomple
 
 ### 1. Codex hook completion via `CODEX_HOME` mirror
 
-The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks for every entry except `hooks.json`, which graftty owns. `config.toml` remains linked to the durable user configuration so Codex plugin, marketplace, and MCP mutations survive later mirror rebuilds.
+The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirrors the user's real `~/.codex/` via symlinks for every entry except `hooks.json` and `config.toml`, which graftty generates. Feature, plugin, marketplace, and MCP administration is routed to the durable home instead of the generated snapshot; a later managed-session launch refreshes the snapshot and symlinks any newly created plugin cache.
 
 ```
 ~/.graftty/agent-hooks/codex-home/
@@ -49,7 +49,7 @@ The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirro
 ├── skills/          -> ~/.codex/skills/          (symlink)
 ├── … (all other ~/.codex entries symlinked)
 ├── hooks.json       (graftty-owned: union merge of user's + graftty's hooks)
-└── config.toml      -> ~/.codex/config.toml      (symlink, even before the target exists)
+└── config.toml      (graftty-owned snapshot of durable user configuration)
 ```
 
 **Wrapper script:**
@@ -62,7 +62,12 @@ trap cleanup EXIT
 
 if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
   [ "${CODEX_HOME:-}" = "$GRAFTTY_HOME" ] || graftty internal sync-codex-home
-  ( exec env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" --enable hooks "$@" )
+  if is_config_administration "$@"; then
+    ( exec env CODEX_HOME="$HOME/.codex" "$real_codex" --enable hooks "$@" )
+    # Print reload guidance here only when the successful command mutated state.
+  else
+    ( exec env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" --enable hooks "$@" )
+  fi
 else
   ( exec "$real_codex" "$@" )
 fi
@@ -73,16 +78,17 @@ The subshell with `exec` preserves the lifecycle semantics (signals propagate to
 
 **`graftty internal sync-codex-home`** is fast (directory walk + symlink ops), idempotent, and runs when entering a managed Codex session. A wrapper invoked from an existing managed session inherits the same `CODEX_HOME` and skips the redundant write, which also avoids attempting an Application Support write from inside the active agent sandbox:
 
-1. For every entry in `~/.codex/`, ensure a symlink in graftty home pointing to it. Skip only `hooks.json`; always create the `config.toml` symlink even if its durable target does not exist yet.
+1. For every entry in `~/.codex/`, ensure a symlink in graftty home pointing to it. Skip `hooks.json` and `config.toml`.
 2. Build `<graftty home>/hooks.json` as the union merge of user's `~/.codex/hooks.json` (if any) and graftty's hooks for `SessionStart`, `PostToolUse`, `Stop`. Sentinel-based: graftty's entries are the ones whose handler `command` starts with the literal `graftty team hook codex`. On rebuild, strip stale graftty entries first, then append fresh ones.
-3. Prune dangling symlinks (entries the user has since deleted from `~/.codex/`), except for the intentional `config.toml` link.
+3. Snapshot durable `config.toml` into the managed home. On the first upgrade from the legacy generated config, migrate a newer legacy copy while restoring the user's durable `features.hooks` setting; if the durable file is newer, preserve the legacy bytes as a backup rather than overwriting newer configuration.
+4. Prune dangling symlinks (entries the user has since deleted from `~/.codex/`).
 
-The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override. It prints reload guidance after successful plugin, marketplace, or MCP mutations because running sessions discover their tools at startup.
+The wrapper enables Codex hooks with the launch-scoped `--enable hooks` override. It prints reload guidance after successful feature, plugin, marketplace, or MCP mutations because running sessions discover configuration and tools at startup. A sandboxed agent may still require the normal filesystem approval to mutate user-global `~/.codex` state; the wrapper does not bypass that security boundary.
 
 **Why this shape:**
 
 - Wrapper-scoped: only graftty-launched Codex sessions see graftty's hooks. Plain `codex` outside the wrapper is unaffected (no `CODEX_HOME` set).
-- Graftty does not rewrite `~/.codex/config.toml`; normal Codex configuration commands mutate that durable file through the mirror symlink.
+- Normal Codex configuration commands run against the durable home, while ordinary managed sessions consume a snapshot and Graftty-owned hook file.
 - Concurrent sessions are safe: graftty home is static between rebuilds; multiple sessions read the same files via the same symlinks.
 - Crash-safe: nothing to restore on abnormal exit.
 - User's own hooks still fire (union-merged into graftty's `hooks.json`).
@@ -261,7 +267,7 @@ Per `CLAUDE.md`'s "When removing features" workflow:
 - **TEAM-PRESENCE-1.2** — When the agent runs `graftty team register`, the application shall persist a presence record at `~/.graftty/teams/<id>/presence/<worktree>.<runtime>.json`.
 - **TEAM-PRESENCE-1.3** — When the agent wrapper script exits, the application shall remove the presence record via `graftty team unregister`.
 - **TEAM-PRESENCE-1.4** — When an agent process exits without its wrapper trap firing (e.g. SIGKILL), the application's process monitor shall clear the stale presence record on next observation.
-- **TEAM-IDLE-1.1** — When the Codex wrapper runs with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the application shall synthesize `<graftty-home>` with symlinks to the user's durable `~/.codex/` entries and a graftty-owned `hooks.json`, then launch Codex with `CODEX_HOME=<graftty-home>` and a launch-scoped hooks feature override.
+- **TEAM-IDLE-1.1** — When Graftty synthesizes a managed CODEX_HOME, the application shall union the user's Codex hooks with Graftty's current SessionStart hook and remove stale Graftty delivery hooks.
 - **TEAM-IDLE-1.2** — When the Claude wrapper runs with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the application shall exec `claude --settings '<inline JSON>'` so graftty's hooks layer additively over the user's settings.
 - **TEAM-IDLE-1.3** — When Claude's Stop hook fires, the application shall spawn an `asyncRewake` inbox watcher coalesced per session.
 - **TEAM-IDLE-1.4** — When the watcher observes a new unread message addressed to its session, it shall exit with code 2 and a stderr summary.
