@@ -188,6 +188,13 @@ For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
 when a new message arrives; for Codex, a graftty-side service sends the
 message into the active conversation through Codex's app server.
 
+The Codex shim keeps `config.toml` linked to the user's durable `~/.codex`
+configuration while maintaining Graftty's hook file in an isolated managed
+home. Plugin marketplace, plugin, and MCP changes made through the shim
+therefore survive later agent launches. Codex discovers plugin-provided tools
+when a session starts, so the shim prints a reminder to reload the agent or
+start a new session after a successful configuration mutation.
+
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
 

@@ -1852,6 +1852,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
 
+**TEAM-10.3** When Graftty synthesizes a managed CODEX_HOME, the application shall symlink `config.toml` to the user's durable Codex configuration so plugin, marketplace, and MCP mutations survive later mirror rebuilds.
+
+**TEAM-10.4** When the Codex wrapper inherits Graftty's managed CODEX_HOME, the application shall reuse the already-synchronized mirror without rewriting it from inside the active agent sandbox, and every managed Codex launch shall enable hooks with a launch-scoped override.
+
+**TEAM-10.5** When a wrapped Codex plugin, marketplace, or MCP mutation succeeds, the application shall tell the caller that running Codex sessions must be reloaded before newly installed tools are available.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.

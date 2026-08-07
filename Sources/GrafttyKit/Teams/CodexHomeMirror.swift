@@ -2,9 +2,10 @@ import Foundation
 
 /// @spec TEAM-IDLE-1.1
 /// Synthesizes a CODEX_HOME directory that mirrors the user's `~/.codex/`
-/// via symlinks, with `hooks.json` and `config.toml` overridden by graftty's
-/// versions (union-merged with user's). Idempotent - runs on every wrapper
-/// invocation via `graftty internal sync-codex-home`.
+/// via symlinks, with only `hooks.json` overridden by graftty's union-merged
+/// version. `config.toml` remains linked to the durable user configuration;
+/// the wrapper enables hooks with a launch-scoped CLI override. Idempotent -
+/// runs via `graftty internal sync-codex-home` before managed sessions.
 public struct CodexHomeMirror: Sendable {
     public static let grafttyCommandPrefix = "graftty team hook codex"
 
@@ -34,25 +35,32 @@ public struct CodexHomeMirror: Sendable {
         try fm.createDirectory(at: mirrorDirectory, withIntermediateDirectories: true)
 
         let sourceEntries: [String] = (try? fm.contentsOfDirectory(atPath: sourceDirectory.path)) ?? []
-        let preserved: Set<String> = ["hooks.json", "config.toml"]
+        let owned: Set<String> = ["hooks.json"]
+        var mirroredEntries = sourceEntries.filter { !owned.contains($0) }
+        if !mirroredEntries.contains("config.toml") {
+            // Keep a dangling link when the user has no config yet. Codex can
+            // create the durable target through it on the first config write.
+            mirroredEntries.append("config.toml")
+        }
 
-        // Pass 1: write/refresh symlinks for source entries we don't own.
-        for name in sourceEntries where !preserved.contains(name) {
+        // Pass 1: write/refresh symlinks for every durable source entry.
+        for name in mirroredEntries {
             let linkPath = mirrorDirectory.appendingPathComponent(name)
             let target = sourceDirectory.appendingPathComponent(name)
             try replaceSymlink(at: linkPath, target: target)
         }
 
-        // Pass 2: prune mirror entries that no longer exist in source (excluding our owned files).
+        // Pass 2: prune mirror entries that no longer belong to the durable
+        // source (excluding our owned hook file and the intentional dangling
+        // config link).
         let mirrorEntries: [String] = (try? fm.contentsOfDirectory(atPath: mirrorDirectory.path)) ?? []
-        let sourceSet = Set(sourceEntries)
-        for name in mirrorEntries where !preserved.contains(name) && !sourceSet.contains(name) {
+        let mirroredSet = Set(mirroredEntries)
+        for name in mirrorEntries where !owned.contains(name) && !mirroredSet.contains(name) {
             try? fm.removeItem(at: mirrorDirectory.appendingPathComponent(name))
         }
 
-        // Pass 3: write graftty-owned files.
+        // Pass 3: write graftty's only owned file.
         try writeMergedHooks()
-        try writeMergedConfig()
     }
 
     private func replaceSymlink(at link: URL, target: URL) throws {
@@ -110,86 +118,4 @@ public struct CodexHomeMirror: Sendable {
         command.hasPrefix(grafttyCommandPrefix) || command.contains(" team hook codex ")
     }
 
-    /// Read user's config.toml (if any), ensure [features].hooks = true,
-    /// preserve every other key/table, write merged file.
-    ///
-    /// Codex uses `hooks`; the legacy `codex_hooks` alias emits a deprecation
-    /// warning on every launch.
-    private func writeMergedConfig() throws {
-        let userConfigURL = sourceDirectory.appendingPathComponent("config.toml")
-        let userText = (try? String(contentsOf: userConfigURL)) ?? ""
-        let merged = TomlEditor.ensureBool(userText, table: "features", key: "hooks", value: true)
-        let outURL = mirrorDirectory.appendingPathComponent("config.toml")
-        try merged.write(to: outURL, atomically: true, encoding: .utf8)
-    }
-}
-
-/// Tiny TOML editor for the narrow case of toggling a boolean in a known table
-/// without disturbing comments or other keys.
-///
-/// **Limitations** (acceptable for our single-key feature-flag use case):
-/// - Does not handle inline tables (`features = { hooks = true }`).
-///   If a user expresses `features` as an inline table, this editor will
-///   produce invalid TOML by also appending a `[features]` section header.
-/// - Does not handle multiline strings spanning section boundaries.
-/// - Does not handle dotted keys (`features.hooks = true` at top level).
-///
-/// If your use case requires any of the above, switch to a real TOML library.
-enum TomlEditor {
-    static func ensureBool(_ text: String, table: String, key: String, value: Bool) -> String {
-        // 1. If the key is already set inside the target table, replace its value.
-        // 2. Else if the target table exists, insert the key after its header.
-        // 3. Else append a new [table] block with the key.
-        if let replaced = replaceWithinTable(text, table: table, key: key, value: value) {
-            return replaced
-        }
-        if textHasTableHeader(text, table: table) {
-            return insertAfterTableHeader(text, table: table, line: "\(key) = \(value)")
-        }
-        let trailing = text.isEmpty || text.hasSuffix("\n") ? "" : "\n"
-        let separator = text.isEmpty ? "" : "\n"
-        return text + "\(trailing)\(separator)[\(table)]\n\(key) = \(value)\n"
-    }
-
-    /// Returns nil if the key is not present inside the target table; otherwise the rewritten text.
-    private static func replaceWithinTable(_ text: String, table: String, key: String, value: Bool) -> String? {
-        let lines = text.components(separatedBy: "\n")
-        var out: [String] = []
-        var inTargetTable = false
-        var didReplace = false
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                inTargetTable = (trimmed == "[\(table)]")
-                out.append(line)
-                continue
-            }
-            if inTargetTable && (trimmed.hasPrefix("\(key) ") || trimmed.hasPrefix("\(key)=") || trimmed.hasPrefix("\(key)\t")) {
-                out.append("\(key) = \(value)")
-                didReplace = true
-                continue
-            }
-            out.append(line)
-        }
-        return didReplace ? out.joined(separator: "\n") : nil
-    }
-
-    private static func textHasTableHeader(_ text: String, table: String) -> Bool {
-        text.components(separatedBy: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "[\(table)]" }
-    }
-
-    /// Insert a line directly after the `[table]` header. Caller must have verified the table exists.
-    static func insertAfterTableHeader(_ text: String, table: String, line: String) -> String {
-        let lines = text.components(separatedBy: "\n")
-        var out: [String] = []
-        var inserted = false
-        for current in lines {
-            out.append(current)
-            if !inserted, current.trimmingCharacters(in: .whitespaces) == "[\(table)]" {
-                out.append(line)
-                inserted = true
-            }
-        }
-        return out.joined(separator: "\n")
-    }
 }

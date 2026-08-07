@@ -416,7 +416,10 @@ public struct AgentHookInstaller: Sendable {
             let codexHomeLiteral = shellLiteral(codexHomeDirectory)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
+              _graftty_codex_sync_status=0
+              if [ "${CODEX_HOME:-}" != \(codexHomeLiteral) ]; then
+                \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home || _graftty_codex_sync_status=$?
+              fi
               _graftty_codex_should_use_app_server() {
                 while [ "$#" -gt 0 ]; do
                   case "$1" in
@@ -448,15 +451,72 @@ public struct AgentHookInstaller: Sendable {
                 done
                 return 0
               }
-              if ! _graftty_codex_should_use_app_server "$@"; then
-                env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
+              _graftty_codex_configuration_changed() {
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                      shift
+                      [ "$#" -gt 0 ] && shift
+                      ;;
+                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
+                      shift
+                      ;;
+                    plugin)
+                      shift
+                      case "${1:-}" in
+                        add|remove)
+                          return 0
+                          ;;
+                        marketplace)
+                          shift
+                          case "${1:-}" in
+                            add|remove|upgrade)
+                              return 0
+                              ;;
+                          esac
+                          ;;
+                      esac
+                      return 1
+                      ;;
+                    mcp)
+                      shift
+                      case "${1:-}" in
+                        add|remove|login|logout)
+                          return 0
+                          ;;
+                      esac
+                      return 1
+                      ;;
+                    --)
+                      return 1
+                      ;;
+                    -*)
+                      shift
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                done
+                return 1
+              }
+              if [ "$_graftty_codex_sync_status" -ne 0 ]; then
+                printf '%s\\n' "graftty: could not prepare the managed Codex home; Codex was not started" >&2
+                (exit "$_graftty_codex_sync_status")
+              elif ! _graftty_codex_should_use_app_server "$@"; then
+                env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --enable hooks "$@"
+                _graftty_codex_command_status=$?
+                if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
+                  printf '%s\\n' "graftty: reload the agent or start a new session for plugin and MCP changes to take effect" >&2
+                fi
+                (exit "$_graftty_codex_command_status")
               else
               _graftty_codex_socket_dir="${TMPDIR:-/tmp}/graftty-codex-app-server"
               mkdir -p "$_graftty_codex_socket_dir"
               _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
               _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
               rm -f "$_graftty_codex_socket" "$_graftty_codex_app_server_log"
-              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
               _graftty_codex_app_server_pid=$!
               _graftty_wait_for_codex_socket() {
                 _graftty_wait_count=0
@@ -482,7 +542,7 @@ public struct AgentHookInstaller: Sendable {
                 exit 1
               fi
               \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
-              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --remote "unix://$_graftty_codex_socket" "$@"
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
               fi
             else
               "$real_binary" "$@"

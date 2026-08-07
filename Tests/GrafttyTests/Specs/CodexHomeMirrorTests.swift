@@ -2,10 +2,10 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("CodexHomeMirror — symlink farm and config merge")
+@Suite("CodexHomeMirror — symlink farm and hooks merge")
 struct CodexHomeMirrorTests {
-    @Test("Symlinks every entry in source dir except hooks.json and config.toml.")
-    func symlinkFarmExcludesOverrides() throws {
+    @Test("Symlinks every durable source entry and keeps hooks.json as the only generated override.")
+    func symlinkFarmExcludesOnlyHooksOverride() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
@@ -32,6 +32,10 @@ struct CodexHomeMirrorTests {
         let hooks = dst.appendingPathComponent("hooks.json")
         let hooksTarget = try? fm.destinationOfSymbolicLink(atPath: hooks.path)
         #expect(hooksTarget == nil)  // Not a symlink.
+
+        let config = dst.appendingPathComponent("config.toml")
+        let configTarget = try fm.destinationOfSymbolicLink(atPath: config.path)
+        #expect(configTarget == src.appendingPathComponent("config.toml").path)
     }
 
     @Test("@spec TEAM-IDLE-1.1: hooks.json is a union merge of user's existing hooks plus graftty's, identifying graftty entries by command-prefix sentinel.")
@@ -106,25 +110,37 @@ struct CodexHomeMirrorTests {
         #expect(stopCommands.isEmpty)
     }
 
-    @Test("config.toml gains [features].hooks=true while preserving other keys.")
-    func configFeatureFlagMerge() throws {
+    @Test("""
+    @spec TEAM-10.3: When Graftty synthesizes a managed CODEX_HOME, the application shall symlink `config.toml` to the user's durable Codex configuration so plugin, marketplace, and MCP mutations survive later mirror rebuilds.
+    """)
+    func configMutationsSurviveMirrorRebuilds() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
         try writeFile(src.appendingPathComponent("config.toml"), """
         model = "o3"
-
-        [features]
-        some_other_feature = true
         """)
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        let mirror = CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        )
+        try mirror.rebuild()
 
-        let merged = try String(contentsOf: dst.appendingPathComponent("config.toml"))
-        #expect(merged.contains("\nhooks = true"))
-        #expect(!merged.contains("codex_hooks"))
-        #expect(merged.contains("model = \"o3\""))
-        #expect(merged.contains("some_other_feature = true"))
+        let mirrorConfig = dst.appendingPathComponent("config.toml")
+        let handle = try FileHandle(forWritingTo: mirrorConfig)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n[mcp_servers.runpod]\nurl = \"https://mcp.getrunpod.io/\"\n".utf8))
+        try handle.close()
+
+        try mirror.rebuild()
+
+        let durable = try String(contentsOf: src.appendingPathComponent("config.toml"))
+        let rebuilt = try String(contentsOf: mirrorConfig)
+        #expect(durable.contains("[mcp_servers.runpod]"))
+        #expect(rebuilt == durable)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: mirrorConfig.path) == src.appendingPathComponent("config.toml").path)
     }
 
     @Test("Dangling symlinks (entries the user deleted) are pruned on rebuild.")
@@ -145,8 +161,8 @@ struct CodexHomeMirrorTests {
         #expect(resourceValues?.isSymbolicLink != true)
     }
 
-    @Test("config.toml is created fresh when source has none.")
-    func configCreatedWhenMissing() throws {
+    @Test("A missing durable config still receives a dangling mirror symlink for Codex to create through.")
+    func missingConfigReceivesDurableSymlink() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         // No config.toml in src.
@@ -154,10 +170,9 @@ struct CodexHomeMirrorTests {
         try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
 
         let dstConfig = dst.appendingPathComponent("config.toml")
-        let contents = try String(contentsOf: dstConfig)
-        #expect(contents.contains("[features]"))
-        #expect(contents.contains("\nhooks = true"))
-        #expect(!contents.contains("codex_hooks"))
+        let target = try FileManager.default.destinationOfSymbolicLink(atPath: dstConfig.path)
+        #expect(target == src.appendingPathComponent("config.toml").path)
+        #expect(!FileManager.default.fileExists(atPath: dstConfig.path))
     }
 
     private func makeMirrorSandbox() throws -> (URL, URL) {
