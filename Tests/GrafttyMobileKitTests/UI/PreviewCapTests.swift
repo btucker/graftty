@@ -12,6 +12,8 @@ struct PreviewPoolTests {
         var started = false
         init(sessionName: String) { self.sessionName = sessionName }
         func start() { started = true }
+        func suspend() { started = false }
+        func resume() { started = true }
         func stop() { started = false }
     }
 

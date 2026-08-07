@@ -205,9 +205,10 @@ final class TerminalContainerBox {
 }
 
 /// Fullscreen terminal view for one session. Owns the authenticated terminal
-/// channel and `InMemoryTerminalSession`; both survive transient `.inactive`
-/// phases, but are torn down on `.background` and re-dialed on `.active` once
-/// the gate is unlocked.
+/// channel and `InMemoryTerminalSession`; transient `.inactive` phases preserve
+/// both, while `.background` closes transport but keeps the mounted terminal
+/// session alive. Once `.active` and unlocked, the same client re-dials without
+/// freeing and remounting Ghostty's renderer during a QuartzCore transaction.
 struct SingleSessionView: View {
     static let sessionRole: SessionClient.Role = .fullscreen
 
@@ -397,6 +398,23 @@ struct SingleSessionView: View {
         case live
         case suspended
         case ended
+
+        var presentation: ConnectionPresentation {
+            switch self {
+            case .connecting:
+                return .loading
+            case .live, .suspended:
+                return .terminal
+            case .ended:
+                return .ended
+            }
+        }
+    }
+
+    enum ConnectionPresentation: Equatable {
+        case loading
+        case terminal
+        case ended
     }
 
     init(
@@ -452,10 +470,10 @@ struct SingleSessionView: View {
 
     private var sessionView: some View {
         Group {
-            switch connection {
-            case .connecting, .suspended:
+            switch connection.presentation {
+            case .loading:
                 loadingPlaceholder
-            case .live:
+            case .terminal:
                 GeometryReader { _ in
                     VStack(spacing: 0) {
                         GeometryReader { termGeo in
@@ -565,6 +583,16 @@ struct SingleSessionView: View {
                 let text = await coordinator?
                     .presentation(for: step.host)?
                     .ghosttyConfig
+                // `.task(id:)` cancellation is cooperative. A presentation
+                // lookup may still return after backgrounding or locking;
+                // never create/configure a Ghostty surface from that stale
+                // lifecycle task.
+                guard !Task.isCancelled,
+                      LiveSessionReadiness.isActive(
+                          scene: scenePhase,
+                          gateUnlocked: gate.isUnlocked
+                      )
+                else { return }
                 if controller == nil {
                     preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
                     controller = MobileTerminalControllerFactory.make(configText: text)
@@ -612,12 +640,12 @@ struct SingleSessionView: View {
     }
 
     private func driveConnection() async {
-        if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
+        guard !Task.isCancelled else { return }
+        if LiveSessionReadiness.shouldSuspendTransport(scene: scenePhase) {
             if client?.isOwner == true {
                 reclaimControlOnNextDial = true
             }
-            client?.stop()
-            client = nil
+            client?.suspend()
             if connection != .ended { connection = .suspended }
             // RootView's coordinator access gate tears down the negotiated
             // connection on the same `.background` transition. The
@@ -658,6 +686,8 @@ struct SingleSessionView: View {
             worktreesResult: result
         ) {
         case .ended:
+            client?.stop()
+            client = nil
             connection = .ended
         case .dial:
             await openTerminal()
@@ -668,6 +698,21 @@ struct SingleSessionView: View {
         // Guard before the dial so we do not negotiate an authenticated
         // channel that we would immediately abort.
         if Task.isCancelled || connection == .ended { return }
+        if let client {
+            guard client.connectionState != .ended else {
+                client.stop()
+                self.client = nil
+                connection = .ended
+                return
+            }
+            client.resume(
+                reclaimControlOnOwnerlessConnect: reclaimControlOnNextDial
+            )
+            connection = .live
+            reclaimControlOnNextDial = false
+            attemptAutoTakeControl()
+            return
+        }
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,

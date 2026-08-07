@@ -1496,9 +1496,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-7.x — Lifecycle
 
-**IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel, invalidate each paired host connection, and tear down every `InMemoryTerminalSession`. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session.
+**IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
 
-**IOS-7.2** When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall fetch a fresh authenticated panes-state snapshot for each paired Mac whose panes were previously active and re-dial every pane whose session name is still present, re-mounting its `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
+**IOS-7.2** When the application foregrounds and the biometric gate is satisfied (either the ≥5 min path with re-prompt per `IOS-3.2` or the within-5-min fast path), the application shall fetch a fresh authenticated panes-state snapshot for each paired Mac whose panes were previously active and re-dial every pane whose session name is still present through its preserved `SessionClient` and mounted `TerminalView`. Per `PERSIST-4.1` the application does not persist scrollback itself; whatever the zmx daemon still has is what the user sees.
 
 **IOS-7.3** When a previously active pane's session name is absent from the fresh authenticated panes-state snapshot (e.g., the worktree was stopped on the Mac while the iOS app was backgrounded), the application shall mark that pane as `sessionEnded` with a non-retryable banner and shall not open a terminal channel for it. The banner shall offer "Back to worktrees" as the only action.
 
@@ -1540,7 +1540,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-10.x
 
-**IOS-10.1** While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. Entering `.background` shall close terminal channels, unmount live `TerminalPaneView` instances, and suspend every paired host connection; the biometric gate continues to prevent authenticated dialing while locked.
+**IOS-10.1** While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. When the scene enters `.background`, the application shall close terminal channels and suspend every paired host connection while keeping live `TerminalPaneView` instances mounted; when the scene becomes active and unlocked, it shall resume transport through the same `SessionClient` and `InMemoryTerminalSession` so foregrounding does not free and remount Ghostty renderers during a QuartzCore transaction.
 
 **IOS-10.2** When `WorktreeDetailView` is active with a multi-leaf layout, the application shall create a live preview `SessionClient` for every leaf so each pane tile renders a real-time preview rather than a static title.
 

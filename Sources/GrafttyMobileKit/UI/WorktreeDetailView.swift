@@ -20,6 +20,7 @@ public struct WorktreeDetailView: View {
     @Environment(\.biometricGate) private var gate
 
     @State private var baseConfig: String?
+    @State private var baseConfigHostID: UUID?
     @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
     @State private var previews: PanePreviewClientPool<SessionClient>?
 
@@ -56,22 +57,50 @@ public struct WorktreeDetailView: View {
         }
         .navigationTitle(worktree.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: host.id) {
-            baseConfig = nil
+        .task(id: ConfigurationKey(
+            hostID: host.id,
+            isReady: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            )
+        )) {
+            guard LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            ) else { return }
+            if baseConfigHostID != host.id {
+                baseConfigHostID = host.id
+                baseConfig = nil
+            }
+            // Preserve an already-loaded config across lifecycle rekeys. A
+            // nil value means an earlier fetch was canceled before it could
+            // safely publish, so foregrounding should try again.
+            guard baseConfig == nil else { return }
             let text = await coordinator?
                 .presentation(for: host)?
                 .ghosttyConfig
+            guard !Task.isCancelled,
+                  LiveSessionReadiness.isActive(
+                      scene: scenePhase,
+                      gateUnlocked: gate.isUnlocked
+                  )
+            else { return }
             preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
             baseConfig = text ?? ""
         }
         // Re-keys on layout / scene-phase / gate transitions. Transient
-        // `.inactive` phases preserve the pool; `.background` tears it down
-        // and `.active + unlocked` rebuilds it.
+        // `.inactive` phases preserve live transport; `.background` suspends
+        // transport without releasing preview surfaces, and `.active +
+        // unlocked` resumes those same clients.
         .task(id: PoolKey(layout: worktree.layout, scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
             await driveLifecycle()
         }
         .onDisappear {
-            previews?.stopAll()
+            // A compact NavigationStack push temporarily removes this view
+            // from the window. Preserve the preview clients so returning does
+            // not manufacture four fresh Ghostty surfaces at once; the pool
+            // dies with this view when it is actually popped.
+            previews?.suspendAll()
         }
     }
 
@@ -81,12 +110,18 @@ public struct WorktreeDetailView: View {
         let gateUnlocked: Bool
     }
 
+    private struct ConfigurationKey: Hashable {
+        let hostID: UUID
+        let isReady: Bool
+    }
+
     private func driveLifecycle() async {
-        if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
-            previews?.stopAll()
+        guard !Task.isCancelled else { return }
+        if LiveSessionReadiness.shouldSuspendTransport(scene: scenePhase) {
+            previews?.suspendAll()
             // RootView's coordinator access gate tears down the negotiated
-            // connection on the same `.background` transition. The pool
-            // re-resolves a fresh connection after foregrounding.
+            // connection on the same `.background` transition. Each preserved
+            // client re-resolves a fresh connection when resumed.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -103,11 +138,8 @@ public struct WorktreeDetailView: View {
             // same per-dial provider `SessionClient.live` uses for the
             // fullscreen path. That's what keeps a background→foreground
             // cycle from reusing a stale, already-invalidated connection:
-            // `stopAll()` above clears every preview client, and when
-            // `update(layout:)` rebuilds them below, each fresh
-            // `SessionClient` asks the coordinator fresh rather than
-            // inheriting a connection captured back when the pool itself
-            // was first built.
+            // each resumed `SessionClient` asks the coordinator fresh rather
+            // than retaining the previous authenticated connection.
             previews = PanePreviewClientPool { [coordinator, host] sessionName in
                 SessionClient.live(
                     baseURL: host.baseURL,
@@ -118,6 +150,7 @@ public struct WorktreeDetailView: View {
             }
         }
         previews?.update(layout: layout)
+        previews?.resumeAll()
     }
 }
 #endif

@@ -4,6 +4,8 @@ import GrafttyProtocol
 public protocol PanePreviewClienting: AnyObject {
     var sessionName: String { get }
     func start()
+    func suspend()
+    func resume()
     func stop()
 }
 
@@ -42,8 +44,24 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
         }
         clients.removeAll()
     }
+
+    public func suspendAll() {
+        for client in clients.values {
+            client.suspend()
+        }
+    }
+
+    public func resumeAll() {
+        for client in clients.values {
+            client.resume()
+        }
+    }
 }
 
 #if canImport(UIKit)
-extension SessionClient: PanePreviewClienting {}
+extension SessionClient: PanePreviewClienting {
+    public func resume() {
+        resume(reclaimControlOnOwnerlessConnect: false)
+    }
+}
 #endif
