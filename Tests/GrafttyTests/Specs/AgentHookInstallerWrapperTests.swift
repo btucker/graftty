@@ -78,6 +78,163 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("'/usr/local/bin/graftty' team unregister --runtime codex"))
     }
 
+    @Test("""
+    @spec TEAM-10.4: When the Codex wrapper runs with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on every managed Codex launch with a launch-scoped override.
+    """)
+    func codexWrapperReusesInheritedMirrorAndEnablesHooksAtLaunch() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["--version"],
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(!run.didSync)
+        #expect(run.forwardedArgs == ["--enable", "hooks", "--version"])
+        #expect(run.forwardedCodexHome == run.managedCodexHome)
+    }
+
+    @Test("""
+    @spec TEAM-10.3: When a wrapped Codex feature, plugin, marketplace, or MCP mutation runs, the application shall execute it against the user's durable Codex home so configuration and cache changes survive managed mirror rebuilds.
+    """)
+    func codexConfigurationMutationsUseDurableHome() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "add", "runpod@runpod"],
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+    }
+
+    @Test(
+        """
+        @spec TEAM-10.5: When a wrapped Codex feature, plugin, marketplace, or MCP mutation succeeds, the application shall tell the caller that running Codex sessions must be reloaded before the configuration change is available.
+        """,
+        arguments: [
+            ["plugin", "add", "runpod@runpod"],
+            ["plugin", "remove", "runpod@runpod"],
+            ["plugin", "marketplace", "add", "https://example.com/plugins.git"],
+            ["mcp", "add", "runpod", "--url", "https://mcp.getrunpod.io/"],
+            ["--config", "model=\"gpt-5\"", "mcp", "remove", "runpod"],
+            ["plugin", "--config", "model=\"gpt-5\"", "add", "runpod@runpod"],
+            ["plugin", "marketplace", "--enable", "hooks", "upgrade", "runpod"],
+            ["mcp", "--disable=unused", "remove", "runpod"],
+            ["features", "enable", "hooks"],
+            ["features", "--config", "model=\"gpt-5\"", "disable", "unused"],
+        ]
+    )
+    func successfulCodexConfigurationMutationsPrintReloadGuidance(arguments: [String]) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: arguments,
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.standardError.localizedCaseInsensitiveContains("reload"))
+        #expect(run.standardError.localizedCaseInsensitiveContains("new session"))
+    }
+
+    @Test("Failed Codex configuration mutations do not print reload guidance.")
+    func failedCodexConfigurationMutationDoesNotPrintReloadGuidance() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "add", "missing@marketplace"],
+            inheritManagedCodexHome: true,
+            codexExitStatus: 7
+        )
+
+        #expect(run.terminationStatus == 7)
+        #expect(!run.standardError.localizedCaseInsensitiveContains("reload"))
+    }
+
+    @Test(
+        "Successful nonmutating and prompt-like Codex commands do not print reload guidance.",
+        arguments: [
+            ["plugin", "list"],
+            ["plugin", "marketplace", "list"],
+            ["mcp", "list"],
+            ["--", "plugin", "add", "is prompt text"],
+            ["--help", "plugin", "add", "runpod@runpod"],
+            ["plugin", "add", "--help"],
+            ["mcp", "add", "--help"],
+            ["features", "list"],
+            ["features", "enable", "--help"],
+        ]
+    )
+    func successfulNonmutatingCodexCommandsDoNotPrintReloadGuidance(arguments: [String]) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: arguments,
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(!run.standardError.localizedCaseInsensitiveContains("reload"))
+    }
+
+    @Test(
+        """
+        @spec TEAM-10.8: While a wrapped Codex feature, plugin, marketplace, or MCP read command runs, the application shall execute it against the durable Codex home so it observes the latest administrative state.
+        """,
+        arguments: [
+            ["plugin", "list"],
+            ["plugin", "marketplace", "list"],
+            ["mcp", "list"],
+            ["mcp", "get", "runpod"],
+            ["features", "list"],
+        ]
+    )
+    func codexConfigurationAdministrationUsesDurableHome(arguments: [String]) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: arguments,
+            inheritManagedCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+    }
+
+    @Test("Disabling agent hooks does not redirect Codex configuration changes into the managed snapshot.")
+    func disabledHooksStillUseDurableHomeForConfigurationMutations() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "add", "runpod@runpod"],
+            inheritManagedCodexHome: true,
+            hooksDisabled: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(!run.didSync)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(!run.forwardedArgs.starts(with: ["--enable", "hooks"]))
+    }
+
+    @Test("Disabling hooks preserves an explicit custom CODEX_HOME for Codex administration.")
+    func disabledHooksPreserveCustomCodexHomeForAdministration() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: false,
+            hooksDisabled: true,
+            inheritCustomCodexHome: true
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(!run.didSync)
+        #expect(run.forwardedCodexHome.hasSuffix("/custom-codex-home"))
+        #expect(run.forwardedCodexHome != run.durableCodexHome)
+    }
+
+    @Test("A failed mirror sync warns but still launches Codex against the durable home.")
+    func failedCodexMirrorSyncFallsBackToDurableHome() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["--version"],
+            inheritManagedCodexHome: false,
+            syncExitStatus: 13
+        )
+
+        #expect(run.terminationStatus == 0)
+        #expect(run.didSync)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.standardError.contains("starting without Graftty's managed hook configuration"))
+    }
+
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
         let script = AgentHookInstaller.wrapperScript(
@@ -98,14 +255,14 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains(#"-c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)"#))
         #expect(script.contains(#"app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)"#))
         #expect(script.contains(#"if ! _graftty_codex_should_use_app_server "$@"; then"#))
-        #expect(script.contains(#"env CODEX_HOME='/Users/x/agent-hooks/codex-home' "$real_binary" "$@""#))
-        #expect(script.contains(#"env CODEX_HOME='/Users/x/agent-hooks/codex-home' "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &"#))
+        #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks "$@""#))
+        #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &"#))
         #expect(script.contains(#"_graftty_codex_app_server_pid=$!"#))
         #expect(script.contains(#"_graftty_wait_for_codex_socket() {"#))
         #expect(script.contains(#"[ -S "$_graftty_codex_socket" ]"#))
         #expect(script.contains(#"kill -0 "$_graftty_codex_app_server_pid""#))
         #expect(script.contains(#"team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid""#))
-        #expect(script.contains(#"env CODEX_HOME='/Users/x/agent-hooks/codex-home' "$real_binary" --remote "unix://$_graftty_codex_socket" "$@""#))
+        #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@""#))
         #expect(script.contains(#"team codex-app-server unregister --socket "$_graftty_codex_socket" --app-server-pid "$_graftty_codex_app_server_pid""#))
         #expect(script.contains(#"kill "$_graftty_codex_app_server_pid""#))
         #expect(script.contains("_graftty_codex_shutdown_wait_count=0"))
@@ -542,9 +699,141 @@ struct AgentHookInstallerWrapperTests {
         return (process.terminationStatus, mode, forwardedArgs)
     }
 
+    private func runCodexWrapperCommand(
+        arguments: [String],
+        inheritManagedCodexHome: Bool,
+        codexExitStatus: Int32 = 0,
+        syncExitStatus: Int32 = 0,
+        hooksDisabled: Bool = false,
+        inheritCustomCodexHome: Bool = false
+    ) throws -> (
+        terminationStatus: Int32,
+        forwardedArgs: [String],
+        forwardedCodexHome: String,
+        managedCodexHome: String,
+        durableCodexHome: String,
+        standardError: String,
+        didSync: Bool
+    ) {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        let codexHome = root.appendingPathComponent("codex-home", isDirectory: true)
+        let codexSource = root.appendingPathComponent("durable-codex-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexSource, withIntermediateDirectories: true)
+
+        let syncMarker = root.appendingPathComponent("did-sync")
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            if [ "$1" = "internal" ] && [ "$2" = "sync-codex-home" ]; then
+              printf 'sync\\n' > "$GRAFTTY_TEST_SYNC_MARKER"
+              exit "$GRAFTTY_TEST_SYNC_EXIT_STATUS"
+            fi
+            exit 0
+            """,
+            to: fakeGraftty
+        )
+
+        let argsFile = root.appendingPathComponent("args")
+        let codexHomeFile = root.appendingPathComponent("forwarded-codex-home")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            printf '%s\\n' "${CODEX_HOME:-}" > "$GRAFTTY_TEST_CODEX_HOME_FILE"
+            if [ "$1" = "--enable" ] && [ "$2" = "hooks" ] && [ "$3" = "app-server" ]; then
+              shift 3
+              while [ "$#" -gt 0 ]; do
+                if [ "$1" = "--listen" ]; then
+                  shift
+                  socket="${1#unix://}"
+                  break
+                fi
+                shift
+              done
+              nc -lU "$socket" >/dev/null 2>&1 &
+              nc_pid=$!
+              trap 'kill "$nc_pid" 2>/dev/null || true; rm -f "$socket"; exit 0' TERM INT
+              wait "$nc_pid"
+              exit $?
+            fi
+            printf '%s\\n' "$@" > "$GRAFTTY_TEST_ARGS_FILE"
+            exit "$GRAFTTY_TEST_CODEX_EXIT_STATUS"
+            """,
+            to: realDirectory.appendingPathComponent("codex")
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: codexHome.path,
+                codexSourceDirectory: codexSource.path
+            ),
+            to: wrapper
+        )
+
+        let process = Process()
+        process.executableURL = wrapper
+        process.arguments = arguments
+        var environment = [
+            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
+            "GRAFTTY_TEST_CODEX_HOME_FILE": codexHomeFile.path,
+            "GRAFTTY_TEST_SYNC_MARKER": syncMarker.path,
+            "GRAFTTY_TEST_SYNC_EXIT_STATUS": String(syncExitStatus),
+            "GRAFTTY_TEST_CODEX_EXIT_STATUS": String(codexExitStatus),
+        ]
+        if inheritManagedCodexHome {
+            environment["CODEX_HOME"] = codexHome.path
+        } else if inheritCustomCodexHome {
+            environment["CODEX_HOME"] = root.appendingPathComponent("custom-codex-home").path
+        }
+        if hooksDisabled {
+            environment["GRAFTTY_DISABLE_AGENT_HOOKS"] = "1"
+        }
+        process.environment = environment
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        var forwardedArgs = try String(contentsOf: argsFile, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        if forwardedArgs.last == "" {
+            forwardedArgs.removeLast()
+        }
+        let standardError = String(
+            data: stderr.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        return (
+            process.terminationStatus,
+            forwardedArgs,
+            try String(contentsOf: codexHomeFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            codexHome.path,
+            codexSource.path,
+            standardError,
+            FileManager.default.fileExists(atPath: syncMarker.path)
+        )
+    }
+
     private func fakeCodexScript(remoteBody: String) -> String {
         """
         #!/bin/sh
+        if [ "$1" = "--enable" ] && [ "$2" = "hooks" ]; then
+          shift 2
+        fi
         if [ "$1" = "app-server" ]; then
           shift
           while [ "$#" -gt 0 ]; do

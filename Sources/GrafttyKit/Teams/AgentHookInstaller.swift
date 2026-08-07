@@ -337,7 +337,8 @@ public struct AgentHookInstaller: Sendable {
         wrapperDirectory: String,
         realCommandName: String,
         grafttyCLIPath: String,
-        codexHomeDirectory: String
+        codexHomeDirectory: String,
+        codexSourceDirectory: String = CodexHomeMirror.defaultSourceDirectory().path
     ) -> String {
         let resolveBlock = realBinaryResolutionShell(
             wrapperDirectory: wrapperDirectory,
@@ -414,9 +415,10 @@ public struct AgentHookInstaller: Sendable {
             """
         case .codex:
             let codexHomeLiteral = shellLiteral(codexHomeDirectory)
+            let codexSourceLiteral = shellLiteral(codexSourceDirectory)
             runtimeBlock = """
-            if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
+            _graftty_codex_sync_status=0
+            _graftty_codex_runtime_home=\(codexHomeLiteral)
               _graftty_codex_should_use_app_server() {
                 while [ "$#" -gt 0 ]; do
                   case "$1" in
@@ -448,15 +450,187 @@ public struct AgentHookInstaller: Sendable {
                 done
                 return 0
               }
-              if ! _graftty_codex_should_use_app_server "$@"; then
-                env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
+              _graftty_codex_requests_help() {
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    --)
+                      return 1
+                      ;;
+                    --help|-h|--version|-V)
+                      return 0
+                      ;;
+                  esac
+                  shift
+                done
+                return 1
+              }
+              _graftty_codex_uses_durable_home() {
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    --help|-h|--version|-V|--)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                      shift
+                      [ "$#" -gt 0 ] && shift
+                      ;;
+                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
+                      shift
+                      ;;
+                    plugin|mcp|features)
+                      return 0
+                      ;;
+                    -*)
+                      shift
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                done
+                return 1
+              }
+              _graftty_codex_configuration_changed() {
+                if _graftty_codex_requests_help "$@"; then
+                  return 1
+                fi
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                      shift
+                      [ "$#" -gt 0 ] && shift
+                      ;;
+                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
+                      shift
+                      ;;
+                    plugin)
+                      shift
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          -c|--config|--enable|--disable)
+                            shift
+                            [ "$#" -gt 0 ] && shift
+                            ;;
+                          --config=*|--enable=*|--disable=*)
+                            shift
+                            ;;
+                          *)
+                            break
+                            ;;
+                        esac
+                      done
+                      case "${1:-}" in
+                        add|remove)
+                          return 0
+                          ;;
+                        marketplace)
+                          shift
+                          while [ "$#" -gt 0 ]; do
+                            case "$1" in
+                              -c|--config|--enable|--disable)
+                                shift
+                                [ "$#" -gt 0 ] && shift
+                                ;;
+                              --config=*|--enable=*|--disable=*)
+                                shift
+                                ;;
+                              *)
+                                break
+                                ;;
+                            esac
+                          done
+                          case "${1:-}" in
+                            add|remove|upgrade)
+                              return 0
+                              ;;
+                          esac
+                          ;;
+                      esac
+                      return 1
+                      ;;
+                    mcp)
+                      shift
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          -c|--config|--enable|--disable)
+                            shift
+                            [ "$#" -gt 0 ] && shift
+                            ;;
+                          --config=*|--enable=*|--disable=*)
+                            shift
+                            ;;
+                          *)
+                            break
+                            ;;
+                        esac
+                      done
+                      case "${1:-}" in
+                        add|remove|login|logout)
+                          return 0
+                          ;;
+                      esac
+                      return 1
+                      ;;
+                    features)
+                      shift
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          -c|--config|--enable|--disable)
+                            shift
+                            [ "$#" -gt 0 ] && shift
+                            ;;
+                          --config=*|--enable=*|--disable=*)
+                            shift
+                            ;;
+                          *)
+                            break
+                            ;;
+                        esac
+                      done
+                      case "${1:-}" in
+                        enable|disable)
+                          return 0
+                          ;;
+                      esac
+                      return 1
+                      ;;
+                    --)
+                      return 1
+                      ;;
+                    -*)
+                      shift
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                done
+                return 1
+              }
+              if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
+              if [ "${CODEX_HOME:-}" != \(codexHomeLiteral) ]; then
+                \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home || _graftty_codex_sync_status=$?
+              fi
+              if [ "$_graftty_codex_sync_status" -ne 0 ]; then
+                _graftty_codex_runtime_home=\(codexSourceLiteral)
+                printf '%s\\n' "graftty: could not prepare the managed Codex home; starting without Graftty's managed hook configuration" >&2
+              fi
+              if _graftty_codex_uses_durable_home "$@"; then
+                env CODEX_HOME=\(codexSourceLiteral) "$real_binary" --enable hooks "$@"
+                _graftty_codex_command_status=$?
+                if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
+                  printf '%s\\n' "graftty: reload the agent or start a new session for Codex configuration changes to take effect" >&2
+                fi
+                (exit "$_graftty_codex_command_status")
+              elif ! _graftty_codex_should_use_app_server "$@"; then
+                env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks "$@"
               else
               _graftty_codex_socket_dir="${TMPDIR:-/tmp}/graftty-codex-app-server"
               mkdir -p "$_graftty_codex_socket_dir"
               _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
               _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
               rm -f "$_graftty_codex_socket" "$_graftty_codex_app_server_log"
-              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
+              env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
               _graftty_codex_app_server_pid=$!
               _graftty_wait_for_codex_socket() {
                 _graftty_wait_count=0
@@ -482,10 +656,23 @@ public struct AgentHookInstaller: Sendable {
                 exit 1
               fi
               \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
-              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --remote "unix://$_graftty_codex_socket" "$@"
+              env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
               fi
             else
-              "$real_binary" "$@"
+              if _graftty_codex_uses_durable_home "$@"; then
+                _graftty_codex_admin_home="${CODEX_HOME:-\(codexSourceLiteral)}"
+                if [ "$_graftty_codex_admin_home" = \(codexHomeLiteral) ]; then
+                  _graftty_codex_admin_home=\(codexSourceLiteral)
+                fi
+                env CODEX_HOME="$_graftty_codex_admin_home" "$real_binary" "$@"
+                _graftty_codex_command_status=$?
+                if [ "$_graftty_codex_command_status" -eq 0 ] && _graftty_codex_configuration_changed "$@"; then
+                  printf '%s\\n' "graftty: reload the agent or start a new session for Codex configuration changes to take effect" >&2
+                fi
+                (exit "$_graftty_codex_command_status")
+              else
+                "$real_binary" "$@"
+              fi
             fi
             """
         }

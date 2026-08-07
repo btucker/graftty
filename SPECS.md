@@ -1852,6 +1852,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
 
+**TEAM-10.3** When a wrapped Codex feature, plugin, marketplace, or MCP mutation runs, the application shall execute it against the user's durable Codex home so configuration and cache changes survive managed mirror rebuilds.
+
+**TEAM-10.4** When the Codex wrapper runs with agent hooks enabled, the application shall reuse an inherited managed CODEX_HOME without rewriting it from inside the active agent sandbox and shall enable hooks on every managed Codex launch with a launch-scoped override.
+
+**TEAM-10.5** When a wrapped Codex feature, plugin, marketplace, or MCP mutation succeeds, the application shall tell the caller that running Codex sessions must be reloaded before the configuration change is available.
+
+**TEAM-10.6** When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall migrate it while restoring the user's durable hooks setting before replacing it with a managed snapshot.
+
+**TEAM-10.7** If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve the legacy bytes in the durable home as a recovery backup.
+
+**TEAM-10.8** While a wrapped Codex feature, plugin, marketplace, or MCP read command runs, the application shall execute it against the durable Codex home so it observes the latest administrative state.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.

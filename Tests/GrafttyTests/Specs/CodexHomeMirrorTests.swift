@@ -2,10 +2,10 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("CodexHomeMirror — symlink farm and config merge")
+@Suite("CodexHomeMirror — symlink farm and hooks merge")
 struct CodexHomeMirrorTests {
-    @Test("Symlinks every entry in source dir except hooks.json and config.toml.")
-    func symlinkFarmExcludesOverrides() throws {
+    @Test("Symlinks durable source entries while generating managed hooks and config snapshots.")
+    func symlinkFarmExcludesGeneratedFiles() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
@@ -28,13 +28,17 @@ struct CodexHomeMirrorTests {
         let sessionsTarget = try? fm.destinationOfSymbolicLink(atPath: sessionsLink.path)
         #expect(sessionsTarget?.hasSuffix("sessions") == true)
 
-        // Real files (not symlinks) for overrides.
+        // Real files (not symlinks) for generated files.
         let hooks = dst.appendingPathComponent("hooks.json")
         let hooksTarget = try? fm.destinationOfSymbolicLink(atPath: hooks.path)
         #expect(hooksTarget == nil)  // Not a symlink.
+
+        let config = dst.appendingPathComponent("config.toml")
+        let configTarget = try? fm.destinationOfSymbolicLink(atPath: config.path)
+        #expect(configTarget == nil)
     }
 
-    @Test("@spec TEAM-IDLE-1.1: hooks.json is a union merge of user's existing hooks plus graftty's, identifying graftty entries by command-prefix sentinel.")
+    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall union the user's Codex hooks with Graftty's current SessionStart hook and remove stale Graftty delivery hooks.")
     func hooksUnionMerge() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -106,25 +110,36 @@ struct CodexHomeMirrorTests {
         #expect(stopCommands.isEmpty)
     }
 
-    @Test("config.toml gains [features].hooks=true while preserving other keys.")
-    func configFeatureFlagMerge() throws {
+    @Test("Durable Codex configuration changes appear in the next managed snapshot.")
+    func durableConfigMutationsAppearInRebuiltMirror() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
         try writeFile(src.appendingPathComponent("config.toml"), """
         model = "o3"
-
-        [features]
-        some_other_feature = true
         """)
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        let mirror = CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        )
+        try mirror.rebuild()
 
-        let merged = try String(contentsOf: dst.appendingPathComponent("config.toml"))
-        #expect(merged.contains("\nhooks = true"))
-        #expect(!merged.contains("codex_hooks"))
-        #expect(merged.contains("model = \"o3\""))
-        #expect(merged.contains("some_other_feature = true"))
+        let durableConfig = src.appendingPathComponent("config.toml")
+        let handle = try FileHandle(forWritingTo: durableConfig)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n[mcp_servers.runpod]\nurl = \"https://mcp.getrunpod.io/\"\n".utf8))
+        try handle.close()
+
+        try mirror.rebuild()
+
+        let mirrorConfig = dst.appendingPathComponent("config.toml")
+        let durable = try String(contentsOf: durableConfig)
+        let rebuilt = try String(contentsOf: mirrorConfig)
+        #expect(durable.contains("[mcp_servers.runpod]"))
+        #expect(rebuilt == durable)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: mirrorConfig.path)) == nil)
     }
 
     @Test("Dangling symlinks (entries the user deleted) are pruned on rebuild.")
@@ -145,8 +160,8 @@ struct CodexHomeMirrorTests {
         #expect(resourceValues?.isSymbolicLink != true)
     }
 
-    @Test("config.toml is created fresh when source has none.")
-    func configCreatedWhenMissing() throws {
+    @Test("A missing durable config produces an empty managed snapshot.")
+    func missingConfigProducesEmptySnapshot() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         // No config.toml in src.
@@ -154,10 +169,100 @@ struct CodexHomeMirrorTests {
         try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
 
         let dstConfig = dst.appendingPathComponent("config.toml")
-        let contents = try String(contentsOf: dstConfig)
-        #expect(contents.contains("[features]"))
-        #expect(contents.contains("\nhooks = true"))
-        #expect(!contents.contains("codex_hooks"))
+        #expect(try Data(contentsOf: dstConfig).isEmpty)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dstConfig.path)) == nil)
+    }
+
+    @Test("Plugin cache created in the durable home after an initial rebuild is mirrored on the next rebuild.")
+    func durablePluginCacheCreatedLaterSurvivesRebuild() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty")
+        try mirror.rebuild()
+
+        let durableCache = src.appendingPathComponent("plugins/cache/runpod", isDirectory: true)
+        try FileManager.default.createDirectory(at: durableCache, withIntermediateDirectories: true)
+        try writeFile(durableCache.appendingPathComponent("plugin.json"), "{}")
+        try mirror.rebuild()
+
+        let pluginsLink = dst.appendingPathComponent("plugins")
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: pluginsLink.path) == src.appendingPathComponent("plugins").path)
+        #expect(FileManager.default.fileExists(atPath: pluginsLink.appendingPathComponent("cache/runpod/plugin.json").path))
+    }
+
+    @Test("""
+    @spec TEAM-10.6: When Graftty upgrades a legacy managed Codex config that is newer than the durable config, the application shall migrate it while restoring the user's durable hooks setting before replacing it with a managed snapshot.
+    """)
+    func newerLegacyConfigIsMigratedBeforeRefresh() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durable = src.appendingPathComponent("config.toml")
+        try writeFile(durable, """
+        model = "o3"
+        [features]
+        hooks = false
+        durable_only = true
+        [desktop]
+        notifications = true
+        """)
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        let legacy = dst.appendingPathComponent("config.toml")
+        try writeFile(legacy, """
+        model = "o3"
+        [features]
+        hooks = true
+        experimental_mode = true
+        [plugins."runpod@runpod"]
+        enabled = true
+        """)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(2)],
+            ofItemAtPath: legacy.path
+        )
+
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+
+        let durableText = try String(contentsOf: durable)
+        #expect(durableText.contains("[plugins.\"runpod@runpod\"]"))
+        #expect(durableText.contains("hooks = false"))
+        #expect(!durableText.contains("hooks = true"))
+        #expect(durableText.contains("durable_only = true"))
+        #expect(durableText.contains("experimental_mode = true"))
+        #expect(durableText.contains("[desktop]"))
+        #expect(durableText.contains("notifications = true"))
+        #expect(try String(contentsOf: dst.appendingPathComponent("config.toml")) == durableText)
+    }
+
+    @Test("""
+    @spec TEAM-10.7: If the durable Codex config is newer than a divergent legacy managed config during upgrade, then the application shall keep the durable config authoritative and preserve the legacy bytes in the durable home as a recovery backup.
+    """)
+    func newerDurableConfigPreservesLegacyRecoveryBackup() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durable = src.appendingPathComponent("config.toml")
+        try writeFile(durable, "model = \"gpt-5\"\n")
+        try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+        let legacy = dst.appendingPathComponent("config.toml")
+        try writeFile(legacy, """
+        model = "o3"
+        [features]
+        hooks = true
+        [mcp_servers.runpod]
+        url = "https://mcp.getrunpod.io/"
+        """)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-2)],
+            ofItemAtPath: legacy.path
+        )
+
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+
+        #expect(try String(contentsOf: durable) == "model = \"gpt-5\"\n")
+        let backup = src.appendingPathComponent("config.toml.graftty-legacy")
+        let backupText = try String(contentsOf: backup)
+        #expect(backupText.contains("[mcp_servers.runpod]"))
+        #expect(!backupText.contains("hooks = true"))
+        #expect(try String(contentsOf: dst.appendingPathComponent("config.toml")) == "model = \"gpt-5\"\n")
     }
 
     private func makeMirrorSandbox() throws -> (URL, URL) {

@@ -188,6 +188,16 @@ For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
 when a new message arrives; for Codex, a graftty-side service sends the
 message into the active conversation through Codex's app server.
 
+The Codex shim routes feature, plugin marketplace, plugin, and MCP
+administration to the user's durable `~/.codex` home while maintaining
+Graftty's hooks and a read-only-at-runtime config snapshot in an isolated
+managed home. Those changes therefore survive later agent launches without
+requiring an agent to rewrite Graftty's generated files. A sandboxed agent may
+request normal filesystem approval before changing this user-global state.
+Codex discovers plugin-provided tools when a session starts, so the shim prints
+a reminder to reload the agent or start a new session after a successful
+configuration mutation.
+
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
 
