@@ -2078,6 +2078,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.4** While a data channel's SSH transport has not yet attached, the application shall buffer inbound data-channel bytes losslessly from the moment the channel is announced and deliver them to the transport in arrival order ahead of live traffic.
 
+**REMOTE-11.5** While Graftty uses non-trickle SDP signaling, the application shall configure both peers to gather ICE candidates once so offer and answer generation can finish when the initial candidates have been collected.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.

@@ -853,7 +853,12 @@ public actor WebRTCHostAgent {
         config.candidateNetworkPolicy = .all
         config.maxIPv6Networks = .max
         config.sdpSemantics = .unifiedPlan
-        config.continualGatheringPolicy = .gatherContinually
+        // Signaling is non-trickle: the answer's initial SDP is the host's
+        // only opportunity to send candidates. Continual gathering keeps
+        // `iceGatheringState` from completing, so acceptOffer() otherwise
+        // pays its five-second fallback. Network-interface changes after
+        // negotiation require a fresh connection under this policy.
+        config.continualGatheringPolicy = .gatherOnce
         return config
     }
 

@@ -683,7 +683,12 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         config.candidateNetworkPolicy = .all
         config.maxIPv6Networks = .max
         config.sdpSemantics = .unifiedPlan
-        config.continualGatheringPolicy = .gatherContinually
+        // Signaling is non-trickle: the only candidates the host receives
+        // are bundled into this initial SDP. Continual gathering keeps
+        // `iceGatheringState` from completing, so createOffer() otherwise
+        // pays its five-second fallback. Network-interface changes after
+        // negotiation require a fresh connection under this policy.
+        config.continualGatheringPolicy = .gatherOnce
         return config
     }
 
