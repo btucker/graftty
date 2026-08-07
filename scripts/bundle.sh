@@ -170,6 +170,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>CE9gods92d0ACzxxj85iTEaMxeF/kdJNjKRBdoLaOFY=</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Graftty allows terminal programs you run to access the microphone for features such as voice dictation.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Graftty uses the local network to discover and connect to your other Macs.</string>
     <key>NSBonjourServices</key>
@@ -228,6 +230,22 @@ codesign "${SIGN_OPTS[@]}" "$APP/Contents/Helpers/graftty"
 codesign "${SIGN_OPTS[@]}" --entitlements "$ENTITLEMENTS_FILE" "$APP/Contents/MacOS/Graftty"
 codesign "${SIGN_OPTS[@]}" --entitlements "$ENTITLEMENTS_FILE" "$APP"
 codesign --verify --strict "$APP"
+
+echo "→ verify embedded entitlements"
+EMBEDDED_ENTITLEMENTS_FILE="$(mktemp -t graftty-entitlements)"
+trap 'rm -f "$EMBEDDED_ENTITLEMENTS_FILE"' EXIT
+codesign --display --entitlements "$EMBEDDED_ENTITLEMENTS_FILE" --xml "$APP/Contents/MacOS/Graftty" 2>/dev/null
+AUDIO_INPUT_ENTITLEMENT="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :com.apple.security.device.audio-input' \
+    "$EMBEDDED_ENTITLEMENTS_FILE" 2>/dev/null || true
+)"
+if [[ "$AUDIO_INPUT_ENTITLEMENT" != "true" ]]; then
+  echo "Graftty executable is missing the audio-input entitlement after codesigning" >&2
+  exit 1
+fi
+rm -f "$EMBEDDED_ENTITLEMENTS_FILE"
+trap - EXIT
 
 echo "→ verify dynamic framework linkage"
 test -e "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
