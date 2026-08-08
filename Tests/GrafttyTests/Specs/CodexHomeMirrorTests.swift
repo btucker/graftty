@@ -214,8 +214,58 @@ struct CodexHomeMirrorTests {
         #expect(FileManager.default.fileExists(atPath: pluginsLink.appendingPathComponent("cache/runpod/plugin.json").path))
     }
 
+    @Test(
+        """
+        @spec TEAM-10.13: When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
+        """,
+        arguments: [false, true]
+    )
+    func appServerControlRemainsMirrorLocalDirectory(startsWithLegacySymlink: Bool) throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let durableControl = src.appendingPathComponent("app-server-control", isDirectory: true)
+        let managedControl = dst.appendingPathComponent("app-server-control", isDirectory: true)
+        try FileManager.default.createDirectory(at: durableControl, withIntermediateDirectories: true)
+        try writeFile(durableControl.appendingPathComponent("app-server-startup.lock"), "")
+        if startsWithLegacySymlink {
+            try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: managedControl,
+                withDestinationURL: durableControl
+            )
+        }
+
+        let mirror = CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty"
+        )
+        try mirror.rebuild()
+
+        let values = try managedControl.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        #expect(values.isDirectory == true)
+        #expect(values.isSymbolicLink != true)
+        #expect(!FileManager.default.fileExists(
+            atPath: managedControl.appendingPathComponent("app-server-startup.lock").path
+        ))
+
+        let managedRuntimeState = managedControl.appendingPathComponent("managed-runtime-state")
+        try writeFile(managedRuntimeState, "active")
+        try mirror.rebuild()
+
+        let rebuiltValues = try managedControl.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )
+        #expect(rebuiltValues.isDirectory == true)
+        #expect(rebuiltValues.isSymbolicLink != true)
+        #expect(try String(contentsOf: managedRuntimeState) == "active")
+        #expect(!FileManager.default.fileExists(
+            atPath: durableControl.appendingPathComponent("managed-runtime-state").path
+        ))
+    }
+
     @Test("""
-    @spec TEAM-10.9: When Graftty rebuilds a managed Codex home, the application shall migrate real non-generated managed entries into the durable Codex home before replacing them with symlinks or pruning stale entries.
+    @spec TEAM-10.9: When Graftty rebuilds a managed Codex home, the application shall migrate real managed entries other than Graftty-generated files and mirror-local runtime directories into the durable Codex home before replacing them with symlinks or pruning stale entries.
     """)
     func runtimePluginCacheIsMigratedBeforePruning() throws {
         let (src, dst) = try makeMirrorSandbox()
