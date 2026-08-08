@@ -1864,13 +1864,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.8** While a wrapped Codex feature, plugin, marketplace, or MCP read command runs, the application shall execute it against the durable Codex home so it observes the latest administrative state.
 
-**TEAM-10.9** When Graftty rebuilds a managed Codex home, the application shall migrate real non-generated managed entries into the durable Codex home before replacing them with symlinks or pruning stale entries.
+**TEAM-10.9** When Graftty rebuilds a managed Codex home, the application shall migrate real managed entries other than Graftty-generated files and mirror-local runtime directories into the durable Codex home before replacing them with symlinks or pruning stale entries.
 
 **TEAM-10.10** When a wrapped Codex login, login status, or logout command runs, the application shall execute it against the durable Codex home so authentication state survives managed mirror rebuilds.
 
 **TEAM-10.11** While a managed Codex home rebuild and durable administration can access the same coordination lock, the application shall serialize them so one finishes before the other begins.
 
 **TEAM-10.12** If the filesystem rejects an otherwise-readable managed Codex home lock, then the application shall warn and continue durable administration without coordination rather than suppress the command.
+
+**TEAM-10.13** When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
 
 ### TEAM-11.x — Idle Delivery
 
