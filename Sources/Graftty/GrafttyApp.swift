@@ -9,6 +9,23 @@ import GrafttyProtocol
 import GrafttyRemoteClient
 import WebRTC
 
+/// Keeps handler installation and listener publication in one ordered call.
+/// The listener closure must remain last because `SocketServer.start()`
+/// resumes its accept source before returning.
+enum SocketServerStartup {
+    static func start(
+        server: SocketServer,
+        onMessage: @escaping (NotificationMessage) -> Void,
+        onAsyncRequest: @escaping @MainActor @Sendable
+            (NotificationMessage) async -> ResponseMessage?,
+        startListener: (SocketServer) throws -> Void = { try $0.start() }
+    ) rethrows {
+        server.onMessage = onMessage
+        server.onAsyncRequest = onAsyncRequest
+        try startListener(server)
+    }
+}
+
 func defaultBranchStatus(
     for repo: RepoEntry,
     stats: WorktreeStats?
@@ -1471,20 +1488,6 @@ struct GrafttyApp: App {
             }
         }
 
-        do {
-            try services.socketServer.start()
-        } catch let error as SocketServerError {
-            // Surface the failure in Console.app AND present a one-time
-            // banner so the user sees it immediately rather than learning
-            // about it later via a "not listening" CLI error (ATTN-3.4).
-            NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
-            DispatchQueue.main.async {
-                NotifySocketBanner.presentIfNeeded(error: error)
-            }
-        } catch {
-            NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
-        }
-
         // Wire the AppState provider for the team PR-merged dispatch hook
         // (TEAM-5.4). @State is only accessible once SwiftUI's body has
         // run, so we capture a Binding here rather than in
@@ -1495,27 +1498,46 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
-        services.socketServer.onMessage = { message in
-            MainActor.assumeIsolated {
-                Self.handleNotification(message, appState: binding, terminalManager: tm)
-            }
-        }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
-        services.socketServer.onAsyncRequest = { message in
-            await Self.handlePaneRequest(
-                message,
-                appState: binding,
-                terminalManager: tm,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher,
-                worktreeMonitor: services.worktreeMonitor,
-                statsStore: services.statsStore,
-                prStatusStore: services.prStatusStore,
-                worktreeCreations: services.cliWorktreeCreations,
-                worktreeRemovals: services.cliWorktreeRemovals,
-                remoteBranchStore: services.remoteBranchStore
+        do {
+            try SocketServerStartup.start(
+                server: services.socketServer,
+                onMessage: { message in
+                    MainActor.assumeIsolated {
+                        Self.handleNotification(
+                            message,
+                            appState: binding,
+                            terminalManager: tm
+                        )
+                    }
+                },
+                onAsyncRequest: { message in
+                    await Self.handlePaneRequest(
+                        message,
+                        appState: binding,
+                        terminalManager: tm,
+                        teamInbox: teamInbox,
+                        teamEventDispatcher: teamEventDispatcher,
+                        worktreeMonitor: services.worktreeMonitor,
+                        statsStore: services.statsStore,
+                        prStatusStore: services.prStatusStore,
+                        worktreeCreations: services.cliWorktreeCreations,
+                        worktreeRemovals: services.cliWorktreeRemovals,
+                        remoteBranchStore: services.remoteBranchStore
+                    )
+                }
             )
+        } catch let error as SocketServerError {
+            // Surface the failure in Console.app AND present a one-time
+            // banner so the user sees it immediately rather than learning
+            // about it later via a "not listening" CLI error (ATTN-3.4).
+            NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
+            DispatchQueue.main.async {
+                NotifySocketBanner.presentIfNeeded(error: error)
+            }
+        } catch {
+            NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
         let remoteBranchStore = services.remoteBranchStore

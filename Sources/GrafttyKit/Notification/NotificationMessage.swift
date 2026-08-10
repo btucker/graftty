@@ -101,6 +101,18 @@ public enum NotificationMessage: Sendable, Equatable {
     case worktreeRemoveStatus(operationID: String)
 }
 
+public extension NotificationMessage {
+    /// @spec ATTN-2.20: When the application receives a one-way `notify` or `clear` socket message, it shall dispatch the notification without registering or waiting on a response handler, so notification bursts cannot consume request-client capacity.
+    var expectsResponse: Bool {
+        switch self {
+        case .notify, .clear:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
@@ -595,12 +607,19 @@ public struct TeamListDocument: Codable, Sendable, Equatable {
 }
 
 /// Reply sent from the app back to the CLI after a request-style
-/// `NotificationMessage`. `ok` covers successful fire-and-forget commands;
-/// `error` carries a human-readable message printed to the CLI's stderr;
+/// `NotificationMessage`. `ok` covers successful one-way commands;
+/// `error` carries a human-readable failure; `serverBusy` is a reserved,
+/// machine-readable transport signal that remains an ordinary error for
+/// older clients;
 /// `paneList` is the response to `listPanes`; `teamList` is the response to `teamList`.
 public enum ResponseMessage: Sendable, Equatable {
+    public static let serverBusyCode = "graftty.control-socket.busy.v1"
+    public static let serverBusyMessage =
+        "Control socket is busy; retry the command."
+
     case ok
     case error(String)
+    case serverBusy
     case paneList([PaneInfo])
     case paneShow(String)
     case teamList(teamName: String, members: [TeamListMember])
@@ -612,7 +631,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, message, panes, output, messages, text, operation
+        case type, code, message, panes, output, messages, text, operation
         case teamName = "team_name"
         case members
         case nextBeforeID = "next_before_id"
@@ -628,6 +647,10 @@ extension ResponseMessage: Codable {
         case .error(let message):
             try container.encode("error", forKey: .type)
             try container.encode(message, forKey: .message)
+        case .serverBusy:
+            try container.encode("error", forKey: .type)
+            try container.encode(Self.serverBusyCode, forKey: .code)
+            try container.encode(Self.serverBusyMessage, forKey: .message)
         case .paneList(let panes):
             try container.encode("pane_list", forKey: .type)
             try container.encode(panes, forKey: .panes)
@@ -664,7 +687,12 @@ extension ResponseMessage: Codable {
             self = .ok
         case "error":
             let msg = try container.decode(String.self, forKey: .message)
-            self = .error(msg)
+            if try container.decodeIfPresent(String.self, forKey: .code)
+                == Self.serverBusyCode || msg == Self.serverBusyCode {
+                self = .serverBusy
+            } else {
+                self = .error(msg)
+            }
         case "pane_list":
             let panes = try container.decode([PaneInfo].self, forKey: .panes)
             self = .paneList(panes)

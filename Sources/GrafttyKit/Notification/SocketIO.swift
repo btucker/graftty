@@ -8,10 +8,19 @@ public enum SocketIO {
     public struct CappedRead: Sendable, Equatable {
         public let data: Data
         public let exceededCap: Bool
+        /// The errno from the read that terminated collection, or `nil` when
+        /// the peer ended the stream normally. Preserving this distinction
+        /// prevents immediate EOF from masquerading as an idle timeout.
+        public let readError: Int32?
 
-        public init(data: Data, exceededCap: Bool) {
+        public init(
+            data: Data,
+            exceededCap: Bool,
+            readError: Int32? = nil
+        ) {
             self.data = data
             self.exceededCap = exceededCap
+            self.readError = readError
         }
     }
 
@@ -58,7 +67,7 @@ public enum SocketIO {
     /// fires. Call `readCapped` when truncation must be distinguished from
     /// an exact-size response.
     public static func readAll(fd: Int32, cap: Int) -> Data {
-        readUpTo(fd: fd, limit: cap)
+        readUpTo(fd: fd, limit: cap).data
     }
 
     /// Reads at most `cap` bytes into the returned payload, plus one probe
@@ -68,24 +77,36 @@ public enum SocketIO {
     public static func readCapped(fd: Int32, cap: Int) -> CappedRead {
         guard cap >= 0 else { return CappedRead(data: Data(), exceededCap: false) }
         let probeLimit = cap == Int.max ? cap : cap + 1
-        var buffer = readUpTo(fd: fd, limit: probeLimit)
+        let read = readUpTo(fd: fd, limit: probeLimit)
+        var buffer = read.data
         let exceededCap = buffer.count > cap
         if exceededCap {
             buffer.removeSubrange(cap..<buffer.count)
         }
-        return CappedRead(data: buffer, exceededCap: exceededCap)
+        return CappedRead(
+            data: buffer,
+            exceededCap: exceededCap,
+            readError: read.readError
+        )
     }
 
-    private static func readUpTo(fd: Int32, limit: Int) -> Data {
-        guard limit > 0 else { return Data() }
+    private static func readUpTo(
+        fd: Int32,
+        limit: Int
+    ) -> (data: Data, readError: Int32?) {
+        guard limit > 0 else { return (Data(), nil) }
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 4096)
         while buffer.count < limit {
             let toRead = min(chunk.count, limit - buffer.count)
             let n = Darwin.read(fd, &chunk, toRead)
-            if n <= 0 { break }
+            if n < 0 {
+                if errno == EINTR { continue }
+                return (buffer, errno)
+            }
+            if n == 0 { break }
             buffer.append(contentsOf: chunk[0..<n])
         }
-        return buffer
+        return (buffer, nil)
     }
 }

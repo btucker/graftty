@@ -58,6 +58,8 @@ enum CLIError: Error, CustomStringConvertible {
     case appNotRunning
     case staleControlSocket(path: String)
     case socketTimeout
+    case socketClosedWithoutResponse
+    case socketBusy
     case socketError(String)
     case socketPathTooLong(bytes: Int, maxBytes: Int)
     case responseTooLarge(maxBytes: Int)
@@ -68,7 +70,12 @@ enum CLIError: Error, CustomStringConvertible {
         case .appNotRunning: return "Graftty is not running"
         case .staleControlSocket(let path):
             return "Graftty is running but not listening on \(path). Quit and relaunch Graftty to reset the control socket."
-        case .socketTimeout: return "Connection timed out after 2 seconds"
+        case .socketTimeout:
+            return "Connection timed out after \(SocketClient.socketTimeoutSeconds) seconds"
+        case .socketClosedWithoutResponse:
+            return "Graftty closed the control connection without a response"
+        case .socketBusy:
+            return ResponseMessage.serverBusyMessage
         case .socketError(let msg): return "Socket error: \(msg)"
         case .socketPathTooLong(let bytes, let maxBytes):
             return "Socket path is \(bytes) bytes, exceeds macOS sockaddr_un limit of \(maxBytes). Set GRAFTTY_SOCK to a shorter path."

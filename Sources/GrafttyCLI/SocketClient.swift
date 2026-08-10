@@ -3,21 +3,127 @@ import GrafttyKit
 
 enum SocketClient {
     static let maxResponseBytes = 16 * 1024 * 1024
+    static let socketTimeoutSeconds = 2
+    static let serverBusyRetryDelays: [TimeInterval] = [0.05, 0.1, 0.2, 0.4]
 
-    /// Fire-and-forget: write the message and close. Used by `notify`.
-    static func send(_ message: NotificationMessage) throws {
-        let fd = try openConnectedSocket()
-        defer { close(fd) }
-        try writeMessage(message, to: fd)
+    /// One-way command with a transport-level admission acknowledgement.
+    /// A normal accepted notification completes when the server closes with
+    /// no payload; a pre-dispatch capacity rejection is retried safely.
+    static func send(
+        _ message: NotificationMessage,
+        delays: [TimeInterval] = serverBusyRetryDelays,
+        sleep: (TimeInterval) -> Void = {
+            Thread.sleep(forTimeInterval: $0)
+        },
+        operation: ((NotificationMessage) throws -> ResponseMessage)? = nil
+    ) throws {
+        let sendOnce = operation ?? { try sendOneWayOnce($0) }
+        let response = try retryingServerBusy(
+            delays: delays,
+            sleep: sleep
+        ) {
+            try sendOnce(message)
+        }
+        switch response {
+        case .ok:
+            return
+        case .error(let message):
+            throw CLIError.socketError(message)
+        case .serverBusy:
+            throw CLIError.socketBusy
+        default:
+            throw CLIError.socketError(
+                "Unexpected response to one-way command"
+            )
+        }
     }
 
     /// Request/response: write the message, half-close the write side so
     /// the server knows the request is complete, then read the reply.
     /// Used by `pane list`, `pane add`, `pane close`.
-    static func sendExpectingResponse(_ message: NotificationMessage) throws -> ResponseMessage {
+    static func sendExpectingResponse(
+        _ message: NotificationMessage,
+        delays: [TimeInterval] = serverBusyRetryDelays,
+        sleep: (TimeInterval) -> Void = {
+            Thread.sleep(forTimeInterval: $0)
+        },
+        operation: ((NotificationMessage) throws -> ResponseMessage)? = nil
+    ) throws -> ResponseMessage {
+        let sendOnce = operation ?? { try sendExpectingResponseOnce($0) }
+        let response = try retryingServerBusy(
+            delays: delays,
+            sleep: sleep
+        ) {
+            try sendOnce(message)
+        }
+        guard response != .serverBusy else {
+            throw CLIError.socketBusy
+        }
+        return response
+    }
+
+    /// Capacity rejection is safe to retry: the server returns its busy
+    /// response before handing the request to a handler, so even mutating
+    /// commands cannot have partially executed. Keep the backoff bounded so
+    /// a genuinely saturated app still returns an actionable error promptly.
+    static func retryingServerBusy(
+        delays: [TimeInterval] = serverBusyRetryDelays,
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        operation: () throws -> ResponseMessage
+    ) rethrows -> ResponseMessage {
+        for delay in delays {
+            let response = try operation()
+            guard response == .serverBusy else {
+                return response
+            }
+            sleep(delay)
+        }
+        return try operation()
+    }
+
+    private static func sendOneWayOnce(
+        _ message: NotificationMessage
+    ) throws -> ResponseMessage {
         let fd = try openConnectedSocket()
         defer { close(fd) }
-        try writeMessage(message, to: fd)
+
+        let writeFailure: Error?
+        do {
+            try writeMessage(message, to: fd)
+            writeFailure = nil
+        } catch {
+            writeFailure = error
+        }
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        let read = SocketIO.readCapped(fd: fd, cap: maxResponseBytes)
+
+        if let writeFailure {
+            if let busy = busyResponseIfPresent(read) {
+                return busy
+            }
+            throw writeFailure
+        }
+        if read.data.isEmpty, !read.exceededCap {
+            if let readError = read.readError {
+                throw readFailure(readError)
+            }
+            return .ok
+        }
+        return try decodeResponse(read)
+    }
+
+    private static func sendExpectingResponseOnce(
+        _ message: NotificationMessage
+    ) throws -> ResponseMessage {
+        let fd = try openConnectedSocket()
+        defer { close(fd) }
+        let writeFailure: Error?
+        do {
+            try writeMessage(message, to: fd)
+            writeFailure = nil
+        } catch {
+            writeFailure = error
+        }
 
         // Half-close so the server's read-until-EOF loop terminates and
         // it proceeds to compute + write the response. Without this the
@@ -30,7 +136,25 @@ enum SocketClient {
         // incoming-request cap; legitimate bulk responses paginate well
         // below this last-resort boundary.
         let read = SocketIO.readCapped(fd: fd, cap: maxResponseBytes)
+        if let writeFailure {
+            if let busy = busyResponseIfPresent(read) {
+                return busy
+            }
+            throw writeFailure
+        }
         return try decodeResponse(read)
+    }
+
+    private static func busyResponseIfPresent(
+        _ read: SocketIO.CappedRead
+    ) -> ResponseMessage? {
+        guard !read.exceededCap,
+              !read.data.isEmpty,
+              let response = try? decodeResponse(read),
+              response == .serverBusy else {
+            return nil
+        }
+        return response
     }
 
     static func decodeResponse(_ read: SocketIO.CappedRead) throws -> ResponseMessage {
@@ -41,14 +165,23 @@ enum SocketClient {
         case .success(let msg):
             return msg
         case .failure(.timeout):
-            // Client SO_RCVTIMEO elapsed, or server closed fd without
-            // a response (`ATTN-2.10`). `.socketTimeout` mirrors the
-            // ATTN-3.3 error shape so the user gets the same cue
-            // regardless of which end of the timeout fired.
-            throw CLIError.socketTimeout
+            throw readFailure(read.readError)
         case .failure(.unparseable):
+            if let readError = read.readError {
+                throw readFailure(readError)
+            }
             throw CLIError.socketError("Unparseable response from app")
         }
+    }
+
+    private static func readFailure(_ readError: Int32?) -> CLIError {
+        guard let readError else {
+            return .socketClosedWithoutResponse
+        }
+        if readError == EAGAIN || readError == EWOULDBLOCK {
+            return .socketTimeout
+        }
+        return .socketError("Failed to read response (errno \(readError))")
     }
 
     // MARK: - Internals
@@ -67,9 +200,13 @@ enum SocketClient {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CLIError.socketError("Failed to create socket") }
 
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        guard configureSocket(fd) else {
+            let savedErrno = errno
+            close(fd)
+            throw CLIError.socketError(
+                "Failed to configure socket deadlines (errno \(savedErrno))"
+            )
+        }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -96,6 +233,41 @@ enum SocketClient {
             }
         }
         return fd
+    }
+
+    @discardableResult
+    static func configureSocket(
+        _ fd: Int32,
+        timeoutSeconds: Int = socketTimeoutSeconds
+    ) -> Bool {
+        var noSigPipe: Int32 = 1
+        let noSigPipeResult = setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+
+        var sendTimeout = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
+        let sendResult = setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_SNDTIMEO,
+            &sendTimeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        var receiveTimeout = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
+        let receiveResult = setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &receiveTimeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        return noSigPipeResult == 0
+            && sendResult == 0
+            && receiveResult == 0
     }
 
     private static func writeMessage(_ message: NotificationMessage, to fd: Int32) throws {

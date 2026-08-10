@@ -64,11 +64,6 @@ struct AttnTodo {
     func attn_3_2() async throws { }
 
     @Test("""
-@spec ATTN-3.3: If the socket is unresponsive, then the CLI shall time out after 2 seconds, print an error, and exit with code 1.
-""", .disabled("not yet implemented"))
-    func attn_3_3() async throws { }
-
-    @Test("""
 @spec ATTN-3.5: When a `pane list`, `pane add`, or `pane close` request targets a tracked worktree that is not in the `.running` state (i.e., no terminals currently alive in it), the server shall respond with `.error("worktree not running")`. `list` in particular shall NOT return an empty `.paneList` — that reads as a silent success to callers scripting `pane list | wc -l` or similar, when in fact the worktree needs to be clicked to start its terminals.
 """, .disabled("not yet implemented"))
     func attn_3_5() async throws { }

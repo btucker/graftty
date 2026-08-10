@@ -60,23 +60,25 @@ struct CLIWorktreeCreationTests {
         #expect(operationID == "create-review")
     }
 
-    @Test("Capability probes retry a transient transport timeout")
-    func capabilityProbeRetriesTimeout() throws {
-        var attempts = 0
-        try WorktreeCapability.require(
-            .worktreeCreateIdempotencyCapability,
-            unsupportedMessage: "unsupported",
-            verificationMessage: "unverified",
-            retryTransportFailuresUntil: Date().addingTimeInterval(1),
-            send: { _ in
-                attempts += 1
-                if attempts == 1 { throw CLIError.socketTimeout }
-                return .ok
-            },
-            sleep: { _ in }
-        )
+    @Test("Capability probes retry transient timeout and saturation errors")
+    func capabilityProbeRetriesTransientTransportErrors() throws {
+        for transportError in [CLIError.socketTimeout, .socketBusy] {
+            var attempts = 0
+            try WorktreeCapability.require(
+                .worktreeCreateIdempotencyCapability,
+                unsupportedMessage: "unsupported",
+                verificationMessage: "unverified",
+                retryTransportFailuresUntil: Date().addingTimeInterval(1),
+                send: { _ in
+                    attempts += 1
+                    if attempts == 1 { throw transportError }
+                    return .ok
+                },
+                sleep: { _ in }
+            )
 
-        #expect(attempts == 2)
+            #expect(attempts == 2)
+        }
     }
 
     @Test("Existing Git refs are preserved while the worktree directory name is normalized")
@@ -358,7 +360,7 @@ struct CLIWorktreeCreationTests {
     @Test("""
     @spec AGENT-5.8: Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
     """)
-    func duplicateCreationOperationReturnsOriginalStatus() {
+    func duplicateCreationOperationReturnsOriginalStatus() throws {
         let store = CLIWorktreeCreationStore()
         let first = store.begin(
             worktreePath: "/repo/.worktrees/fix-auth",
@@ -374,6 +376,30 @@ struct CLIWorktreeCreationTests {
         #expect(retry == first)
         #expect(retry.worktreePath == "/repo/.worktrees/fix-auth")
         #expect(retry.state == .pending)
+
+        for transportError in [
+            CLIError.socketClosedWithoutResponse,
+            .socketError("connection reset"),
+            .socketBusy,
+        ] {
+            var attempts = 0
+            let response = try WorktreeAdd.sendRequestRetryingTimeout(
+                .worktreeCreateStatus(operationID: first.operationID),
+                operationID: first.operationID,
+                deadline: Date().addingTimeInterval(1),
+                send: { _ in
+                    attempts += 1
+                    if attempts == 1 {
+                        throw transportError
+                    }
+                    return .worktreeCreate(first)
+                },
+                sleep: { _ in }
+            )
+
+            #expect(attempts == 2)
+            #expect(response == .worktreeCreate(first))
+        }
     }
 
     @MainActor
