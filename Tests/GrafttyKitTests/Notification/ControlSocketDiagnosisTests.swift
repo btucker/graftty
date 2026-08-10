@@ -39,12 +39,31 @@ struct ControlSocketDiagnosisTests {
         #expect(reason == .notRunning)
     }
 
-    @Test func classifiesOtherErrnoAsTimeout() {
+    @Test func classifiesTimedOutAsTimeout() {
         let reason = ControlSocketDiagnosis.classifyConnectFailure(
             errno: ETIMEDOUT,
             socketExists: true,
             path: "/tmp/s"
         )
         #expect(reason == .timeout)
+    }
+
+    @Test(arguments: [EAGAIN, ENOBUFS])
+    func classifiesTransientCapacityErrnoAsBusy(errno: Int32) {
+        let reason = ControlSocketDiagnosis.classifyConnectFailure(
+            errno: errno,
+            socketExists: true,
+            path: "/tmp/s"
+        )
+        #expect(reason == .busy)
+    }
+
+    @Test func preservesUnexpectedErrno() {
+        let reason = ControlSocketDiagnosis.classifyConnectFailure(
+            errno: EACCES,
+            socketExists: true,
+            path: "/tmp/s"
+        )
+        #expect(reason == .failure(errno: EACCES))
     }
 }

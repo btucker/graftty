@@ -590,6 +590,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.23** When a timed-out control-socket request's descriptor number is reused by a new client, the application shall reject the stale handler task unless its unique client lease still owns that descriptor.
 
+**ATTN-2.24** While admitted control-socket request handlers are suspended, the application shall start each additional admitted client's receive and handler deadline independently of those blocked workers so a fast request cannot expire while waiting to begin processing.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -607,6 +609,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ATTN-3.7** When the application rejects a control-socket request with its structured busy response before dispatching the request, the CLI shall retry the request with bounded backoff before reporting the saturation error.
 
 **ATTN-3.8** When the application closes a control-socket request without a response before the receive deadline, the CLI shall report the premature close rather than claim that the full receive deadline elapsed.
+
+**ATTN-3.9** When a control-socket connect attempt is rejected before dispatch with a transient capacity error, the CLI shall apply the same bounded busy retry used for a structured server rejection, and it shall preserve unexpected connect errno values instead of reporting a receive timeout that did not occur.
 
 ### ATTN-4.x — CLI Distribution
 

@@ -7,16 +7,15 @@ public final class SocketServer: @unchecked Sendable {
     private var isRunning = false
     private var generation: UInt64 = 0
     private var nextClientID: UInt64 = 0
+    private var nextRequestID: UInt64 = 0
     private var clientLeases = ClientLeaseRegistry()
-    private var requestWaiters: [Int32: RequestWaiter] = [:]
+    private var activeRequests: [Int32: ActiveRequest] = [:]
     private let stateLock = NSLock()
     private let acceptQueue = DispatchQueue(
-        label: "com.graftty.socket-server.accept"
+        label: "com.graftty.socket-server.accept",
+        qos: .userInitiated
     )
-    private let clientQueue = DispatchQueue(
-        label: "com.graftty.socket-server.client",
-        attributes: .concurrent
-    )
+    private let clientQueue: DispatchQueue
     public var onMessage: ((NotificationMessage) -> Void)?
     /// The last error thrown from `start()`, or `nil` if the most
     /// recent call succeeded (or none has been made). Exists so the
@@ -29,7 +28,7 @@ public final class SocketServer: @unchecked Sendable {
     /// this after `onMessage` and, if the handler returns a non-nil
     /// `ResponseMessage`, writes it to the client (as JSON + newline)
     /// before closing the connection. Handlers are invoked on the main
-    /// queue; each connection worker waits for its own handler result.
+    /// queue and complete asynchronously without retaining a socket worker.
     public var onRequest: ((NotificationMessage) -> ResponseMessage?)?
     /// Async request variant used when a handler needs to await work without
     /// blocking the main actor (for example a bounded zmx subprocess). When
@@ -37,11 +36,13 @@ public final class SocketServer: @unchecked Sendable {
     public var onAsyncRequest:
         (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage?)?
 
-    /// Upper bound on how long a connection worker waits for an `onRequest`
-    /// handler (which runs on the main queue) to return. If the main
-    /// queue stalls — modal dialog, long synchronous work, reentrancy
-    /// bug — the previous unbounded `semaphore.wait()` pinned the socket
-    /// server. Capping at 5s means the server closes the fd without a
+    /// Upper bound on how long an `onRequest` handler (which runs on the main
+    /// queue) may retain its connection. If the main queue stalls — modal
+    /// dialog, long synchronous work, reentrancy bug — the server still
+    /// closes the fd after 5s. The prior semaphore-based implementation also
+    /// retained a dispatch worker for this entire interval; request completion
+    /// is now asynchronous so unrelated admitted clients can begin promptly.
+    /// Capping at 5s means the server closes the fd without a
     /// response on stall. The CLI's receive deadline extends one second past
     /// this server-side terminal bound (`ATTN-3.3`) so a response completed
     /// between seconds two and five is not abandoned, while a stalled handler
@@ -65,10 +66,10 @@ public final class SocketServer: @unchecked Sendable {
     /// slot forever. Tests can shorten the production two-second value.
     public var clientSendTimeoutSeconds: Int = 2
 
-    /// Maximum number of accepted clients allowed to occupy connection
-    /// workers at once. Excess clients receive an immediate structured busy
-    /// response and close. Tests can shrink the production limit to exercise
-    /// admission behavior.
+    /// Maximum number of accepted clients allowed to retain connection state
+    /// at once. Excess clients receive an immediate structured busy response
+    /// and close. Tests can shrink the production limit to exercise admission
+    /// behavior.
     public var maxConcurrentClients: Int = 64
 
     /// Maximum path length for a Unix domain socket on macOS. `sockaddr_un.sun_path`
@@ -77,7 +78,21 @@ public final class SocketServer: @unchecked Sendable {
     public static let maxPathBytes = 103
     public static let listenBacklog: Int32 = 64
 
-    public init(socketPath: String) { self.socketPath = socketPath }
+    public convenience init(socketPath: String) {
+        self.init(
+            socketPath: socketPath,
+            clientQueue: DispatchQueue(
+                label: "com.graftty.socket-server.client",
+                qos: .userInitiated,
+                attributes: .concurrent
+            )
+        )
+    }
+
+    init(socketPath: String, clientQueue: DispatchQueue) {
+        self.socketPath = socketPath
+        self.clientQueue = clientQueue
+    }
     deinit { stop() }
 
     public func start() throws {
@@ -170,36 +185,38 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     public func stop() {
-        let (sourceToCancel, waiters) = stateLock.withLock {
-            () -> (DispatchSourceRead?, [DispatchSemaphore]) in
+        let (sourceToCancel, pendingRequests) = stateLock.withLock {
+            () -> (DispatchSourceRead?, [(fd: Int32, lease: ClientLease)]) in
             let ownedSocketPath = source != nil
             isRunning = false
             listenFD = -1
             let sourceToCancel = source
             source = nil
 
-            // Each connection worker owns its close(2). shutdown(2) wakes a
-            // worker blocked in read/write without introducing a close/reuse
-            // race with that worker's eventual cleanup.
+            // The current connection owner performs close(2): either its
+            // bounded socket worker or its asynchronous request completion.
+            // shutdown(2) wakes a worker blocked in read/write without
+            // introducing a close/reuse race with that owner's cleanup.
             for fd in clientLeases.fileDescriptors {
                 _ = Darwin.shutdown(fd, Int32(SHUT_RDWR))
             }
-            // Wake workers waiting for MainActor results as well as workers
-            // blocked in socket I/O. A handler that completes later may signal
-            // again harmlessly, but cannot keep the server alive after stop.
-            let waiters = requestWaiters.values.map(\.semaphore)
-            requestWaiters.removeAll()
+            // Request handlers run asynchronously after their socket worker
+            // returns. Capture those connections so stop can close them now;
+            // a late handler completion is rejected by its lease + request ID.
+            let pendingRequests = activeRequests.map {
+                (fd: $0.key, lease: $0.value.lease)
+            }
             // Keep prior-generation descriptors in the admission count until
-            // their workers actually close them. Otherwise rapid stop/start
-            // cycles could admit another full generation while old workers
-            // were still unwinding, defeating the process-wide client cap.
+            // their current owners actually close them. Otherwise rapid
+            // stop/start cycles could admit another full generation while old
+            // work was still unwinding, defeating the process-wide client cap.
             if ownedSocketPath {
                 unlink(socketPath)
             }
-            return (sourceToCancel, waiters)
+            return (sourceToCancel, pendingRequests)
         }
-        for waiter in waiters {
-            waiter.signal()
+        for request in pendingRequests {
+            finishClient(fd: request.fd, lease: request.lease)
         }
         sourceToCancel?.cancel()
     }
@@ -237,10 +254,9 @@ public final class SocketServer: @unchecked Sendable {
         }
         switch admission {
         case .admitted(let lease):
-            // A dedicated concurrent queue prevents one connection's read or
-            // request-handler wait from occupying the accept source or delaying
-            // unrelated clients. Each connection still runs on one work item,
-            // so its request lines and responses remain strictly ordered.
+            // The worker owns only bounded socket reads. Request handlers are
+            // handed off asynchronously below, so a suspended MainActor task
+            // cannot occupy the worker that another admitted client needs.
             clientQueue.async { [weak self] in
                 guard let self else {
                     close(clientFD)
@@ -277,7 +293,6 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     private func handleClient(fd: Int32, lease: ClientLease) {
-        defer { finishClient(fd: fd, lease: lease) }
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 4096)
         let cap = maxPerClientBytes
@@ -288,13 +303,33 @@ public final class SocketServer: @unchecked Sendable {
             if bytesRead <= 0 { break }
             buffer.append(contentsOf: chunk[0..<bytesRead])
         }
-        let lines = String(data: buffer, encoding: .utf8)?.components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
-        for line in lines {
+        let messages = String(data: buffer, encoding: .utf8)?
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty }
+            .compactMap { line -> NotificationMessage? in
+                guard let data = line.data(using: .utf8) else { return nil }
+                return try? JSONDecoder().decode(
+                    NotificationMessage.self,
+                    from: data
+                )
+            } ?? []
+        processMessages(messages, at: 0, fd: fd, lease: lease)
+    }
+
+    private func processMessages(
+        _ messages: [NotificationMessage],
+        at startingIndex: Int,
+        fd: Int32,
+        lease: ClientLease
+    ) {
+        var index = startingIndex
+        while index < messages.count {
             guard isConnectionActive(fd: fd, lease: lease) else {
+                finishClient(fd: fd, lease: lease)
                 return
             }
-            guard let data = line.data(using: .utf8),
-                  let message = try? JSONDecoder().decode(NotificationMessage.self, from: data) else { continue }
+
+            let message = messages[index]
             DispatchQueue.main.async { [weak self] in
                 self?.deliverMessage(
                     message,
@@ -306,61 +341,124 @@ public final class SocketServer: @unchecked Sendable {
             // completes. Waiting on the app's response dispatcher for those
             // messages cannot produce a useful reply and, during hook bursts,
             // can needlessly occupy every bounded request slot.
-            guard message.expectsResponse else { continue }
+            guard message.expectsResponse else {
+                index += 1
+                continue
+            }
+            let nextIndex = index + 1
 
-            // Request/response path: if a handler is registered, run it on
-            // the main actor and block only this connection's worker on the
-            // result so the reply is written before we close the fd.
             if let onAsyncRequest {
-                let semaphore = DispatchSemaphore(value: 0)
-                guard registerRequestWaiter(
-                    semaphore,
+                guard let requestID = registerRequest(fd: fd, lease: lease) else {
+                    finishClient(fd: fd, lease: lease)
+                    return
+                }
+                scheduleRequestTimeout(
                     fd: fd,
-                    lease: lease
-                ) else { return }
-                let responseBox = ResponseBox()
+                    lease: lease,
+                    requestID: requestID
+                )
                 Task { @MainActor [weak self] in
                     guard self?.isConnectionActive(
                         fd: fd,
                         lease: lease
-                    ) == true else {
-                        semaphore.signal()
-                        return
+                    ) == true else { return }
+                    let response = await onAsyncRequest(message)
+                    self?.clientQueue.async { [weak self] in
+                        self?.completeRequest(
+                            fd: fd,
+                            lease: lease,
+                            requestID: requestID,
+                            response: response,
+                            messages: messages,
+                            nextIndex: nextIndex
+                        )
                     }
-                    responseBox.value = await onAsyncRequest(message)
-                    semaphore.signal()
                 }
-                guard writeResponseAfterWaiting(
+            } else if let onRequest {
+                guard let requestID = registerRequest(fd: fd, lease: lease) else {
+                    finishClient(fd: fd, lease: lease)
+                    return
+                }
+                scheduleRequestTimeout(
                     fd: fd,
                     lease: lease,
-                    semaphore: semaphore,
-                    responseBox: responseBox
-                ) else { return }
-            } else if let onRequest {
-                let semaphore = DispatchSemaphore(value: 0)
-                guard registerRequestWaiter(
-                    semaphore,
-                    fd: fd,
-                    lease: lease
-                ) else { return }
-                let responseBox = ResponseBox()
+                    requestID: requestID
+                )
                 DispatchQueue.main.async { [weak self] in
                     guard self?.isConnectionActive(
                         fd: fd,
                         lease: lease
-                    ) == true else {
-                        semaphore.signal()
-                        return
+                    ) == true else { return }
+                    let response = onRequest(message)
+                    self?.clientQueue.async { [weak self] in
+                        self?.completeRequest(
+                            fd: fd,
+                            lease: lease,
+                            requestID: requestID,
+                            response: response,
+                            messages: messages,
+                            nextIndex: nextIndex
+                        )
                     }
-                    responseBox.value = onRequest(message)
-                    semaphore.signal()
                 }
-                guard writeResponseAfterWaiting(
+            } else {
+                index += 1
+                continue
+            }
+            return
+        }
+        finishClient(fd: fd, lease: lease)
+    }
+
+    private func scheduleRequestTimeout(
+        fd: Int32,
+        lease: ClientLease,
+        requestID: UInt64
+    ) {
+        clientQueue.asyncAfter(deadline: .now() + onRequestTimeout) { [weak self] in
+            guard let self,
+                  self.claimRequest(
                     fd: fd,
                     lease: lease,
-                    semaphore: semaphore,
-                    responseBox: responseBox
-                ) else { return }
+                    requestID: requestID
+                  ) else { return }
+            self.finishClient(fd: fd, lease: lease)
+        }
+    }
+
+    private func completeRequest(
+        fd: Int32,
+        lease: ClientLease,
+        requestID: UInt64,
+        response: ResponseMessage?,
+        messages: [NotificationMessage],
+        nextIndex: Int
+    ) {
+        guard claimRequest(
+            fd: fd,
+            lease: lease,
+            requestID: requestID
+        ) else { return }
+        if let response, !writeResponse(response, to: fd) {
+            finishClient(fd: fd, lease: lease)
+            return
+        }
+        processMessages(messages, at: nextIndex, fd: fd, lease: lease)
+    }
+
+    private func writeResponse(_ response: ResponseMessage, to fd: Int32) -> Bool {
+        guard var payload = try? JSONEncoder().encode(response) else {
+            return false
+        }
+        payload.append(0x0A)
+        return payload.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress?
+                .assumingMemoryBound(to: UInt8.self) else { return false }
+            do {
+                try SocketIO.writeAll(fd: fd, bytes: base, count: buffer.count)
+                return true
+            } catch {
+                return false
             }
         }
     }
@@ -467,83 +565,47 @@ public final class SocketServer: @unchecked Sendable {
 
     private func finishClient(fd: Int32, lease: ClientLease) {
         stateLock.withLock {
-            if requestWaiters[fd]?.lease == lease {
-                requestWaiters.removeValue(forKey: fd)
+            if activeRequests[fd]?.lease == lease {
+                activeRequests.removeValue(forKey: fd)
             }
             guard clientLeases.remove(fd: fd, ifOwnedBy: lease) else { return }
             close(fd)
         }
     }
 
-    private func registerRequestWaiter(
-        _ semaphore: DispatchSemaphore,
+    private func registerRequest(
         fd: Int32,
         lease: ClientLease
+    ) -> UInt64? {
+        stateLock.withLock {
+            guard isRunning,
+                  generation == lease.serverGeneration,
+                  clientLeases.isOwned(fd: fd, by: lease) else { return nil }
+            nextRequestID &+= 1
+            let requestID = nextRequestID
+            activeRequests[fd] = ActiveRequest(
+                lease: lease,
+                requestID: requestID
+            )
+            return requestID
+        }
+    }
+
+    private func claimRequest(
+        fd: Int32,
+        lease: ClientLease,
+        requestID: UInt64
     ) -> Bool {
         stateLock.withLock {
             guard isRunning,
                   generation == lease.serverGeneration,
-                  clientLeases.isOwned(fd: fd, by: lease) else { return false }
-            requestWaiters[fd] = RequestWaiter(
-                lease: lease,
-                semaphore: semaphore
-            )
+                  clientLeases.isOwned(fd: fd, by: lease),
+                  activeRequests[fd] == ActiveRequest(
+                    lease: lease,
+                    requestID: requestID
+                  ) else { return false }
+            activeRequests.removeValue(forKey: fd)
             return true
-        }
-    }
-
-    private func unregisterRequestWaiter(
-        _ semaphore: DispatchSemaphore,
-        fd: Int32,
-        lease: ClientLease
-    ) {
-        stateLock.withLock {
-            guard requestWaiters[fd]?.lease == lease,
-                  requestWaiters[fd]?.semaphore === semaphore else { return }
-            requestWaiters.removeValue(forKey: fd)
-        }
-    }
-
-    private func writeResponseAfterWaiting(
-        fd: Int32,
-        lease: ClientLease,
-        semaphore: DispatchSemaphore,
-        responseBox: ResponseBox
-    ) -> Bool {
-        defer {
-            unregisterRequestWaiter(
-                semaphore,
-                fd: fd,
-                lease: lease
-            )
-        }
-        // Cap the wait so a stalled handler cannot retain even its own
-        // connection indefinitely. A late task writes only to the retained
-        // box and signals a semaphore nobody is waiting on.
-        let waitResult = semaphore.wait(timeout: .now() + onRequestTimeout)
-        let shouldWrite = stateLock.withLock {
-            isRunning
-                && generation == lease.serverGeneration
-                && clientLeases.isOwned(fd: fd, by: lease)
-                && requestWaiters[fd]?.lease == lease
-                && requestWaiters[fd]?.semaphore === semaphore
-        }
-        guard shouldWrite, waitResult == .success else { return false }
-        guard let response = responseBox.value else { return true }
-        guard let encoded = try? JSONEncoder().encode(response) else {
-            return false
-        }
-        var payload = encoded
-        payload.append(0x0A) // '\n'
-        return payload.withUnsafeBytes { buf in
-            guard let base = buf.baseAddress?
-                .assumingMemoryBound(to: UInt8.self) else { return false }
-            do {
-                try SocketIO.writeAll(fd: fd, bytes: base, count: buf.count)
-                return true
-            } catch {
-                return false
-            }
         }
     }
 }
@@ -582,20 +644,9 @@ struct ClientLeaseRegistry {
     }
 }
 
-private struct RequestWaiter {
+private struct ActiveRequest: Equatable {
     let lease: ClientLease
-    let semaphore: DispatchSemaphore
-}
-
-/// Heap-allocated box for the onRequest response. Necessary because the
-/// closure dispatched to main needs to write the response where the
-/// socket worker can read it AFTER the semaphore signals success. A
-/// plain `var response: ResponseMessage?` captured by the closure would
-/// race the worker's read against the closure's write on timeout
-/// reclaim; a class gives us a known reference the closure writes
-/// under a happens-before edge with `signal() → wait() == .success`.
-private final class ResponseBox: @unchecked Sendable {
-    var value: ResponseMessage?
+    let requestID: UInt64
 }
 
 public enum SocketServerError: Error {

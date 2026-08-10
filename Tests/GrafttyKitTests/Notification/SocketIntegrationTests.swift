@@ -384,6 +384,84 @@ struct SocketIntegrationTests {
     }
 
     @Test("""
+    @spec ATTN-2.24: While admitted control-socket request handlers are suspended, the application shall start each additional admitted client's receive and handler deadline independently of those blocked workers so a fast request cannot expire while waiting to begin processing.
+    """)
+    func admittedClientsStartIndependentlyOfBlockedWorkers() async throws {
+        let dir = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-worker-saturation-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (slowStarts, slowStartContinuation) = AsyncStream.makeStream(
+            of: Void.self
+        )
+        defer { slowStartContinuation.finish() }
+        let slowGate = AsyncGate()
+        let server = SocketServer(
+            socketPath: socketPath,
+            clientQueue: DispatchQueue(
+                label: "com.graftty.socket-server.serial-test-client"
+            )
+        )
+        server.onAsyncRequest = { message in
+            switch message {
+            case .listPanes:
+                slowStartContinuation.yield(())
+                await slowGate.wait()
+                return .paneList([])
+            case .teamMessage:
+                return .ok
+            default:
+                return .error("unexpected")
+            }
+        }
+        try server.start()
+        defer {
+            Task { await slowGate.open() }
+            server.stop()
+        }
+
+        let slowRequest = Task.detached {
+            try Self.sendRequest(
+                socketPath: socketPath,
+                json: #"{"type":"list_panes","path":"/tmp/slow"}"#
+            )
+        }
+        try await expectSignal(from: slowStarts)
+
+        let (fastFinishes, fastFinishContinuation) = AsyncStream.makeStream(of: Void.self)
+        defer { fastFinishContinuation.finish() }
+        let fastRequest = Task.detached {
+            let result: Result<ResponseMessage, Error> = Result {
+                try Self.sendRequest(
+                    socketPath: socketPath,
+                    json: #"{"type":"team_message","caller_worktree":"/tmp/fast","recipient":"peer","text":"hello"}"#
+                )
+            }
+            fastFinishContinuation.yield(())
+            return result
+        }
+
+        do {
+            try await expectSignal(from: fastFinishes, timeout: .seconds(1))
+        } catch {
+            await slowGate.open()
+            _ = await fastRequest.value
+            _ = try? await slowRequest.value
+            throw error
+        }
+        let fastResult = await fastRequest.value
+        await slowGate.open()
+
+        #expect(try fastResult.get() == .ok)
+        #expect(try await slowRequest.value == .paneList([]))
+    }
+
+    @Test("""
     @spec ATTN-2.13: When one client connection sends multiple request lines, the application shall write their responses in request order even when an earlier handler suspends.
     """)
     func responsesRemainOrderedWithinOneConnection() async throws {
@@ -996,10 +1074,10 @@ struct SocketIntegrationTests {
     }
 
     /// `onRequest` runs on the main queue; if the main actor stalls (modal
-    /// dialog, long synchronous work, a reentrancy bug), the connection
-    /// worker's `semaphore.wait()` would otherwise block forever. Independent
-    /// connection workers cannot make progress through a synchronously-stalled
-    /// main actor, so every request still needs a bounded terminal condition.
+    /// dialog, long synchronous work, a reentrancy bug), its connection would
+    /// otherwise remain open forever. The handler no longer occupies a socket
+    /// worker while suspended, but every request still needs a bounded terminal
+    /// condition.
     ///
     /// The server shall cap its wait with a bounded timeout and, on expiry,
     /// close the client fd without a response. Observable: the client's

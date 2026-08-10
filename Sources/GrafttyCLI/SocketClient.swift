@@ -29,7 +29,9 @@ enum SocketClient {
             delays: delays,
             sleep: sleep
         ) {
-            try sendOnce(message)
+            try treatingConnectBusyAsServerBusy {
+                try sendOnce(message)
+            }
         }
         switch response {
         case .ok:
@@ -61,7 +63,9 @@ enum SocketClient {
             delays: delays,
             sleep: sleep
         ) {
-            try sendOnce(message)
+            try treatingConnectBusyAsServerBusy {
+                try sendOnce(message)
+            }
         }
         guard response != .serverBusy else {
             throw CLIError.socketBusy
@@ -86,6 +90,20 @@ enum SocketClient {
             sleep(delay)
         }
         return try operation()
+    }
+
+    /// A transient `connect()` capacity failure is as definitively
+    /// pre-dispatch as the server's structured admission rejection, so it is
+    /// safe to route through the same bounded retry policy even for mutations.
+    private static func treatingConnectBusyAsServerBusy(
+        _ operation: () throws -> ResponseMessage
+    ) throws -> ResponseMessage {
+        do {
+            return try operation()
+        } catch let error as CLIError {
+            guard case .socketBusy = error else { throw error }
+            return .serverBusy
+        }
     }
 
     private static func sendOneWayOnce(
@@ -260,7 +278,12 @@ enum SocketClient {
             switch reason {
             case .notRunning: throw CLIError.appNotRunning
             case .staleSocket(let path): throw CLIError.staleControlSocket(path: path)
+            case .busy: throw CLIError.socketBusy
             case .timeout: throw CLIError.socketTimeout
+            case .failure(let errno):
+                throw CLIError.socketError(
+                    "Failed to connect to control socket (errno \(errno))"
+                )
             }
         }
         return fd

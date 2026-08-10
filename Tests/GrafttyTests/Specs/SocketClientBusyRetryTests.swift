@@ -45,6 +45,48 @@ struct SocketClientBusyRetryTests {
         #expect(sleeps == 2)
     }
 
+    @Test("""
+    @spec ATTN-3.9: When a control-socket connect attempt is rejected before dispatch with a transient capacity error, the CLI shall apply the same bounded busy retry used for a structured server rejection, and it shall preserve unexpected connect errno values instead of reporting a receive timeout that did not occur.
+    """)
+    func retriesTransientConnectBusyBeforeDispatch() throws {
+        var attempts = 0
+        var sleeps: [TimeInterval] = []
+
+        let response = try SocketClient.sendExpectingResponse(
+            .teamList(callerWorktree: "/tmp/wt"),
+            delays: [0.01, 0.02],
+            sleep: { sleeps.append($0) },
+            operation: { _ in
+                attempts += 1
+                if attempts < 3 {
+                    throw CLIError.socketBusy
+                }
+                return .ok
+            }
+        )
+
+        #expect(response == .ok)
+        #expect(attempts == 3)
+        #expect(sleeps == [0.01, 0.02])
+
+        attempts = 0
+        sleeps = []
+        try SocketClient.send(
+            .notify(path: "/tmp/wt", text: "hi"),
+            delays: [0.01],
+            sleep: { sleeps.append($0) },
+            operation: { _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw CLIError.socketBusy
+                }
+                return .ok
+            }
+        )
+        #expect(attempts == 2)
+        #expect(sleeps == [0.01])
+    }
+
     @Test func oneWayMessagesAwaitAdmissionAndRetryBusyRejections() throws {
         var attempts = 0
         var sleeps: [TimeInterval] = []

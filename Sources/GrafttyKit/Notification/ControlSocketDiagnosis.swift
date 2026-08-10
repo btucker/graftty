@@ -12,7 +12,9 @@ public enum ControlSocketDiagnosis {
     public enum Reason: Equatable, Sendable {
         case notRunning
         case staleSocket(path: String)
+        case busy
         case timeout
+        case failure(errno: Int32)
     }
 
     public static func classifyConnectFailure(
@@ -26,6 +28,12 @@ public enum ControlSocketDiagnosis {
         if errno == ECONNREFUSED || errno == ENOENT {
             return .notRunning
         }
-        return .timeout
+        if errno == EAGAIN || errno == ENOBUFS {
+            return .busy
+        }
+        if errno == ETIMEDOUT {
+            return .timeout
+        }
+        return .failure(errno: errno)
     }
 }
