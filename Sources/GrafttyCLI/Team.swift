@@ -175,7 +175,7 @@ struct TeamHook: ParsableCommand {
                 print(output)
             case .error:
                 print("{}")
-            case .ok, .paneList, .paneShow, .teamList, .teamInbox,
+            case .serverBusy, .ok, .paneList, .paneShow, .teamList, .teamInbox,
                  .worktreeCreate, .worktreeRemove:
                 print("{}")
             }
@@ -309,6 +309,9 @@ struct TeamInbox: ParsableCommand {
             case .error(let msg):
                 writeError(msg)
                 throw ExitCode(1)
+            case .serverBusy:
+                writeError(ResponseMessage.serverBusyMessage)
+                throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .worktreeCreate, .worktreeRemove:
                 writeError("Unexpected response for team inbox")
@@ -359,6 +362,10 @@ struct TeamInbox: ParsableCommand {
         case .error(let message):
             writeError(Self.advanceFailureGuidance)
             writeError(message)
+            throw ExitCode(1)
+        case .serverBusy:
+            writeError(Self.advanceFailureGuidance)
+            writeError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
         case .paneList, .paneShow, .teamList, .teamHookOutput,
              .teamInbox, .worktreeCreate, .worktreeRemove:
@@ -1050,6 +1057,9 @@ private enum TeamOutput {
             }
         case .error(let msg):
             CLIEnv.printError(msg)
+            throw ExitCode(1)
+        case .serverBusy:
+            CLIEnv.printError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
         case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
              .worktreeCreate, .worktreeRemove:

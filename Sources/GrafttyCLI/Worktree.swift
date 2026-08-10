@@ -175,6 +175,9 @@ struct WorktreeAdd: ParsableCommand {
             case .error(let message):
                 CLIEnv.printError(message)
                 throw ExitCode(1)
+            case .serverBusy:
+                CLIEnv.printError(ResponseMessage.serverBusyMessage)
+                throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .teamInbox, .worktreeRemove:
                 CLIEnv.printError("Unexpected response for worktree add")
@@ -225,29 +228,65 @@ struct WorktreeAdd: ParsableCommand {
         )
     }
 
-    private static func sendRequestRetryingTimeout(
+    static func sendRequestRetryingTimeout(
         _ message: NotificationMessage,
         operationID: String,
-        deadline: Date
+        deadline: Date,
+        send: (NotificationMessage) throws -> ResponseMessage = {
+            try SocketClient.sendExpectingResponse($0)
+        },
+        sleep: (TimeInterval) -> Void = {
+            Thread.sleep(forTimeInterval: $0)
+        },
+        writeError: (String) -> Void = CLIEnv.printError
     ) throws -> ResponseMessage {
+        var operationMayExist: Bool
+        if case .worktreeCreateStatus = message {
+            operationMayExist = true
+        } else {
+            operationMayExist = false
+        }
         while true {
             do {
-                return try SocketClient.sendExpectingResponse(message)
+                return try send(message)
             } catch let error as CLIError {
-                if case .socketTimeout = error, Date() < deadline {
-                    Thread.sleep(forTimeInterval: 0.1)
-                    continue
-                }
-                if case .socketTimeout = error {
-                    CLIEnv.printError(
+                switch error {
+                case .socketBusy:
+                    // Busy is a pre-dispatch rejection. With no earlier
+                    // ambiguous failure, the server cannot have created the
+                    // operation, so do not wait the full worktree deadline or
+                    // claim that it may finish. Once a request might have been
+                    // admitted, keep polling the stable operation ID.
+                    guard operationMayExist else {
+                        writeError(error.description)
+                        throw ExitCode(1)
+                    }
+                    if Date() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    writeError(
                         "timed out waiting for worktree creation; operation \(operationID) may still finish"
                     )
-                } else {
-                    CLIEnv.printError(error.description)
+                    throw ExitCode(1)
+                case .socketTimeout, .socketClosedWithoutResponse,
+                     .socketError:
+                    operationMayExist = true
+                    if Date() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    writeError(
+                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                    )
+                    throw ExitCode(1)
+                case .notInsideWorktree, .appNotRunning, .staleControlSocket,
+                     .socketPathTooLong, .responseTooLarge:
+                    writeError(error.description)
+                    throw ExitCode(1)
                 }
-                throw ExitCode(1)
             } catch {
-                CLIEnv.printError("Decode error: \(error)")
+                writeError("Decode error: \(error)")
                 throw ExitCode(1)
             }
         }
@@ -346,6 +385,9 @@ struct WorktreeRemove: ParsableCommand {
             case .error(let message):
                 CLIEnv.printError(message)
                 throw ExitCode(1)
+            case .serverBusy:
+                CLIEnv.printError(ResponseMessage.serverBusyMessage)
+                throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .teamInbox, .worktreeCreate:
                 CLIEnv.printError("Unexpected response for worktree remove")
@@ -424,12 +466,19 @@ enum WorktreeCapability {
                 response = try send(request)
             } catch let error as CLIError {
                 switch error {
-                case .socketTimeout, .socketError:
+                case .socketTimeout, .socketClosedWithoutResponse,
+                     .socketError:
                     if let deadline, now() < deadline {
                         sleep(0.1)
                         continue
                     }
                     CLIEnv.printError(verificationMessage)
+                case .socketBusy:
+                    if let deadline, now() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    CLIEnv.printError(error.description)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
                      .socketPathTooLong, .responseTooLarge:
                     CLIEnv.printError(error.description)

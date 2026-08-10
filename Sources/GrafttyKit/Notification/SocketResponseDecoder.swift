@@ -6,9 +6,9 @@ import Foundation
 public enum SocketResponseDecoder {
 
     public enum Failure: Error, Equatable {
-        /// Empty read: client `SO_RCVTIMEO` elapsed, or the server
-        /// closed fd without responding (`ATTN-2.10` onRequestTimeout,
-        /// or no `onRequest` handler registered).
+        /// Empty bytes. The pure decoder cannot distinguish an idle read
+        /// deadline from peer EOF; callers with socket metadata must use the
+        /// terminating errno to report the correct transport failure.
         case timeout
         /// Bytes arrived but couldn't be parsed as a `ResponseMessage`
         /// JSON line.

@@ -211,6 +211,9 @@ struct PaneList: ParsableCommand {
         case .error(let msg):
             CLIEnv.printError(msg)
             throw ExitCode(1)
+        case .serverBusy:
+            CLIEnv.printError(ResponseMessage.serverBusyMessage)
+            throw ExitCode(1)
         case .ok:
             CLIEnv.printError("Unexpected ok response for list")
             throw ExitCode(1)
@@ -559,13 +562,25 @@ enum CLIEnv {
     }
 
     static func sendRequest(_ message: NotificationMessage) throws -> ResponseMessage {
+        try sendRequest(
+            message,
+            using: { try SocketClient.sendExpectingResponse($0) },
+            writeError: printError
+        )
+    }
+
+    static func sendRequest(
+        _ message: NotificationMessage,
+        using send: (NotificationMessage) throws -> ResponseMessage,
+        writeError: (String) -> Void
+    ) throws -> ResponseMessage {
         do {
-            return try SocketClient.sendExpectingResponse(message)
+            return try send(message)
         } catch let error as CLIError {
-            printError(error.description)
+            writeError(error.description)
             throw ExitCode(1)
         } catch {
-            printError("Decode error: \(error)")
+            writeError("Decode error: \(error)")
             throw ExitCode(1)
         }
     }
@@ -576,6 +591,9 @@ enum CLIEnv {
             return
         case .error(let msg):
             printError(msg)
+            throw ExitCode(1)
+        case .serverBusy:
+            printError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
         case .paneList:
             printError("Unexpected pane_list response")
