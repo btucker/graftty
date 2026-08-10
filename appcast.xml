@@ -6,19 +6,32 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.4.4</title>
+            <sparkle:version>0.4.4</sparkle:version>
+            <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
+            <pubDate>Mon, 10 Aug 2026 15:14:53 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>Fix Codex app-server control directory by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5095573561" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/309" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/309/hovercard" href="https://github.com/btucker/graftty/pull/309">#309</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.3...v0.4.4"><tt>v0.4.3...v0.4.4</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.4.4/Graftty-0.4.4.zip" length="31716793" type="application/octet-stream" sparkle:edSignature="ZN1fElfaXGCx0krR+MUQyhSB1q8DmdVXvQrGywBEethH6e0a5UaRUSzTRaQ8GRxVQLchaTh1XknO4OJavnwZAw=="/>
+        </item>
+        <item>
             <title>Version 0.4.2</title>
             <sparkle:version>0.4.2</sparkle:version>
             <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
             <pubDate>Wed, 05 Aug 2026 21:20:24 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.4.1 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5064291855" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/298" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/298/hovercard" href="https://github.com/btucker/graftty/pull/298">#298</a></li>
-<li>Group nested worktrees in the sidebar by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5072267168" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/299" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/299/hovercard" href="https://github.com/btucker/graftty/pull/299">#299</a></li>
-<li>Advance team inbox reads automatically by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5074531620" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/300" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/300/hovercard" href="https://github.com/btucker/graftty/pull/300">#300</a></li>
-<li>Bound background polling across repositories by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5074779413" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/301" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/301/hovercard" href="https://github.com/btucker/graftty/pull/301">#301</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.1...v0.4.2"><tt>v0.4.1...v0.4.2</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.4.1 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5064291855" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/298" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/298/hovercard" href="https://github.com/btucker/graftty/pull/298"&gt;#298&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Group nested worktrees in the sidebar by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5072267168" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/299" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/299/hovercard" href="https://github.com/btucker/graftty/pull/299"&gt;#299&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Advance team inbox reads automatically by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5074531620" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/300" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/300/hovercard" href="https://github.com/btucker/graftty/pull/300"&gt;#300&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Bound background polling across repositories by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5074779413" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/301" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/301/hovercard" href="https://github.com/btucker/graftty/pull/301"&gt;#301&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.1...v0.4.2"&gt;&lt;tt&gt;v0.4.1...v0.4.2&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.4.2/Graftty-0.4.2.zip" length="31667240" type="application/octet-stream" sparkle:edSignature="bQp834rhb9/FiFJzFVSnaQb+/q//SfDqtzj5VG8fEl2knXHP2r3MCRAoGHiEUqK7OM+ciPbYuG2DAY3j2deWCg=="/>
         </item>
         <item>
