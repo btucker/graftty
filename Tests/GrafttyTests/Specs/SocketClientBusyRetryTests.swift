@@ -3,6 +3,7 @@ import ArgumentParser
 import Testing
 @testable import GrafttyCLI
 import enum GrafttyKit.ResponseMessage
+import enum GrafttyKit.SocketIO
 
 @Suite("""
 @spec ATTN-3.7: When the application rejects a control-socket request with its structured busy response before dispatching the request, the CLI shall retry the request with bounded backoff before reporting the saturation error.
@@ -66,6 +67,20 @@ struct SocketClientBusyRetryTests {
 
         #expect(attempts == 2)
         #expect(sleeps == [0.01])
+    }
+
+    @Test func oneWayTimeoutAfterSuccessfulWritePreservesLegacySuccess() throws {
+        let response = try SocketClient.resolveOneWayResult(
+            writeFailure: nil,
+            read: SocketIO.CappedRead(
+                data: Data(),
+                exceededCap: false,
+                readError: EAGAIN
+            )
+        )
+
+        #expect(response == .ok)
+        #expect(SocketClient.oneWayAdmissionTimeoutSeconds == 2)
     }
 
     @Test func exhaustedBusyRetriesReachBothCLITransportPaths() {

@@ -237,34 +237,56 @@ struct WorktreeAdd: ParsableCommand {
         },
         sleep: (TimeInterval) -> Void = {
             Thread.sleep(forTimeInterval: $0)
-        }
+        },
+        writeError: (String) -> Void = CLIEnv.printError
     ) throws -> ResponseMessage {
+        var operationMayExist: Bool
+        if case .worktreeCreateStatus = message {
+            operationMayExist = true
+        } else {
+            operationMayExist = false
+        }
         while true {
             do {
                 return try send(message)
             } catch let error as CLIError {
-                let isRetryable: Bool
                 switch error {
-                case .socketTimeout, .socketClosedWithoutResponse,
-                     .socketBusy, .socketError:
-                    isRetryable = true
-                default:
-                    isRetryable = false
-                }
-                if isRetryable, Date() < deadline {
-                    sleep(0.1)
-                    continue
-                }
-                if isRetryable {
-                    CLIEnv.printError(
+                case .socketBusy:
+                    // Busy is a pre-dispatch rejection. With no earlier
+                    // ambiguous failure, the server cannot have created the
+                    // operation, so do not wait the full worktree deadline or
+                    // claim that it may finish. Once a request might have been
+                    // admitted, keep polling the stable operation ID.
+                    guard operationMayExist else {
+                        writeError(error.description)
+                        throw ExitCode(1)
+                    }
+                    if Date() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    writeError(
                         "timed out waiting for worktree creation; operation \(operationID) may still finish"
                     )
-                } else {
-                    CLIEnv.printError(error.description)
+                    throw ExitCode(1)
+                case .socketTimeout, .socketClosedWithoutResponse,
+                     .socketError:
+                    operationMayExist = true
+                    if Date() < deadline {
+                        sleep(0.1)
+                        continue
+                    }
+                    writeError(
+                        "timed out waiting for worktree creation; operation \(operationID) may still finish"
+                    )
+                    throw ExitCode(1)
+                case .notInsideWorktree, .appNotRunning, .staleControlSocket,
+                     .socketPathTooLong, .responseTooLarge:
+                    writeError(error.description)
+                    throw ExitCode(1)
                 }
-                throw ExitCode(1)
             } catch {
-                CLIEnv.printError("Decode error: \(error)")
+                writeError("Decode error: \(error)")
                 throw ExitCode(1)
             }
         }

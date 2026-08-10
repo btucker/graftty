@@ -643,112 +643,33 @@ struct SocketIntegrationTests {
     @Test("""
     @spec ATTN-2.23: When a timed-out control-socket request's descriptor number is reused by a new client, the application shall reject the stale handler task unless its unique client lease still owns that descriptor.
     """)
-    func timedOutHandlerCannotBorrowReusedDescriptor() async throws {
-        let dir = URL(fileURLWithPath: "/tmp")
-            .appendingPathComponent("graftty-lease-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(
-            at: dir,
-            withIntermediateDirectories: true
+    func timedOutHandlerCannotBorrowReusedDescriptor() {
+        let reusedFD: Int32 = 17
+        let oldLease = ClientLease(serverGeneration: 3, clientID: 41)
+        let newLease = ClientLease(serverGeneration: 3, clientID: 42)
+        var registry = ClientLeaseRegistry()
+
+        registry.install(oldLease, for: reusedFD)
+        #expect(registry.isOwned(fd: reusedFD, by: oldLease))
+
+        // Deliberately reuse the same descriptor number within the same
+        // server generation. This is the state the OS-dependent integration
+        // test tried, but could not guarantee, to obtain from accept(2).
+        registry.install(newLease, for: reusedFD)
+        #expect(!registry.isOwned(fd: reusedFD, by: oldLease))
+        #expect(registry.isOwned(fd: reusedFD, by: newLease))
+
+        // A late old worker cannot remove or otherwise borrow the new lease.
+        let removedNewLease = registry.remove(
+            fd: reusedFD,
+            ifOwnedBy: oldLease
         )
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let socketPath = dir.appendingPathComponent("s").path
-        let server = SocketServer(socketPath: socketPath)
-        server.maxConcurrentClients = 1
-        server.onRequestTimeout = .milliseconds(200)
-        let admittedFDs = MutableBox<[Int32]>([])
-        server.clientAdmissionObserver = { fd in
-            var fds = admittedFDs.value
-            fds.append(fd)
-            admittedFDs.value = fds
-        }
-        let handledTexts = MutableBox<[String]>([])
-        server.onAsyncRequest = { message in
-            guard case .teamMessage(_, _, let text) = message else {
-                return .error("unexpected request")
-            }
-            var texts = handledTexts.value
-            texts.append(text)
-            handledTexts.value = texts
-            return .ok
-        }
-
-        let releaseMain = DispatchSemaphore(value: 0)
-        let (mainBlocks, mainBlockContinuation) = AsyncStream.makeStream(
-            of: Void.self
-        )
-        defer {
-            mainBlockContinuation.finish()
-            releaseMain.signal()
-            server.stop()
-        }
-        DispatchQueue.main.async {
-            mainBlockContinuation.yield(())
-            releaseMain.wait()
-        }
-        try await expectSignal(from: mainBlocks)
-        try server.start()
-
-        let oldRequest = Task.detached {
-            try Self.exchangeRequests(
-                socketPath: socketPath,
-                jsonLines: [
-                    #"{"type":"team_message","caller_worktree":"/tmp/old","recipient":"peer","text":"old"}"#,
-                ]
-            )
-        }
-        #expect(try await oldRequest.value == Data())
-
-        let newFD = try Self.connectSocket(to: socketPath)
-        defer { close(newFD) }
-        var clientTimeout = timeval(tv_sec: 5, tv_usec: 0)
-        #expect(setsockopt(
-            newFD,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            &clientTimeout,
-            socklen_t(MemoryLayout<timeval>.size)
-        ) == 0)
-        try SocketIO.writeAll(
-            fd: newFD,
-            string: #"{"type":"team_message","caller_worktree":"/tmp/new","recipient":"peer","text":"new"}"# + "\n"
-        )
-        _ = Darwin.shutdown(newFD, Int32(SHUT_WR))
-
-        var newClientWasAdmitted = false
-        for _ in 0..<40 {
-            let probe = try? Self.sendRequest(
-                socketPath: socketPath,
-                json: #"{"type":"team_list","caller_worktree":"/tmp/probe"}"#
-            )
-            if probe == .serverBusy {
-                newClientWasAdmitted = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(newClientWasAdmitted)
-        let reusedFDs = admittedFDs.value
-        #expect(reusedFDs.count == 2)
-        #expect(reusedFDs.first == reusedFDs.last)
-
-        releaseMain.signal()
-        #expect(
-            SocketResponseDecoder.decode(
-                SocketIO.readAll(fd: newFD, cap: 1 * 1024 * 1024)
-            )
-                == .success(.ok)
-        )
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                continuation.resume()
-            }
-        }
-        #expect(handledTexts.value == ["new"])
+        #expect(!removedNewLease)
+        #expect(registry.isOwned(fd: reusedFD, by: newLease))
     }
 
     @Test("""
-    @spec ATTN-2.15: While 64 control-socket clients are active, the application shall reject additional request clients promptly with a structured busy response rather than misreport the immediate close as a two-second timeout, and it shall admit new clients again after capacity is released.
+    @spec ATTN-2.15: While 64 control-socket clients are active, the application shall reject additional request clients promptly with a structured busy response rather than misreport the immediate close as a receive timeout, and it shall admit new clients again after capacity is released.
     """)
     func concurrentClientAdmissionIsBounded() async throws {
         let dir = URL(fileURLWithPath: "/tmp")

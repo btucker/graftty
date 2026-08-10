@@ -7,7 +7,7 @@ public final class SocketServer: @unchecked Sendable {
     private var isRunning = false
     private var generation: UInt64 = 0
     private var nextClientID: UInt64 = 0
-    private var clientFDs: [Int32: ClientLease] = [:]
+    private var clientLeases = ClientLeaseRegistry()
     private var requestWaiters: [Int32: RequestWaiter] = [:]
     private let stateLock = NSLock()
     private let acceptQueue = DispatchQueue(
@@ -36,17 +36,20 @@ public final class SocketServer: @unchecked Sendable {
     /// present it takes precedence over `onRequest`.
     public var onAsyncRequest:
         (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage?)?
-    var clientAdmissionObserver: (@Sendable (Int32) -> Void)?
 
     /// Upper bound on how long a connection worker waits for an `onRequest`
     /// handler (which runs on the main queue) to return. If the main
     /// queue stalls — modal dialog, long synchronous work, reentrancy
     /// bug — the previous unbounded `semaphore.wait()` pinned the socket
     /// server. Capping at 5s means the server closes the fd without a
-    /// response on stall. The CLI has its own shorter client-side deadline
-    /// (`ATTN-3.3`), so neither endpoint can hang forever. Tests can override;
-    /// production takes the default.
-    public var onRequestTimeout: DispatchTimeInterval = .seconds(5)
+    /// response on stall. The CLI's receive deadline extends one second past
+    /// this server-side terminal bound (`ATTN-3.3`) so a response completed
+    /// between seconds two and five is not abandoned, while a stalled handler
+    /// still cannot hang either endpoint forever. Tests can override.
+    public static let defaultRequestTimeoutSeconds = 5
+    public var onRequestTimeout: DispatchTimeInterval = .seconds(
+        SocketServer.defaultRequestTimeoutSeconds
+    )
 
     /// Per-client read cap. `SO_RCVTIMEO` only fires on idle pipes,
     /// so a continuously-writing peer needs an explicit byte bound.
@@ -178,7 +181,7 @@ public final class SocketServer: @unchecked Sendable {
             // Each connection worker owns its close(2). shutdown(2) wakes a
             // worker blocked in read/write without introducing a close/reuse
             // race with that worker's eventual cleanup.
-            for fd in clientFDs.keys {
+            for fd in clientLeases.fileDescriptors {
                 _ = Darwin.shutdown(fd, Int32(SHUT_RDWR))
             }
             // Wake workers waiting for MainActor results as well as workers
@@ -221,7 +224,7 @@ public final class SocketServer: @unchecked Sendable {
             guard isRunning, self.listenFD == listenFD else {
                 return .inactive
             }
-            guard clientFDs.count < maxConcurrentClients else {
+            guard clientLeases.count < maxConcurrentClients else {
                 return .busy
             }
             nextClientID &+= 1
@@ -229,12 +232,11 @@ public final class SocketServer: @unchecked Sendable {
                 serverGeneration: generation,
                 clientID: nextClientID
             )
-            clientFDs[clientFD] = lease
+            clientLeases.install(lease, for: clientFD)
             return .admitted(lease: lease)
         }
         switch admission {
         case .admitted(let lease):
-            clientAdmissionObserver?(clientFD)
             // A dedicated concurrent queue prevents one connection's read or
             // request-handler wait from occupying the accept source or delaying
             // unrelated clients. Each connection still runs on one work item,
@@ -459,7 +461,7 @@ public final class SocketServer: @unchecked Sendable {
         stateLock.withLock {
             isRunning
                 && generation == lease.serverGeneration
-                && clientFDs[fd] == lease
+                && clientLeases.isOwned(fd: fd, by: lease)
         }
     }
 
@@ -468,8 +470,7 @@ public final class SocketServer: @unchecked Sendable {
             if requestWaiters[fd]?.lease == lease {
                 requestWaiters.removeValue(forKey: fd)
             }
-            guard clientFDs[fd] == lease else { return }
-            clientFDs.removeValue(forKey: fd)
+            guard clientLeases.remove(fd: fd, ifOwnedBy: lease) else { return }
             close(fd)
         }
     }
@@ -482,7 +483,7 @@ public final class SocketServer: @unchecked Sendable {
         stateLock.withLock {
             guard isRunning,
                   generation == lease.serverGeneration,
-                  clientFDs[fd] == lease else { return false }
+                  clientLeases.isOwned(fd: fd, by: lease) else { return false }
             requestWaiters[fd] = RequestWaiter(
                 lease: lease,
                 semaphore: semaphore
@@ -523,7 +524,7 @@ public final class SocketServer: @unchecked Sendable {
         let shouldWrite = stateLock.withLock {
             isRunning
                 && generation == lease.serverGeneration
-                && clientFDs[fd] == lease
+                && clientLeases.isOwned(fd: fd, by: lease)
                 && requestWaiters[fd]?.lease == lease
                 && requestWaiters[fd]?.semaphore === semaphore
         }
@@ -554,9 +555,31 @@ private enum ClientAdmission {
 }
 
 /// @spec ATTN-2.23: When a timed-out control-socket request's descriptor number is reused by a new client, the application shall reject the stale handler task unless its unique client lease still owns that descriptor.
-private struct ClientLease: Sendable, Equatable {
+struct ClientLease: Sendable, Equatable {
     let serverGeneration: UInt64
     let clientID: UInt64
+}
+
+struct ClientLeaseRegistry {
+    private var leases: [Int32: ClientLease] = [:]
+
+    var count: Int { leases.count }
+    var fileDescriptors: [Int32] { Array(leases.keys) }
+
+    mutating func install(_ lease: ClientLease, for fd: Int32) {
+        leases[fd] = lease
+    }
+
+    func isOwned(fd: Int32, by lease: ClientLease) -> Bool {
+        leases[fd] == lease
+    }
+
+    @discardableResult
+    mutating func remove(fd: Int32, ifOwnedBy lease: ClientLease) -> Bool {
+        guard leases[fd] == lease else { return false }
+        leases.removeValue(forKey: fd)
+        return true
+    }
 }
 
 private struct RequestWaiter {

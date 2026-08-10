@@ -3,7 +3,14 @@ import GrafttyKit
 
 enum SocketClient {
     static let maxResponseBytes = 16 * 1024 * 1024
-    static let socketTimeoutSeconds = 2
+    // The server owns a five-second request-handler terminal bound. Keep the
+    // receive side alive for one additional second so its response or close
+    // can propagate instead of abandoning work the server still considers
+    // live. Send remains independently bounded at two seconds.
+    static let socketTimeoutSeconds =
+        SocketServer.defaultRequestTimeoutSeconds + 1
+    static let socketSendTimeoutSeconds = 2
+    static let oneWayAdmissionTimeoutSeconds = 2
     static let serverBusyRetryDelays: [TimeInterval] = [0.05, 0.1, 0.2, 0.4]
 
     /// One-way command with a transport-level admission acknowledgement.
@@ -84,7 +91,9 @@ enum SocketClient {
     private static func sendOneWayOnce(
         _ message: NotificationMessage
     ) throws -> ResponseMessage {
-        let fd = try openConnectedSocket()
+        let fd = try openConnectedSocket(
+            receiveTimeoutSeconds: oneWayAdmissionTimeoutSeconds
+        )
         defer { close(fd) }
 
         let writeFailure: Error?
@@ -97,6 +106,16 @@ enum SocketClient {
         _ = Darwin.shutdown(fd, Int32(SHUT_WR))
         let read = SocketIO.readCapped(fd: fd, cap: maxResponseBytes)
 
+        return try resolveOneWayResult(
+            writeFailure: writeFailure,
+            read: read
+        )
+    }
+
+    static func resolveOneWayResult(
+        writeFailure: Error?,
+        read: SocketIO.CappedRead
+    ) throws -> ResponseMessage {
         if let writeFailure {
             if let busy = busyResponseIfPresent(read) {
                 return busy
@@ -104,9 +123,16 @@ enum SocketClient {
             throw writeFailure
         }
         if read.data.isEmpty, !read.exceededCap {
-            if let readError = read.readError {
+            if let readError = read.readError,
+               readError != EAGAIN,
+               readError != EWOULDBLOCK {
                 throw readFailure(readError)
             }
+            // Current servers close immediately after admitting a one-way
+            // message. Older servers can wait on their main-actor dispatcher
+            // instead; once our full write succeeded, their receive timeout is
+            // the legacy fire-and-forget success condition, not a reason to
+            // tell the caller an already-accepted notification failed.
             return .ok
         }
         return try decodeResponse(read)
@@ -186,7 +212,9 @@ enum SocketClient {
 
     // MARK: - Internals
 
-    private static func openConnectedSocket() throws -> Int32 {
+    private static func openConnectedSocket(
+        receiveTimeoutSeconds: Int = socketTimeoutSeconds
+    ) throws -> Int32 {
         let socketPath = resolveSocketPath()
         let pathBytes = socketPath.utf8.count
         guard pathBytes <= SocketServer.maxPathBytes else {
@@ -200,7 +228,10 @@ enum SocketClient {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CLIError.socketError("Failed to create socket") }
 
-        guard configureSocket(fd) else {
+        guard configureSocket(
+            fd,
+            receiveTimeoutSeconds: receiveTimeoutSeconds
+        ) else {
             let savedErrno = errno
             close(fd)
             throw CLIError.socketError(
@@ -238,7 +269,8 @@ enum SocketClient {
     @discardableResult
     static func configureSocket(
         _ fd: Int32,
-        timeoutSeconds: Int = socketTimeoutSeconds
+        sendTimeoutSeconds: Int = socketSendTimeoutSeconds,
+        receiveTimeoutSeconds: Int = socketTimeoutSeconds
     ) -> Bool {
         var noSigPipe: Int32 = 1
         let noSigPipeResult = setsockopt(
@@ -249,7 +281,7 @@ enum SocketClient {
             socklen_t(MemoryLayout<Int32>.size)
         )
 
-        var sendTimeout = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
+        var sendTimeout = timeval(tv_sec: sendTimeoutSeconds, tv_usec: 0)
         let sendResult = setsockopt(
             fd,
             SOL_SOCKET,
@@ -257,7 +289,7 @@ enum SocketClient {
             &sendTimeout,
             socklen_t(MemoryLayout<timeval>.size)
         )
-        var receiveTimeout = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
+        var receiveTimeout = timeval(tv_sec: receiveTimeoutSeconds, tv_usec: 0)
         let receiveResult = setsockopt(
             fd,
             SOL_SOCKET,

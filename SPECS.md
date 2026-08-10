@@ -572,7 +572,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.14** When the control-socket server stops, the application shall stop accepting connections, interrupt every active client's socket I/O and request wait, and release its connection workers without waiting for handler timeouts.
 
-**ATTN-2.15** While 64 control-socket clients are active, the application shall reject additional request clients promptly with a structured busy response rather than misreport the immediate close as a two-second timeout, and it shall admit new clients again after capacity is released.
+**ATTN-2.15** While 64 control-socket clients are active, the application shall reject additional request clients promptly with a structured busy response rather than misreport the immediate close as a receive timeout, and it shall admit new clients again after capacity is released.
 
 **ATTN-2.16** When a stopped control-socket server is stopped or deinitialized again after a successor has bound the same path, the application shall preserve the successor's live socket path.
 
@@ -596,7 +596,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-3.2** If the current working directory is not inside a tracked worktree, then the CLI shall print "Not inside a tracked worktree" and exit with code 1.
 
-**ATTN-3.3** If the control socket is unresponsive for the two-second receive deadline, then the CLI shall print a timeout error and exit with code 1.
+**ATTN-3.3** If the control socket remains unresponsive through the application's five-second request-handler deadline, then the CLI shall wait one additional second for response-or-close propagation before printing a six-second timeout error and exiting with code 1.
 
 **ATTN-3.4** If the control socket file exists on disk but `connect()` fails with `ECONNREFUSED`, then the CLI shall print "Graftty is running but not listening on `<path>`. Quit and relaunch Graftty to reset the control socket." and exit with code 1, rather than conflating this stale-listener case with `ATTN-3.1`'s "not running" message. The conditions differ: `ENOENT` (file missing) means the app never created the socket, whereas `ECONNREFUSED` on an existing file means a prior Graftty instance crashed without unlinking, or its `SocketServer.start()` failed after the file was created but before listening began.
 
@@ -606,7 +606,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-3.7** When the application rejects a control-socket request with its structured busy response before dispatching the request, the CLI shall retry the request with bounded backoff before reporting the saturation error.
 
-**ATTN-3.8** When the application closes a control-socket request without a response before the receive deadline, the CLI shall report the premature close rather than claim that two seconds elapsed.
+**ATTN-3.8** When the application closes a control-socket request without a response before the receive deadline, the CLI shall report the premature close rather than claim that the full receive deadline elapsed.
 
 ### ATTN-4.x — CLI Distribution
 

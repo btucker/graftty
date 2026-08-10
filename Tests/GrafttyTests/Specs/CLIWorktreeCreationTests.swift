@@ -1,4 +1,5 @@
 import Foundation
+import ArgumentParser
 import Testing
 @testable import Graftty
 @testable import GrafttyCLI
@@ -400,6 +401,78 @@ struct CLIWorktreeCreationTests {
             #expect(attempts == 2)
             #expect(response == .worktreeCreate(first))
         }
+    }
+
+    @Test("A pure pre-dispatch busy rejection does not claim creation may finish")
+    func initialCreationBusyReportsSaturationImmediately() {
+        var attempts = 0
+        var errors: [String] = []
+
+        #expect(throws: ExitCode.self) {
+            _ = try WorktreeAdd.sendRequestRetryingTimeout(
+                .createWorktree(
+                    callerWorktree: "/repo",
+                    worktreeName: "fix-auth",
+                    branchName: "fix-auth",
+                    existing: false,
+                    base: nil,
+                    command: nil,
+                    agentRuntime: nil,
+                    agentPrompt: nil,
+                    operationID: "client-create-123"
+                ),
+                operationID: "client-create-123",
+                deadline: Date().addingTimeInterval(60),
+                send: { _ in
+                    attempts += 1
+                    throw CLIError.socketBusy
+                },
+                sleep: { _ in },
+                writeError: { errors.append($0) }
+            )
+        }
+
+        #expect(attempts == 1)
+        #expect(errors == [ResponseMessage.serverBusyMessage])
+    }
+
+    @Test("Busy remains retryable after an ambiguous initial creation failure")
+    func busyAfterLostCreationResponseKeepsPollingOperationID() throws {
+        var attempts = 0
+        let operation = WorktreeCreateStatus(
+            operationID: "client-create-123",
+            state: .pending,
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth"
+        )
+
+        let response = try WorktreeAdd.sendRequestRetryingTimeout(
+            .createWorktree(
+                callerWorktree: "/repo",
+                worktreeName: "fix-auth",
+                branchName: "fix-auth",
+                existing: false,
+                base: nil,
+                command: nil,
+                agentRuntime: nil,
+                agentPrompt: nil,
+                operationID: operation.operationID
+            ),
+            operationID: operation.operationID,
+            deadline: Date().addingTimeInterval(60),
+            send: { _ in
+                attempts += 1
+                switch attempts {
+                case 1: throw CLIError.socketTimeout
+                case 2: throw CLIError.socketBusy
+                default: return .worktreeCreate(operation)
+                }
+            },
+            sleep: { _ in }
+        )
+
+        #expect(attempts == 3)
+        #expect(response == .worktreeCreate(operation))
     }
 
     @MainActor
