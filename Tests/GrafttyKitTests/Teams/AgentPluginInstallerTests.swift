@@ -5,14 +5,16 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
-    @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and skill-managed lifecycle hooks, then present provider-native install commands without silently changing provider trust configuration.
+    @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
     """)
     func preparesBothProviderMarketplacesAndCommands() throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-agent-plugins-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
 
-        let plan = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        let plan = try AgentPluginInstaller(
+            grafttyCLIPath: "/Applications/Graftty.app/Contents/Helpers/graftty"
+        ).prepare(destinationRoot: destination)
 
         #expect(FileManager.default.fileExists(atPath: destination
             .appendingPathComponent("codex/plugins/graftty-team/skills/graftty-team/SKILL.md").path))
@@ -21,12 +23,20 @@ struct AgentPluginInstallerTests {
         #expect(try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/hooks/hooks.json"))
             .contains("--skill-managed"))
-        #expect(plan.commands.count == 4)
+        #expect(plan.commands.count == 5)
         #expect(plan.commands[0].contains("codex plugin marketplace add"))
         #expect(plan.commands[2].contains("claude plugin marketplace add"))
-        #expect(plan.installSteps.map(\.provider) == [.codex, .codex, .claude, .claude])
+        #expect(plan.installSteps.map(\.provider) == [
+            .codex, .codex, .claude, .claude, .claude,
+        ])
         #expect(plan.installSteps[0].arguments == ["plugin", "marketplace", "add", destination
             .appendingPathComponent("codex", isDirectory: true).path])
+        #expect(plan.installSteps[3].arguments == [
+            "plugin", "install", "graftty-team@graftty", "--scope", "user",
+        ])
+        #expect(plan.installSteps[4].arguments == [
+            "plugin", "update", "graftty-team@graftty", "--scope", "user",
+        ])
         for provider in ["codex", "claude"] {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
@@ -34,7 +44,15 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("<graftty-peer-message agent=\"<address>\">"))
             #expect(skill.contains("<canonical-worktree-path>#<runtime>-<12hex>"))
             #expect(!skill.contains("## Trust boundary"))
+            let hooks = try String(contentsOf: destination
+                .appendingPathComponent(provider)
+                .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
+            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == 3)
+            #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
         }
+        let claudeManifest = try String(contentsOf: destination
+            .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
+        #expect(claudeManifest.contains(#""version": "0.1.1""#))
     }
 
     @Test("""
@@ -77,9 +95,9 @@ struct AgentPluginInstallerTests {
         #expect(await executor.invocations() == plan.installSteps.map {
             Invocation(command: $0.executable, arguments: $0.arguments)
         })
-        #expect(report.results.count == 4)
-        #expect(report.results.map(\.succeeded) == [true, false, true, true])
-        #expect(report.summary.contains("3 of 4"))
+        #expect(report.results.count == 5)
+        #expect(report.results.map(\.succeeded) == [true, false, true, true, true])
+        #expect(report.summary.contains("4 of 5"))
         #expect(report.summary.contains("Codex"))
     }
 }

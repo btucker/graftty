@@ -313,16 +313,28 @@ public final class TeamInbox {
     static func runtimeDeliverablePrefix(
         _ messages: [TeamInboxMessage],
         runtime: String,
-        agentID: String? = nil
+        agentID: String? = nil,
+        acceptsUntargeted: Bool = true
     ) -> [TeamInboxMessage] {
-        Array(messages.prefix { isDeliverable($0, toRuntime: runtime, agentID: agentID) })
+        Array(messages.prefix {
+            isDeliverable(
+                $0,
+                toRuntime: runtime,
+                agentID: agentID,
+                acceptsUntargeted: acceptsUntargeted
+            )
+        })
     }
 
     static func isDeliverable(
         _ message: TeamInboxMessage,
         toRuntime runtime: String,
-        agentID: String? = nil
+        agentID: String? = nil,
+        acceptsUntargeted: Bool = true
     ) -> Bool {
+        if message.to.runtime == nil, message.to.agentID == nil {
+            return acceptsUntargeted
+        }
         guard message.to.runtime == nil || message.to.runtime == runtime else {
             return false
         }

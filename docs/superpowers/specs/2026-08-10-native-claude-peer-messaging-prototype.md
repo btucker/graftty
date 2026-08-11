@@ -141,12 +141,12 @@ The bridge now:
 6. Notifies every reachable top-level agent in a worktree when its roster gains
    an agent, so the default recipient can forward to a better exact recipient.
 7. Leaves native subagents out of the address space and wraps every peer body
-   in an explicit untrusted-context boundary.
+   in one compact `<graftty-peer-message agent="…">` provenance element.
 
 Reply sockets and native delivery receipts remain future work. Agent replies
 currently use the skill's exact `graftty team send --stdin` path, which keeps
-identity in the durable inbox address rather than trusting model-authored text
-inside the native protocol.
+identity in the durable inbox address and lets each provider apply its normal
+permission classification to the peer body.
 
 ## Wrapper-removal boundary
 

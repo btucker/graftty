@@ -4,8 +4,7 @@ import GrafttyKit
 enum AgentPluginInstallOfferPresenter {
     @MainActor
     static func presentWhenWindowIsReady(
-        defaults: UserDefaults = .standard,
-        retriesRemaining: Int = 40
+        defaults: UserDefaults = .standard
     ) {
         guard AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
         if let window = NSApp.mainWindow
@@ -14,15 +13,11 @@ enum AgentPluginInstallOfferPresenter {
             presentIfNeeded(on: window, defaults: defaults)
             return
         }
-        guard retriesRemaining > 0 else {
-            NSLog("[Graftty] Provider plugin offer skipped because no app window became available")
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            presentWhenWindowIsReady(
-                defaults: defaults,
-                retriesRemaining: retriesRemaining - 1
-            )
+        // Window restoration can take arbitrarily longer than a fixed launch
+        // grace period. Keep one lightweight pending retry until a window is
+        // available or the revision is acknowledged/installed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            presentWhenWindowIsReady(defaults: defaults)
         }
     }
 
@@ -30,9 +25,12 @@ enum AgentPluginInstallOfferPresenter {
     static func presentIfNeeded(
         on window: NSWindow,
         defaults: UserDefaults = .standard,
-        installer: AgentPluginInstaller = AgentPluginInstaller()
+        installer suppliedInstaller: AgentPluginInstaller? = nil
     ) {
         guard AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
+        let installer = suppliedInstaller ?? AgentPluginInstaller(
+            grafttyCLIPath: GrafttyApp.agentHookCLIPath()
+        )
         let nativeMessagingWasEnabled = defaults.bool(
             forKey: SettingsKeys.nativeAgentMessagingEnabled
         )

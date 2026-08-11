@@ -229,7 +229,7 @@ struct AgentHookInstallerTests {
         #expect(codex.contains(#"--remote "unix://$_graftty_codex_socket""#))
     }
 
-    @Test("The wrapper mints a runtime-prefixed canonical agent ID that team register accepts.")
+    @Test("Every wrapper launch replaces an inherited identity with a new runtime-prefixed ID.")
     func wrapperMintsValidCanonicalAgentID() {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let script = AgentHookInstaller.wrapperScript(
@@ -242,6 +242,7 @@ struct AgentHookInstallerTests {
             #expect(script.contains(
                 #"GRAFTTY_AGENT_ID=""# + runtime.rawValue + #"-$_graftty_agent_suffix""#
             ))
+            #expect(!script.contains(#"if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then"#))
             #expect(!script.contains("(runtime.rawValue)"))
         }
     }

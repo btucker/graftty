@@ -6,7 +6,7 @@ import GrafttyKit
 @Suite("Native provider plugin launch offer")
 struct AgentPluginInstallOfferPolicyTests {
     @Test("""
-    @spec AGENT-6.15: When Graftty launches with agent teams enabled and the current bundled provider integration has been neither installed nor acknowledged, the application shall prepare its app-owned snapshots and offer to install both plugins with explicit consent; a complete installation shall enable native messaging, an incomplete installation shall preserve legacy mode, and acknowledging or completing that integration revision shall suppress repeat launch offers while a newer revision may offer again.
+    @spec AGENT-6.15: When Graftty launches with agent teams enabled and the current bundled provider integration has been neither installed nor acknowledged, the application shall prepare its app-owned snapshots and offer to install both plugins with explicit consent; the settings control shall transition from legacy to native messaging only after the current integration revision is installed, an incomplete initial installation shall preserve legacy mode, and acknowledging or completing that integration revision shall suppress repeat launch offers while a newer revision may offer again.
     """)
     func launchOfferIsGatedAndVersioned() {
         let revision = AgentPluginInstaller.integrationRevision
@@ -15,6 +15,13 @@ struct AgentPluginInstallOfferPolicyTests {
             agentTeamsEnabled: true,
             lastAcknowledgedRevision: nil,
             installedRevision: nil
+        ))
+
+        #expect(!AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(
+            installedRevision: revision - 1
+        ))
+        #expect(AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(
+            installedRevision: revision
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
             agentTeamsEnabled: false,

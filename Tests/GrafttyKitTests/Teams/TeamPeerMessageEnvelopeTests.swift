@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 @Suite("""
-@spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
+    @spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
 """)
 struct TeamPeerMessageEnvelopeTests {
     @Test("A plugin-only session recovers its exact identity from the current pane presence.")
@@ -69,8 +69,10 @@ struct TeamPeerMessageEnvelopeTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-peer-envelope-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
+        let repoPath = #"/repo/R&D"#
+        let recipientPath = repoPath + "/.worktrees/alice"
         let repo = TeamTestFixtures.makeRepo(
-            path: "/repo",
+            path: repoPath,
             displayName: "repo",
             branches: ["main", "alice"]
         )
@@ -78,8 +80,8 @@ struct TeamPeerMessageEnvelopeTests {
         let recipientID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "recipient-session")
         let records = [
             TeamPresenceRecord(
-                teamID: "/repo",
-                worktree: "/repo",
+                teamID: repoPath,
+                worktree: repoPath,
                 runtime: .codex,
                 paneSessionName: "sender",
                 pid: 101,
@@ -89,8 +91,8 @@ struct TeamPeerMessageEnvelopeTests {
                 agentID: senderID.rawValue
             ),
             TeamPresenceRecord(
-                teamID: "/repo",
-                worktree: "/repo/.worktrees/alice",
+                teamID: repoPath,
+                worktree: recipientPath,
                 runtime: .claude,
                 paneSessionName: "recipient",
                 pid: 102,
@@ -100,7 +102,7 @@ struct TeamPeerMessageEnvelopeTests {
                 agentID: recipientID.rawValue
             ),
         ]
-        let inbox = TeamInbox(rootDirectory: root, idGenerator: { "m1" })
+        let inbox = TeamInbox(rootDirectory: root)
         let handler = TeamInboxRequestHandler(
             inbox: inbox,
             dispatcher: TeamEventDispatcher(
@@ -113,9 +115,9 @@ struct TeamPeerMessageEnvelopeTests {
         )
 
         let delivery = try handler.send(
-            callerWorktree: "/repo",
+            callerWorktree: repoPath,
             callerAgentID: senderID.rawValue,
-            recipient: "/repo/.worktrees/alice#\(recipientID.rawValue)",
+            recipient: "\(recipientPath)#\(recipientID.rawValue)",
             text: "reply to me",
             priority: .normal,
             repos: [repo],
@@ -126,11 +128,24 @@ struct TeamPeerMessageEnvelopeTests {
         #expect(delivery.message.from.agentID == senderID.rawValue)
         #expect(delivery.message.to.runtime == "claude")
         #expect(delivery.message.to.agentID == recipientID.rawValue)
-        #expect(TeamPeerMessageFormatter.context(messages: [delivery.message]) == """
-        <graftty-peer-message agent="/repo#\(senderID.rawValue)">
+        let rendered = TeamPeerMessageFormatter.context(messages: [delivery.message])
+        #expect(rendered == """
+        <graftty-peer-message agent="/repo/R&amp;D#\(senderID.rawValue)">
         reply to me
         </graftty-peer-message>
         """)
+
+        let reply = try handler.send(
+            callerWorktree: recipientPath,
+            callerAgentID: recipientID.rawValue,
+            recipient: "/repo/R&amp;D#\(senderID.rawValue)",
+            text: "received",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(reply.message.to.worktree == repoPath)
+        #expect(reply.message.to.agentID == senderID.rawValue)
     }
 
     @Test("A batch uses sibling provenance elements and cannot be closed early by a peer body.")

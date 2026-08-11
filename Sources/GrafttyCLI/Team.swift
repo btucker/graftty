@@ -165,7 +165,7 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
-        if runtime == .claude, let resolvedSessionID {
+        if runtime == .claude, skillManaged, let resolvedSessionID {
             updateClaudeNativePresence(
                 event: event,
                 sessionID: resolvedSessionID,
@@ -218,9 +218,10 @@ struct TeamHook: ParsableCommand {
         }
         let teamID = TeamLookup.id(of: resolved.team)
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
-        let inheritedAgentID = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
-        let canonicalAgentID = inheritedAgentID.flatMap(TeamAgentIdentity.init(rawValue:))?.rawValue
-            ?? TeamAgentIdentity(runtime: .claude, nativeSessionID: sessionID).rawValue
+        let canonicalAgentID = TeamAgentIdentity(
+            runtime: .claude,
+            nativeSessionID: sessionID
+        ).rawValue
 
         let prior = try? storage.read(
             teamID: teamID,
@@ -566,8 +567,13 @@ struct TeamRegister: ParsableCommand {
         )
         let resolvedAgentID = agentID
             ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
-        if let resolvedAgentID, TeamAgentIdentity(rawValue: resolvedAgentID) == nil {
-            throw ValidationError("--agent-id must be shaped as <runtime>-<12 lowercase hex characters>")
+        if let resolvedAgentID {
+            guard let identity = TeamAgentIdentity(rawValue: resolvedAgentID) else {
+                throw ValidationError("--agent-id must be shaped as <runtime>-<12 lowercase hex characters>")
+            }
+            guard identity.runtime == runtimeValue else {
+                throw ValidationError("--agent-id runtime must match --runtime")
+            }
         }
         let record = TeamPresenceRecord(
             teamID: teamID,
@@ -977,19 +983,19 @@ struct TeamWatchInbox: ParsableCommand {
         // canonical hash of the native session ID (the same derivation the
         // hook and send paths use).
         let hookSessionID = payload["session_id"] as? String
-        let watcherAgentID = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
-            .flatMap(TeamAgentIdentity.init(rawValue:))?.rawValue
-            ?? records.first(where: { record in
-                guard record.teamID == teamID,
-                      record.worktree == resolved.worktreePath,
-                      record.runtime == runtimeValue else {
-                    return false
-                }
-                if let hookSessionID, record.runtimeSessionID == hookSessionID {
-                    return true
-                }
-                return record.paneSessionName == paneSessionName
-            })?.agentID
+        let inheritedIdentity = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
+            .flatMap(TeamAgentIdentity.init(rawValue:))
+        let watcherAgentID = (inheritedIdentity?.runtime == runtimeValue
+            ? inheritedIdentity?.rawValue
+            : nil)
+            ?? TeamAgentSessionIdentityResolver.agentID(
+                records: records,
+                teamID: teamID,
+                worktree: resolved.worktreePath,
+                runtime: runtimeValue,
+                sessionID: hookSessionID,
+                paneSessionName: paneSessionName
+            )
             ?? hookSessionID.map {
                 TeamAgentIdentity(runtime: runtimeValue, nativeSessionID: $0).rawValue
             }

@@ -72,6 +72,83 @@ struct TeamAgentDirectoryTests {
         }
     }
 
+    @Test("Exact lookup skips a stale duplicate of a resumed native session.")
+    func exactLookupUsesReachableDuplicateIdentity() throws {
+        let stale = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            paneSessionName: "graftty-stale",
+            pid: 100,
+            processStartTimeMicroseconds: 1_000,
+            registeredAt: Date(timeIntervalSince1970: 1),
+            runtimeSessionID: "resumed-session"
+        )
+        let resumed = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            paneSessionName: "graftty-resumed",
+            pid: 101,
+            processStartTimeMicroseconds: 2_000,
+            registeredAt: Date(timeIntervalSince1970: 2),
+            runtimeSessionID: "resumed-session"
+        )
+        let identity = TeamAgentIdentity(runtime: .claude, nativeSessionID: "resumed-session")
+        let directory = TeamAgentDirectory(
+            records: [stale, resumed],
+            isReachable: { $0.paneSessionName == "graftty-resumed" }
+        )
+
+        let selected = try directory.resolve(
+            worktreePath: "/repo/feature",
+            explicitAgentID: identity.rawValue
+        )
+
+        #expect(selected?.paneSessionName == "graftty-resumed")
+    }
+
+    @Test("A provider session ID never falls back to another pane-less session.")
+    func sessionIdentityDoesNotCrossPaneLessAgents() {
+        let first = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            paneSessionName: nil,
+            pid: 100,
+            registeredAt: Date(timeIntervalSince1970: 1),
+            runtimeSessionID: "first",
+            agentID: "claude-000000000001"
+        )
+        let second = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            paneSessionName: nil,
+            pid: 101,
+            registeredAt: Date(timeIntervalSince1970: 2),
+            runtimeSessionID: "second",
+            agentID: "claude-000000000002"
+        )
+
+        #expect(TeamAgentSessionIdentityResolver.agentID(
+            records: [first, second],
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            sessionID: "second",
+            paneSessionName: nil
+        ) == second.agentID)
+        #expect(TeamAgentSessionIdentityResolver.agentID(
+            records: [first, second],
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: .claude,
+            sessionID: "missing",
+            paneSessionName: nil
+        ) == nil)
+    }
+
     @Test("A runtime-qualified default selects the earliest reachable agent of that runtime.")
     func runtimeQualifiedDefault() throws {
         let codex = presence(runtime: .codex, sessionID: "codex-first", registeredAt: 1)

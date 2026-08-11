@@ -37,10 +37,15 @@ public struct ClaudePeerSessionRegistry: Sendable {
     }
 
     public static func defaultDirectory(
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL {
-        homeDirectory
-            .appendingPathComponent(".claude", isDirectory: true)
+        let configuredRoot = environment["CLAUDE_CONFIG_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = configuredRoot.flatMap { value in
+            value.isEmpty ? nil : URL(fileURLWithPath: value, isDirectory: true)
+        } ?? homeDirectory.appendingPathComponent(".claude", isDirectory: true)
+        return root
             .appendingPathComponent("sessions", isDirectory: true)
     }
 

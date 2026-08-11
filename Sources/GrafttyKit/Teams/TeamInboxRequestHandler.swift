@@ -465,9 +465,11 @@ public final class TeamInboxRequestHandler {
                     sessionLastSeenID: cursor.lastSeenID
                 )
                 readPosition = unread.readPosition
-                pending = TeamInbox.runtimeDeliverablePrefix(
+                pending = hookDeliverablePrefix(
                     unread.messages,
-                    runtime: runtime.rawValue,
+                    teamID: teamID,
+                    worktree: context.sender.worktreePath,
+                    runtime: runtime,
                     agentID: agentID
                 )
             } else {
@@ -528,9 +530,11 @@ public final class TeamInboxRequestHandler {
                 recipientWorktree: context.sender.worktreePath,
                 sessionLastSeenID: cursor.lastSeenID
             )
-            let deliverableUnread = TeamInbox.runtimeDeliverablePrefix(
+            let deliverableUnread = hookDeliverablePrefix(
                 unread.messages,
-                runtime: runtime.rawValue,
+                teamID: teamID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime,
                 agentID: agentID
             )
             let messages = deliverableUnread.filter { $0.priority == .urgent }
@@ -723,6 +727,44 @@ public final class TeamInboxRequestHandler {
         _ recipient: String,
         in team: TeamView
     ) -> (member: String, agentID: String?) {
+        let literal = splitLiteralAgentAddress(recipient, in: team)
+        if team.memberNamed(literal.member) != nil {
+            return literal
+        }
+        let unescaped = Self.unescapeXMLAttribute(recipient)
+        guard unescaped != recipient else { return literal }
+        return splitLiteralAgentAddress(unescaped, in: team)
+    }
+
+    private func hookDeliverablePrefix(
+        _ messages: [TeamInboxMessage],
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        agentID: String
+    ) -> [TeamInboxMessage] {
+        let directory = TeamAgentDirectory(
+            records: agentRecords().filter { $0.teamID == teamID },
+            isReachable: agentReachability
+        )
+        let defaultAgent = try? directory.resolve(
+            worktreePath: worktree,
+            explicitAgentID: nil
+        )
+        let acceptsUntargeted = defaultAgent == nil
+            || (defaultAgent?.runtime == runtime && defaultAgent?.id.rawValue == agentID)
+        return TeamInbox.runtimeDeliverablePrefix(
+            messages,
+            runtime: runtime.rawValue,
+            agentID: agentID,
+            acceptsUntargeted: acceptsUntargeted
+        )
+    }
+
+    private func splitLiteralAgentAddress(
+        _ recipient: String,
+        in team: TeamView
+    ) -> (member: String, agentID: String?) {
         // Prefer an exact member/path match so existing branch names that
         // contain `#` remain valid. Canonical suffixes are recognized only
         // after a known absolute worktree path or convenience display name
@@ -746,6 +788,14 @@ public final class TeamInboxRequestHandler {
             return (candidate.member, id.isEmpty ? nil : id)
         }
         return (recipient, nil)
+    }
+
+    private static func unescapeXMLAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
     }
 
     private func teamID(_ team: TeamView) -> String {

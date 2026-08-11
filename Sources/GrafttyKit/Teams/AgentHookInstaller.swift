@@ -396,15 +396,13 @@ public struct AgentHookInstaller: Sendable {
         # remains a foreground child in the same process group so TUIs keep
         # normal terminal semantics, while the wrapper gets a short teardown
         # phase after the runtime exits.
-        if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then
-          _graftty_agent_suffix="$(uuidgen 2>/dev/null | tr -d '-' | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
-          if [ "${#_graftty_agent_suffix}" -ne 12 ]; then
-            _graftty_agent_suffix="$(printf '%012x' "$$")"
-          fi
-          GRAFTTY_AGENT_ID="\(runtime.rawValue)-$_graftty_agent_suffix"
-          export GRAFTTY_AGENT_ID
-          unset _graftty_agent_suffix
+        _graftty_agent_suffix="$(uuidgen 2>/dev/null | tr -d '-' | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
+        if [ "${#_graftty_agent_suffix}" -ne 12 ]; then
+          _graftty_agent_suffix="$(printf '%012x' "$$")"
         fi
+        GRAFTTY_AGENT_ID="\(runtime.rawValue)-$_graftty_agent_suffix"
+        export GRAFTTY_AGENT_ID
+        unset _graftty_agent_suffix
         \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
         """
 

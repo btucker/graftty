@@ -1735,8 +1735,11 @@ struct GrafttyApp: App {
             ),
             client: CodexAppServerClient()
         )
+        let nativeAgentMessagingEnabledAtLaunch = UserDefaults.standard.bool(
+            forKey: SettingsKeys.nativeAgentMessagingEnabled
+        )
         let claudePeerDeliveryService: ClaudePeerDeliveryService? =
-            UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
+            nativeAgentMessagingEnabledAtLaunch
             ? ClaudePeerDeliveryService(
                 inbox: services.teamInbox,
                 presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
@@ -1746,7 +1749,7 @@ struct GrafttyApp: App {
             )
             : nil
         let teamAgentRosterNotifier: TeamAgentRosterNotifier? =
-            UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
+            nativeAgentMessagingEnabledAtLaunch
             ? TeamAgentRosterNotifier(
                 inbox: services.teamInbox,
                 initialRecords: presenceIndex.allRecords(),
@@ -1758,7 +1761,8 @@ struct GrafttyApp: App {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
             let records = refreshPresenceIndex()
             refreshDeliveryLiveness(records: records)
-            if let teamAgentRosterNotifier {
+            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            if teamsEnabled, let teamAgentRosterNotifier {
                 let repos = await MainActor.run { binding.wrappedValue.repos }
                 try? await teamAgentRosterNotifier.reconcile(records: records, repos: repos)
             }
@@ -1767,7 +1771,8 @@ struct GrafttyApp: App {
                 records: records,
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService
+                    claude: claudePeerDeliveryService,
+                    enabled: teamsEnabled
                 )
             )
         }
@@ -1797,6 +1802,10 @@ struct GrafttyApp: App {
                 [weak codexAppServerDeliveryService, weak claudePeerDeliveryService] messages in
                 Task { @MainActor in
                     refreshDeliveryLiveness()
+                    guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
+                        await deliveryState.markSeen(messages)
+                        return
+                    }
                     guard codexAppServerDeliveryService != nil || claudePeerDeliveryService != nil else {
                         await deliveryState.markSeen(messages)
                         return
@@ -1856,7 +1865,8 @@ struct GrafttyApp: App {
                     records: records,
                     deliveries: Self.nativeDeliveries(
                         codex: codexAppServerDeliveryService,
-                        claude: claudePeerDeliveryService
+                        claude: claudePeerDeliveryService,
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                     )
                 )
             }
@@ -1877,7 +1887,8 @@ struct GrafttyApp: App {
                 records: restoredPresenceRecords,
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService
+                    claude: claudePeerDeliveryService,
+                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                 )
             )
         }
@@ -2949,8 +2960,10 @@ struct GrafttyApp: App {
 
     nonisolated static func nativeDeliveries(
         codex: CodexAppServerDeliveryService,
-        claude: ClaudePeerDeliveryService?
+        claude: ClaudePeerDeliveryService?,
+        enabled: Bool = true
     ) -> [any CodexAppServerDeliveryTrigger] {
+        guard enabled else { return [] }
         var deliveries: [any CodexAppServerDeliveryTrigger] = [codex]
         if let claude {
             deliveries.append(claude)
@@ -4108,25 +4121,22 @@ struct GrafttyApp: App {
             // fires on every tool call of every agent, and the 30s presence
             // ticker already covers departures. Roster I/O failures must not
             // fail the hook response itself.
-            if event == .sessionStart {
+            if event == .sessionStart, teamsEnabled {
                 try? await teamAgentRosterNotifier?.reconcile(
                     records: presenceRecords,
                     repos: repos
                 )
             }
-            let currentAgentID = presenceRecords.first { record in
-                guard record.worktree == callerPath, record.runtime == runtime else {
-                    return false
-                }
-                if let sessionID, record.runtimeSessionID == sessionID {
-                    return true
-                }
-                // Nil-safe equality: a session launched outside a Graftty
-                // pane (hook pane nil) must still match its own pane-less
-                // presence record, or the hook falls back to a derived ID
-                // that can never equal the agent ID pinned onto its rows.
-                return record.paneSessionName == paneSessionName
-            }?.agentID
+            let currentAgentID = TeamLookup.team(for: callerPath, in: repos).flatMap { team in
+                TeamAgentSessionIdentityResolver.agentID(
+                    records: presenceRecords,
+                    teamID: TeamLookup.id(of: team),
+                    worktree: callerPath,
+                    runtime: runtime,
+                    sessionID: sessionID,
+                    paneSessionName: paneSessionName
+                )
+            }
             let liveSessionNames = Self.livePaneSessionNamesForAutomaticDelivery(
                 records: presenceRecords,
                 terminalManager: terminalManager
@@ -5530,7 +5540,7 @@ struct GrafttyApp: App {
         }
     }
 
-    private static func agentHookCLIPath() -> String {
+    static func agentHookCLIPath() -> String {
         let bundled = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/graftty")
             .path

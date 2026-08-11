@@ -25,6 +25,18 @@ enum AgentPluginInstallOfferPolicy {
         )
     }
 
+    static func isCurrentIntegrationInstalled(installedRevision: Int?) -> Bool {
+        (installedRevision ?? 0) >= AgentPluginInstaller.integrationRevision
+    }
+
+    static func isCurrentIntegrationInstalled(in defaults: UserDefaults) -> Bool {
+        isCurrentIntegrationInstalled(
+            installedRevision: defaults.object(
+                forKey: SettingsKeys.agentPluginInstalledRevision
+            ) as? Int
+        )
+    }
+
     static func recordAcknowledged(in defaults: UserDefaults) {
         defaults.set(
             AgentPluginInstaller.integrationRevision,

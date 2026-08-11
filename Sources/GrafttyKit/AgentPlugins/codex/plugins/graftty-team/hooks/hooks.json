@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graftty team hook codex session-start --skill-managed"
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex session-start --skill-managed"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graftty team hook codex post-tool-use --skill-managed"
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex post-tool-use --skill-managed"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graftty team hook codex stop --skill-managed"
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex stop --skill-managed"
           }
         ]
       }

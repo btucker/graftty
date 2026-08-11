@@ -33,7 +33,7 @@ public struct AgentPluginInstallStep: Equatable, Sendable {
             .joined(separator: " ")
     }
 
-    private static func shellToken(_ value: String) -> String {
+    static func shellToken(_ value: String) -> String {
         let safe = CharacterSet.alphanumerics.union(
             CharacterSet(charactersIn: "_@%+=:,./-")
         )
@@ -93,12 +93,17 @@ public enum AgentPluginInstallerError: Error, Equatable {
 public struct AgentPluginInstaller: Sendable {
     /// Bump when the bundled provider integration changes in a way that
     /// warrants presenting the launch-time install offer again.
-    public static let integrationRevision = 2
+    public static let integrationRevision = 3
 
     private let resourceRoot: URL?
+    private let grafttyCLIPath: String
 
-    public init(resourceRoot: URL? = nil) {
+    public init(
+        resourceRoot: URL? = nil,
+        grafttyCLIPath: String = "graftty"
+    ) {
         self.resourceRoot = resourceRoot
+        self.grafttyCLIPath = grafttyCLIPath
     }
 
     /// Materializes an app-owned marketplace snapshot. Provider configuration
@@ -128,6 +133,7 @@ public struct AgentPluginInstaller: Sendable {
                 try FileManager.default.removeItem(at: destination)
             }
             try FileManager.default.copyItem(at: source, to: destination)
+            try materializeHookCommands(in: destination)
         }
 
         let codexRoot = destinationRoot.appendingPathComponent("codex", isDirectory: true).path
@@ -155,8 +161,43 @@ public struct AgentPluginInstaller: Sendable {
                     executable: "claude",
                     arguments: ["plugin", "install", "graftty-team@graftty", "--scope", "user"]
                 ),
+                AgentPluginInstallStep(
+                    provider: .claude,
+                    executable: "claude",
+                    arguments: ["plugin", "update", "graftty-team@graftty", "--scope", "user"]
+                ),
             ]
         )
+    }
+
+    private func materializeHookCommands(in providerRoot: URL) throws {
+        let hooksURL = providerRoot
+            .appendingPathComponent("plugins/graftty-team/hooks/hooks.json")
+        let data = try Data(contentsOf: hooksURL)
+        let document = try JSONSerialization.jsonObject(with: data)
+        let commandPrefix = AgentPluginInstallStep.shellToken(grafttyCLIPath)
+
+        func rewrite(_ value: Any) -> Any {
+            if let dictionary = value as? [String: Any] {
+                return dictionary.mapValues(rewrite)
+            }
+            if let array = value as? [Any] {
+                return array.map(rewrite)
+            }
+            if let string = value as? String {
+                return string.replacingOccurrences(
+                    of: "graftty team hook",
+                    with: "\(commandPrefix) team hook"
+                )
+            }
+            return value
+        }
+
+        let rewritten = try JSONSerialization.data(
+            withJSONObject: rewrite(document),
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        try rewritten.write(to: hooksURL, options: .atomic)
     }
 
     /// Runs the structured installation plan only after the caller has

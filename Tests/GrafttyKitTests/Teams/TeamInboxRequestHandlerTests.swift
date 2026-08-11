@@ -588,6 +588,83 @@ struct TeamInboxRequestHandlerTests {
         #expect(ownerOutput.contains("queued for the owner"))
     }
 
+    @Test("An unbound hook row is consumed only by the earliest reachable agent across runtimes.")
+    func hookDefaultRespectsCrossRuntimeAgentOrder() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let aliceWorktree = "/repo/.worktrees/alice"
+        let codexID = TeamAgentIdentity(runtime: .codex, nativeSessionID: "codex-first")
+        let claudeID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "claude-later")
+        let records = [
+            TeamPresenceRecord(
+                teamID: "/repo", worktree: aliceWorktree, runtime: .codex,
+                paneSessionName: nil, pid: 101,
+                processStartTimeMicroseconds: 1_001,
+                registeredAt: Date(timeIntervalSince1970: 10),
+                runtimeSessionID: "codex-first", agentID: codexID.rawValue
+            ),
+            TeamPresenceRecord(
+                teamID: "/repo", worktree: aliceWorktree, runtime: .claude,
+                paneSessionName: nil, pid: 102,
+                processStartTimeMicroseconds: 1_002,
+                registeredAt: Date(timeIntervalSince1970: 20),
+                runtimeSessionID: "claude-later", agentID: claudeID.rawValue
+            ),
+        ]
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            agentRecords: { records },
+            agentReachability: { _ in true }
+        )
+        _ = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: .system(repoPath: "/repo"),
+            to: TeamInboxEndpoint(member: "alice", worktree: aliceWorktree, runtime: nil),
+            priority: .normal,
+            body: "for the first agent"
+        )
+
+        let claudeOutput = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "claude-later",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true,
+            agentID: claudeID.rawValue
+        )
+        #expect(!claudeOutput.contains("for the first agent"))
+        #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: aliceWorktree) == nil)
+
+        let codexOutput = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "codex-first",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true,
+            agentID: codexID.rawValue
+        )
+        #expect(codexOutput.contains("for the first agent"))
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: aliceWorktree
+        )?.lastDeliveredToAnySessionID == "0001")
+    }
+
     @Test("SessionStart stops at a message targeted to another runtime.")
     func sessionStartPreservesRuntimeTargetedHeadOfLine() throws {
         let root = try Self.temporaryDirectory()

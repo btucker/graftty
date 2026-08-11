@@ -162,13 +162,14 @@ public struct TeamAgentDirectory: Sendable {
             }
             return candidates.first(where: \.isReachable)
         }
-        guard let exact = worktreeCandidates.first(where: { $0.id.rawValue == explicitAgentID }) else {
+        let exactCandidates = worktreeCandidates.filter { candidate in
+            candidate.id.rawValue == explicitAgentID
+                && (runtime == nil || candidate.runtime == runtime)
+        }
+        guard !exactCandidates.isEmpty else {
             throw TeamAgentDirectoryError.explicitAgentNotFound(explicitAgentID)
         }
-        guard runtime == nil || exact.runtime == runtime else {
-            throw TeamAgentDirectoryError.explicitAgentNotFound(explicitAgentID)
-        }
-        guard exact.isReachable else {
+        guard let exact = exactCandidates.first(where: \.isReachable) else {
             throw TeamAgentDirectoryError.explicitAgentUnavailable(explicitAgentID)
         }
         return exact
@@ -182,6 +183,35 @@ public struct TeamAgentDirectory: Sendable {
             return lhs.registeredAt < rhs.registeredAt
         }
         return lhs.id.rawValue < rhs.id.rawValue
+    }
+}
+
+/// Resolves the canonical identity belonging to one provider hook invocation.
+/// A native session ID is authoritative when present; pane fallback exists
+/// only for older hook payloads that do not carry a session identity.
+public enum TeamAgentSessionIdentityResolver {
+    public static func agentID(
+        records: [TeamPresenceRecord],
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        paneSessionName: String?
+    ) -> String? {
+        let candidates = records.filter { record in
+            record.teamID == teamID
+                && record.worktree == worktree
+                && record.runtime == runtime
+        }
+        if let sessionID {
+            return candidates.first(where: { $0.runtimeSessionID == sessionID })?.agentID
+        }
+        guard let paneSessionName else { return nil }
+        let identities = Set(candidates.compactMap { record in
+            record.paneSessionName == paneSessionName ? record.agentID : nil
+        })
+        guard identities.count == 1 else { return nil }
+        return identities.first
     }
 }
 

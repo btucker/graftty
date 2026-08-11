@@ -5,7 +5,7 @@ import Testing
 @Suite("Claude native peer-session registry")
 struct ClaudePeerSessionRegistryTests {
     @Test("""
-    @spec AGENT-6.5: When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
+    @spec AGENT-6.5: When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session in Claude's configured state directory, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
     """)
     func discoversOnlyCompatibleTopLevelSession() throws {
         let root = FileManager.default.temporaryDirectory
@@ -62,6 +62,23 @@ struct ClaudePeerSessionRegistryTests {
             teamID: "/repo",
             paneSessionName: nil
         ) == nil)
+    }
+
+    @Test("The default registry follows Claude's configured state directory.")
+    func defaultDirectoryHonorsClaudeConfigDirectory() {
+        let home = URL(fileURLWithPath: "/Users/example")
+        let configured = URL(fileURLWithPath: "/tmp/claude-profile")
+
+        #expect(ClaudePeerSessionRegistry.defaultDirectory(
+            homeDirectory: home,
+            environment: ["CLAUDE_CONFIG_DIR": configured.path]
+        ) == configured.appendingPathComponent("sessions", isDirectory: true))
+        #expect(ClaudePeerSessionRegistry.defaultDirectory(
+            homeDirectory: home,
+            environment: ["CLAUDE_CONFIG_DIR": "   "]
+        ) == home
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true))
     }
 
     private func write(_ string: String, to url: URL) throws {

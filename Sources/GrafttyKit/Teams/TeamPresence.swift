@@ -93,7 +93,12 @@ public struct TeamPresenceStorage: Sendable {
             agentID: record.agentID
         )
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(dateFormatter.string(from: date))
+        }
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(record)
         try data.write(to: url, options: .atomic)
