@@ -150,12 +150,14 @@ struct CLIRunnerTests {
         #expect(CLIRunner.drainChunk(from: reader) == nil)
     }
 
-    @Test func pathEnrichmentIncludesHomebrewAndLocal() {
+    @Test func pathEnrichmentIncludesHomebrewLocalAndBun() {
         let env = CLIRunner.enrichedEnvironment(base: ["PATH": "/usr/bin"])
         let path = env["PATH"] ?? ""
         let parts = path.split(separator: ":").map(String.init)
         #expect(parts.contains("/opt/homebrew/bin"))
         #expect(parts.contains("/usr/local/bin"))
+        #expect(parts.contains("\(NSHomeDirectory())/.local/bin"))
+        #expect(parts.contains("\(NSHomeDirectory())/.bun/bin"))
         #expect(parts.contains("/usr/bin"))
         // Homebrew should come before /usr/bin so brewed git beats Xcode's.
         let homebrewIdx = parts.firstIndex(of: "/opt/homebrew/bin") ?? Int.max

@@ -13,7 +13,9 @@ struct TeamInboxRequestHandlerTests {
             _ worktree: String,
             _ runtime: TeamHookRuntime,
             _ paneSessionName: String?
-        ) -> Bool)? = nil
+        ) -> Bool)? = nil,
+        agentRecords: @escaping @Sendable () -> [TeamPresenceRecord] = { [] },
+        agentReachability: @escaping @Sendable (TeamPresenceRecord) -> Bool = { _ in false }
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -23,7 +25,9 @@ struct TeamInboxRequestHandlerTests {
                 templateProvider: templateProvider
             ),
             sessionPromptRenderer: sessionPromptRenderer,
-            automaticDeliveryOwner: automaticDeliveryOwner
+            automaticDeliveryOwner: automaticDeliveryOwner,
+            agentRecords: agentRecords,
+            agentReachability: agentReachability
         )
     }
 
@@ -49,6 +53,80 @@ struct TeamInboxRequestHandlerTests {
         #expect(delivery.message.body == "please review")
     }
 
+    @Test("Unsuffixed recipient is bound to the earliest reachable top-level agent.")
+    func sendBindsDefaultAgentOnce() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let alice = "/repo/.worktrees/alice"
+        let claude = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .claude,
+            paneSessionName: "graftty-claude", pid: 101,
+            processStartTimeMicroseconds: 1_001,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            runtimeSessionID: "claude-session"
+        )
+        let codex = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .codex,
+            paneSessionName: "graftty-codex", pid: 102,
+            processStartTimeMicroseconds: 1_002,
+            registeredAt: Date(timeIntervalSince1970: 20),
+            runtimeSessionID: "codex-session"
+        )
+        let handler = Self.makeHandler(
+            inbox: TeamInbox(rootDirectory: root),
+            agentRecords: { [codex, claude] },
+            agentReachability: { _ in true }
+        )
+
+        let delivery = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "please review",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(delivery.message.to.runtime == "claude")
+        #expect(delivery.message.to.agentID == TeamAgentIdentity(
+            runtime: .claude,
+            nativeSessionID: "claude-session"
+        ).rawValue)
+    }
+
+    @Test("Explicit canonical recipient rejects stale identity without appending.")
+    func explicitRecipientFailsClosed() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let alice = "/repo/.worktrees/alice"
+        let stale = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .codex,
+            paneSessionName: "graftty-codex", pid: 102,
+            processStartTimeMicroseconds: 1_002,
+            registeredAt: Date(timeIntervalSince1970: 20),
+            runtimeSessionID: "codex-session"
+        )
+        let identity = TeamAgentIdentity(runtime: .codex, nativeSessionID: "codex-session")
+        let inbox = TeamInbox(rootDirectory: root)
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            agentRecords: { [stale] },
+            agentReachability: { _ in false }
+        )
+
+        #expect(throws: TeamInboxRequestError.agentUnavailable(identity.rawValue)) {
+            _ = try handler.send(
+                callerWorktree: "/repo",
+                recipient: "alice#\(identity.rawValue)",
+                text: "do not reroute",
+                priority: .normal,
+                repos: [repo],
+                teamsEnabled: true
+            )
+        }
+        #expect(try inbox.messages(teamID: "/repo").isEmpty)
+    }
+
     @Test func sendUsesCanonicalPathToDisambiguateCollidingMemberNames() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(
@@ -61,12 +139,24 @@ struct TeamInboxRequestHandlerTests {
             idGenerator: Self.fixedIDs(["0001"]),
             now: { Self.fixedDate }
         )
-        let handler = Self.makeHandler(inbox: inbox)
         let targetPath = "/repo/.worktrees/foo-bar"
+        let targetPresence = TeamPresenceRecord(
+            teamID: "/repo", worktree: targetPath, runtime: .codex,
+            paneSessionName: "target-codex", pid: 102,
+            processStartTimeMicroseconds: 1_002,
+            registeredAt: Date(timeIntervalSince1970: 20),
+            runtimeSessionID: "target-codex-session"
+        )
+        let identity = TeamAgentIdentity(runtime: .codex, nativeSessionID: "target-codex-session")
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            agentRecords: { [targetPresence] },
+            agentReachability: { _ in true }
+        )
 
         let delivery = try handler.send(
             callerWorktree: "/repo",
-            recipient: targetPath,
+            recipient: "\(targetPath)#\(identity.rawValue)",
             text: "path-addressed",
             priority: .normal,
             repos: [repo],
@@ -75,6 +165,7 @@ struct TeamInboxRequestHandlerTests {
 
         #expect(delivery.recipient.branch == "foo-bar")
         #expect(delivery.message.to.worktree == targetPath)
+        #expect(delivery.message.to.agentID == identity.rawValue)
     }
 
     @Test func broadcastExcludesSenderAndDeliversToAllOthers() throws {
@@ -347,6 +438,47 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test("""
+    @spec AGENT-6.9: When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
+    """)
+    func skillManagedSessionOmitsPrimerButKeepsQueuedMessages() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(inbox: inbox)
+        _ = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "queued before launch",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "session-1",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true,
+            skillManaged: true
+        )
+
+        #expect(!output.contains("Graftty team context"))
+        #expect(!output.contains("graftty worktree add"))
+        #expect(output.contains("queued before launch"))
+    }
+
+    @Test("""
     @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
@@ -387,7 +519,8 @@ struct TeamInboxRequestHandlerTests {
             #expect(output.contains("worktree's stable reply address"))
             #expect(output.contains("graftty team send --stdin <address>"))
             #expect(output.contains("queued before launch"))
-            #expect(output.contains("untrusted peer notes"))
+            #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\">"))
+            #expect(!output.lowercased().contains("untrusted peer"))
             #expect(try inbox.cursor(teamID: "/repo", sessionID: "session-1")?.lastSeenID == "0001")
             #expect(try inbox.worktreeWatermark(
                 teamID: "/repo",

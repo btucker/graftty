@@ -2268,7 +2268,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
-**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews session-start team context under its untrusted-peer contract, completes one turn, and thereby establishes the runtime's idle-message wake path.
+**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
 **AGENT-5.5** Once the app accepts an agent worktree-creation request, it shall own the staged prompt until the terminal backend accepts the loader; if creation fails before then, the app shall remove the prompt. At startup it shall snapshot crash leftovers, prune expired files immediately, and remove the remaining snapshot after the recovery grace period without touching prompts created by current live operations.
 
@@ -2277,6 +2277,42 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.7** `graftty worktree remove <worktree>` shall resolve a tracked worktree name, absolute path, or `.` for the current worktree; reject ambiguous names and the repository's main checkout; and route removal through the same application flow as the native Delete Worktree action so successful removal tears down its panes, removes it from the UI and per-path stores, emits team departure state, and preserves its Git branch. A normal removal shall fail when Git reports modified, staged, or untracked files, include `git status --short` in the CLI error, and instruct the user to rerun with `--force`; `--force` shall mirror the UI's Force Delete action. The CLI shall poll an asynchronous operation status so slow removal does not exceed the control socket request timeout.
 
 **AGENT-5.8** Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
+
+### AGENT-6.x
+
+**AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.
+
+**AGENT-6.2** When Graftty observes a top-level Claude or Codex session, the application shall expose a stable canonical agent ID shaped as `<runtime>-<12 lowercase hex characters>` and an address shaped as `<canonical-worktree-path>#<agent-id>`; provider and worktree display names shall not participate in routing identity.
+
+**AGENT-6.3** While multiple top-level agents are live in one worktree, the application shall route the unsuffixed worktree address to the earliest reachable agent across runtimes, route a canonical suffixed address only to that exact agent, exclude native subagents, and reject an explicit stale or unknown address without enqueuing or falling back.
+
+**AGENT-6.4** When `graftty team list` describes a worktree with observed agents, the application shall expose repository-to-worktree-to-agent-to-pane hierarchy in its stable JSON model, including canonical address, runtime, reachability, optional native display label, and optional pane session.
+
+**AGENT-6.5** When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
+
+**AGENT-6.6** When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+
+**AGENT-6.7** When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
+
+**AGENT-6.8** When a wrapped Codex SessionStart hook reports its native `session_id`, the application shall bind that exact thread ID to the wrapper's canonical agent presence and app-server socket while preserving process identity and pane ownership.
+
+**AGENT-6.9** When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
+
+**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and skill-managed lifecycle hooks, then present provider-native install commands without silently changing provider trust configuration.
+
+**AGENT-6.11** While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
+
+**AGENT-6.12** When a top-level agent becomes reachable in a worktree, the application shall notify every reachable top-level agent in that worktree at its exact canonical address with the joined agents and current worktree roster; repeated observations and native subagents shall not create duplicate notifications.
+
+**AGENT-6.13** When exact-agent inbox rows for different runtimes are adjacent in one worktree queue, the application shall retry all available native delivery transports while the shared watermark advances so a row consumed by one provider immediately unblocks the next provider without waiting for the presence ticker.
+
+**AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
+
+**AGENT-6.15** When Graftty launches with agent teams enabled and the current bundled provider integration has been neither installed nor acknowledged, the application shall prepare its app-owned snapshots and offer to install both plugins with explicit consent; a complete installation shall enable native messaging, an incomplete installation shall preserve legacy mode, and acknowledging or completing that integration revision shall suppress repeat launch offers while a newer revision may offer again.
+
+**AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
+
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
 
 ## CLI — CLI
 

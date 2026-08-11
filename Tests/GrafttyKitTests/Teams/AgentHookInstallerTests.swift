@@ -203,6 +203,49 @@ struct AgentHookInstallerTests {
         #expect(script.contains(#"--settings '"#))
     }
 
+    @Test("""
+    @spec AGENT-6.11: While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
+    """)
+    func providerPluginModeRemovesClaudeWrapperAndKeepsCodexTransport() throws {
+        let root = try Self.temporaryDirectory()
+        _ = try AgentHookInstaller(
+            rootDirectory: root,
+            grafttyCLIPath: "/app/graftty"
+        ).install()
+        let claudeURL = root.appendingPathComponent("bin/claude")
+        let codexURL = root.appendingPathComponent("bin/codex")
+        #expect(FileManager.default.fileExists(atPath: claudeURL.path))
+
+        _ = try AgentHookInstaller(
+            rootDirectory: root,
+            grafttyCLIPath: "/app/graftty",
+            providerPluginsEnabled: true
+        ).install()
+        let codex = try String(contentsOf: codexURL, encoding: .utf8)
+
+        #expect(!FileManager.default.fileExists(atPath: claudeURL.path))
+        #expect(codex.contains("GRAFTTY_PROVIDER_PLUGINS=1"))
+        #expect(codex.contains("app-server --listen"))
+        #expect(codex.contains(#"--remote "unix://$_graftty_codex_socket""#))
+    }
+
+    @Test("The wrapper mints a runtime-prefixed canonical agent ID that team register accepts.")
+    func wrapperMintsValidCanonicalAgentID() {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let script = AgentHookInstaller.wrapperScript(
+                runtime: runtime,
+                wrapperDirectory: "/app/hooks/bin",
+                realCommandName: runtime.rawValue,
+                grafttyCLIPath: "/app/graftty",
+                codexHomeDirectory: "/app/hooks/codex-home"
+            )
+            #expect(script.contains(
+                #"GRAFTTY_AGENT_ID=""# + runtime.rawValue + #"-$_graftty_agent_suffix""#
+            ))
+            #expect(!script.contains("(runtime.rawValue)"))
+        }
+    }
+
     private static func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-agent-hooks-\(UUID().uuidString)", isDirectory: true)

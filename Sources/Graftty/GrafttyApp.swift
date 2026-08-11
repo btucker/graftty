@@ -52,6 +52,7 @@ protocol CodexAppServerDeliveryTrigger: Sendable {
 }
 
 extension CodexAppServerDeliveryService: CodexAppServerDeliveryTrigger {}
+extension ClaudePeerDeliveryService: CodexAppServerDeliveryTrigger {}
 
 private final class LivePaneSessionNames: @unchecked Sendable {
     private let lock = NSLock()
@@ -290,6 +291,8 @@ final class AppServices {
     /// Retained so inbox arrivals can reach Codex app-server delivery for
     /// the app's lifetime.
     var codexAppServerDeliveryService: CodexAppServerDeliveryService?
+    var claudePeerDeliveryService: ClaudePeerDeliveryService?
+    var teamAgentRosterNotifier: TeamAgentRosterNotifier?
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -1204,6 +1207,14 @@ struct GrafttyApp: App {
         // the wrapper at request time.
         Self.installAgentHookAssets()
 
+        // Native integration no longer depends on the user discovering the
+        // Settings button. Offer the current bundled provider plugins once
+        // per integration revision after the main window exists. Provider
+        // configuration changes only if the user accepts the sheet.
+        DispatchQueue.main.async {
+            AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
+        }
+
         // One-shot cleanup of the retired graftty-channel MCP integration
         // (TEAM-8.1 / TEAM-8.2 / TEAM-8.3). Runs idempotently every launch
         // until we drop it in a few releases.
@@ -1524,7 +1535,8 @@ struct GrafttyApp: App {
                         prStatusStore: services.prStatusStore,
                         worktreeCreations: services.cliWorktreeCreations,
                         worktreeRemovals: services.cliWorktreeRemovals,
-                        remoteBranchStore: services.remoteBranchStore
+                        remoteBranchStore: services.remoteBranchStore,
+                        teamAgentRosterNotifier: services.teamAgentRosterNotifier
                     )
                 }
             )
@@ -1723,14 +1735,40 @@ struct GrafttyApp: App {
             ),
             client: CodexAppServerClient()
         )
+        let claudePeerDeliveryService: ClaudePeerDeliveryService? =
+            UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
+            ? ClaudePeerDeliveryService(
+                inbox: services.teamInbox,
+                presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
+                agentReachability: { record in
+                    TeamAgentReachability.isReachable(record)
+                }
+            )
+            : nil
+        let teamAgentRosterNotifier: TeamAgentRosterNotifier? =
+            UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
+            ? TeamAgentRosterNotifier(
+                inbox: services.teamInbox,
+                initialRecords: presenceIndex.allRecords(),
+                isReachable: { TeamAgentReachability.isReachable($0) }
+            )
+            : nil
+        services.teamAgentRosterNotifier = teamAgentRosterNotifier
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
             let records = refreshPresenceIndex()
             refreshDeliveryLiveness(records: records)
-            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+            if let teamAgentRosterNotifier {
+                let repos = await MainActor.run { binding.wrappedValue.repos }
+                try? await teamAgentRosterNotifier.reconcile(records: records, repos: repos)
+            }
+            await Self.retryNativeDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: records,
-                delivery: codexAppServerDeliveryService
+                deliveries: Self.nativeDeliveries(
+                    codex: codexAppServerDeliveryService,
+                    claude: claudePeerDeliveryService
+                )
             )
         }
 
@@ -1755,18 +1793,27 @@ struct GrafttyApp: App {
             // by multiple observer queues — Swift Dictionary is not
             // thread-safe.)
             let deliveryState = CodexAppServerInboxObserverDeliveryState(skipInitialSnapshot: true)
-            let cancellable = observer.start { [weak codexAppServerDeliveryService] messages in
+            let cancellable = observer.start {
+                [weak codexAppServerDeliveryService, weak claudePeerDeliveryService] messages in
                 Task { @MainActor in
                     refreshDeliveryLiveness()
-                    guard let service = codexAppServerDeliveryService else {
+                    guard codexAppServerDeliveryService != nil || claudePeerDeliveryService != nil else {
                         await deliveryState.markSeen(messages)
                         return
                     }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
-                    await Self.deliverCodexAppServerMessages(
+                    var deliveries: [any CodexAppServerDeliveryTrigger] = []
+                    if let codexAppServerDeliveryService {
+                        deliveries.append(codexAppServerDeliveryService)
+                    }
+                    if let claudePeerDeliveryService {
+                        deliveries.append(claudePeerDeliveryService)
+                    }
+                    await Self.drainNativeDeliveryMessages(
                         teamID: teamID,
                         recipientWorktrees: recipientWorktrees,
-                        delivery: service
+                        inbox: services.teamInbox,
+                        deliveries: deliveries
                     )
                 }
             }
@@ -1776,6 +1823,7 @@ struct GrafttyApp: App {
 
         // Persist the delivery service on AppServices so it outlives startup().
         services.codexAppServerDeliveryService = codexAppServerDeliveryService
+        services.claudePeerDeliveryService = claudePeerDeliveryService
 
         // When a pane is destroyed, sweep any TeamPresenceRecord whose
         // paneSessionName matches the closing pane. The agent's own
@@ -1790,7 +1838,8 @@ struct GrafttyApp: App {
                     teamID: record.teamID,
                     worktree: record.worktree,
                     runtime: record.runtime,
-                    paneSessionName: record.paneSessionName
+                    paneSessionName: record.paneSessionName,
+                    agentID: record.agentID
                 )
                 presenceIndex.remove(
                     teamID: record.teamID,
@@ -1802,10 +1851,13 @@ struct GrafttyApp: App {
             let records = presenceIndex.allRecords()
             refreshDeliveryLiveness(records: records)
             Task {
-                await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                await Self.retryNativeDeliveryForPresenceWorktrees(
                     inbox: services.teamInbox,
                     records: records,
-                    delivery: codexAppServerDeliveryService
+                    deliveries: Self.nativeDeliveries(
+                        codex: codexAppServerDeliveryService,
+                        claude: claudePeerDeliveryService
+                    )
                 )
             }
         }
@@ -1820,10 +1872,13 @@ struct GrafttyApp: App {
         let restoredPresenceRecords = refreshPresenceIndex()
         refreshDeliveryLiveness(records: restoredPresenceRecords)
         Task {
-            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+            await Self.retryNativeDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: restoredPresenceRecords,
-                delivery: codexAppServerDeliveryService
+                deliveries: Self.nativeDeliveries(
+                    codex: codexAppServerDeliveryService,
+                    claude: claudePeerDeliveryService
+                )
             )
         }
 
@@ -2855,6 +2910,94 @@ struct GrafttyApp: App {
         }
     }
 
+    nonisolated static func drainNativeDeliveryMessages(
+        teamID: String,
+        recipientWorktrees: [String],
+        inbox: TeamInbox,
+        deliveries: [any CodexAppServerDeliveryTrigger],
+        maximumPasses: Int = 64
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            for recipientWorktree in recipientWorktrees {
+                group.addTask {
+                    for _ in 0..<maximumPasses {
+                        let before = (try? inbox.worktreeWatermark(
+                            teamID: teamID,
+                            worktree: recipientWorktree
+                        ))?.lastDeliveredToAnySessionID
+                        // Sequential on purpose: both services contend on the
+                        // same queue head and shared watermark, so parallel
+                        // fan-out can double-send an untargeted head row when
+                        // their reachability views differ; only one of them
+                        // can advance the watermark per pass anyway.
+                        for delivery in deliveries {
+                            await delivery.onMessageArrival(
+                                team: teamID,
+                                worktree: recipientWorktree
+                            )
+                        }
+                        let after = (try? inbox.worktreeWatermark(
+                            teamID: teamID,
+                            worktree: recipientWorktree
+                        ))?.lastDeliveredToAnySessionID
+                        if before == after { break }
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated static func nativeDeliveries(
+        codex: CodexAppServerDeliveryService,
+        claude: ClaudePeerDeliveryService?
+    ) -> [any CodexAppServerDeliveryTrigger] {
+        var deliveries: [any CodexAppServerDeliveryTrigger] = [codex]
+        if let claude {
+            deliveries.append(claude)
+        }
+        return deliveries
+    }
+
+    nonisolated static func retryNativeDeliveryForPresenceWorktrees(
+        inbox: TeamInbox,
+        records: [TeamPresenceRecord],
+        deliveries: [any CodexAppServerDeliveryTrigger]
+    ) async {
+        var seen: Set<TeamDeliveryPresenceWorktreeKey> = []
+        var keys: [TeamDeliveryPresenceWorktreeKey] = []
+        for record in records {
+            guard record.runtime == .codex
+                    || (record.runtime == .claude && record.transport != nil) else {
+                continue
+            }
+            let key = TeamDeliveryPresenceWorktreeKey(
+                teamID: record.teamID,
+                worktree: record.worktree
+            )
+            // Unlike the codex-only retry helper, do not gate on the head
+            // row's runtime: a claude-targeted head that failed its initial
+            // native delivery must be retried here (AGENT-6.6/6.13); each
+            // delivery service re-checks the head row itself.
+            guard seen.insert(key).inserted,
+                  Self.firstUnreadMessage(inbox: inbox, key: key) != nil else {
+                continue
+            }
+            keys.append(key)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for key in keys {
+                group.addTask {
+                    await Self.drainNativeDeliveryMessages(
+                        teamID: key.teamID,
+                        recipientWorktrees: [key.worktree],
+                        inbox: inbox,
+                        deliveries: deliveries
+                    )
+                }
+            }
+        }
+    }
+
     nonisolated static func retryCodexAppServerDeliveryForPresenceWorktrees(
         inbox: TeamInbox,
         records: [TeamPresenceRecord],
@@ -2879,25 +3022,36 @@ struct GrafttyApp: App {
         }
     }
 
+    /// Head-of-queue gate for the codex-only retry helper: waits for another
+    /// runtime to consume a non-codex head row rather than waking codex
+    /// delivery for a row it can never send.
     private nonisolated static func hasPendingUnreadMessage(
         inbox: TeamInbox,
         key: TeamDeliveryPresenceWorktreeKey
     ) -> Bool {
+        guard let first = firstUnreadMessage(inbox: inbox, key: key) else {
+            return false
+        }
+        return first.to.runtime == nil ||
+            first.to.runtime == TeamHookRuntime.codex.rawValue
+    }
+
+    private nonisolated static func firstUnreadMessage(
+        inbox: TeamInbox,
+        key: TeamDeliveryPresenceWorktreeKey
+    ) -> TeamInboxMessage? {
         do {
             let watermark = try inbox.worktreeWatermark(
                 teamID: key.teamID,
                 worktree: key.worktree
             )?.lastDeliveredToAnySessionID
-            let allUnread = try inbox.unreadMessages(
+            return try inbox.unreadMessages(
                 teamID: key.teamID,
                 recipientWorktree: key.worktree,
                 after: watermark
-            )
-            guard let first = allUnread.first else { return false }
-            return first.to.runtime == nil ||
-                first.to.runtime == TeamHookRuntime.codex.rawValue
+            ).first
         } catch {
-            return false
+            return nil
         }
     }
 
@@ -3464,7 +3618,8 @@ struct GrafttyApp: App {
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        teamAgentRosterNotifier: TeamAgentRosterNotifier? = nil
     ) async -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -3509,6 +3664,7 @@ struct GrafttyApp: App {
         case .teamMessage(let callerPath, let recipient, let text):
             return await handleTeamSend(
                 callerPath: callerPath,
+                callerAgentID: nil,
                 recipient: recipient,
                 text: text,
                 priority: .normal,
@@ -3516,9 +3672,10 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamSend(let callerPath, let recipient, let text, let priority):
+        case .teamSend(let callerPath, let callerAgentID, let recipient, let text, let priority):
             return await handleTeamSend(
                 callerPath: callerPath,
+                callerAgentID: callerAgentID,
                 recipient: recipient,
                 text: text,
                 priority: priority,
@@ -3526,27 +3683,37 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamBroadcast(let callerPath, let text, let priority):
+        case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):
             return await handleTeamBroadcast(
                 callerPath: callerPath,
+                callerAgentID: callerAgentID,
                 text: text,
                 priority: priority,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamHook(let callerPath, let runtime, let event, let sessionID, let paneSessionName):
+        case .teamHook(
+            let callerPath,
+            let runtime,
+            let event,
+            let sessionID,
+            let paneSessionName,
+            let skillManaged
+        ):
             return await handleTeamHook(
                 callerPath: callerPath,
                 runtime: runtime,
                 event: event,
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
+                skillManaged: skillManaged,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
                 terminalManager: terminalManager,
-                remoteBranchStore: remoteBranchStore
+                remoteBranchStore: remoteBranchStore,
+                teamAgentRosterNotifier: teamAgentRosterNotifier
             )
         case .teamInbox(let request):
             return await handleTeamInbox(
@@ -3840,6 +4007,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func handleTeamSend(
         callerPath: String,
+        callerAgentID: String?,
         recipient: String,
         text: String,
         priority: TeamInboxPriority,
@@ -3856,6 +4024,7 @@ struct GrafttyApp: App {
             _ = try await OffMainIO.run {
                 try handler.send(
                     callerWorktree: callerPath,
+                    callerAgentID: callerAgentID,
                     recipient: recipient,
                     text: text,
                     priority: priority,
@@ -3874,6 +4043,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func handleTeamBroadcast(
         callerPath: String,
+        callerAgentID: String?,
         text: String,
         priority: TeamInboxPriority,
         appState: Binding<AppState>,
@@ -3888,6 +4058,7 @@ struct GrafttyApp: App {
             _ = try await OffMainIO.run {
                 try handler.broadcast(
                     callerWorktree: callerPath,
+                    callerAgentID: callerAgentID,
                     text: text,
                     priority: priority,
                     repos: repos,
@@ -3909,11 +4080,13 @@ struct GrafttyApp: App {
         event: TeamHookEvent,
         sessionID: String?,
         paneSessionName: String?,
+        skillManaged: Bool,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         terminalManager: TerminalManager,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        teamAgentRosterNotifier: TeamAgentRosterNotifier?
     ) async -> ResponseMessage {
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
@@ -3930,12 +4103,37 @@ struct GrafttyApp: App {
                     rootDirectory: TeamPresenceStorage.defaultRoot()
                 ).listAll()) ?? []
             }
+            let repos = appState.wrappedValue.repos
+            // Reconcile the roster only when a session joins: PostToolUse
+            // fires on every tool call of every agent, and the 30s presence
+            // ticker already covers departures. Roster I/O failures must not
+            // fail the hook response itself.
+            if event == .sessionStart {
+                try? await teamAgentRosterNotifier?.reconcile(
+                    records: presenceRecords,
+                    repos: repos
+                )
+            }
+            let currentAgentID = presenceRecords.first { record in
+                guard record.worktree == callerPath, record.runtime == runtime else {
+                    return false
+                }
+                if let sessionID, record.runtimeSessionID == sessionID {
+                    return true
+                }
+                // Nil-safe equality: a session launched outside a Graftty
+                // pane (hook pane nil) must still match its own pane-less
+                // presence record, or the hook falls back to a derived ID
+                // that can never equal the agent ID pinned onto its rows.
+                return record.paneSessionName == paneSessionName
+            }?.agentID
             let liveSessionNames = Self.livePaneSessionNamesForAutomaticDelivery(
                 records: presenceRecords,
                 terminalManager: terminalManager
             )
             let instructions: String
             if event == .sessionStart,
+               !skillManaged,
                teamsEnabled,
                let team = TeamLookup.team(
                    for: callerPath,
@@ -3975,7 +4173,6 @@ struct GrafttyApp: App {
                     return owner.paneSessionName == paneSessionName
                 }
             )
-            let repos = appState.wrappedValue.repos
             // ATTN-2.19: hook delivery parses the full inbox history and
             // can wait on the inter-process watermark lock; it fires on
             // every PostToolUse of every agent, so on the main actor it
@@ -3989,7 +4186,9 @@ struct GrafttyApp: App {
                     paneSessionName: paneSessionName,
                     repos: repos,
                     teamsEnabled: teamsEnabled,
-                    instructions: instructions
+                    instructions: instructions,
+                    agentID: currentAgentID,
+                    skillManaged: skillManaged
                 )
             }
             if event == .stop {
@@ -4204,7 +4403,15 @@ struct GrafttyApp: App {
             inbox: inbox,
             dispatcher: dispatcher,
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
-            automaticDeliveryOwner: automaticDeliveryOwner
+            automaticDeliveryOwner: automaticDeliveryOwner,
+            agentRecords: {
+                (try? TeamPresenceStorage(
+                    rootDirectory: TeamPresenceStorage.defaultRoot()
+                ).listAll()) ?? []
+            },
+            agentReachability: { record in
+                TeamAgentReachability.isReachable(record)
+            }
         )
     }
 
@@ -5313,7 +5520,10 @@ struct GrafttyApp: App {
         do {
             _ = try AgentHookInstaller(
                 rootDirectory: AgentHookInstaller.rootDirectory(),
-                grafttyCLIPath: agentHookCLIPath()
+                grafttyCLIPath: agentHookCLIPath(),
+                providerPluginsEnabled: UserDefaults.standard.bool(
+                    forKey: SettingsKeys.nativeAgentMessagingEnabled
+                )
             ).install()
         } catch {
             NSLog("[Graftty] Agent hook asset install failed: %@", String(describing: error))

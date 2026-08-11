@@ -4,6 +4,86 @@ import Testing
 
 @Suite("TeamInbox")
 struct TeamInboxTests {
+    @Test("Agent-targeted rows are deliverable only to the exact runtime agent.")
+    func agentTargetedDeliveryIsExact() {
+        let message = TeamInboxMessage(
+            id: "1",
+            batchID: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            team: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(
+                member: "alice",
+                worktree: "/repo/alice",
+                runtime: "codex",
+                agentID: "codex-111111111111"
+            ),
+            priority: .normal,
+            body: "hello"
+        )
+
+        #expect(TeamInbox.isDeliverable(
+            message,
+            toRuntime: "codex",
+            agentID: "codex-111111111111"
+        ))
+        #expect(!TeamInbox.isDeliverable(
+            message,
+            toRuntime: "codex",
+            agentID: "codex-222222222222"
+        ))
+        #expect(!TeamInbox.isDeliverable(message, toRuntime: "claude", agentID: nil))
+    }
+    @Test("A watcher claiming with its agent identity consumes rows pinned to that agent; an identity-less claim leaves them for native delivery.")
+    func claimHonorsAgentPinnedRows() throws {
+        let inbox = TeamInbox(
+            rootDirectory: try temporaryDirectory(),
+            idGenerator: IncrementingIDGenerator(prefix: "m").next,
+            now: { Date(timeIntervalSince1970: 1_800) }
+        )
+        let worktree = "/repo/alice"
+        let agentID = "claude-111111111111"
+        try inbox.writeCursor(
+            TeamInboxCursor(
+                sessionID: "s1",
+                worktree: worktree,
+                runtime: "claude",
+                lastSeenID: nil
+            ),
+            teamID: "/repo"
+        )
+        _ = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(
+                member: "alice",
+                worktree: worktree,
+                runtime: "claude",
+                agentID: agentID
+            ),
+            priority: .normal,
+            body: "pinned"
+        )
+
+        #expect(try inbox.claimNextUnreadMessage(
+            teamID: "/repo",
+            sessionID: "s1",
+            recipientWorktree: worktree,
+            runtime: "claude"
+        ) == nil)
+        let claimed = try inbox.claimNextUnreadMessage(
+            teamID: "/repo",
+            sessionID: "s1",
+            recipientWorktree: worktree,
+            runtime: "claude",
+            agentID: agentID
+        )
+        #expect(claimed?.body == "pinned")
+    }
+
     @Test func appendPointToPointMessageRoundTrips() throws {
         let inbox = TeamInbox(
             rootDirectory: try temporaryDirectory(),

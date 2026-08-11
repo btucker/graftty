@@ -1,14 +1,22 @@
 import SwiftUI
+import AppKit
 import GrafttyKit
 
 /// Settings pane that exposes the `agentTeamsEnabled` toggle, the routing
 /// matrix, and the two user-editable prompts.
 struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
+    @AppStorage(SettingsKeys.nativeAgentMessagingEnabled)
+    private var nativeAgentMessagingEnabled: Bool = false
     @AppStorage private var teamSessionPrompt: String
     @AppStorage private var teamPrompt: String
     @AppStorage("teamEventRoutingPreferences") private var teamEventRoutingPreferences = TeamEventRoutingPreferences()
     private let defaults: UserDefaults
+    @State private var pluginSetupCommands = ""
+    @State private var pluginSetupStatus: String?
+    @State private var preparedPluginPlan: AgentPluginSetupPlan?
+    @State private var showingPluginInstallOffer = false
+    @State private var pluginInstallInProgress = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -29,12 +37,49 @@ struct AgentTeamsSettingsPane: View {
             Section {
                 Toggle("Enable agent teams", isOn: $agentTeamsEnabled)
             } footer: {
-                Text("Graftty always installs Codex and Claude wrappers for panes it launches. When this is off, those wrappers still run but team hook requests return an empty no-op response. When on, hooks inject team context and deliver team inbox messages.")
+                Text("When native provider integration is off, Graftty installs compatibility wrappers that register sessions, inject lifecycle hooks, and deliver team inbox messages. Native integration moves hooks and team instructions into provider plugins.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if agentTeamsEnabled {
+                Section {
+                    Toggle(
+                        "Use native agent messaging (experimental)",
+                        isOn: $nativeAgentMessagingEnabled
+                    )
+                    Button("Prepare Codex and Claude Plugins…") {
+                        prepareProviderPlugins()
+                    }
+                    .disabled(pluginInstallInProgress)
+                    if preparedPluginPlan != nil {
+                        Button("Install Prepared Plugins…") {
+                            showingPluginInstallOffer = true
+                        }
+                        .disabled(pluginInstallInProgress)
+                    }
+                    if pluginInstallInProgress {
+                        ProgressView("Installing provider plugins…")
+                            .controlSize(.small)
+                    }
+                    if !pluginSetupCommands.isEmpty {
+                        Text(pluginSetupCommands)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    if let pluginSetupStatus {
+                        Text(pluginSetupStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Native provider integration")
+                } footer: {
+                    Text("Preparation copies a Graftty-owned marketplace snapshot and four provider-native setup commands to the clipboard, then offers to run those commands. Graftty changes provider configuration only after you explicitly approve that offer. The plugins install the shared team skill and lifecycle hooks. Native mode removes Graftty's Claude wrapper and uses Claude's peer socket. Codex 0.147 still needs a small Graftty transport wrapper to launch an app-server/remote pair; its plugin owns hooks and instructions. After changing this setting or installing the plugins, restart Graftty and then start new provider sessions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section {
                     ChannelRoutingMatrixView(prefs: $teamEventRoutingPreferences)
                 } header: {
@@ -89,9 +134,70 @@ struct AgentTeamsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            nativeAgentMessagingEnabled
+                ? "Install Codex and Claude plugins now?"
+                : "Install plugins and enable native messaging?",
+            isPresented: $showingPluginInstallOffer,
+            titleVisibility: .visible
+        ) {
+            Button(nativeAgentMessagingEnabled ? "Install Both Plugins" : "Install and Enable") {
+                AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
+                installPreparedProviderPlugins()
+            }
+            Button("Not Now", role: .cancel) {
+                AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
+            }
+        } message: {
+            Text("Graftty will run the four displayed provider-native commands. Each provider remains responsible for its own plugin configuration, and failures are reported without preventing the other provider from being attempted.")
+        }
+        .onChange(of: nativeAgentMessagingEnabled) { _, enabled in
+            guard enabled,
+                  AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
+            prepareProviderPlugins()
+        }
+        .onChange(of: agentTeamsEnabled) { _, enabled in
+            guard enabled,
+                  AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
+            prepareProviderPlugins()
+        }
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
         .frame(minWidth: 540, minHeight: 640)
+    }
+
+    private func prepareProviderPlugins() {
+        do {
+            let plan = try AgentPluginInstaller().prepare()
+            preparedPluginPlan = plan
+            pluginSetupCommands = plan.shellScript
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(plan.shellScript, forType: .string)
+            pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
+            showingPluginInstallOffer = true
+        } catch {
+            preparedPluginPlan = nil
+            pluginSetupCommands = ""
+            pluginSetupStatus = "Could not prepare provider plugins: \(error)"
+        }
+    }
+
+    private func installPreparedProviderPlugins() {
+        guard let plan = preparedPluginPlan else { return }
+        pluginInstallInProgress = true
+        pluginSetupStatus = "Installing Codex and Claude plugins…"
+        Task {
+            let report = await AgentPluginInstaller().install(plan)
+            if AgentPluginIntegrationActivation.apply(
+                successfulInstallation: report.succeeded,
+                defaults: defaults,
+                refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
+            ) {
+                nativeAgentMessagingEnabled = true
+            }
+            pluginInstallInProgress = false
+            pluginSetupStatus = report.summary
+        }
     }
 }
 

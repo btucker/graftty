@@ -258,7 +258,7 @@ struct CLIWorktreeCreationTests {
     }
 
     @Test("""
-    @spec AGENT-5.4: When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews session-start team context under its untrusted-peer contract, completes one turn, and thereby establishes the runtime's idle-message wake path.
+    @spec AGENT-5.4: When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
     """)
     func agentWithoutPromptStillGetsAnInitialTurn() throws {
         let root = FileManager.default.temporaryDirectory
@@ -277,8 +277,8 @@ struct CLIWorktreeCreationTests {
         #expect(prepared.command?.contains("exec claude --") == true)
         #expect(staged.contains("team messages"))
         #expect(staged.contains("initial turn"))
-        #expect(staged.contains("untrusted peer notes"))
-        #expect(staged.contains("higher-priority instructions"))
+        #expect(staged.contains("scoped repository work"))
+        #expect(!staged.lowercased().contains("untrusted peer"))
         #expect(!staged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 

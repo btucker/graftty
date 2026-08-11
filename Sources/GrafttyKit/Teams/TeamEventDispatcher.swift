@@ -32,7 +32,11 @@ public final class TeamEventDispatcher {
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
-        teamsEnabled: Bool
+        teamsEnabled: Bool,
+        senderRuntime: TeamHookRuntime? = nil,
+        senderAgentID: String? = nil,
+        recipientRuntime: TeamHookRuntime? = nil,
+        recipientAgentID: String? = nil
     ) throws -> TeamInboxMessage? {
         guard teamsEnabled else { return nil }
         guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
@@ -47,12 +51,14 @@ public final class TeamEventDispatcher {
             from: TeamInboxEndpoint(
                 member: senderMember.name,
                 worktree: senderMember.worktreePath,
-                runtime: nil
+                runtime: senderRuntime?.rawValue,
+                agentID: senderAgentID
             ),
             to: TeamInboxEndpoint(
                 member: recipientMember.name,
                 worktree: recipientMember.worktreePath,
-                runtime: nil
+                runtime: recipientRuntime?.rawValue,
+                agentID: recipientAgentID
             ),
             priority: priority,
             kind: TeamChannelEvents.EventType.message,
@@ -71,7 +77,9 @@ public final class TeamEventDispatcher {
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
-        teamsEnabled: Bool
+        teamsEnabled: Bool,
+        senderRuntime: TeamHookRuntime? = nil,
+        senderAgentID: String? = nil
     ) throws -> [TeamInboxMessage] {
         guard teamsEnabled else { return [] }
         guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
@@ -87,7 +95,8 @@ public final class TeamEventDispatcher {
             from: TeamInboxEndpoint(
                 member: senderMember.name,
                 worktree: senderMember.worktreePath,
-                runtime: nil
+                runtime: senderRuntime?.rawValue,
+                agentID: senderAgentID
             ),
             recipients: recipients.map { recipient in
                 TeamInboxEndpoint(

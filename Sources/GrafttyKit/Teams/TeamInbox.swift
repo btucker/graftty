@@ -14,15 +14,27 @@ public struct TeamInboxEndpoint: Codable, Sendable, Equatable, Hashable {
     public let member: String
     public let worktree: String
     public let runtime: String?
+    public let agentID: String?
 
-    public init(member: String, worktree: String, runtime: String?) {
+    public init(
+        member: String,
+        worktree: String,
+        runtime: String?,
+        agentID: String? = nil
+    ) {
         self.member = member
         self.worktree = worktree
         self.runtime = runtime
+        self.agentID = agentID
     }
 }
 
 extension TeamInboxEndpoint {
+    public var canonicalAddress: String {
+        guard let agentID else { return worktree }
+        return "\(worktree)#\(agentID)"
+    }
+
     /// @spec TEAM-5.4
     /// Synthetic sender used by automated team events (PR/CI/membership)
     /// where there is no human author. The activity window and hook
@@ -300,16 +312,22 @@ public final class TeamInbox {
     /// advances past a message that still needs its own delivery path.
     static func runtimeDeliverablePrefix(
         _ messages: [TeamInboxMessage],
-        runtime: String
+        runtime: String,
+        agentID: String? = nil
     ) -> [TeamInboxMessage] {
-        Array(messages.prefix { isDeliverable($0, toRuntime: runtime) })
+        Array(messages.prefix { isDeliverable($0, toRuntime: runtime, agentID: agentID) })
     }
 
     static func isDeliverable(
         _ message: TeamInboxMessage,
-        toRuntime runtime: String
+        toRuntime runtime: String,
+        agentID: String? = nil
     ) -> Bool {
-        message.to.runtime == nil || message.to.runtime == runtime
+        guard message.to.runtime == nil || message.to.runtime == runtime else {
+            return false
+        }
+        guard let targetedAgentID = message.to.agentID else { return true }
+        return targetedAgentID == agentID
     }
 
     public func writeCursor(_ cursor: TeamInboxCursor, teamID: String) throws {
@@ -475,7 +493,8 @@ public final class TeamInbox {
         teamID: String,
         sessionID: String,
         recipientWorktree: String,
-        runtime: String
+        runtime: String,
+        agentID: String? = nil
     ) throws -> TeamInboxMessage? {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
             guard let cursor = try cursor(teamID: teamID, sessionID: sessionID),
@@ -502,7 +521,7 @@ public final class TeamInbox {
             }) else {
                 return nil
             }
-            guard Self.isDeliverable(message, toRuntime: runtime) else {
+            guard Self.isDeliverable(message, toRuntime: runtime, agentID: agentID) else {
                 return nil
             }
 

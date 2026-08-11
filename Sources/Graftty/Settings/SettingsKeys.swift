@@ -4,6 +4,9 @@ import GrafttyKit
 /// Centralized UserDefaults key strings used across Settings panes and observers.
 enum SettingsKeys {
     static let agentTeamsEnabled         = "agentTeamsEnabled"
+    static let nativeAgentMessagingEnabled = "nativeAgentMessagingEnabled"
+    static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"
+    static let agentPluginInstalledRevision = "agentPluginInstalledRevision"
     static let channelsEnabled           = "channelsEnabled"
     static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamSessionPrompt         = "teamSessionPrompt"

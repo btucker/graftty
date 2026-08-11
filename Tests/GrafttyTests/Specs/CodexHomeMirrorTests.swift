@@ -38,7 +38,7 @@ struct CodexHomeMirrorTests {
         #expect(configTarget == nil)
     }
 
-    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall union the user's Codex hooks with Graftty's current SessionStart hook and remove stale Graftty delivery hooks.")
+    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks and remove stale Graftty delivery hooks; while legacy wrapper hooks are enabled it shall add Graftty's SessionStart hook, and while provider plugins are enabled it shall leave that hook to the plugin.")
     func hooksUnionMerge() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -75,6 +75,35 @@ struct CodexHomeMirrorTests {
         let hooks2 = merged2["hooks"] as! [String: Any]
         let sessionStart2 = hooks2["SessionStart"] as! [[String: Any]]
         #expect(sessionStart2.count == 2)
+    }
+
+    @Test("Provider-plugin mode strips legacy Graftty hooks without replacing user hooks.")
+    func pluginModeLeavesHooksToPlugin() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        try writeFile(src.appendingPathComponent("hooks.json"), """
+        {
+          "hooks": {
+            "SessionStart": [
+              { "hooks": [{ "type": "command", "command": "/path/to/user-script.sh" }] },
+              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex session-start" }] }
+            ]
+          }
+        }
+        """)
+
+        try CodexHomeMirror(
+            sourceDirectory: src,
+            mirrorDirectory: dst,
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            grafttyHooksEnabled: false
+        ).rebuild()
+
+        let data = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
+        let root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let hooks = root["hooks"] as! [String: Any]
+        let commands = commands(in: hooks["SessionStart"] as! [[String: Any]])
+        #expect(commands == ["/path/to/user-script.sh"])
     }
 
     @Test("Codex mirror installs only the SessionStart graftty hook and removes stale graftty delivery hooks.")

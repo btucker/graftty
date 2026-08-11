@@ -18,7 +18,7 @@ struct CodexAppServerDeliveryTests {
         #expect(calls[0].binaryPath == f.realBinaryPath)
         #expect(calls[0].socketPath == f.socketPath)
         #expect(calls[0].expectedCWD == f.worktree)
-        #expect(calls[0].message == TeamHookRenderer.format(messages: [first, second]))
+        #expect(calls[0].message == TeamPeerMessageFormatter.context(messages: [first, second]))
         #expect(try f.inbox.worktreeWatermark(
             teamID: f.teamID,
             worktree: f.worktree
@@ -45,7 +45,7 @@ struct CodexAppServerDeliveryTests {
 
         let calls = await f.client.calls()
         #expect(calls.count == 1)
-        #expect(calls[0].message == TeamHookRenderer.format(messages: [codexMessage]))
+        #expect(calls[0].message == TeamPeerMessageFormatter.context(messages: [codexMessage]))
         #expect(try f.inbox.worktreeWatermark(
             teamID: f.teamID,
             worktree: f.worktree
@@ -232,6 +232,50 @@ struct CodexAppServerDeliveryTests {
         #expect(event.detail["outcome"] == "sent")
     }
 
+    @Test("An exact Codex address selects that agent's app-server instead of the earliest Codex owner.")
+    func exactAddressSelectsLaterAgent() async throws {
+        let firstID = TeamAgentIdentity(runtime: .codex, nativeSessionID: "codex-first").rawValue
+        let laterID = TeamAgentIdentity(runtime: .codex, nativeSessionID: "codex-later").rawValue
+        let f = try Fixture(
+            presenceRecords: [
+                Fixture.presenceRecord(
+                    pane: "graftty-owner",
+                    pid: 101,
+                    start: 1_001,
+                    registeredAt: 10,
+                    sessionID: "codex-first"
+                ),
+                Fixture.presenceRecord(
+                    pane: "graftty-later",
+                    pid: 102,
+                    start: 1_002,
+                    registeredAt: 20,
+                    sessionID: "codex-later"
+                ),
+            ],
+            liveSessions: ["graftty-owner", "graftty-later"],
+            processStartTimes: [101: 1_001, 102: 1_002, 201: 2_001, 202: 2_002]
+        )
+        _ = firstID
+        _ = try f.appendUnread(body: "for the later agent", agentID: laterID)
+        try f.writeOwnerSession(agentID: firstID)
+        try f.writeOwnerSession(
+            pane: "graftty-later",
+            socketPath: "/tmp/later.sock",
+            realBinaryPath: "/bin/later-codex",
+            appServerPID: 202,
+            appServerStart: 2_002,
+            agentID: laterID
+        )
+
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree)
+
+        let calls = await f.client.calls()
+        #expect(calls.count == 1)
+        #expect(calls[0].socketPath == "/tmp/later.sock")
+        #expect(calls[0].binaryPath == "/bin/later-codex")
+    }
+
     struct Fixture {
         let teamID = "/repo"
         let worktree = "/repo/.worktrees/alice"
@@ -286,13 +330,22 @@ struct CodexAppServerDeliveryTests {
             )
         }
 
-        func appendUnread(body: String, runtime: String? = "codex") throws -> TeamInboxMessage {
+        func appendUnread(
+            body: String,
+            runtime: String? = "codex",
+            agentID: String? = nil
+        ) throws -> TeamInboxMessage {
             try inbox.appendMessage(
                 teamID: teamID,
                 teamName: "repo",
                 repoPath: "/repo",
                 from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
-                to: TeamInboxEndpoint(member: "alice", worktree: worktree, runtime: runtime),
+                to: TeamInboxEndpoint(
+                    member: "alice",
+                    worktree: worktree,
+                    runtime: runtime,
+                    agentID: agentID
+                ),
                 priority: .normal,
                 body: body
             )
@@ -303,7 +356,8 @@ struct CodexAppServerDeliveryTests {
             socketPath: String? = nil,
             realBinaryPath: String? = nil,
             appServerPID: Int32 = 201,
-            appServerStart: Int64? = 2_001
+            appServerStart: Int64? = 2_001,
+            agentID: String? = nil
         ) throws {
             try sessionStorage.write(CodexAppServerSessionRecord(
                 teamID: teamID,
@@ -313,7 +367,8 @@ struct CodexAppServerDeliveryTests {
                 realBinaryPath: realBinaryPath ?? self.realBinaryPath,
                 appServerPID: appServerPID,
                 appServerProcessStartTimeMicroseconds: appServerStart,
-                registeredAt: frozen
+                registeredAt: frozen,
+                agentID: agentID
             ))
         }
 
@@ -333,7 +388,8 @@ struct CodexAppServerDeliveryTests {
             pane: String,
             pid: Int32,
             start: Int64,
-            registeredAt: TimeInterval
+            registeredAt: TimeInterval,
+            sessionID: String? = nil
         ) -> TeamPresenceRecord {
             TeamPresenceRecord(
                 teamID: "/repo",
@@ -342,7 +398,11 @@ struct CodexAppServerDeliveryTests {
                 paneSessionName: pane,
                 pid: pid,
                 processStartTimeMicroseconds: start,
-                registeredAt: Date(timeIntervalSince1970: registeredAt)
+                registeredAt: Date(timeIntervalSince1970: registeredAt),
+                runtimeSessionID: sessionID,
+                agentID: sessionID.map {
+                    TeamAgentIdentity(runtime: .codex, nativeSessionID: $0).rawValue
+                }
             )
         }
     }

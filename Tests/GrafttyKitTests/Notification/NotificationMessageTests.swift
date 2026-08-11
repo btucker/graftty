@@ -82,6 +82,7 @@ struct NotificationMessageTests {
     @Test func teamSendRoundTripsWithPriority() throws {
         let original: NotificationMessage = .teamSend(
             callerWorktree: "/r/a",
+            callerAgentID: "codex-0123456789ab",
             recipient: "alice",
             text: "please review",
             priority: .urgent
@@ -90,6 +91,7 @@ struct NotificationMessageTests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_send")
         #expect(json["caller_worktree"] as? String == "/r/a")
+        #expect(json["caller_agent_id"] as? String == "codex-0123456789ab")
         #expect(json["recipient"] as? String == "alice")
         #expect(json["text"] as? String == "please review")
         #expect(json["priority"] as? String == "urgent")
@@ -101,6 +103,7 @@ struct NotificationMessageTests {
     @Test func teamBroadcastRoundTripsWithPriority() throws {
         let original: NotificationMessage = .teamBroadcast(
             callerWorktree: "/r/a",
+            callerAgentID: "claude-abcdef012345",
             text: "heads up",
             priority: .normal
         )
@@ -108,11 +111,27 @@ struct NotificationMessageTests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_broadcast")
         #expect(json["caller_worktree"] as? String == "/r/a")
+        #expect(json["caller_agent_id"] as? String == "claude-abcdef012345")
         #expect(json["text"] as? String == "heads up")
         #expect(json["priority"] as? String == "normal")
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test("Older team-send payloads decode without caller agent identity.")
+    func legacyTeamSendDecodesWithoutCallerAgentID() throws {
+        let data = Data(#"{"type":"team_send","caller_worktree":"/r/a","recipient":"alice","text":"hello","priority":"normal"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
+
+        #expect(decoded == .teamSend(
+            callerWorktree: "/r/a",
+            callerAgentID: nil,
+            recipient: "alice",
+            text: "hello",
+            priority: .normal
+        ))
     }
 
     @Test func teamHookRoundTripsRuntimeEventAndSession() throws {
@@ -146,7 +165,7 @@ struct NotificationMessageTests {
         )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
-        guard case let .teamHook(_, _, _, _, paneSessionName) = decoded else {
+        guard case let .teamHook(_, _, _, _, paneSessionName, _) = decoded else {
             Issue.record("expected .teamHook"); return
         }
         #expect(paneSessionName == "graftty-abc12345")
@@ -163,7 +182,7 @@ struct NotificationMessageTests {
         }
         """
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
-        guard case let .teamHook(_, _, _, _, paneSessionName) = decoded else {
+        guard case let .teamHook(_, _, _, _, paneSessionName, _) = decoded else {
             Issue.record("expected .teamHook"); return
         }
         #expect(paneSessionName == nil)

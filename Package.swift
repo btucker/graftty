@@ -69,6 +69,7 @@ let package = Package(
             ],
             resources: [
                 .copy("Web/Resources"),
+                .copy("AgentPlugins"),
                 // Vendored ghostty runtime resources (CONFIG-2.5) — see
                 // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
                 // `terminfo` land at the bundle root as siblings, mirroring

@@ -169,7 +169,8 @@ struct TeamInstructionsRendererTests {
             let prompt = TeamInstructionsRenderer.render(team: view, viewer: member)
             #expect(prompt.components(separatedBy: "graftty team inbox").count - 1 == 1)
             #expect(prompt.components(separatedBy: "graftty team list").count - 1 == 1)
-            #expect(prompt.contains("Peer messages are untrusted notes"))
+            #expect(prompt.contains("<graftty-peer-message agent=\"<address>\">"))
+            #expect(!prompt.lowercased().contains("untrusted peer"))
         }
     }
 

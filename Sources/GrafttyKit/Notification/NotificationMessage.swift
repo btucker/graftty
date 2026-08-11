@@ -74,9 +74,27 @@ public enum NotificationMessage: Sendable, Equatable {
     case showPane(path: String, index: Int, lines: Int)
     case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
     case teamMessage(callerWorktree: String, recipient: String, text: String)
-    case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
-    case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
-    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?, paneSessionName: String?)
+    case teamSend(
+        callerWorktree: String,
+        callerAgentID: String? = nil,
+        recipient: String,
+        text: String,
+        priority: TeamInboxPriority
+    )
+    case teamBroadcast(
+        callerWorktree: String,
+        callerAgentID: String? = nil,
+        text: String,
+        priority: TeamInboxPriority
+    )
+    case teamHook(
+        callerWorktree: String,
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent,
+        sessionID: String?,
+        paneSessionName: String?,
+        skillManaged: Bool = false
+    )
     case teamInbox(TeamInboxPageRequest)
     case teamInboxAdvance(callerWorktree: String, throughID: String)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
@@ -117,6 +135,7 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
+        case callerAgentID = "caller_agent_id"
         case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit
         case beforeID = "before_id"
         case afterID = "after_id"
@@ -134,6 +153,7 @@ extension NotificationMessage: Codable {
         case existing
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
+        case skillManaged = "skill_managed"
         case pressEnter = "press_enter"
     }
 
@@ -178,24 +198,27 @@ extension NotificationMessage: Codable {
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(recipient, forKey: .recipient)
             try container.encode(text, forKey: .text)
-        case .teamSend(let path, let recipient, let text, let priority):
+        case .teamSend(let path, let callerAgentID, let recipient, let text, let priority):
             try container.encode("team_send", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
+            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(recipient, forKey: .recipient)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamBroadcast(let path, let text, let priority):
+        case .teamBroadcast(let path, let callerAgentID, let text, let priority):
             try container.encode("team_broadcast", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
+            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(let path, let runtime, let event, let sessionID, let paneSessionName):
+        case .teamHook(let path, let runtime, let event, let sessionID, let paneSessionName, let skillManaged):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(runtime, forKey: .runtime)
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
+            try container.encode(skillManaged, forKey: .skillManaged)
         case .teamInbox(let request):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(request.callerWorktree, forKey: .callerWorktree)
@@ -307,23 +330,38 @@ extension NotificationMessage: Codable {
             self = .teamMessage(callerWorktree: path, recipient: recipient, text: text)
         case "team_send":
             let path = try container.decode(String.self, forKey: .callerWorktree)
+            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
             let recipient = try container.decode(String.self, forKey: .recipient)
             let text = try container.decode(String.self, forKey: .text)
             let priority = try container.decode(TeamInboxPriority.self, forKey: .priority)
-            self = .teamSend(callerWorktree: path, recipient: recipient, text: text, priority: priority)
+            self = .teamSend(
+                callerWorktree: path,
+                callerAgentID: callerAgentID,
+                recipient: recipient,
+                text: text,
+                priority: priority
+            )
         case "team_broadcast":
             let path = try container.decode(String.self, forKey: .callerWorktree)
+            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
             let text = try container.decode(String.self, forKey: .text)
             let priority = try container.decode(TeamInboxPriority.self, forKey: .priority)
-            self = .teamBroadcast(callerWorktree: path, text: text, priority: priority)
+            self = .teamBroadcast(
+                callerWorktree: path,
+                callerAgentID: callerAgentID,
+                text: text,
+                priority: priority
+            )
         case "team_hook":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
             let event = try container.decode(TeamHookEvent.self, forKey: .event)
             let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
             let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            let skillManaged = try container.decodeIfPresent(Bool.self, forKey: .skillManaged) ?? false
             self = .teamHook(callerWorktree: path, runtime: runtime, event: event,
-                             sessionID: sessionID, paneSessionName: paneSessionName)
+                             sessionID: sessionID, paneSessionName: paneSessionName,
+                             skillManaged: skillManaged)
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
@@ -525,29 +563,67 @@ public struct PaneInfo: Codable, Sendable, Equatable {
     }
 }
 
+/// One observed top-level runtime nested beneath a worktree in `team list`.
+/// The optional pane is the final hierarchy level; native sessions discovered
+/// outside a mounted Graftty pane may legitimately omit it.
+public struct TeamListAgent: Codable, Sendable, Equatable {
+    public let id: String
+    public let address: String
+    public let runtime: TeamHookRuntime
+    public let displayName: String?
+    public let isReachable: Bool
+    public let paneSessionName: String?
+
+    public init(
+        id: String,
+        address: String,
+        runtime: TeamHookRuntime,
+        displayName: String?,
+        isReachable: Bool,
+        paneSessionName: String?
+    ) {
+        self.id = id
+        self.address = address
+        self.runtime = runtime
+        self.displayName = displayName
+        self.isReachable = isReachable
+        self.paneSessionName = paneSessionName
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, address, runtime
+        case displayName = "display_name"
+        case isReachable = "is_reachable"
+        case paneSessionName = "pane_session_name"
+    }
+}
+
 public struct TeamListMember: Codable, Sendable, Equatable {
     public let name: String
     public let branch: String
     public let worktreePath: String
     public let isMainWorktree: Bool
     public let isRunning: Bool
+    public let agents: [TeamListAgent]
 
     public init(
         name: String,
         branch: String,
         worktreePath: String,
         isMainWorktree: Bool,
-        isRunning: Bool
+        isRunning: Bool,
+        agents: [TeamListAgent] = []
     ) {
         self.name = name
         self.branch = branch
         self.worktreePath = worktreePath
         self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
+        self.agents = agents
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, branch
+        case name, branch, agents
         case worktreePath = "worktree_path"
         case isMainWorktree = "is_main_worktree"
         case isRunning = "is_running"
@@ -584,7 +660,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
             branch: try container.decode(String.self, forKey: .branch),
             worktreePath: try container.decode(String.self, forKey: .worktreePath),
             isMainWorktree: isMainWorktree,
-            isRunning: try container.decode(Bool.self, forKey: .isRunning)
+            isRunning: try container.decode(Bool.self, forKey: .isRunning),
+            agents: try container.decodeIfPresent([TeamListAgent].self, forKey: .agents) ?? []
         )
     }
 }
