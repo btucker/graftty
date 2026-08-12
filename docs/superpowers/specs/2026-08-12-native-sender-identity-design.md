@@ -55,7 +55,9 @@ consumers, which have no native sender concept:
 
 A native send's `senderName` is per-frame, but today's deliverable prefix can
 mix senders. `deliverOnce` trims the pending prefix to its **leading run of
-rows sharing the same `from` endpoint**; the existing
+rows sharing the same derived sender name** (two system rows share a `from`
+endpoint but may have different sources, so the grouping key is the name
+itself); the existing
 `onMessageArrival` repeat-loop redelivers, so later runs go out in follow-up
 frames each under their own correct name. Watermark advancement and the
 too-large frame halving loop are unchanged (halving applies within the run).
@@ -97,7 +99,7 @@ delivery keeps the wrapper.
   other system rows.
 - **New AGENT-6.19** (plain same-sender frames): When pending deliverable
   rows are sent through Claude's native peer socket, the application shall
-  send only the leading run of rows sharing one sender endpoint per frame,
+  send only the leading run of rows sharing one derived sender name per frame,
   with bodies joined by a blank line and no per-message envelope, leaving
   later runs for subsequent frames.
 - **New AGENT-6.20** (source persistence): When the dispatcher writes a
