@@ -111,11 +111,12 @@ public actor ClaudePeerDeliveryService {
             ClaudePeerSenderName.name(for: $0) == senderName
         }))
 
+        // A batch that overflows the peer protocol's frame cap would
+        // otherwise be retried identically forever, wedging the queue.
+        // Halve the batch until it fits; the next pass delivers the rest.
+        var batch = run
+        var skippedOversized = false
         do {
-            // A batch that overflows the peer protocol's frame cap would
-            // otherwise be retried identically forever, wedging the queue.
-            // Halve the batch until it fits; the next pass delivers the rest.
-            var batch = run
             while true {
                 do {
                     _ = try await client.send(
@@ -130,30 +131,48 @@ public actor ClaudePeerDeliveryService {
                     batch = Array(batch.prefix((batch.count + 1) / 2))
                 }
             }
-            try inbox.compareAndAdvanceWorktreeWatermark(
-                teamID: team,
-                worktree: worktree,
-                to: batch[batch.count - 1].id
-            )
-            log(
-                team: team,
-                worktree: worktree,
-                outcome: "sent",
-                agentID: selected.id.rawValue,
-                messageIDs: batch.map(\.id)
-            )
-            return true
+        } catch ClaudePeerMessagingError.messageTooLarge {
+            // A lone row that exceeds the frame cap can never be delivered;
+            // skip the watermark past it so the poison row cannot wedge the
+            // queue. The row stays in inbox history for manual reading.
+            skippedOversized = true
         } catch {
             log(
                 team: team,
                 worktree: worktree,
                 outcome: "error_delivery",
                 agentID: selected.id.rawValue,
-                messageIDs: run.map(\.id),
+                messageIDs: batch.map(\.id),
                 error: String(describing: error)
             )
             return false
         }
+
+        do {
+            try inbox.compareAndAdvanceWorktreeWatermark(
+                teamID: team,
+                worktree: worktree,
+                to: batch[batch.count - 1].id
+            )
+        } catch {
+            log(
+                team: team,
+                worktree: worktree,
+                outcome: "error_watermark_write",
+                agentID: selected.id.rawValue,
+                messageIDs: batch.map(\.id),
+                error: String(describing: error)
+            )
+            return false
+        }
+        log(
+            team: team,
+            worktree: worktree,
+            outcome: skippedOversized ? "skipped_oversized" : "sent",
+            agentID: selected.id.rawValue,
+            messageIDs: batch.map(\.id)
+        )
+        return true
     }
 
     private func log(
@@ -207,14 +226,26 @@ public enum TeamPeerMessageFormatter {
     public static func context(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
             let address = escapeAttribute(message.from.canonicalAddress)
+            // Neutralize both peer-authored closes (early termination) and
+            // peer-authored opens (sender-attribution forgery of a sibling
+            // element); the `agent` attribute is the recipient's only
+            // provenance cue.
             let body = TeamHookRenderer.content(message: message)
                 .replacingOccurrences(
                     of: "</graftty-peer-message",
                     with: #"<\/graftty-peer-message"#,
                     options: [.caseInsensitive]
                 )
+                .replacingOccurrences(
+                    of: "<graftty-peer-message",
+                    with: #"<\graftty-peer-message"#,
+                    options: [.caseInsensitive]
+                )
+            let urgencySuffix = message.priority == .urgent
+                ? #" priority="urgent""#
+                : ""
             return """
-            <graftty-peer-message agent="\(address)">
+            <graftty-peer-message agent="\(address)"\(urgencySuffix)>
             \(body)
             </graftty-peer-message>
             """

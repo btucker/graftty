@@ -102,22 +102,14 @@ public actor CodexAppServerDeliveryService {
         let directory = TeamAgentDirectory(
             records: worktreeRecords,
             isReachable: { record in
-                guard let start = record.processStartTimeMicroseconds,
-                      self.liveness.processStartTimeMicroseconds(ofPID: record.pid) == start else {
-                    return false
-                }
-                // Keep this view of a Claude peer's reachability aligned with
-                // ClaudePeerDeliveryService: if the two services disagree
-                // about the earliest reachable agent, an untargeted head row
-                // is claimed by neither and the worktree queue wedges.
-                if case .claude(let socketPath, _)? = record.transport,
-                   !ClaudePeerSessionRegistry.isSocket(atPath: socketPath) {
-                    return false
-                }
-                guard let pane = record.paneSessionName else {
-                    return record.transport != nil
-                }
-                return self.liveness.isLivePaneSession(pane)
+                // The predicate shared with ClaudePeerDeliveryService and the
+                // hook-side default-agent computation: if the reachability
+                // views diverge, an untargeted head row is double-sent or
+                // claimed by neither and the worktree queue wedges.
+                TeamAgentReachability.isReachableForNativeDelivery(
+                    record,
+                    liveness: self.liveness
+                )
             }
         )
         let selected: TeamAgentDescriptor?

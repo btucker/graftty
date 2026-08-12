@@ -175,7 +175,7 @@ public struct TeamAgentDirectory: Sendable {
         return exact
     }
 
-    private static func isOrderedBefore(
+    static func isOrderedBefore(
         _ lhs: TeamAgentDescriptor,
         _ rhs: TeamAgentDescriptor
     ) -> Bool {
@@ -234,6 +234,50 @@ public enum TeamAgentReachability {
             socketPath = path
         }
         return ClaudePeerSessionRegistry.isSocket(atPath: socketPath)
+    }
+
+    /// The one reachability view shared by every native-delivery decision —
+    /// Codex app-server delivery, Claude peer delivery, and the hook-side
+    /// default-agent computation. If those views diverge, an untargeted
+    /// head-of-queue row can be claimed by both services (double-send) or by
+    /// neither (wedged worktree queue).
+    ///
+    /// Per-record rules:
+    /// - The record's process must be alive per `liveness`; a recorded start
+    ///   time must match the live one, while a nil recorded start is
+    ///   tolerated as unverifiable-but-alive (mirroring `cleanupStale`,
+    ///   which preserves nil-start records).
+    /// - `.claude` transport: the peer socket must exist. Claude delivery is
+    ///   socket-addressed and pane-blind, so no pane gate applies.
+    /// - `.codex` transport: the app-server socket must exist, and a
+    ///   recorded pane session must be live.
+    /// - No transport: a recorded live pane session is required — the record
+    ///   has no native endpoint of its own, so hook delivery through its
+    ///   pane is the only route.
+    public static func isReachableForNativeDelivery(
+        _ record: TeamPresenceRecord,
+        liveness: some TeamDeliveryLivenessChecking,
+        isSocket: (String) -> Bool = ClaudePeerSessionRegistry.isSocket(atPath:)
+    ) -> Bool {
+        guard record.pid > 0,
+              let currentStart = liveness.processStartTimeMicroseconds(ofPID: record.pid) else {
+            return false
+        }
+        if let expectedStart = record.processStartTimeMicroseconds,
+           currentStart != expectedStart {
+            return false
+        }
+        switch record.transport {
+        case .claude(let socketPath, _):
+            return isSocket(socketPath)
+        case .codex(_, let socketPath, _, _):
+            guard isSocket(socketPath) else { return false }
+            guard let pane = record.paneSessionName else { return true }
+            return liveness.isLivePaneSession(pane)
+        case nil:
+            guard let pane = record.paneSessionName else { return false }
+            return liveness.isLivePaneSession(pane)
+        }
     }
 }
 

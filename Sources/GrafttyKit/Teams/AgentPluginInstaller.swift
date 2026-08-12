@@ -129,11 +129,25 @@ public struct AgentPluginInstaller: Sendable {
                 provider.rawValue,
                 isDirectory: true
             )
+            // The destination path is registered with the provider plugin
+            // marketplaces, so it must never be observed missing or partially
+            // written. Materialize into a staging sibling on the same volume,
+            // then swap it into place atomically.
+            let staging = destinationRoot.appendingPathComponent(
+                ".staging-\(provider.rawValue)-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer { try? FileManager.default.removeItem(at: staging) }
+            try FileManager.default.copyItem(at: source, to: staging)
+            try materializeHookCommands(in: staging)
             if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+                _ = try FileManager.default.replaceItemAt(
+                    destination,
+                    withItemAt: staging
+                )
+            } else {
+                try FileManager.default.moveItem(at: staging, to: destination)
             }
-            try FileManager.default.copyItem(at: source, to: destination)
-            try materializeHookCommands(in: destination)
         }
 
         let codexRoot = destinationRoot.appendingPathComponent("codex", isDirectory: true).path

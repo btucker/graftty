@@ -5,7 +5,7 @@ import Testing
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
     @Test("""
-    @spec AGENT-6.6: When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+    @spec AGENT-6.6: When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped by advancing the watermark past it; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
     """)
     func exactAgentDeliveryAdvancesOnlyAfterAcceptance() async throws {
         let fixture = try Fixture()
@@ -42,6 +42,108 @@ struct ClaudePeerDeliveryServiceTests {
             teamID: fixture.teamID,
             worktree: fixture.worktree
         ) == nil)
+    }
+
+    @Test("An oversized lone row is skipped past so it cannot wedge the worktree queue.")
+    func oversizedSingleRowIsSkippedPast() async throws {
+        let fixture = try Fixture(errorForBody: { body in
+            body.contains("OVERSIZED")
+                ? ClaudePeerMessagingError.messageTooLarge(bytes: 99_999, maxBytes: 1)
+                : nil
+        })
+        let oversized = try fixture.append(body: "OVERSIZED payload")
+        let deliverable = try fixture.append(body: "please review")
+
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+
+        // Batch of two overflows, halves to the oversized row alone, which
+        // still overflows and is skipped; the next pass delivers the rest.
+        let calls = await fixture.client.calls
+        #expect(calls.map(\.body) == [
+            "OVERSIZED payload\n\nplease review",
+            "OVERSIZED payload",
+            "please review",
+        ])
+        #expect(try fixture.inbox.worktreeWatermark(
+            teamID: fixture.teamID,
+            worktree: fixture.worktree
+        )?.lastDeliveredToAnySessionID == deliverable.id)
+        let skip = try fixture.deliveryEvents().first {
+            $0.detail["outcome"] == "skipped_oversized"
+        }
+        #expect(skip?.detail["messageIDs"] == oversized.id)
+    }
+
+    @Test("A watermark-commit failure after an accepted send logs error_watermark_write, not error_delivery.")
+    func watermarkCommitFailureIsNotASendFailure() async throws {
+        let fixture = try Fixture()
+        let first = try fixture.append(body: "first")
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+        let second = try fixture.append(body: "second")
+        // The first delivery materialized the worktrees/ watermark directory;
+        // making it read-only makes the next atomic watermark write throw
+        // while reads (and the already-created lock file) keep working.
+        let worktreesDir = fixture.root
+            .appendingPathComponent(TeamInbox.fileComponent(fixture.teamID), isDirectory: true)
+            .appendingPathComponent("worktrees", isDirectory: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o555], ofItemAtPath: worktreesDir.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: worktreesDir.path
+            )
+        }
+
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+
+        #expect(await fixture.client.calls.count == 2)
+        #expect(try fixture.inbox.worktreeWatermark(
+            teamID: fixture.teamID,
+            worktree: fixture.worktree
+        )?.lastDeliveredToAnySessionID == first.id)
+        let outcomes = try fixture.deliveryEvents().map { $0.detail["outcome"] }
+        #expect(!outcomes.contains("error_delivery"))
+        let failure = try fixture.deliveryEvents().first {
+            $0.detail["outcome"] == "error_watermark_write"
+        }
+        #expect(failure?.detail["messageIDs"] == second.id)
+    }
+
+    @Test("A send failure after halving logs the shrunk batch's ids, not the whole run's.")
+    func sendFailureLogsActualBatchIDs() async throws {
+        let fixture = try Fixture(errorForBody: { body in
+            if body.contains("\n\n") {
+                return ClaudePeerMessagingError.messageTooLarge(bytes: 99_999, maxBytes: 1)
+            }
+            return body == "first" ? StubError.failed : nil
+        })
+        let first = try fixture.append(body: "first")
+        _ = try fixture.append(body: "second")
+
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+
+        #expect(await fixture.client.calls.map(\.body) == ["first\n\nsecond", "first"])
+        #expect(try fixture.inbox.worktreeWatermark(
+            teamID: fixture.teamID,
+            worktree: fixture.worktree
+        ) == nil)
+        let failure = try fixture.deliveryEvents().first {
+            $0.detail["outcome"] == "error_delivery"
+        }
+        #expect(failure?.detail["messageIDs"] == first.id)
     }
 
     @Test("""
@@ -101,18 +203,23 @@ struct ClaudePeerDeliveryServiceTests {
         let teamID = "/repo"
         let worktree = "/repo/feature"
         let socketPath = "/tmp/cc-socks/101.sock"
+        let root: URL
         let inbox: TeamInbox
         let client: StubClient
         let service: ClaudePeerDeliveryService
         let agentID: String
 
-        init(error: Error? = nil, includeEarlierCodex: Bool = false) throws {
+        init(
+            error: Error? = nil,
+            includeEarlierCodex: Bool = false,
+            errorForBody: (@Sendable (String) -> Error?)? = nil
+        ) throws {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let counter = IDCounter()
             let inbox = TeamInbox(rootDirectory: root, idGenerator: { counter.next() })
-            let client = StubClient(error: error)
+            let client = StubClient(error: error, errorForBody: errorForBody)
             let agentID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "session-1").rawValue
             let presence = TeamPresenceRecord(
                 teamID: teamID,
@@ -137,6 +244,7 @@ struct ClaudePeerDeliveryServiceTests {
                 runtimeSessionID: "codex-earlier"
             )
             let records = includeEarlierCodex ? [codexPresence, presence] : [presence]
+            self.root = root
             self.inbox = inbox
             self.client = client
             self.agentID = agentID
@@ -145,8 +253,20 @@ struct ClaudePeerDeliveryServiceTests {
                 presenceRecords: { records },
                 agentReachability: { _ in true },
                 client: client,
-                eventLog: nil
+                eventLog: TeamEventLog(rootDirectory: root)
             )
+        }
+
+        func deliveryEvents() throws -> [TeamEvent] {
+            let url = root
+                .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
+                .appendingPathComponent("events.jsonl")
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return String(decoding: data, as: UTF8.self)
+                .split(separator: "\n")
+                .compactMap { try? decoder.decode(TeamEvent.self, from: Data($0.utf8)) }
         }
 
         func append(
@@ -196,9 +316,11 @@ struct ClaudePeerDeliveryServiceTests {
 
         private(set) var calls: [Call] = []
         let error: Error?
+        let errorForBody: (@Sendable (String) -> Error?)?
 
-        init(error: Error?) {
+        init(error: Error?, errorForBody: (@Sendable (String) -> Error?)? = nil) {
             self.error = error
+            self.errorForBody = errorForBody
         }
 
         func send(
@@ -214,6 +336,7 @@ struct ClaudePeerDeliveryServiceTests {
                 senderName: senderName
             ))
             if let error { throw error }
+            if let bodyError = errorForBody?(body) { throw bodyError }
             return UUID()
         }
     }

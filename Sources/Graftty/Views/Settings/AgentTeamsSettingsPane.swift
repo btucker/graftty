@@ -154,7 +154,9 @@ struct AgentTeamsSettingsPane: View {
         .onChange(of: agentTeamsEnabled) { _, enabled in
             guard enabled,
                   AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
-            prepareProviderPlugins()
+            // The user toggled agent teams, not a plugin action; surfacing the
+            // offer is fine, but silently replacing their clipboard is not.
+            prepareProviderPlugins(copyToClipboard: false)
         }
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
@@ -179,16 +181,20 @@ struct AgentTeamsSettingsPane: View {
         )
     }
 
-    private func prepareProviderPlugins() {
+    private func prepareProviderPlugins(copyToClipboard: Bool = true) {
         do {
             let plan = try AgentPluginInstaller(
                 grafttyCLIPath: GrafttyApp.agentHookCLIPath()
             ).prepare()
             preparedPluginPlan = plan
             pluginSetupCommands = plan.shellScript
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(plan.shellScript, forType: .string)
-            pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
+            if copyToClipboard {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(plan.shellScript, forType: .string)
+                pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
+            } else {
+                pluginSetupStatus = "Setup commands prepared. Approve the installation offer to run them now, or review and run them in a terminal."
+            }
             showingPluginInstallOffer = true
         } catch {
             preparedPluginPlan = nil

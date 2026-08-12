@@ -453,13 +453,23 @@ public struct ClaudePeerClient: ClaudePeerClienting, Sendable {
         replySocketPath: String?,
         senderName: String?
     ) async throws -> UUID {
-        try await Task.detached(priority: .utility) {
-            try ClaudePeerSocketClient.sendUserMessage(
-                body,
-                to: socketPath,
-                replySocketPath: replySocketPath,
-                senderName: senderName
-            )
-        }.value
+        // The socket client blocks on connect/poll/write (up to ~10s); run it
+        // on a global dispatch queue so it never occupies a thread of the
+        // cooperative pool. Not OffMainIO: that is a single serial queue and
+        // would serialize deliveries across worktrees.
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    continuation.resume(returning: try ClaudePeerSocketClient.sendUserMessage(
+                        body,
+                        to: socketPath,
+                        replySocketPath: replySocketPath,
+                        senderName: senderName
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }

@@ -53,8 +53,8 @@ struct TeamInboxRequestHandlerTests {
         #expect(delivery.message.body == "please review")
     }
 
-    @Test("Unsuffixed recipient is bound to the earliest reachable top-level agent.")
-    func sendBindsDefaultAgentOnce() throws {
+    @Test("A plain worktree send stays unpinned; an explicit #agent-id send still pins.")
+    func sendPinsAgentOnlyForExplicitAddressing() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let alice = "/repo/.worktrees/alice"
@@ -78,7 +78,7 @@ struct TeamInboxRequestHandlerTests {
             agentReachability: { _ in true }
         )
 
-        let delivery = try handler.send(
+        let plain = try handler.send(
             callerWorktree: "/repo",
             recipient: "alice",
             text: "please review",
@@ -87,11 +87,90 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
 
-        #expect(delivery.message.to.runtime == "claude")
-        #expect(delivery.message.to.agentID == TeamAgentIdentity(
+        // The recipient is the worktree, not whichever agent happens to be
+        // the default right now: the default is re-resolved at delivery.
+        #expect(plain.message.to.runtime == nil)
+        #expect(plain.message.to.agentID == nil)
+
+        let claudeID = TeamAgentIdentity(
             runtime: .claude,
             nativeSessionID: "claude-session"
-        ).rawValue)
+        ).rawValue
+        let explicit = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice#\(claudeID)",
+            text: "for that exact agent",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(explicit.message.to.runtime == "claude")
+        #expect(explicit.message.to.agentID == claudeID)
+    }
+
+    @Test("A plain worktree send remains deliverable after the send-time default agent exits.")
+    func plainSendRemainsDeliverableAfterDefaultAgentExits() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let alice = "/repo/.worktrees/alice"
+        let claude = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .claude,
+            paneSessionName: "graftty-claude", pid: 101,
+            processStartTimeMicroseconds: 1_001,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            runtimeSessionID: "claude-session"
+        )
+        let codex = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .codex,
+            paneSessionName: "graftty-codex", pid: 102,
+            processStartTimeMicroseconds: 1_002,
+            registeredAt: Date(timeIntervalSince1970: 20),
+            runtimeSessionID: "codex-session"
+        )
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate }
+        )
+        // At send time Claude is the earliest reachable agent (the default).
+        let sendHandler = Self.makeHandler(
+            inbox: inbox,
+            agentRecords: { [codex, claude] },
+            agentReachability: { _ in true }
+        )
+        _ = try sendHandler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "queued for whoever is here",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        // Claude exits before delivery; only Codex remains. The row must not
+        // stay pinned to the vanished send-time default, or the whole
+        // worktree queue wedges behind it.
+        let deliveryHandler = Self.makeHandler(
+            inbox: inbox,
+            agentRecords: { [codex] },
+            agentReachability: { _ in true }
+        )
+        let output = try deliveryHandler.hook(
+            callerWorktree: alice,
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "codex-session",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(output.contains("queued for whoever is here"))
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: alice
+        )?.lastDeliveredToAnySessionID == "0001")
     }
 
     @Test("Explicit canonical recipient rejects stale identity without appending.")

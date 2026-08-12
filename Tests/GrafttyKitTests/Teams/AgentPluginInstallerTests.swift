@@ -103,6 +103,81 @@ struct AgentPluginInstallerTests {
         }
     }
 
+    @Test("Re-running prepare over an existing installation yields the full tree with no staging residue.")
+    func rePreparingReplacesExistingInstallationWithoutStagingResidue() throws {
+        let fileManager = FileManager.default
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugins-replace-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(
+            grafttyCLIPath: "/Applications/Graftty.app/Contents/Helpers/graftty"
+        )
+
+        _ = try installer.prepare(destinationRoot: destination)
+        // Plant a stale file inside the existing installation to prove the
+        // replacement swaps in a complete fresh tree rather than merging.
+        let staleMarker = destination
+            .appendingPathComponent("codex/plugins/graftty-team/stale-marker")
+        try Data().write(to: staleMarker)
+
+        _ = try installer.prepare(destinationRoot: destination)
+
+        #expect(!fileManager.fileExists(atPath: staleMarker.path))
+        for provider in ["codex", "claude"] {
+            #expect(fileManager.fileExists(atPath: destination
+                .appendingPathComponent("\(provider)/plugins/graftty-team/skills/graftty-team/SKILL.md")
+                .path))
+            let hooks = try String(contentsOf: destination
+                .appendingPathComponent("\(provider)/plugins/graftty-team/hooks/hooks.json"))
+            #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
+        }
+        let residue = try fileManager.contentsOfDirectory(atPath: destination.path)
+            .filter { $0.hasPrefix(".staging-") }
+        #expect(residue.isEmpty)
+    }
+
+    @Test("A failed re-preparation preserves the existing marketplace installation intact.")
+    func failedRePreparationPreservesExistingInstallation() throws {
+        let fileManager = FileManager.default
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugins-atomic-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        let codexHooks = destination
+            .appendingPathComponent("codex/plugins/graftty-team/hooks/hooks.json")
+        let hooksBeforeFailure = try String(contentsOf: codexHooks)
+
+        // A source whose hooks.json cannot be parsed makes preparation fail
+        // partway through materialization. The marketplace path stays
+        // registered with the providers, so the previous tree must survive.
+        let corruptSource = fileManager.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugins-corrupt-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: corruptSource) }
+        for provider in ["codex", "claude"] {
+            let hooksDirectory = corruptSource
+                .appendingPathComponent("\(provider)/plugins/graftty-team/hooks", isDirectory: true)
+            try fileManager.createDirectory(
+                at: hooksDirectory,
+                withIntermediateDirectories: true
+            )
+            try Data("not json".utf8)
+                .write(to: hooksDirectory.appendingPathComponent("hooks.json"))
+        }
+
+        #expect(throws: (any Error).self) {
+            try AgentPluginInstaller(resourceRoot: corruptSource)
+                .prepare(destinationRoot: destination)
+        }
+
+        #expect(try String(contentsOf: codexHooks) == hooksBeforeFailure)
+        #expect(fileManager.fileExists(atPath: destination
+            .appendingPathComponent("codex/plugins/graftty-team/skills/graftty-team/SKILL.md")
+            .path))
+        let residue = try fileManager.contentsOfDirectory(atPath: destination.path)
+            .filter { $0.hasPrefix(".staging-") }
+        #expect(residue.isEmpty)
+    }
+
     @Test("""
     @spec AGENT-6.14: If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
     """)

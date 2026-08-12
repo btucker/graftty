@@ -176,19 +176,29 @@ public final class TeamInboxRequestHandler {
                 .filter { $0 != context.sender.name }
             throw TeamInboxRequestError.recipientNotFound(name: recipient, available: available)
         }
+        // AGENT-6.17: an explicit `#agent-id` suffix binds the row to that
+        // exact reachable agent and fails closed here when it is gone. A
+        // plain worktree address must stay unpinned: delivery re-resolves
+        // the default agent per attempt (AGENT-6.3), so stamping the
+        // send-time default would wedge the whole worktree queue behind a
+        // row no live agent may consume once that agent exits.
         let selectedAgent: TeamAgentDescriptor?
-        do {
-            selectedAgent = try TeamAgentDirectory(
-                records: agentRecords().filter { $0.teamID == teamID(context.team) },
-                isReachable: agentReachability
-            ).resolve(
-                worktreePath: recipientMember.worktreePath,
-                explicitAgentID: addressed.agentID
-            )
-        } catch TeamAgentDirectoryError.explicitAgentNotFound(let id) {
-            throw TeamInboxRequestError.agentNotFound(id)
-        } catch TeamAgentDirectoryError.explicitAgentUnavailable(let id) {
-            throw TeamInboxRequestError.agentUnavailable(id)
+        if let explicitAgentID = addressed.agentID {
+            do {
+                selectedAgent = try TeamAgentDirectory(
+                    records: agentRecords().filter { $0.teamID == teamID(context.team) },
+                    isReachable: agentReachability
+                ).resolve(
+                    worktreePath: recipientMember.worktreePath,
+                    explicitAgentID: explicitAgentID
+                )
+            } catch TeamAgentDirectoryError.explicitAgentNotFound(let id) {
+                throw TeamInboxRequestError.agentNotFound(id)
+            } catch TeamAgentDirectoryError.explicitAgentUnavailable(let id) {
+                throw TeamInboxRequestError.agentUnavailable(id)
+            }
+        } else {
+            selectedAgent = nil
         }
         let senderIdentity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:))
 

@@ -35,22 +35,44 @@ enum AgentPluginInstallOfferPresenter {
             forKey: SettingsKeys.nativeAgentMessagingEnabled
         )
 
-        let plan: AgentPluginSetupPlan
-        do {
-            plan = try installer.prepare()
-        } catch {
-            SheetAlert.present(
-                .init(
-                    messageText: "Could Not Prepare Provider Plugins",
-                    informativeText: "Graftty could not prepare the Codex and Claude plugins: \(error). Try again from Agent Teams Settings.",
-                    style: .warning,
-                    primaryButton: "OK"
-                ),
+        Task { @MainActor in
+            // prepare() rewrites the app-owned marketplace snapshots on disk
+            // (recursive copy plus hooks.json rewrite). Run it off the main
+            // actor so launch-time file I/O cannot wedge control-socket
+            // handling or UI events (ATTN-2.19 / OffMainIO).
+            let plan: AgentPluginSetupPlan
+            do {
+                plan = try await OffMainIO.run { try installer.prepare() }
+            } catch {
+                SheetAlert.present(
+                    .init(
+                        messageText: "Could Not Prepare Provider Plugins",
+                        informativeText: "Graftty could not prepare the Codex and Claude plugins: \(error). Try again from Agent Teams Settings.",
+                        style: .warning,
+                        primaryButton: "OK"
+                    ),
+                    on: window
+                )
+                return
+            }
+            presentOffer(
+                plan: plan,
+                installer: installer,
+                nativeMessagingWasEnabled: nativeMessagingWasEnabled,
+                defaults: defaults,
                 on: window
             )
-            return
         }
+    }
 
+    @MainActor
+    private static func presentOffer(
+        plan: AgentPluginSetupPlan,
+        installer: AgentPluginInstaller,
+        nativeMessagingWasEnabled: Bool,
+        defaults: UserDefaults,
+        on window: NSWindow
+    ) {
         SheetAlert.present(
             .init(
                 messageText: nativeMessagingWasEnabled

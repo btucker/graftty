@@ -1,6 +1,26 @@
 import Foundation
 import GrafttyProtocol
 
+/// The slice of `TeamInbox` the roster notifier appends through; a seam so
+/// tests can inject per-recipient append failures.
+protocol TeamRosterAnnouncementAppending {
+    @discardableResult
+    func appendMessage(
+        teamID: String,
+        teamName: String,
+        repoPath: String,
+        from: TeamInboxEndpoint,
+        to: TeamInboxEndpoint,
+        priority: TeamInboxPriority,
+        kind: String,
+        body: String,
+        agentPrompt: String?,
+        source: String?
+    ) throws -> TeamInboxMessage
+}
+
+extension TeamInbox: TeamRosterAnnouncementAppending {}
+
 /// Tracks the reachable top-level provider sessions seen during this app
 /// process. Existing sessions seed the snapshot at startup so an app relaunch
 /// does not manufacture join events for agents that were already running.
@@ -10,12 +30,24 @@ public actor TeamAgentRosterNotifier {
         let worktree: String
     }
 
-    private let inbox: TeamInbox
+    private let inbox: any TeamRosterAnnouncementAppending
     private let isReachable: @Sendable (TeamPresenceRecord) -> Bool
     private var observedAgentIDs: [Scope: Set<String>]
 
     public init(
         inbox: TeamInbox,
+        initialRecords: [TeamPresenceRecord],
+        isReachable: @escaping @Sendable (TeamPresenceRecord) -> Bool
+    ) {
+        self.init(
+            appendingTo: inbox,
+            initialRecords: initialRecords,
+            isReachable: isReachable
+        )
+    }
+
+    init(
+        appendingTo inbox: any TeamRosterAnnouncementAppending,
         initialRecords: [TeamPresenceRecord],
         isReachable: @escaping @Sendable (TeamPresenceRecord) -> Bool
     ) {
@@ -29,8 +61,12 @@ public actor TeamAgentRosterNotifier {
 
     /// Reconciles all worktree rosters and emits one exact-addressed message
     /// to every current agent in a worktree when that worktree gains agents.
-    /// The in-memory snapshot advances only after all rows append successfully,
-    /// so an I/O failure can be retried on the next presence reconciliation.
+    /// Announcements are at-most-once: if an append fails partway through a
+    /// worktree's recipients, that worktree's snapshot still advances (rows
+    /// before the failure are already committed, so a retry would duplicate
+    /// them into live agent sessions) and the remaining worktrees are still
+    /// processed in the same pass. A missed announcement is acceptable —
+    /// roster changes are advisory and the roster is queryable on demand.
     public func reconcile(
         records: [TeamPresenceRecord],
         repos: [RepoEntry]
@@ -55,22 +91,32 @@ public actor TeamAgentRosterNotifier {
                 joined: joined,
                 roster: agents
             )
-            for recipient in agents {
-                try inbox.appendMessage(
-                    teamID: scope.teamID,
-                    teamName: context.teamName,
-                    repoPath: context.repoPath,
-                    from: .system(repoPath: context.repoPath),
-                    to: TeamInboxEndpoint(
-                        member: context.memberName,
-                        worktree: scope.worktree,
-                        runtime: recipient.runtime.rawValue,
-                        agentID: recipient.id.rawValue
-                    ),
-                    priority: .normal,
-                    kind: "team_agent_joined",
-                    body: body
-                )
+            do {
+                for recipient in agents {
+                    try inbox.appendMessage(
+                        teamID: scope.teamID,
+                        teamName: context.teamName,
+                        repoPath: context.repoPath,
+                        from: .system(repoPath: context.repoPath),
+                        to: TeamInboxEndpoint(
+                            member: context.memberName,
+                            worktree: scope.worktree,
+                            runtime: recipient.runtime.rawValue,
+                            agentID: recipient.id.rawValue
+                        ),
+                        priority: .normal,
+                        kind: "team_agent_joined",
+                        body: body,
+                        agentPrompt: nil,
+                        source: nil
+                    )
+                }
+            } catch {
+                // At-most-once: rows appended before the failure are already
+                // committed, so retrying this scope next tick would duplicate
+                // announcements into live agent sessions. Advance the
+                // snapshot below, accept the missed announcement for the
+                // failed recipient, and keep reconciling the other scopes.
             }
             // Ever-seen accumulation: a scope's set only grows, so a
             // transient reachability dip (or a failed presence read that
@@ -111,12 +157,7 @@ public actor TeamAgentRosterNotifier {
             grouped[scope, default: [:]][agent.id.rawValue] = agent
         }
         return grouped.mapValues { agentsByID in
-            agentsByID.values.sorted { lhs, rhs in
-                if lhs.registeredAt != rhs.registeredAt {
-                    return lhs.registeredAt < rhs.registeredAt
-                }
-                return lhs.id.rawValue < rhs.id.rawValue
-            }
+            agentsByID.values.sorted(by: TeamAgentDirectory.isOrderedBefore)
         }
     }
 

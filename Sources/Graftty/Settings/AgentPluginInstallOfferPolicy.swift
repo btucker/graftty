@@ -56,16 +56,19 @@ enum AgentPluginInstallOfferPolicy {
 enum AgentPluginIntegrationActivation {
     /// Activates plugin-owned hooks only after both provider installations
     /// complete. Until then the compatibility wrappers remain authoritative.
+    /// A failed installation preserves the previously selected messaging
+    /// mode: a revision-bump re-offer that fails must not demote an
+    /// already-native user to legacy mode while the earlier plugins remain
+    /// installed, which would register duplicate hooks.
     @discardableResult
     static func apply(
         successfulInstallation: Bool,
         defaults: UserDefaults,
         refreshHookAssets: () -> Void
     ) -> Bool {
-        defaults.set(
-            successfulInstallation,
-            forKey: SettingsKeys.nativeAgentMessagingEnabled
-        )
+        if successfulInstallation {
+            defaults.set(true, forKey: SettingsKeys.nativeAgentMessagingEnabled)
+        }
         refreshHookAssets()
         guard successfulInstallation else { return false }
         AgentPluginInstallOfferPolicy.recordInstalled(in: defaults)

@@ -1725,44 +1725,48 @@ struct GrafttyApp: App {
             livePaneSessionNames.replace(with: names)
         }
 
+        let deliveryLiveness = AppTeamDeliveryLiveness(
+            livePaneSession: { livePaneSessionNames.contains($0) },
+            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+        )
         let codexAppServerDeliveryService = CodexAppServerDeliveryService(
             inbox: services.teamInbox,
             presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
             sessionStorage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
-            liveness: AppTeamDeliveryLiveness(
-                livePaneSession: { livePaneSessionNames.contains($0) },
-                processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
-            ),
+            liveness: deliveryLiveness,
             client: CodexAppServerClient()
         )
-        let nativeAgentMessagingEnabledAtLaunch = UserDefaults.standard.bool(
-            forKey: SettingsKeys.nativeAgentMessagingEnabled
+        // Constructed unconditionally — these inits only store closures — so
+        // enabling native agent messaging mid-session takes effect without a
+        // relaunch. Every use site live-reads the setting instead
+        // (`Self.nativeAgentMessagingEnabled()`), so toggling it off also
+        // stops delivery immediately.
+        let claudePeerDeliveryService = ClaudePeerDeliveryService(
+            inbox: services.teamInbox,
+            presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
+            agentReachability: { record in
+                // The shared native-delivery predicate, closed over the same
+                // liveness view the Codex service uses, so both services and
+                // the hook-side default-agent computation agree on which
+                // agent owns an untargeted head row.
+                TeamAgentReachability.isReachableForNativeDelivery(
+                    record,
+                    liveness: deliveryLiveness
+                )
+            }
         )
-        let claudePeerDeliveryService: ClaudePeerDeliveryService? =
-            nativeAgentMessagingEnabledAtLaunch
-            ? ClaudePeerDeliveryService(
-                inbox: services.teamInbox,
-                presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
-                agentReachability: { record in
-                    TeamAgentReachability.isReachable(record)
-                }
-            )
-            : nil
-        let teamAgentRosterNotifier: TeamAgentRosterNotifier? =
-            nativeAgentMessagingEnabledAtLaunch
-            ? TeamAgentRosterNotifier(
-                inbox: services.teamInbox,
-                initialRecords: presenceIndex.allRecords(),
-                isReachable: { TeamAgentReachability.isReachable($0) }
-            )
-            : nil
+        let teamAgentRosterNotifier = TeamAgentRosterNotifier(
+            inbox: services.teamInbox,
+            initialRecords: presenceIndex.allRecords(),
+            isReachable: { TeamAgentReachability.isReachable($0) }
+        )
         services.teamAgentRosterNotifier = teamAgentRosterNotifier
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
             let records = refreshPresenceIndex()
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            if teamsEnabled, let teamAgentRosterNotifier {
+            if teamsEnabled, Self.nativeAgentMessagingEnabled() {
                 let repos = await MainActor.run { binding.wrappedValue.repos }
                 try? await teamAgentRosterNotifier.reconcile(records: records, repos: repos)
             }
@@ -1772,7 +1776,8 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: teamsEnabled
+                    enabled: teamsEnabled,
+                    claudeEnabled: Self.nativeAgentMessagingEnabled()
                 )
             )
         }
@@ -1815,7 +1820,7 @@ struct GrafttyApp: App {
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
                     }
-                    if let claudePeerDeliveryService {
+                    if let claudePeerDeliveryService, Self.nativeAgentMessagingEnabled() {
                         deliveries.append(claudePeerDeliveryService)
                     }
                     await Self.drainNativeDeliveryMessages(
@@ -1866,7 +1871,8 @@ struct GrafttyApp: App {
                     deliveries: Self.nativeDeliveries(
                         codex: codexAppServerDeliveryService,
                         claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                        claudeEnabled: Self.nativeAgentMessagingEnabled()
                     )
                 )
             }
@@ -1888,7 +1894,8 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                    claudeEnabled: Self.nativeAgentMessagingEnabled()
                 )
             )
         }
@@ -2958,14 +2965,23 @@ struct GrafttyApp: App {
         }
     }
 
+    /// Live read of the native agent messaging setting. The delivery
+    /// services are constructed unconditionally at startup, so every use
+    /// site consults the current value rather than a launch-time snapshot;
+    /// toggling the setting takes effect without an app relaunch.
+    nonisolated static func nativeAgentMessagingEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
+    }
+
     nonisolated static func nativeDeliveries(
         codex: CodexAppServerDeliveryService,
-        claude: ClaudePeerDeliveryService?,
-        enabled: Bool = true
+        claude: ClaudePeerDeliveryService,
+        enabled: Bool = true,
+        claudeEnabled: Bool
     ) -> [any CodexAppServerDeliveryTrigger] {
         guard enabled else { return [] }
         var deliveries: [any CodexAppServerDeliveryTrigger] = [codex]
-        if let claude {
+        if claudeEnabled {
             deliveries.append(claude)
         }
         return deliveries
@@ -3708,6 +3724,7 @@ struct GrafttyApp: App {
             )
         case .teamHook(
             let callerPath,
+            let callerAgentID,
             let runtime,
             let event,
             let sessionID,
@@ -3716,6 +3733,7 @@ struct GrafttyApp: App {
         ):
             return await handleTeamHook(
                 callerPath: callerPath,
+                callerAgentID: callerAgentID,
                 runtime: runtime,
                 event: event,
                 sessionID: sessionID,
@@ -4089,6 +4107,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func handleTeamHook(
         callerPath: String,
+        callerAgentID: String?,
         runtime: TeamHookRuntime,
         event: TeamHookEvent,
         sessionID: String?,
@@ -4121,29 +4140,37 @@ struct GrafttyApp: App {
             // fires on every tool call of every agent, and the 30s presence
             // ticker already covers departures. Roster I/O failures must not
             // fail the hook response itself.
-            if event == .sessionStart, teamsEnabled {
+            if event == .sessionStart, teamsEnabled, nativeAgentMessagingEnabled() {
                 try? await teamAgentRosterNotifier?.reconcile(
                     records: presenceRecords,
                     repos: repos
                 )
             }
-            let currentAgentID = TeamLookup.team(for: callerPath, in: repos).flatMap { team in
-                TeamAgentSessionIdentityResolver.agentID(
-                    records: presenceRecords,
-                    teamID: TeamLookup.id(of: team),
-                    worktree: callerPath,
-                    runtime: runtime,
-                    sessionID: sessionID,
-                    paneSessionName: paneSessionName
-                )
-            }
+            // The wrapper-launched CLI knows its own canonical identity
+            // (GRAFTTY_AGENT_ID / pane presence), so a caller-supplied agent
+            // ID wins; the session-based resolver covers older CLIs, and the
+            // handler's hash fallback remains behind both.
+            let currentAgentID = callerAgentID
+                ?? TeamLookup.team(for: callerPath, in: repos).flatMap { team in
+                    TeamAgentSessionIdentityResolver.agentID(
+                        records: presenceRecords,
+                        teamID: TeamLookup.id(of: team),
+                        worktree: callerPath,
+                        runtime: runtime,
+                        sessionID: sessionID,
+                        paneSessionName: paneSessionName
+                    )
+                }
             let liveSessionNames = Self.livePaneSessionNamesForAutomaticDelivery(
                 records: presenceRecords,
                 terminalManager: terminalManager
             )
             let instructions: String
+            // Instructions render for wrapper- and plugin-managed sessions
+            // alike: the hook threads them independently of the legacy
+            // primer, whose skill-managed suppression lives in
+            // TeamInboxRequestHandler.hook.
             if event == .sessionStart,
-               !skillManaged,
                teamsEnabled,
                let team = TeamLookup.team(
                    for: callerPath,
@@ -4162,16 +4189,17 @@ struct GrafttyApp: App {
             } else {
                 instructions = ""
             }
+            let hookDeliveryLiveness = AppTeamDeliveryLiveness(
+                livePaneSession: { liveSessionNames.contains($0) },
+                processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+            )
             let handler = teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
                     let resolver = TeamDeliveryOwnershipResolver(
                         records: { presenceRecords },
-                        liveness: AppTeamDeliveryLiveness(
-                            livePaneSession: { liveSessionNames.contains($0) },
-                            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
-                        )
+                        liveness: hookDeliveryLiveness
                     )
                     let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
                     guard let owner = resolver.owner(for: key) else {
@@ -4181,6 +4209,16 @@ struct GrafttyApp: App {
                         return true
                     }
                     return owner.paneSessionName == paneSessionName
+                },
+                agentReachability: { record in
+                    // Same shared predicate as both native delivery services,
+                    // so the hook-side default-agent computation
+                    // (acceptsUntargeted) agrees with them about which agent
+                    // owns an untargeted head row.
+                    TeamAgentReachability.isReachableForNativeDelivery(
+                        record,
+                        liveness: hookDeliveryLiveness
+                    )
                 }
             )
             // ATTN-2.19: hook delivery parses the full inbox history and
@@ -4407,7 +4445,10 @@ struct GrafttyApp: App {
             _ worktree: String,
             _ runtime: TeamHookRuntime,
             _ paneSessionName: String?
-        ) -> Bool)? = nil
+        ) -> Bool)? = nil,
+        agentReachability: @escaping @Sendable (TeamPresenceRecord) -> Bool = { record in
+            TeamAgentReachability.isReachable(record)
+        }
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -4419,9 +4460,7 @@ struct GrafttyApp: App {
                     rootDirectory: TeamPresenceStorage.defaultRoot()
                 ).listAll()) ?? []
             },
-            agentReachability: { record in
-                TeamAgentReachability.isReachable(record)
-            }
+            agentReachability: agentReachability
         )
     }
 

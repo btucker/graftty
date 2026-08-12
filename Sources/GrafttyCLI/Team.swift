@@ -175,6 +175,7 @@ struct TeamHook: ParsableCommand {
         }
         if runtime == .codex, event != .stop, let resolvedSessionID {
             bindCodexNativeSession(
+                event: event,
                 sessionID: resolvedSessionID,
                 worktreePath: worktreePath,
                 paneSessionName: paneSessionName
@@ -184,6 +185,7 @@ struct TeamHook: ParsableCommand {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
                     callerWorktree: worktreePath,
+                    callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                     runtime: runtime,
                     event: event,
                     sessionID: resolvedSessionID,
@@ -267,6 +269,7 @@ struct TeamHook: ParsableCommand {
     }
 
     private func bindCodexNativeSession(
+        event: TeamHookEvent,
         sessionID: String,
         worktreePath: String,
         paneSessionName: String?
@@ -286,6 +289,7 @@ struct TeamHook: ParsableCommand {
             worktree: resolved.worktreePath,
             paneSessionName: paneSessionName,
             agentID: agentID,
+            allowRebind: event == .sessionStart,
             presenceStorage: TeamPresenceStorage(rootDirectory: root),
             sessionStorage: CodexAppServerSessionStorage(rootDirectory: root)
         )

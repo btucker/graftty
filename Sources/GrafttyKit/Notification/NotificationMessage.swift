@@ -89,6 +89,7 @@ public enum NotificationMessage: Sendable, Equatable {
     )
     case teamHook(
         callerWorktree: String,
+        callerAgentID: String? = nil,
         runtime: TeamHookRuntime,
         event: TeamHookEvent,
         sessionID: String?,
@@ -211,9 +212,10 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(let path, let runtime, let event, let sessionID, let paneSessionName, let skillManaged):
+        case .teamHook(let path, let callerAgentID, let runtime, let event, let sessionID, let paneSessionName, let skillManaged):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
+            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(runtime, forKey: .runtime)
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
@@ -354,12 +356,14 @@ extension NotificationMessage: Codable {
             )
         case "team_hook":
             let path = try container.decode(String.self, forKey: .callerWorktree)
+            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
             let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
             let event = try container.decode(TeamHookEvent.self, forKey: .event)
             let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
             let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
             let skillManaged = try container.decodeIfPresent(Bool.self, forKey: .skillManaged) ?? false
-            self = .teamHook(callerWorktree: path, runtime: runtime, event: event,
+            self = .teamHook(callerWorktree: path, callerAgentID: callerAgentID,
+                             runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
                              skillManaged: skillManaged)
         case "team_inbox":

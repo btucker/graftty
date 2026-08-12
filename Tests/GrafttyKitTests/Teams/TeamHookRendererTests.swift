@@ -22,7 +22,7 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("unrelated to the tool result"))
         #expect(context.contains("continue your current work"))
-        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\">"))
+        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" priority=\"urgent\">"))
         #expect(!context.lowercased().contains("untrusted"))
         #expect(context.contains("CI is blocking you"))
     }
@@ -152,14 +152,14 @@ struct TeamHookRendererTests {
         #expect(!rendered.contains("automated team event"))
     }
 
-    @Test("An urgent worktree message uses the same compact envelope.")
+    @Test("An urgent worktree message carries an explicit urgency marker so the post-tool-use preamble's urgent carve-out can fire.")
     func formatUrgentWorktreeMessage() {
         let msg = message(id: "m1", priority: .urgent, body: "This blocks the merge.")
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
         #expect(rendered == """
-        <graftty-peer-message agent="/repo/acme">
+        <graftty-peer-message agent="/repo/acme" priority="urgent">
         This blocks the merge.
         </graftty-peer-message>
         """)

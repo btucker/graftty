@@ -108,6 +108,91 @@ struct TeamAgentRosterNotifierTests {
         #expect(try inbox.messages(teamID: "/repo").count == 1)
     }
 
+    @Test("""
+    @spec AGENT-6.22: If appending a join announcement fails partway through a worktree's recipients, then the application shall still advance that worktree's observed roster so already-committed announcements are never re-appended on a later reconciliation, and shall continue announcing the remaining worktrees in the same pass.
+    """)
+    func partialAppendFailureNeitherDuplicatesNorBlocksOtherWorktrees() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-agent-roster-partial-\(UUID().uuidString)")
+        let underlying = TeamInbox(rootDirectory: root, idGenerator: incrementingIDs())
+        let codexID = TeamAgentIdentity(runtime: .codex, nativeSessionID: "codex-2").rawValue
+        let inbox = RecipientFailingInbox(wrapping: underlying, failingAgentID: codexID)
+        let notifier = TeamAgentRosterNotifier(
+            appendingTo: inbox,
+            initialRecords: [],
+            isReachable: { _ in true }
+        )
+        let claude = presence(runtime: .claude, sessionID: "claude-1", registeredAt: 1)
+        let codex = presence(runtime: .codex, sessionID: "codex-2", registeredAt: 2)
+        let other = presence(
+            runtime: .claude,
+            sessionID: "other-1",
+            registeredAt: 3,
+            worktree: "/repo/other"
+        )
+        let repos = [repo()]
+
+        // claude-1's row commits, then codex-2's append fails partway
+        // through the feature worktree; the other worktree must still be
+        // announced in this same pass.
+        try await notifier.reconcile(records: [claude, codex, other], repos: repos)
+
+        let claudeID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "claude-1").rawValue
+        let otherID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "other-1").rawValue
+        let firstPass = try underlying.messages(teamID: "/repo")
+        #expect(firstPass.filter { $0.to.agentID == claudeID }.count == 1)
+        #expect(firstPass.filter { $0.to.agentID == otherID }.count == 1)
+
+        // The next tick must not re-announce rows that may already have
+        // landed in a live session.
+        try await notifier.reconcile(records: [claude, codex, other], repos: repos)
+
+        let secondPass = try underlying.messages(teamID: "/repo")
+        #expect(secondPass.filter { $0.to.agentID == claudeID }.count == 1)
+        #expect(secondPass.count == firstPass.count)
+    }
+
+    private struct StubAppendFailure: Error {}
+
+    /// Wraps a real inbox but fails every append addressed to one agent,
+    /// simulating an I/O failure partway through a scope's recipients.
+    private final class RecipientFailingInbox: TeamRosterAnnouncementAppending {
+        private let underlying: TeamInbox
+        private let failingAgentID: String
+
+        init(wrapping underlying: TeamInbox, failingAgentID: String) {
+            self.underlying = underlying
+            self.failingAgentID = failingAgentID
+        }
+
+        func appendMessage(
+            teamID: String,
+            teamName: String,
+            repoPath: String,
+            from: TeamInboxEndpoint,
+            to: TeamInboxEndpoint,
+            priority: TeamInboxPriority,
+            kind: String,
+            body: String,
+            agentPrompt: String?,
+            source: String?
+        ) throws -> TeamInboxMessage {
+            guard to.agentID != failingAgentID else { throw StubAppendFailure() }
+            return try underlying.appendMessage(
+                teamID: teamID,
+                teamName: teamName,
+                repoPath: repoPath,
+                from: from,
+                to: to,
+                priority: priority,
+                kind: kind,
+                body: body,
+                agentPrompt: agentPrompt,
+                source: source
+            )
+        }
+    }
+
     private func repo() -> RepoEntry {
         RepoEntry(
             path: "/repo",
@@ -115,6 +200,7 @@ struct TeamAgentRosterNotifierTests {
             worktrees: [
                 WorktreeEntry(path: "/repo", branch: "main"),
                 WorktreeEntry(path: "/repo/feature", branch: "feature"),
+                WorktreeEntry(path: "/repo/other", branch: "other"),
             ]
         )
     }
@@ -123,11 +209,12 @@ struct TeamAgentRosterNotifierTests {
         runtime: TeamHookRuntime,
         sessionID: String,
         registeredAt: TimeInterval,
-        isSubagent: Bool = false
+        isSubagent: Bool = false,
+        worktree: String = "/repo/feature"
     ) -> TeamPresenceRecord {
         TeamPresenceRecord(
             teamID: "/repo",
-            worktree: "/repo/feature",
+            worktree: worktree,
             runtime: runtime,
             paneSessionName: "pane-\(sessionID)",
             pid: 100,

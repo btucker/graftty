@@ -10,6 +10,11 @@ public enum CodexHookSessionBinder {
     /// Joins the two facts established at different points in wrapper startup:
     /// the transport socket registered before the TUI launches and the exact
     /// thread ID reported later by Codex's SessionStart hook.
+    ///
+    /// `allowRebind` is true only for session-start invocations: once a
+    /// non-empty thread ID is bound, a straggling post-tool-use hook from a
+    /// superseded thread may fill an empty binding or confirm a matching one,
+    /// but must not steer the records back into a dead thread.
     @discardableResult
     public static func bind(
         threadID: String,
@@ -17,6 +22,7 @@ public enum CodexHookSessionBinder {
         worktree: String,
         paneSessionName: String,
         agentID: String,
+        allowRebind: Bool,
         presenceStorage: TeamPresenceStorage,
         sessionStorage: CodexAppServerSessionStorage
     ) throws -> CodexHookSessionBinding? {
@@ -34,6 +40,21 @@ public enum CodexHookSessionBinder {
                   paneSessionName: paneSessionName
               ) else {
             return nil
+        }
+
+        // A straggling post-tool-use hook can still carry the thread ID of a
+        // session that a re-host/resume has already superseded; rewriting the
+        // records would steer native delivery into the dead thread. Only
+        // session-start may replace an established, different binding.
+        if !allowRebind,
+           let boundThreadID = session.threadID,
+           !boundThreadID.isEmpty,
+           boundThreadID != threadID {
+            return CodexHookSessionBinding(
+                agentID: session.agentID ?? agentID,
+                threadID: boundThreadID,
+                socketPath: session.socketPath
+            )
         }
 
         let boundSession = CodexAppServerSessionRecord(

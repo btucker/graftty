@@ -195,6 +195,90 @@ struct TeamAgentDirectoryTests {
         #expect(decoded.members[0].agents == [agent])
     }
 
+    @Test("""
+    Native-delivery reachability yields one shared verdict for the records where the Codex and Claude delivery views used to diverge, so an untargeted head row is neither double-sent nor claimed by no service.
+    """)
+    func nativeDeliveryReachabilityIsSharedAcrossServices() {
+        // Was: unreachable to Codex delivery (required a non-nil stored
+        // start), reachable to Claude delivery (nil start tolerated).
+        let nilStartCodexWithLivePane = record(
+            runtime: .codex,
+            pane: "graftty-live",
+            pid: 100,
+            start: nil
+        )
+        // Was: unreachable to Codex delivery (pane gate applied to every
+        // record), reachable to Claude delivery (pane-blind socket check).
+        let claudeSocketWithUnmappedPane = record(
+            runtime: .claude,
+            pane: "graftty-unmapped",
+            pid: 101,
+            start: 1_001,
+            transport: .claude(socketPath: "/tmp/cc-live.sock", protocolVersion: 1)
+        )
+        // Was: reachable to Codex delivery (no codex socket check),
+        // unreachable to Claude delivery (socket check on both transports).
+        let codexWithDeadSocketLivePane = record(
+            runtime: .codex,
+            pane: "graftty-live",
+            pid: 102,
+            start: 1_002,
+            transport: .codex(
+                binaryPath: "/bin/codex",
+                socketPath: "/tmp/codex-dead.sock",
+                threadID: "thread-1",
+                activeTurnID: nil
+            )
+        )
+        let liveness = StubDeliveryLiveness(
+            liveSessions: ["graftty-live"],
+            processStartTimes: [100: 9_999, 101: 1_001, 102: 1_002]
+        )
+        func verdict(_ record: TeamPresenceRecord) -> Bool {
+            TeamAgentReachability.isReachableForNativeDelivery(
+                record,
+                liveness: liveness,
+                isSocket: { $0 == "/tmp/cc-live.sock" }
+            )
+        }
+
+        #expect(verdict(nilStartCodexWithLivePane))
+        #expect(verdict(claudeSocketWithUnmappedPane))
+        #expect(!verdict(codexWithDeadSocketLivePane))
+    }
+
+    private func record(
+        runtime: TeamHookRuntime,
+        pane: String?,
+        pid: Int32,
+        start: Int64?,
+        transport: TeamAgentTransport? = nil
+    ) -> TeamPresenceRecord {
+        TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/feature",
+            runtime: runtime,
+            paneSessionName: pane,
+            pid: pid,
+            processStartTimeMicroseconds: start,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            transport: transport
+        )
+    }
+
+    private struct StubDeliveryLiveness: TeamDeliveryLivenessChecking {
+        let liveSessions: Set<String>
+        let processStartTimes: [Int32: Int64]
+
+        func isLivePaneSession(_ sessionName: String) -> Bool {
+            liveSessions.contains(sessionName)
+        }
+
+        func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+            processStartTimes[pid]
+        }
+    }
+
     private func presence(
         runtime: TeamHookRuntime,
         sessionID: String,
