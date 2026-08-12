@@ -20,7 +20,8 @@ public enum InstructionSessionText {
         viewer: TeamMember,
         defaultBranch: String?,
         applicationSupportDirectory: URL =
-            InstructionStore.defaultApplicationSupportDirectory
+            InstructionStore.defaultApplicationSupportDirectory,
+        loadBudget: Duration = InstructionStore.loadBudget
     ) async -> String {
         func audience(_ member: TeamMember) -> InstructionAudience {
             InstructionAudience(
@@ -55,7 +56,8 @@ public enum InstructionSessionText {
             repoPath: team.repoPath,
             worktreePath: viewer.worktreePath,
             applicationSupportDirectory: applicationSupportDirectory,
-            preferredPaths: preferredPaths
+            preferredPaths: preferredPaths,
+            budget: loadBudget
         ) else { return "" }
 
         return InstructionRenderer.render(

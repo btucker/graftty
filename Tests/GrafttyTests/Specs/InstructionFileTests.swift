@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("@spec INSTR-3.1: The application shall recognize hierarchical files named GRAFTTY.md and map each containing directory to the same worktree key and its descendants; if a root contains a legacy GRAFTTY.<leaf>.md file, then the application shall treat it as a fallback alias for the equivalent hierarchical path, prefer the hierarchical file when both exist in that root, and skip every other filename.")
+@Suite("@spec INSTR-3.1: The application shall recognize hierarchical files named GRAFTTY.md and map each containing directory to the same worktree key and its descendants; if a root contains a legacy GRAFTTY.<leaf>.md file, then the application shall treat it as a fallback alias for the equivalent hierarchical path, prefer the hierarchical file when both exist in that root while emitting a diagnostic naming both files, and skip every other filename.")
 struct InstructionFileClassificationTests {
 
     @Test func rootInstructionFile() {

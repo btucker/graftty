@@ -112,7 +112,10 @@ A worktree receives the repo-wide file, then each ancestor directory's
 
 For upgrade compatibility, the older `GRAFTTY.<leaf>.md` form remains a
 read-only fallback when the equivalent hierarchical file is absent. New and
-updated instructions should use the directory form above.
+updated instructions should use the directory form above. If both forms exist
+for one scope in the same root, Graftty uses the hierarchical file and logs a
+warning naming both paths; reconcile any content that still matters, then
+delete the legacy file.
 
 Anything below a `## Private` heading goes only to the worktrees that file
 applies to. Everything above it is shared with every agent in the repo, so

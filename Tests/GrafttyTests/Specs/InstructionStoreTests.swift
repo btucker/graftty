@@ -4,6 +4,23 @@ import os
 import Testing
 @testable import GrafttyKit
 
+/// Correctness tests should not race the production session-start deadline
+/// while the full Swift Testing suite is saturating the cooperative executor.
+/// `InstructionStoreDeadlineTests` exercises the bounded-load behavior
+/// separately with an intentionally short deadline.
+private func loadInstructions(
+    from fixture: InstructionFilesystemFixture,
+    preferredPaths: [String] = []
+) async -> InstructionSet? {
+    await InstructionStore.load(
+        repoPath: fixture.repo.path,
+        worktreePath: fixture.worktree.path,
+        applicationSupportDirectory: fixture.applicationSupport,
+        preferredPaths: preferredPaths,
+        budget: .seconds(10)
+    )
+}
+
 @Suite("""
 @spec INSTR-1.1: When instruction files are loaded for a worktree, the application shall discover them from `~/Library/Application Support/Graftty/.graftty`, the current worktree's `.graftty`, and the main checkout's `.graftty`, and shall resolve each relative path from the first readable regular file in that precedence order.
 """)
@@ -37,11 +54,7 @@ struct InstructionStoreTests {
             relativePath: "ops/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["GRAFTTY.md"]?.shared == "APP ROOT")
         #expect(set?.documents["feature-login/GRAFTTY.md"]?.shared == "WORKTREE SCOPE")
@@ -53,11 +66,7 @@ struct InstructionStoreTests {
         let fixture = try InstructionFilesystemFixture()
         defer { fixture.remove() }
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set == nil)
     }
@@ -69,11 +78,7 @@ struct InstructionStoreTests {
         try fixture.write("ignored", root: fixture.worktree, relativePath: "GRAFTTY..md")
         try fixture.write("kept", root: fixture.worktree, relativePath: "ok/GRAFTTY.md")
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents.keys.sorted() == ["ok/GRAFTTY.md"])
     }
@@ -87,11 +92,7 @@ struct InstructionStoreTests {
             relativePath: "research/GRAFTTY.vector-db.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["research/vector-db/GRAFTTY.md"]?.shared == "LEGACY ROLE")
         #expect(set?.documents["research/GRAFTTY.vector-db.md"] == nil)
@@ -110,14 +111,35 @@ struct InstructionStoreTests {
             root: fixture.worktree,
             relativePath: "feature-login/GRAFTTY.md"
         )
-
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
+        // An uppercase key sorts before the legacy filename and exercises the
+        // opposite discovery order. Precedence must not depend on directory
+        // enumeration order.
+        try fixture.write(
+            "CANONICAL UPPERCASE ROLE",
+            root: fixture.worktree,
+            relativePath: "AAA/GRAFTTY.md"
+        )
+        try fixture.write(
+            "LEGACY UPPERCASE ROLE",
+            root: fixture.worktree,
+            relativePath: "GRAFTTY.AAA.md"
         )
 
+        let set = await loadInstructions(from: fixture)
+
         #expect(set?.documents["feature-login/GRAFTTY.md"]?.shared == "CANONICAL ROLE")
+        #expect(set?.documents["AAA/GRAFTTY.md"]?.shared == "CANONICAL UPPERCASE ROLE")
+        let diagnostics = try #require(set?.diagnostics)
+        #expect(diagnostics.count == 2)
+        #expect(diagnostics.allSatisfy { $0.kind == .legacyFileShadowed })
+        #expect(diagnostics.contains {
+            $0.preferredPath.hasSuffix("/.graftty/feature-login/GRAFTTY.md")
+                && $0.shadowedPath.hasSuffix("/.graftty/GRAFTTY.feature-login.md")
+        })
+        #expect(diagnostics.contains {
+            $0.preferredPath.hasSuffix("/.graftty/AAA/GRAFTTY.md")
+                && $0.shadowedPath.hasSuffix("/.graftty/GRAFTTY.AAA.md")
+        })
     }
 
     @Test func rootPrecedenceAppliesAcrossCanonicalAndLegacyNames() async throws {
@@ -134,11 +156,7 @@ struct InstructionStoreTests {
             relativePath: "feature-login/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["feature-login/GRAFTTY.md"]?.shared == "APP LEGACY OVERRIDE")
     }
@@ -157,11 +175,7 @@ struct InstructionStoreTests {
         #expect(mkfifo(fifo.path, 0o600) == 0)
         try fixture.write("MAIN FALLBACK", root: fixture.repo, relativePath: "GRAFTTY.md")
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["GRAFTTY.md"]?.shared == "MAIN FALLBACK")
     }
@@ -182,11 +196,7 @@ struct InstructionStoreTests {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: secret)
         try fixture.write("MAIN FALLBACK", root: fixture.repo, relativePath: "GRAFTTY.md")
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["GRAFTTY.md"]?.shared == "MAIN FALLBACK")
     }
@@ -221,11 +231,7 @@ struct InstructionStoreTests {
             relativePath: "research/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["research/GRAFTTY.md"]?.shared == "MAIN FALLBACK")
     }
@@ -245,11 +251,7 @@ struct InstructionStoreTests {
             relativePath: "research/vector-db/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(
             set?.documents["Research/vector-db/GRAFTTY.md"]?.shared
@@ -285,11 +287,7 @@ struct InstructionWorkingTreeReadTests {
         )
         try "UNCOMMITTED EDIT".write(to: file, atomically: true, encoding: .utf8)
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["feature-login/GRAFTTY.md"]?.shared == "UNCOMMITTED EDIT")
     }
@@ -309,11 +307,7 @@ struct InstructionStoreLimitTests {
             relativePath: "GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
         let shared = set?.documents["GRAFTTY.md"]?.shared ?? ""
 
         #expect(shared.hasSuffix(InstructionStore.truncationMarker))
@@ -336,10 +330,8 @@ struct InstructionStoreLimitTests {
             relativePath: "viewer/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport,
+        let set = await loadInstructions(
+            from: fixture,
             preferredPaths: ["viewer/GRAFTTY.md"]
         )
 
@@ -358,11 +350,7 @@ struct InstructionStoreLimitTests {
             )
         }
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
         let total = set?.documents.values.reduce(0) {
             $0 + $1.shared.utf8.count + $1.privateText.utf8.count
         } ?? 0
@@ -380,11 +368,7 @@ struct InstructionStoreLimitTests {
             relativePath: "GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
         let shared = set?.documents["GRAFTTY.md"]?.shared ?? ""
 
         #expect(shared.utf8.count <= InstructionStore.perFileByteCap)
@@ -412,11 +396,7 @@ struct InstructionStoreLimitTests {
             relativePath: "e/GRAFTTY.md"
         )
 
-        let set = await InstructionStore.load(
-            repoPath: fixture.repo.path,
-            worktreePath: fixture.worktree.path,
-            applicationSupportDirectory: fixture.applicationSupport
-        )
+        let set = await loadInstructions(from: fixture)
 
         #expect(set?.documents["e/GRAFTTY.md"] == nil)
     }

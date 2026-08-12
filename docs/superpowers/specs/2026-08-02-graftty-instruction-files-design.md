@@ -152,9 +152,12 @@ exactly `GRAFTTY.md` nor the legacy `GRAFTTY.<leaf>.md` form.
 For upgrade compatibility with v0.4.x, `GRAFTTY.<leaf>.md` remains a read-only
 alias for `<leaf>/GRAFTTY.md` at the same directory level. Discovery stores it
 under the canonical hierarchical path. When both forms exist in one overlay
-root, the hierarchical file wins; across roots, the normal Application
-Support/current-worktree/main-checkout precedence still wins. The built-in
-prompt and provider skill teach only the hierarchical form.
+root, the hierarchical file wins and the load emits a diagnostic naming the
+preferred and shadowed absolute paths. The loader never merges or deletes the
+legacy file: the user must reconcile any content that still matters before
+deleting it. Across roots, the normal Application Support/current-worktree/
+main-checkout precedence still wins. The built-in prompt and provider skill
+teach only the hierarchical form.
 
 **Wildcard patterns were considered and rejected.** They require a specificity
 ranking, pattern validation, and a rule for how a wildcard orders against a
@@ -291,7 +294,7 @@ The governing rule is to degrade to omission and never block session start.
 | Evicted iCloud/File Provider (`SF_DATALESS`) entry | Skip without reading it |
 | The aggregate filesystem load exceeds one second | Omit the section without awaiting the late I/O |
 | Filename neither `GRAFTTY.md` nor legacy `GRAFTTY.<leaf>.md` | Skip, log |
-| Canonical and legacy forms for one scope in one root | Use the canonical hierarchical file |
+| Canonical and legacy forms for one scope in one root | Use the canonical hierarchical file and emit a diagnostic naming both absolute paths; never merge or delete either file |
 | Main checkout with unresolved default branch | Root file only, no keyed file |
 | Worktree outside the repo's worktrees directory | Root file only |
 | Per-file size cap exceeded | Truncate with a visible marker |

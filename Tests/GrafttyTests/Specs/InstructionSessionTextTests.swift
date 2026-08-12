@@ -18,7 +18,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.isEmpty)
@@ -47,7 +48,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.isEmpty)
@@ -75,7 +77,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("main-only text"))
@@ -109,7 +112,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: viewer,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("vector database role"))
@@ -156,7 +160,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: viewer,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("child's own role"))
@@ -179,7 +184,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: nil,
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("repo wide"))
@@ -204,7 +210,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("retained org-chart role"))

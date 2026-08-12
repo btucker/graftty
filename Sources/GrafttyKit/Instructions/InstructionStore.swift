@@ -2,13 +2,36 @@ import Darwin
 import Foundation
 import os
 
+/// A non-fatal problem found while resolving instruction files.
+public struct InstructionDiagnostic: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case legacyFileShadowed
+    }
+
+    public let kind: Kind
+    public let preferredPath: String
+    public let shadowedPath: String
+
+    public init(kind: Kind, preferredPath: String, shadowedPath: String) {
+        self.kind = kind
+        self.preferredPath = preferredPath
+        self.shadowedPath = shadowedPath
+    }
+}
+
 /// Every instruction file discovered for one repository, parsed.
 public struct InstructionSet: Sendable, Equatable {
     /// Parsed documents keyed by `.graftty/`-relative path.
     public let documents: [String: InstructionDocument]
+    /// Non-fatal conflicts encountered while choosing those documents.
+    public let diagnostics: [InstructionDiagnostic]
 
-    public init(documents: [String: InstructionDocument]) {
+    public init(
+        documents: [String: InstructionDocument],
+        diagnostics: [InstructionDiagnostic] = []
+    ) {
         self.documents = documents
+        self.diagnostics = diagnostics
     }
 }
 
@@ -129,6 +152,7 @@ public enum InstructionStore {
 
         var inventories: [RootInventory] = []
         var discovered: Set<String> = []
+        var diagnostics: [InstructionDiagnostic] = []
         var skippedCount = 0
         for root in roots {
             guard !Task.isCancelled else { return nil }
@@ -137,13 +161,17 @@ public enum InstructionStore {
                 isDirectory: true
             )
             var rootPaths: [String: DiscoveredPath] = [:]
+            var rootDiagnostics: [InstructionDiagnostic] = []
             discoverFiles(
                 beneath: instructionDirectory,
+                instructionDirectory: instructionDirectory,
                 relativeDirectory: "",
                 discovered: &rootPaths,
+                diagnostics: &rootDiagnostics,
                 skippedCount: &skippedCount
             )
             discovered.formUnion(rootPaths.keys)
+            diagnostics.append(contentsOf: rootDiagnostics)
             inventories.append(
                 RootInventory(
                     instructionDirectory: instructionDirectory,
@@ -155,6 +183,13 @@ public enum InstructionStore {
             logger.info(
                 """
                 skipped \(skippedCount, privacy: .public) unrecognized .graftty files
+                """
+            )
+        }
+        for diagnostic in diagnostics {
+            logger.warning(
+                """
+                ignored legacy instruction file \(diagnostic.shadowedPath, privacy: .public) because canonical file \(diagnostic.preferredPath, privacy: .public) exists
                 """
             )
         }
@@ -189,7 +224,7 @@ public enum InstructionStore {
         }
 
         guard !documents.isEmpty else { return nil }
-        return InstructionSet(documents: documents)
+        return InstructionSet(documents: documents, diagnostics: diagnostics)
     }
 
     private static func uniqueRoots(_ candidates: [URL]) -> [URL] {
@@ -205,8 +240,10 @@ public enum InstructionStore {
     /// instruction root or enter an unbounded directory cycle.
     private static func discoverFiles(
         beneath directory: URL,
+        instructionDirectory: URL,
         relativeDirectory: String,
         discovered: inout [String: DiscoveredPath],
+        diagnostics: inout [InstructionDiagnostic],
         skippedCount: inout Int
     ) {
         guard !Task.isCancelled,
@@ -226,8 +263,10 @@ public enum InstructionStore {
             if isMaterializedDirectory(st) {
                 discoverFiles(
                     beneath: entry,
+                    instructionDirectory: instructionDirectory,
                     relativeDirectory: relativePath,
                     discovered: &discovered,
+                    diagnostics: &diagnostics,
                     skippedCount: &skippedCount
                 )
             } else if isMaterializedRegularFile(st) {
@@ -235,9 +274,24 @@ public enum InstructionStore {
                     let canonicalPath = instruction.canonicalRelativePath
                     if let existing = discovered[canonicalPath] {
                         if existing.isLegacy && !instruction.isLegacy {
+                            diagnostics.append(
+                                shadowingDiagnostic(
+                                    preferredPath: relativePath,
+                                    shadowedPath: existing.actualPath,
+                                    instructionDirectory: instructionDirectory
+                                )
+                            )
                             discovered[canonicalPath] = DiscoveredPath(
                                 actualPath: relativePath,
                                 isLegacy: false
+                            )
+                        } else if !existing.isLegacy && instruction.isLegacy {
+                            diagnostics.append(
+                                shadowingDiagnostic(
+                                    preferredPath: existing.actualPath,
+                                    shadowedPath: relativePath,
+                                    instructionDirectory: instructionDirectory
+                                )
                             )
                         }
                     } else {
@@ -251,6 +305,18 @@ public enum InstructionStore {
                 }
             }
         }
+    }
+
+    private static func shadowingDiagnostic(
+        preferredPath: String,
+        shadowedPath: String,
+        instructionDirectory: URL
+    ) -> InstructionDiagnostic {
+        InstructionDiagnostic(
+            kind: .legacyFileShadowed,
+            preferredPath: instructionDirectory.appendingPathComponent(preferredPath).path,
+            shadowedPath: instructionDirectory.appendingPathComponent(shadowedPath).path
+        )
     }
 
     private static func firstReadableBody(

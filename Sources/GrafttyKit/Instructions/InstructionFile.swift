@@ -7,8 +7,8 @@ import Foundation
 /// map each containing directory to the same worktree key and its descendants;
 /// if a root contains a legacy GRAFTTY.<leaf>.md file, then the application
 /// shall treat it as a fallback alias for the equivalent hierarchical path,
-/// prefer the hierarchical file when both exist in that root, and skip every
-/// other filename.
+/// prefer the hierarchical file when both exist in that root while emitting a
+/// diagnostic naming both files, and skip every other filename.
 public enum InstructionFile: Equatable, Sendable {
     /// The worktree key matching the containing directory. The empty key is
     /// the repository-wide root scope.
