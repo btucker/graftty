@@ -172,6 +172,29 @@ public actor ClaudePeerDeliveryService {
     }
 }
 
+/// Derives the native cross-session sender label for one inbox row.
+/// Agent rows: `<team>/<worktree-member>#<agent-id>`; the suffix minus the
+/// team prefix is a routable `graftty team send` address. System rows: the
+/// originating SCM's display name when a source was persisted, else the
+/// generic team label.
+public enum ClaudePeerSenderName {
+    public static func name(for message: TeamInboxMessage) -> String {
+        guard message.from.member != "system" else {
+            guard let source = message.source, !source.isEmpty else {
+                return "Graftty team"
+            }
+            switch source {
+            case "github": return "GitHub"
+            case "gitlab": return "GitLab"
+            default: return source.prefix(1).uppercased() + source.dropFirst()
+            }
+        }
+        let base = "\(message.team)/\(message.from.member)"
+        guard let agentID = message.from.agentID else { return base }
+        return "\(base)#\(agentID)"
+    }
+}
+
 public enum TeamPeerMessageFormatter {
     public static func context(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
