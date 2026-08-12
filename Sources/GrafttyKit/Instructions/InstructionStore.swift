@@ -2,13 +2,36 @@ import Darwin
 import Foundation
 import os
 
+/// A non-fatal problem found while resolving instruction files.
+public struct InstructionDiagnostic: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case legacyFileShadowed
+    }
+
+    public let kind: Kind
+    public let preferredPath: String
+    public let shadowedPath: String
+
+    public init(kind: Kind, preferredPath: String, shadowedPath: String) {
+        self.kind = kind
+        self.preferredPath = preferredPath
+        self.shadowedPath = shadowedPath
+    }
+}
+
 /// Every instruction file discovered for one repository, parsed.
 public struct InstructionSet: Sendable, Equatable {
     /// Parsed documents keyed by `.graftty/`-relative path.
     public let documents: [String: InstructionDocument]
+    /// Non-fatal conflicts encountered while choosing those documents.
+    public let diagnostics: [InstructionDiagnostic]
 
-    public init(documents: [String: InstructionDocument]) {
+    public init(
+        documents: [String: InstructionDocument],
+        diagnostics: [InstructionDiagnostic] = []
+    ) {
         self.documents = documents
+        self.diagnostics = diagnostics
     }
 }
 
@@ -24,7 +47,14 @@ public enum InstructionStore {
 
     private struct RootInventory: Sendable {
         let instructionDirectory: URL
-        let discoveredPaths: Set<String>
+        /// Canonical logical path → actual path inside this root. Legacy
+        /// filenames alias to their canonical path without rewriting disk.
+        let actualPathByCanonicalPath: [String: String]
+    }
+
+    private struct DiscoveredPath {
+        let actualPath: String
+        let isLegacy: Bool
     }
 
     private static let logger = Logger(
@@ -122,6 +152,7 @@ public enum InstructionStore {
 
         var inventories: [RootInventory] = []
         var discovered: Set<String> = []
+        var diagnostics: [InstructionDiagnostic] = []
         var skippedCount = 0
         for root in roots {
             guard !Task.isCancelled else { return nil }
@@ -129,26 +160,36 @@ public enum InstructionStore {
                 directoryName,
                 isDirectory: true
             )
-            var rootPaths: Set<String> = []
+            var rootPaths: [String: DiscoveredPath] = [:]
+            var rootDiagnostics: [InstructionDiagnostic] = []
             discoverFiles(
                 beneath: instructionDirectory,
+                instructionDirectory: instructionDirectory,
                 relativeDirectory: "",
                 discovered: &rootPaths,
+                diagnostics: &rootDiagnostics,
                 skippedCount: &skippedCount
             )
-            discovered.formUnion(rootPaths)
+            discovered.formUnion(rootPaths.keys)
+            diagnostics.append(contentsOf: rootDiagnostics)
             inventories.append(
                 RootInventory(
                     instructionDirectory: instructionDirectory,
-                    discoveredPaths: rootPaths
+                    actualPathByCanonicalPath: rootPaths.mapValues(\.actualPath)
                 )
             )
         }
         if skippedCount > 0 {
             logger.info(
                 """
-                skipped \(skippedCount, privacy: .public) .graftty entries not named \
-                GRAFTTY.md or GRAFTTY.<leaf>.md
+                skipped \(skippedCount, privacy: .public) unrecognized .graftty files
+                """
+            )
+        }
+        for diagnostic in diagnostics {
+            logger.warning(
+                """
+                ignored legacy instruction file \(diagnostic.shadowedPath, privacy: .public) because canonical file \(diagnostic.preferredPath, privacy: .public) exists
                 """
             )
         }
@@ -183,7 +224,7 @@ public enum InstructionStore {
         }
 
         guard !documents.isEmpty else { return nil }
-        return InstructionSet(documents: documents)
+        return InstructionSet(documents: documents, diagnostics: diagnostics)
     }
 
     private static func uniqueRoots(_ candidates: [URL]) -> [URL] {
@@ -199,8 +240,10 @@ public enum InstructionStore {
     /// instruction root or enter an unbounded directory cycle.
     private static func discoverFiles(
         beneath directory: URL,
+        instructionDirectory: URL,
         relativeDirectory: String,
-        discovered: inout Set<String>,
+        discovered: inout [String: DiscoveredPath],
+        diagnostics: inout [InstructionDiagnostic],
         skippedCount: inout Int
     ) {
         guard !Task.isCancelled,
@@ -220,13 +263,43 @@ public enum InstructionStore {
             if isMaterializedDirectory(st) {
                 discoverFiles(
                     beneath: entry,
+                    instructionDirectory: instructionDirectory,
                     relativeDirectory: relativePath,
                     discovered: &discovered,
+                    diagnostics: &diagnostics,
                     skippedCount: &skippedCount
                 )
             } else if isMaterializedRegularFile(st) {
-                if InstructionFile.classify(relativePath: relativePath) != nil {
-                    discovered.insert(relativePath)
+                if let instruction = InstructionFile.classify(relativePath: relativePath) {
+                    let canonicalPath = instruction.canonicalRelativePath
+                    if let existing = discovered[canonicalPath] {
+                        if existing.isLegacy && !instruction.isLegacy {
+                            diagnostics.append(
+                                shadowingDiagnostic(
+                                    preferredPath: relativePath,
+                                    shadowedPath: existing.actualPath,
+                                    instructionDirectory: instructionDirectory
+                                )
+                            )
+                            discovered[canonicalPath] = DiscoveredPath(
+                                actualPath: relativePath,
+                                isLegacy: false
+                            )
+                        } else if !existing.isLegacy && instruction.isLegacy {
+                            diagnostics.append(
+                                shadowingDiagnostic(
+                                    preferredPath: existing.actualPath,
+                                    shadowedPath: relativePath,
+                                    instructionDirectory: instructionDirectory
+                                )
+                            )
+                        }
+                    } else {
+                        discovered[canonicalPath] = DiscoveredPath(
+                            actualPath: relativePath,
+                            isLegacy: instruction.isLegacy
+                        )
+                    }
                 } else {
                     skippedCount += 1
                 }
@@ -234,16 +307,30 @@ public enum InstructionStore {
         }
     }
 
+    private static func shadowingDiagnostic(
+        preferredPath: String,
+        shadowedPath: String,
+        instructionDirectory: URL
+    ) -> InstructionDiagnostic {
+        InstructionDiagnostic(
+            kind: .legacyFileShadowed,
+            preferredPath: instructionDirectory.appendingPathComponent(preferredPath).path,
+            shadowedPath: instructionDirectory.appendingPathComponent(shadowedPath).path
+        )
+    }
+
     private static func firstReadableBody(
         relativePath: String,
         inventories: [RootInventory],
         limit: Int
     ) -> String? {
-        for inventory in inventories
-            where inventory.discoveredPaths.contains(relativePath) {
+        for inventory in inventories {
             guard !Task.isCancelled else { return nil }
+            guard let actualPath = inventory.actualPathByCanonicalPath[relativePath] else {
+                continue
+            }
             if let body = readMaterializedRegularFile(
-                relativePath: relativePath,
+                relativePath: actualPath,
                 beneath: inventory.instructionDirectory,
                 limit: limit
             ) {

@@ -68,6 +68,25 @@ struct TeamPresenceStorageTests {
         #expect(loaded.processStartTimeMicroseconds == 1_700_000_123_456_789)
     }
 
+    @Test("Record persistence preserves subsecond registration ordering.")
+    func roundTripsRegisteredAtFractionalSeconds() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000.125)
+        let record = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            paneSessionName: "graftty-fraction",
+            pid: 4242,
+            registeredAt: registeredAt
+        )
+
+        try storage.write(record)
+        let loaded = try #require(storage.listAll().first)
+
+        #expect(abs(loaded.registeredAt.timeIntervalSince(registeredAt)) < 0.001)
+    }
+
     @Test("@spec TEAM-IDLE-2.13: Two records with the same (worktree, runtime) but different paneSessionName coexist.")
     func sameWorktreeRuntimeDifferentPanesCoexist() throws {
         let storage = try makeStorage()

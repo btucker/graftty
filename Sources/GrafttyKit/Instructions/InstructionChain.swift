@@ -4,26 +4,19 @@ import Foundation
 /// worktree key.
 ///
 /// @spec INSTR-5.1
-/// The stack is every ancestor directory's group file from the root inward,
-/// then the worktree's own leaf file at its parent level. Depth is the
-/// ordering — there is no specificity ranking to compute.
+/// The application shall resolve a worktree instruction stack as the GRAFTTY.md
+/// file at the repository root and every directory component of the worktree
+/// key, ordered from root to the exact worktree.
 public enum InstructionChain {
 
     public static func paths(forKey key: String) -> [String] {
         var result = ["GRAFTTY.md"]
         let components = key.split(separator: "/").map(String.init)
-        guard let leaf = components.last else { return result }
-
-        // Ancestor group files, root-most first. Excludes the key's own
-        // directory-form, which covers descendants only.
-        for depth in 1..<components.count {
+        guard !components.isEmpty else { return result }
+        for depth in 1...components.count {
             let directory = components.prefix(depth).joined(separator: "/")
             result.append(directory + "/GRAFTTY.md")
         }
-
-        let parent = components.dropLast().joined(separator: "/")
-        let leafFile = "GRAFTTY." + leaf + ".md"
-        result.append(parent.isEmpty ? leafFile : parent + "/" + leafFile)
         return result
     }
 }

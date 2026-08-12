@@ -18,7 +18,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.isEmpty)
@@ -47,7 +48,8 @@ struct InstructionSessionTextTests {
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.isEmpty)
@@ -63,19 +65,20 @@ struct InstructionSessionTextTests {
         try fixture.write(
             "main-only text",
             at: fixture.repo,
-            relativePath: "GRAFTTY.main.md"
+            relativePath: "main/GRAFTTY.md"
         )
         try fixture.write(
             "feature-login shared text\n## Private\nfeature-login private text",
             at: fixture.repo,
-            relativePath: "GRAFTTY.feature-login.md"
+            relativePath: "feature-login/GRAFTTY.md"
         )
 
         let text = await InstructionSessionText.render(
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("main-only text"))
@@ -85,7 +88,7 @@ struct InstructionSessionTextTests {
     }
 
     @Test("""
-    @spec INSTR-6.5: When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's leaf from that new checkout's filesystem so the child receives its role in the first session.
+    @spec INSTR-6.5: When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's exact-worktree instruction file from that new checkout's filesystem so the child receives its role in the first session.
     """)
     func creatingViewerReceivesItsWorktreeLeafInFirstSession() async throws {
         let fixture = try InstructionFilesystemFixture(
@@ -102,14 +105,15 @@ struct InstructionSessionTextTests {
         try fixture.write(
             "vector database role\n## Private\nfirst-session details",
             at: fixture.linkedWorktree("research/vector-db"),
-            relativePath: "research/GRAFTTY.vector-db.md"
+            relativePath: "research/vector-db/GRAFTTY.md"
         )
 
         let text = await InstructionSessionText.render(
             team: team,
             viewer: viewer,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("vector database role"))
@@ -119,7 +123,7 @@ struct InstructionSessionTextTests {
     @Test("""
     @spec INSTR-6.6: When instruction content exceeds a load limit, the application shall prioritize the viewer's instruction stack ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
     """)
-    func viewerLeafPrecedesPeerLeavesAtTheByteCap() async throws {
+    func viewerInstructionsPrecedePeerInstructionsAtTheByteCap() async throws {
         let fixture = try InstructionFilesystemFixture(
             prefix: "graftty-session-instr"
         )
@@ -143,20 +147,21 @@ struct InstructionSessionTextTests {
             try fixture.write(
                 capFiller,
                 at: fixture.linkedWorktree("zz-child"),
-                relativePath: "GRAFTTY.aa-peer-\(index).md"
+                relativePath: "aa-peer-\(index)/GRAFTTY.md"
             )
         }
         try fixture.write(
             "child's own role",
             at: fixture.linkedWorktree("zz-child"),
-            relativePath: "GRAFTTY.zz-child.md"
+            relativePath: "zz-child/GRAFTTY.md"
         )
 
         let text = await InstructionSessionText.render(
             team: team,
             viewer: viewer,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("child's own role"))
@@ -172,21 +177,22 @@ struct InstructionSessionTextTests {
         try fixture.write(
             "main-only text",
             at: fixture.repo,
-            relativePath: "GRAFTTY.main.md"
+            relativePath: "main/GRAFTTY.md"
         )
 
         let text = await InstructionSessionText.render(
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: nil,
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("repo wide"))
         #expect(text.contains("Instruction files matching no current worktree"))
     }
 
-    @Test func staleMemberDoesNotClaimItsLeaf() async throws {
+    @Test func staleMemberDoesNotClaimItsInstructionFile() async throws {
         let fixture = try InstructionFilesystemFixture(
             prefix: "graftty-session-instr"
         )
@@ -197,14 +203,15 @@ struct InstructionSessionTextTests {
         try fixture.write(
             "retained org-chart role",
             at: fixture.repo,
-            relativePath: "GRAFTTY.feature-login.md"
+            relativePath: "feature-login/GRAFTTY.md"
         )
 
         let text = await InstructionSessionText.render(
             team: team,
             viewer: team.mainWorktree,
             defaultBranch: "main",
-            applicationSupportDirectory: fixture.applicationSupport
+            applicationSupportDirectory: fixture.applicationSupport,
+            loadBudget: .seconds(10)
         )
 
         #expect(text.contains("retained org-chart role"))

@@ -60,7 +60,8 @@ public struct CLIRunner: CLIExecutor {
         let extras = [
             "/opt/homebrew/bin",
             "/usr/local/bin",
-            "\(NSHomeDirectory())/.local/bin"
+            "\(NSHomeDirectory())/.local/bin",
+            "\(NSHomeDirectory())/.bun/bin"
         ]
         let existing = env["PATH"] ?? ""
         let existingParts = existing.split(separator: ":").map(String.init)

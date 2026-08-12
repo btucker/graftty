@@ -3,37 +3,51 @@ import Foundation
 /// A classified file discovered under `.graftty/`.
 ///
 /// @spec INSTR-3.1
-/// There are exactly two forms. `<dir>/GRAFTTY.md` applies to every key
-/// beneath `<dir>`; `<dir>/GRAFTTY.<leaf>.md` applies to the single key
-/// `<dir>/<leaf>`. Any other name is skipped.
+/// The application shall recognize hierarchical files named GRAFTTY.md and
+/// map each containing directory to the same worktree key and its descendants;
+/// if a root contains a legacy GRAFTTY.<leaf>.md file, then the application
+/// shall treat it as a fallback alias for the equivalent hierarchical path,
+/// prefer the hierarchical file when both exist in that root while emitting a
+/// diagnostic naming both files, and skip every other filename.
 public enum InstructionFile: Equatable, Sendable {
-    /// `<dir>/GRAFTTY.md`. `directory` is "" at the root of `.graftty/`.
-    case group(directory: String)
-    /// `<dir>/GRAFTTY.<leaf>.md`, addressing the worktree key `<dir>/<leaf>`.
-    case leaf(key: String)
+    /// The worktree key matching the containing directory. The empty key is
+    /// the repository-wide root scope.
+    case scope(key: String)
+    /// The pre-v0.5 exact-worktree form. Loading aliases this to the canonical
+    /// hierarchical path and prefers `.scope` if both exist in one root.
+    case legacyScope(key: String)
 
-    private static let prefix = "GRAFTTY."
+    private static let filename = "GRAFTTY.md"
+    private static let legacyPrefix = "GRAFTTY."
     private static let suffix = ".md"
-    private static let groupFilename = "GRAFTTY.md"
 
-    /// Classifies a path relative to `.graftty/`. Returns nil for any name
-    /// that is not one of the two supported forms.
+    var canonicalRelativePath: String {
+        let key = switch self {
+        case .scope(let key), .legacyScope(let key): key
+        }
+        return key.isEmpty ? Self.filename : key + "/" + Self.filename
+    }
+
+    var isLegacy: Bool {
+        if case .legacyScope = self { return true }
+        return false
+    }
+
+    /// Classifies a path relative to `.graftty/`.
     public static func classify(relativePath: String) -> InstructionFile? {
         let components = relativePath.split(separator: "/").map(String.init)
         guard let filename = components.last else { return nil }
         let directory = components.dropLast().joined(separator: "/")
-
-        if filename == groupFilename {
-            return .group(directory: directory)
+        if filename == Self.filename {
+            return .scope(key: directory)
         }
-
-        guard filename.hasPrefix(prefix), filename.hasSuffix(suffix) else {
+        guard filename.hasPrefix(legacyPrefix), filename.hasSuffix(suffix) else {
             return nil
         }
-        let leaf = String(
-            filename.dropFirst(prefix.count).dropLast(suffix.count)
-        )
+        let leaf = filename.dropFirst(legacyPrefix.count).dropLast(suffix.count)
         guard !leaf.isEmpty else { return nil }
-        return .leaf(key: directory.isEmpty ? leaf : directory + "/" + leaf)
+        return .legacyScope(
+            key: directory.isEmpty ? String(leaf) : directory + "/" + leaf
+        )
     }
 }

@@ -16,6 +16,16 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
     public let pid: Int32
     public let processStartTimeMicroseconds: Int64?
     public let registeredAt: Date
+    /// Stable provider session identity used to derive Graftty's canonical
+    /// agent ID. This is intentionally separate from a provider-controlled
+    /// display name.
+    public let runtimeSessionID: String?
+    public let nativeDisplayName: String?
+    public let agentID: String?
+    public let transport: TeamAgentTransport?
+    /// Native provider children share their parent's worktree but are not
+    /// independently addressable through `graftty team`.
+    public let isSubagent: Bool?
 
     public init(
         teamID: String,
@@ -24,7 +34,12 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
         paneSessionName: String?,
         pid: Int32,
         processStartTimeMicroseconds: Int64? = nil,
-        registeredAt: Date
+        registeredAt: Date,
+        runtimeSessionID: String? = nil,
+        nativeDisplayName: String? = nil,
+        agentID: String? = nil,
+        transport: TeamAgentTransport? = nil,
+        isSubagent: Bool = false
     ) {
         self.teamID = teamID
         self.worktree = worktree
@@ -33,7 +48,25 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
         self.pid = pid
         self.processStartTimeMicroseconds = processStartTimeMicroseconds
         self.registeredAt = registeredAt
+        self.runtimeSessionID = runtimeSessionID
+        self.nativeDisplayName = nativeDisplayName
+        self.agentID = agentID
+        self.transport = transport
+        self.isSubagent = isSubagent ? true : nil
     }
+}
+
+/// Native ingress metadata associated with one observed top-level agent.
+/// Values are compatibility observations, not provider API contracts, so
+/// delivery validates the endpoint again immediately before use.
+public enum TeamAgentTransport: Codable, Equatable, Sendable {
+    case claude(socketPath: String, protocolVersion: Int)
+    case codex(
+        binaryPath: String,
+        socketPath: String,
+        threadID: String,
+        activeTurnID: String?
+    )
 }
 
 /// On-disk storage for `TeamPresenceRecord`s under a directory the caller controls
@@ -56,26 +89,50 @@ public struct TeamPresenceStorage: Sendable {
             teamID: record.teamID,
             worktree: record.worktree,
             runtime: record.runtime,
-            paneSessionName: record.paneSessionName
+            paneSessionName: record.paneSessionName,
+            agentID: record.agentID
         )
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(dateFormatter.string(from: date))
+        }
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(record)
         try data.write(to: url, options: .atomic)
+        // An agent-ID-keyed record supersedes the pre-upgrade file that
+        // keyed the same slot without an identity suffix. Leaving the old
+        // file behind lists one live session as two agents, and the older
+        // transport-less row wins default routing by registration time.
+        if record.agentID != nil {
+            let legacyURL = filePath(
+                teamID: record.teamID,
+                worktree: record.worktree,
+                runtime: record.runtime,
+                paneSessionName: record.paneSessionName,
+                agentID: nil
+            )
+            if FileManager.default.fileExists(atPath: legacyURL.path) {
+                try? FileManager.default.removeItem(at: legacyURL)
+            }
+        }
     }
 
     public func read(
         teamID: String,
         worktree: String,
         runtime: TeamHookRuntime,
-        paneSessionName: String?
+        paneSessionName: String?,
+        agentID: String? = nil
     ) throws -> TeamPresenceRecord? {
         let url = filePath(
             teamID: teamID,
             worktree: worktree,
             runtime: runtime,
-            paneSessionName: paneSessionName
+            paneSessionName: paneSessionName,
+            agentID: agentID
         )
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
@@ -88,13 +145,15 @@ public struct TeamPresenceStorage: Sendable {
         teamID: String,
         worktree: String,
         runtime: TeamHookRuntime,
-        paneSessionName: String?
+        paneSessionName: String?,
+        agentID: String? = nil
     ) throws {
         let url = filePath(
             teamID: teamID,
             worktree: worktree,
             runtime: runtime,
-            paneSessionName: paneSessionName
+            paneSessionName: paneSessionName,
+            agentID: agentID
         )
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
@@ -133,10 +192,14 @@ public struct TeamPresenceStorage: Sendable {
         teamID: String,
         worktree: String,
         runtime: TeamHookRuntime,
-        paneSessionName: String?
+        paneSessionName: String?,
+        agentID: String? = nil
     ) -> URL {
         let paneSegment = paneSessionName ?? "_no_pane"
-        let leaf = TeamInbox.fileComponent("\(worktree).\(runtime.rawValue).\(paneSegment)") + ".json"
+        let identitySegment = agentID.map { ".\($0)" } ?? ""
+        let leaf = TeamInbox.fileComponent(
+            "\(worktree).\(runtime.rawValue).\(paneSegment)\(identitySegment)"
+        ) + ".json"
         return presenceDirectory(teamID: teamID).appendingPathComponent(leaf)
     }
 }
@@ -237,7 +300,8 @@ public enum TeamPresenceMonitor {
                     teamID: record.teamID,
                     worktree: record.worktree,
                     runtime: record.runtime,
-                    paneSessionName: record.paneSessionName
+                    paneSessionName: record.paneSessionName,
+                    agentID: record.agentID
                 )
                 try? eventLog?.append(
                     .init(teamID: record.teamID, kind: .unregistered, detail: [

@@ -13,10 +13,16 @@ public struct AgentHookInstaller: Sendable {
 
     public let rootDirectory: URL
     public let grafttyCLIPath: String
+    public let providerPluginsEnabled: Bool
 
-    public init(rootDirectory: URL, grafttyCLIPath: String) {
+    public init(
+        rootDirectory: URL,
+        grafttyCLIPath: String,
+        providerPluginsEnabled: Bool = false
+    ) {
         self.rootDirectory = rootDirectory
         self.grafttyCLIPath = grafttyCLIPath
+        self.providerPluginsEnabled = providerPluginsEnabled
     }
 
     public static func rootDirectory(defaultDirectory: URL = AppState.defaultDirectory) -> URL {
@@ -99,25 +105,31 @@ public struct AgentHookInstaller: Sendable {
             .appendingPathComponent("codex-home", isDirectory: true)
             .path
 
-        try writeIfChanged(
-            AgentHookInstaller.wrapperScript(
-                runtime: .claude,
-                wrapperDirectory: binDirectory.path,
-                realCommandName: "claude",
-                grafttyCLIPath: grafttyCLIPath,
-                codexHomeDirectory: codexHomeDirectory
-            ),
-            to: claudeWrapper,
-            executable: true,
-            written: &written
-        )
+        if providerPluginsEnabled {
+            try removeManagedWrapperIfPresent(at: claudeWrapper)
+        } else {
+            try writeIfChanged(
+                AgentHookInstaller.wrapperScript(
+                    runtime: .claude,
+                    wrapperDirectory: binDirectory.path,
+                    realCommandName: "claude",
+                    grafttyCLIPath: grafttyCLIPath,
+                    codexHomeDirectory: codexHomeDirectory,
+                    providerPluginsEnabled: false
+                ),
+                to: claudeWrapper,
+                executable: true,
+                written: &written
+            )
+        }
         try writeIfChanged(
             AgentHookInstaller.wrapperScript(
                 runtime: .codex,
                 wrapperDirectory: binDirectory.path,
                 realCommandName: "codex",
                 grafttyCLIPath: grafttyCLIPath,
-                codexHomeDirectory: codexHomeDirectory
+                codexHomeDirectory: codexHomeDirectory,
+                providerPluginsEnabled: providerPluginsEnabled
             ),
             to: codexWrapper,
             executable: true,
@@ -128,6 +140,18 @@ public struct AgentHookInstaller: Sendable {
         try installBashInitShim(written: &written)
 
         return AgentHookInstallResult(writtenFiles: written)
+    }
+
+    /// The plugin makes Claude reachable without a launch wrapper. Remove only
+    /// the file carrying Graftty's marker; an unexpected file in the managed
+    /// bin is preserved rather than being treated as ours to delete.
+    private func removeManagedWrapperIfPresent(at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let contents = try? String(contentsOf: url, encoding: .utf8),
+              contents.contains("# GRAFTTY_AGENT_HOOK_WRAPPER version=") else {
+            return
+        }
+        try FileManager.default.removeItem(at: url)
     }
 
     /// Writes the ZDOTDIR shim files (`.zshenv`, `.zprofile`, `.zshrc`,
@@ -338,7 +362,8 @@ public struct AgentHookInstaller: Sendable {
         realCommandName: String,
         grafttyCLIPath: String,
         codexHomeDirectory: String,
-        codexSourceDirectory: String = CodexHomeMirror.defaultSourceDirectory().path
+        codexSourceDirectory: String = CodexHomeMirror.defaultSourceDirectory().path,
+        providerPluginsEnabled: Bool = false
     ) -> String {
         wrapperScript(
             runtime: runtime,
@@ -347,7 +372,8 @@ public struct AgentHookInstaller: Sendable {
             grafttyCLIPath: grafttyCLIPath,
             codexHomeDirectory: codexHomeDirectory,
             codexSourceDirectory: codexSourceDirectory,
-            codexLockCommandPath: "/usr/bin/lockf"
+            codexLockCommandPath: "/usr/bin/lockf",
+            providerPluginsEnabled: providerPluginsEnabled
         )
     }
 
@@ -358,7 +384,8 @@ public struct AgentHookInstaller: Sendable {
         grafttyCLIPath: String,
         codexHomeDirectory: String,
         codexSourceDirectory: String,
-        codexLockCommandPath: String
+        codexLockCommandPath: String,
+        providerPluginsEnabled: Bool = false
     ) -> String {
         let resolveBlock = realBinaryResolutionShell(
             wrapperDirectory: wrapperDirectory,
@@ -369,6 +396,13 @@ public struct AgentHookInstaller: Sendable {
         # remains a foreground child in the same process group so TUIs keep
         # normal terminal semantics, while the wrapper gets a short teardown
         # phase after the runtime exits.
+        _graftty_agent_suffix="$(uuidgen 2>/dev/null | tr -d '-' | tr '[:upper:]' '[:lower:]' | cut -c1-12)"
+        if [ "${#_graftty_agent_suffix}" -ne 12 ]; then
+          _graftty_agent_suffix="$(printf '%012x' "$$")"
+        fi
+        GRAFTTY_AGENT_ID="\(runtime.rawValue)-$_graftty_agent_suffix"
+        export GRAFTTY_AGENT_ID
+        unset _graftty_agent_suffix
         \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
         """
 
@@ -424,15 +458,23 @@ public struct AgentHookInstaller: Sendable {
         let runtimeBlock: String
         switch runtime {
         case .claude:
-            let inlineJSON = claudeInlineSettingsJSON(grafttyCLIPath: grafttyCLIPath)
-            let escapedJSON = shellLiteral(inlineJSON)
-            runtimeBlock = """
-            if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              "$real_binary" --settings \(escapedJSON) "$@"
-            else
-              "$real_binary" "$@"
-            fi
-            """
+            if providerPluginsEnabled {
+                runtimeBlock = """
+                # The installed provider plugin owns lifecycle hooks and the
+                # graftty-team skill; this wrapper is compatibility-only.
+                "$real_binary" "$@"
+                """
+            } else {
+                let inlineJSON = claudeInlineSettingsJSON(grafttyCLIPath: grafttyCLIPath)
+                let escapedJSON = shellLiteral(inlineJSON)
+                runtimeBlock = """
+                if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
+                  "$real_binary" --settings \(escapedJSON) "$@"
+                else
+                  "$real_binary" "$@"
+                fi
+                """
+            }
         case .codex:
             let codexHomeLiteral = shellLiteral(codexHomeDirectory)
             let codexSourceLiteral = shellLiteral(codexSourceDirectory)
@@ -443,6 +485,7 @@ public struct AgentHookInstaller: Sendable {
             )
             runtimeBlock = """
             _graftty_codex_sync_status=0
+            \(providerPluginsEnabled ? "GRAFTTY_PROVIDER_PLUGINS=1; export GRAFTTY_PROVIDER_PLUGINS" : "")
             _graftty_codex_runtime_home=\(codexHomeLiteral)
               _graftty_codex_should_use_app_server() {
                 while [ "$#" -gt 0 ]; do

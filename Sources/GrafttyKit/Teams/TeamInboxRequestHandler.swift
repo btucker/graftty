@@ -7,6 +7,8 @@ public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
     case notInTeam
     case senderNotInTeam
     case recipientNotFound(name: String, available: [String])
+    case agentNotFound(String)
+    case agentUnavailable(String)
     case paginationRequired
     case paginationCursorNotFound(String)
 
@@ -22,6 +24,10 @@ public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
             return "internal error: caller not in resolved team"
         case .recipientNotFound(let name, let available):
             return "\(name) is not a teammate of this worktree; current teammates: \(available.joined(separator: ", "))"
+        case .agentNotFound(let id):
+            return "team agent not found: \(id)"
+        case .agentUnavailable(let id):
+            return "team agent is no longer reachable: \(id)"
         case .paginationRequired:
             return "team inbox request is missing pagination support; use the CLI bundled with this Graftty version"
         case .paginationCursorNotFound(let id):
@@ -125,6 +131,8 @@ public final class TeamInboxRequestHandler {
         _ runtime: TeamHookRuntime,
         _ paneSessionName: String?
     ) -> Bool)?
+    private let agentRecords: @Sendable () -> [TeamPresenceRecord]
+    private let agentReachability: @Sendable (TeamPresenceRecord) -> Bool
 
     public init(
         inbox: TeamInbox,
@@ -135,17 +143,22 @@ public final class TeamInboxRequestHandler {
             _ worktree: String,
             _ runtime: TeamHookRuntime,
             _ paneSessionName: String?
-        ) -> Bool)? = nil
+        ) -> Bool)? = nil,
+        agentRecords: @escaping @Sendable () -> [TeamPresenceRecord] = { [] },
+        agentReachability: @escaping @Sendable (TeamPresenceRecord) -> Bool = { _ in false }
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
         self.sessionPromptRenderer = sessionPromptRenderer
         self.automaticDeliveryOwner = automaticDeliveryOwner
+        self.agentRecords = agentRecords
+        self.agentReachability = agentReachability
     }
 
     @discardableResult
     public func send(
         callerWorktree: String,
+        callerAgentID: String? = nil,
         recipient: String,
         text: String,
         priority: TeamInboxPriority,
@@ -156,23 +169,53 @@ public final class TeamInboxRequestHandler {
         // stays helpful (the dispatcher would silently no-op on an unknown
         // recipient, returning nil — not a useful error for `team msg`).
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
-        guard let recipientMember = context.team.memberNamed(recipient) else {
+        let addressed = splitAgentAddress(recipient, in: context.team)
+        guard let recipientMember = context.team.memberNamed(addressed.member) else {
             let available = context.team.members
                 .map(\.name)
                 .filter { $0 != context.sender.name }
             throw TeamInboxRequestError.recipientNotFound(name: recipient, available: available)
         }
+        // AGENT-6.17: an explicit `#agent-id` suffix binds the row to that
+        // exact reachable agent and fails closed here when it is gone. A
+        // plain worktree address must stay unpinned: delivery re-resolves
+        // the default agent per attempt (AGENT-6.3), so stamping the
+        // send-time default would wedge the whole worktree queue behind a
+        // row no live agent may consume once that agent exits.
+        let selectedAgent: TeamAgentDescriptor?
+        if let explicitAgentID = addressed.agentID {
+            do {
+                selectedAgent = try TeamAgentDirectory(
+                    records: agentRecords().filter { $0.teamID == teamID(context.team) },
+                    isReachable: agentReachability
+                ).resolve(
+                    worktreePath: recipientMember.worktreePath,
+                    explicitAgentID: explicitAgentID
+                )
+            } catch TeamAgentDirectoryError.explicitAgentNotFound(let id) {
+                throw TeamInboxRequestError.agentNotFound(id)
+            } catch TeamAgentDirectoryError.explicitAgentUnavailable(let id) {
+                throw TeamInboxRequestError.agentUnavailable(id)
+            }
+        } else {
+            selectedAgent = nil
+        }
+        let senderIdentity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:))
 
         // Validated above (teamContext + memberNamed), so the dispatcher
         // cannot return nil here. Force-unwrap rather than re-throwing a
         // misleading `notInTeam`.
         let message = try dispatcher.dispatchTeamMessage(
             fromWorktree: callerWorktree,
-            to: recipient,
+            to: addressed.member,
             text: text,
             priority: priority,
             repos: repos,
-            teamsEnabled: teamsEnabled
+            teamsEnabled: teamsEnabled,
+            senderRuntime: senderIdentity?.runtime,
+            senderAgentID: senderIdentity?.rawValue,
+            recipientRuntime: selectedAgent?.runtime,
+            recipientAgentID: selectedAgent?.id.rawValue
         )!
         return TeamInboxDelivery(recipient: recipientMember, message: message)
     }
@@ -180,6 +223,7 @@ public final class TeamInboxRequestHandler {
     @discardableResult
     public func broadcast(
         callerWorktree: String,
+        callerAgentID: String? = nil,
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
@@ -187,12 +231,15 @@ public final class TeamInboxRequestHandler {
     ) throws -> [TeamInboxDelivery] {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let recipients = context.team.members.filter { $0.worktreePath != context.sender.worktreePath }
+        let senderIdentity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:))
         let messages = try dispatcher.dispatchTeamBroadcast(
             fromWorktree: callerWorktree,
             text: text,
             priority: priority,
             repos: repos,
-            teamsEnabled: teamsEnabled
+            teamsEnabled: teamsEnabled,
+            senderRuntime: senderIdentity?.runtime,
+            senderAgentID: senderIdentity?.rawValue
         )
         // The dispatcher iterates `team.members.filter { $0.worktreePath != sender }` —
         // same order this method computes. Pair them up so the returned
@@ -232,13 +279,34 @@ public final class TeamInboxRequestHandler {
             repos: repos,
             teamsEnabled: teamsEnabled
         )
+        // One presence scan and one directory for the whole team; the
+        // production `agentRecords` closure walks and decodes every presence
+        // file on disk, so calling it per member would be O(members * files).
+        let directory = TeamAgentDirectory(
+            records: agentRecords().filter { $0.teamID == teamID(context.team) },
+            isReachable: agentReachability
+        )
+        let agentsByWorktree = Dictionary(
+            grouping: directory.agents,
+            by: \.worktreePath
+        )
         let members = context.team.members.map { member in
             TeamListMember(
                 name: member.name,
                 branch: member.branch,
                 worktreePath: member.worktreePath,
                 isMainWorktree: member.isMainWorktree,
-                isRunning: member.isRunning
+                isRunning: member.isRunning,
+                agents: (agentsByWorktree[member.worktreePath] ?? []).map { agent in
+                    TeamListAgent(
+                        id: agent.id.rawValue,
+                        address: agent.address(worktreeAddress: member.worktreePath),
+                        runtime: agent.runtime,
+                        displayName: agent.displayName,
+                        isReachable: agent.isReachable,
+                        paneSessionName: agent.paneSessionName
+                    )
+                }
             )
         }
         return (context.team.repoDisplayName, members)
@@ -374,10 +442,14 @@ public final class TeamInboxRequestHandler {
         paneSessionName: String?,
         repos: [RepoEntry],
         teamsEnabled: Bool,
-        instructions: String = ""
+        instructions: String = "",
+        agentID: String? = nil,
+        skillManaged: Bool = false
     ) throws -> String {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let sessionID = sessionID ?? "\(runtime.rawValue):\(context.sender.name):\(context.sender.worktreePath)"
+        let agentID = agentID
+            ?? TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue
         let teamID = teamID(context.team)
 
         switch event {
@@ -403,16 +475,21 @@ public final class TeamInboxRequestHandler {
                     sessionLastSeenID: cursor.lastSeenID
                 )
                 readPosition = unread.readPosition
-                pending = TeamInbox.runtimeDeliverablePrefix(
+                pending = hookDeliverablePrefix(
                     unread.messages,
-                    runtime: runtime.rawValue
+                    teamID: teamID,
+                    worktree: context.sender.worktreePath,
+                    runtime: runtime,
+                    agentID: agentID
                 )
             } else {
                 readPosition = nil
                 pending = []
             }
             let text: String
-            if let sessionPromptRenderer {
+            if skillManaged {
+                text = ""
+            } else if let sessionPromptRenderer {
                 // A configured session template owns the complete prompt.
                 // Empty or invalid templates intentionally suppress it.
                 text = sessionPromptRenderer(context.team, context.sender) ?? ""
@@ -463,9 +540,12 @@ public final class TeamInboxRequestHandler {
                 recipientWorktree: context.sender.worktreePath,
                 sessionLastSeenID: cursor.lastSeenID
             )
-            let deliverableUnread = TeamInbox.runtimeDeliverablePrefix(
+            let deliverableUnread = hookDeliverablePrefix(
                 unread.messages,
-                runtime: runtime.rawValue
+                teamID: teamID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime,
+                agentID: agentID
             )
             let messages = deliverableUnread.filter { $0.priority == .urgent }
             let output = try TeamHookRenderer.postToolUse(
@@ -651,6 +731,81 @@ public final class TeamInboxRequestHandler {
 
     private func endpoint(_ member: TeamMember, runtime: String?) -> TeamInboxEndpoint {
         TeamInboxEndpoint(member: member.name, worktree: member.worktreePath, runtime: runtime)
+    }
+
+    private func splitAgentAddress(
+        _ recipient: String,
+        in team: TeamView
+    ) -> (member: String, agentID: String?) {
+        let literal = splitLiteralAgentAddress(recipient, in: team)
+        if team.memberNamed(literal.member) != nil {
+            return literal
+        }
+        let unescaped = Self.unescapeXMLAttribute(recipient)
+        guard unescaped != recipient else { return literal }
+        return splitLiteralAgentAddress(unescaped, in: team)
+    }
+
+    private func hookDeliverablePrefix(
+        _ messages: [TeamInboxMessage],
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        agentID: String
+    ) -> [TeamInboxMessage] {
+        let directory = TeamAgentDirectory(
+            records: agentRecords().filter { $0.teamID == teamID },
+            isReachable: agentReachability
+        )
+        let defaultAgent = try? directory.resolve(
+            worktreePath: worktree,
+            explicitAgentID: nil
+        )
+        let acceptsUntargeted = defaultAgent == nil
+            || (defaultAgent?.runtime == runtime && defaultAgent?.id.rawValue == agentID)
+        return TeamInbox.runtimeDeliverablePrefix(
+            messages,
+            runtime: runtime.rawValue,
+            agentID: agentID,
+            acceptsUntargeted: acceptsUntargeted
+        )
+    }
+
+    private func splitLiteralAgentAddress(
+        _ recipient: String,
+        in team: TeamView
+    ) -> (member: String, agentID: String?) {
+        // Prefer an exact member/path match so existing branch names that
+        // contain `#` remain valid. Canonical suffixes are recognized only
+        // after a known absolute worktree path or convenience display name
+        // plus a literal separator. Paths sort first naturally in most cases,
+        // but explicit length ordering also handles names nested in paths.
+        if team.memberNamed(recipient) != nil {
+            return (recipient, nil)
+        }
+        let candidates = team.members.flatMap { member in
+            [
+                (address: member.worktreePath, member: member.worktreePath),
+                (address: member.name, member: member.name),
+            ]
+        }.sorted { lhs, rhs in
+            lhs.address.count > rhs.address.count
+        }
+        for candidate in candidates {
+            let prefix = candidate.address + "#"
+            guard recipient.hasPrefix(prefix) else { continue }
+            let id = String(recipient.dropFirst(prefix.count))
+            return (candidate.member, id.isEmpty ? nil : id)
+        }
+        return (recipient, nil)
+    }
+
+    private static func unescapeXMLAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
     }
 
     private func teamID(_ team: TeamView) -> String {

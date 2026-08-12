@@ -44,8 +44,9 @@ public actor CodexAppServerDeliveryService {
 
         repeat {
             dirtyDeliveries.remove(deliveryKey)
-            await deliverOnce(team: team, worktree: worktree)
-        } while dirtyDeliveries.remove(deliveryKey) != nil
+            let advanced = await deliverOnce(team: team, worktree: worktree)
+            if !advanced, dirtyDeliveries.remove(deliveryKey) == nil { break }
+        } while true
     }
 
     private func beginDelivery(_ key: DeliveryKey) -> Bool {
@@ -60,54 +61,9 @@ public actor CodexAppServerDeliveryService {
         inFlightDeliveries.remove(key)
     }
 
-    private func deliverOnce(team: String, worktree: String) async {
+    @discardableResult
+    private func deliverOnce(team: String, worktree: String) async -> Bool {
         let runtime = TeamHookRuntime.codex.rawValue
-        let key = TeamDeliveryOwnerKey(teamID: team, worktree: worktree, runtime: .codex)
-        let resolver = TeamDeliveryOwnershipResolver(records: presenceRecords, liveness: liveness)
-        guard let owner = resolver.owner(for: key) else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_owner")
-            return
-        }
-
-        let record: CodexAppServerSessionRecord
-        do {
-            guard let stored = try sessionStorage.read(
-                teamID: team,
-                worktree: worktree,
-                paneSessionName: owner.paneSessionName
-            ) else {
-                log(
-                    team: team,
-                    worktree: worktree,
-                    runtime: runtime,
-                    outcome: "skipped_missing_app_server",
-                    paneSessionName: owner.paneSessionName
-                )
-                return
-            }
-            record = stored
-        } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_app_server_read",
-                paneSessionName: owner.paneSessionName
-            )
-            return
-        }
-
-        guard isLiveAppServer(record) else {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "skipped_stale_app_server",
-                paneSessionName: owner.paneSessionName
-            )
-            return
-        }
-
         let watermark: String?
         do {
             watermark = try inbox.worktreeWatermark(teamID: team, worktree: worktree)?
@@ -117,30 +73,107 @@ public actor CodexAppServerDeliveryService {
                 team: team,
                 worktree: worktree,
                 runtime: runtime,
-                outcome: "error_watermark_read",
-                paneSessionName: owner.paneSessionName
+                outcome: "error_watermark_read"
             )
-            return
+            return false
         }
 
-        let pending: [TeamInboxMessage]
+        let allUnread: [TeamInboxMessage]
         do {
-            let allUnread = try inbox.unreadMessages(
+            allUnread = try inbox.unreadMessages(
                 teamID: team,
                 recipientWorktree: worktree,
                 after: watermark
             )
-            pending = TeamInbox.runtimeDeliverablePrefix(allUnread, runtime: runtime)
         } catch {
             log(
                 team: team,
                 worktree: worktree,
                 runtime: runtime,
-                outcome: "error_inbox_read",
-                paneSessionName: owner.paneSessionName
+                outcome: "error_inbox_read"
             )
-            return
+            return false
         }
+        guard let first = allUnread.first else { return false }
+
+        let worktreeRecords = presenceRecords().filter {
+            $0.teamID == team && $0.worktree == worktree
+        }
+        let directory = TeamAgentDirectory(
+            records: worktreeRecords,
+            isReachable: { record in
+                // The predicate shared with ClaudePeerDeliveryService and the
+                // hook-side default-agent computation: if the reachability
+                // views diverge, an untargeted head row is double-sent or
+                // claimed by neither and the worktree queue wedges.
+                TeamAgentReachability.isReachableForNativeDelivery(
+                    record,
+                    liveness: self.liveness
+                )
+            }
+        )
+        let selected: TeamAgentDescriptor?
+        do {
+            let targetRuntime = first.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
+            selected = try directory.resolve(
+                worktreePath: worktree,
+                runtime: targetRuntime,
+                explicitAgentID: first.to.agentID
+            )
+        } catch {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_unreachable")
+            return false
+        }
+        guard let selected, selected.runtime == .codex,
+              let ownerPane = selected.paneSessionName else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_owner")
+            return false
+        }
+
+        let record: CodexAppServerSessionRecord
+        do {
+            guard let stored = try sessionStorage.read(
+                teamID: team,
+                worktree: worktree,
+                paneSessionName: ownerPane
+            ) else {
+                log(
+                    team: team,
+                    worktree: worktree,
+                    runtime: runtime,
+                    outcome: "skipped_missing_app_server",
+                    paneSessionName: ownerPane
+                )
+                return false
+            }
+            record = stored
+        } catch {
+            log(
+                team: team,
+                worktree: worktree,
+                runtime: runtime,
+                outcome: "error_app_server_read",
+                paneSessionName: ownerPane
+            )
+            return false
+        }
+
+        guard isLiveAppServer(record) else {
+            log(
+                team: team,
+                worktree: worktree,
+                runtime: runtime,
+                outcome: "skipped_stale_app_server",
+                paneSessionName: ownerPane
+            )
+            return false
+        }
+
+        let pending = TeamInbox.runtimeDeliverablePrefix(
+            allUnread,
+            runtime: runtime,
+            agentID: selected.id.rawValue
+        )
 
         guard let lastMessage = pending.last else {
             log(
@@ -148,9 +181,9 @@ public actor CodexAppServerDeliveryService {
                 worktree: worktree,
                 runtime: runtime,
                 outcome: "skipped_no_pending",
-                paneSessionName: owner.paneSessionName
+                paneSessionName: ownerPane
             )
-            return
+            return false
         }
 
         let result: CodexAppServerDeliveryResult
@@ -159,7 +192,13 @@ public actor CodexAppServerDeliveryService {
                 binaryPath: record.realBinaryPath,
                 socketPath: record.socketPath,
                 expectedCWD: worktree,
-                message: TeamHookRenderer.format(messages: pending)
+                message: TeamPeerMessageFormatter.context(messages: pending),
+                target: record.threadID.map {
+                    CodexAppServerTarget(
+                        threadID: $0,
+                        activeTurnID: record.activeTurnID
+                    )
+                }
             )
         } catch {
             log(
@@ -167,11 +206,11 @@ public actor CodexAppServerDeliveryService {
                 worktree: worktree,
                 runtime: runtime,
                 outcome: "error_delivery",
-                paneSessionName: owner.paneSessionName,
+                paneSessionName: ownerPane,
                 messageIDs: pending.map(\.id),
                 error: String(describing: error)
             )
-            return
+            return false
         }
 
         do {
@@ -186,11 +225,11 @@ public actor CodexAppServerDeliveryService {
                 worktree: worktree,
                 runtime: runtime,
                 outcome: "error_watermark_write",
-                paneSessionName: owner.paneSessionName,
+                paneSessionName: ownerPane,
                 messageIDs: pending.map(\.id),
                 threadID: result.threadID
             )
-            return
+            return false
         }
 
         log(
@@ -198,10 +237,11 @@ public actor CodexAppServerDeliveryService {
             worktree: worktree,
             runtime: runtime,
             outcome: "sent",
-            paneSessionName: owner.paneSessionName,
+            paneSessionName: ownerPane,
             messageIDs: pending.map(\.id),
             threadID: result.threadID
         )
+        return true
     }
 
     private func isLiveAppServer(_ record: CodexAppServerSessionRecord) -> Bool {

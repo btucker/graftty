@@ -25,7 +25,7 @@ struct Team: ParsableCommand {
 struct TeamSend: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "send",
-        abstract: "Send a message to a teammate by name"
+        abstract: "Send a message to a worktree or exact canonical agent address"
     )
 
     @Flag(name: .long, help: "Deliver at the next post-tool hook boundary when possible")
@@ -34,8 +34,8 @@ struct TeamSend: ParsableCommand {
     @Flag(name: .long, help: "Read message text from standard input")
     var stdin: Bool = false
 
-    @Argument(help: "Member name of the teammate to message")
-    var member: String
+    @Argument(help: "Worktree name/path or <canonical-worktree-path>#<agent-id>")
+    var address: String
 
     @Argument(help: "Message text")
     var text: String?
@@ -46,7 +46,8 @@ struct TeamSend: ParsableCommand {
         let response = try CLIEnv.sendRequest(
             .teamSend(
                 callerWorktree: worktreePath,
-                recipient: member,
+                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                recipient: address,
                 text: body,
                 priority: urgent ? .urgent : .normal
             )
@@ -76,6 +77,7 @@ struct TeamBroadcast: ParsableCommand {
         let response = try CLIEnv.sendRequest(
             .teamBroadcast(
                 callerWorktree: worktreePath,
+                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                 text: body,
                 priority: urgent ? .urgent : .normal
             )
@@ -123,6 +125,9 @@ struct TeamHook: ParsableCommand {
     @Option(name: [.customLong("session-id"), .customLong("session")], help: "Stable runtime session identifier")
     var sessionID: String?
 
+    @Flag(name: .customLong("skill-managed"), help: "Suppress legacy team primer because the provider plugin supplies the Graftty skill")
+    var skillManaged = false
+
     func validate() throws {
         guard TeamHookRuntime(rawValue: runtime) != nil else {
             throw ValidationError("runtime must be one of: codex, claude")
@@ -160,14 +165,32 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        if runtime == .claude, skillManaged, let resolvedSessionID {
+            updateClaudeNativePresence(
+                event: event,
+                sessionID: resolvedSessionID,
+                worktreePath: worktreePath,
+                paneSessionName: paneSessionName
+            )
+        }
+        if runtime == .codex, event != .stop, let resolvedSessionID {
+            bindCodexNativeSession(
+                event: event,
+                sessionID: resolvedSessionID,
+                worktreePath: worktreePath,
+                paneSessionName: paneSessionName
+            )
+        }
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
                     callerWorktree: worktreePath,
+                    callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                     runtime: runtime,
                     event: event,
                     sessionID: resolvedSessionID,
-                    paneSessionName: paneSessionName
+                    paneSessionName: paneSessionName,
+                    skillManaged: skillManaged
                 )
             )
             switch response {
@@ -182,6 +205,94 @@ struct TeamHook: ParsableCommand {
         } catch {
             print("{}")
         }
+    }
+
+    private func updateClaudeNativePresence(
+        event: TeamHookEvent,
+        sessionID: String,
+        worktreePath: String,
+        paneSessionName: String?
+    ) {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree(
+            worktreePath: worktreePath
+        ) else {
+            return
+        }
+        let teamID = TeamLookup.id(of: resolved.team)
+        let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+        let canonicalAgentID = TeamAgentIdentity(
+            runtime: .claude,
+            nativeSessionID: sessionID
+        ).rawValue
+
+        let prior = try? storage.read(
+            teamID: teamID,
+            worktree: worktreePath,
+            runtime: .claude,
+            paneSessionName: paneSessionName,
+            agentID: canonicalAgentID
+        )
+        // PostToolUse fires on every tool call; skip the registry scan and
+        // rewrite while the stored record still points at a live socket.
+        if event == .postToolUse,
+           let prior,
+           prior.runtimeSessionID == sessionID,
+           case .claude(let socketPath, _)? = prior.transport,
+           ClaudePeerSessionRegistry.isSocket(atPath: socketPath) {
+            return
+        }
+        // Claude's Stop hook fires at the end of every assistant turn — the
+        // exact moment native peer delivery exists to wake — so `.stop`
+        // refreshes the record rather than deleting it. The record is
+        // removed only when the native registry no longer lists a live
+        // session (stale-presence cleanup handles process exit as well).
+        guard let record = ClaudePeerSessionRegistry().presenceRecord(
+            sessionID: sessionID,
+            expectedWorktree: worktreePath,
+            teamID: teamID,
+            paneSessionName: paneSessionName,
+            agentID: canonicalAgentID,
+            registeredAt: prior?.registeredAt ?? Date()
+        ) else {
+            if event == .stop {
+                try? storage.delete(
+                    teamID: teamID,
+                    worktree: worktreePath,
+                    runtime: .claude,
+                    paneSessionName: paneSessionName,
+                    agentID: canonicalAgentID
+                )
+            }
+            return
+        }
+        try? storage.write(record)
+    }
+
+    private func bindCodexNativeSession(
+        event: TeamHookEvent,
+        sessionID: String,
+        worktreePath: String,
+        paneSessionName: String?
+    ) {
+        guard let paneSessionName,
+              let agentID = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"],
+              TeamAgentIdentity(rawValue: agentID)?.runtime == .codex,
+              let resolved = TeamPresenceCLI.resolveTeamAndWorktree(
+                  worktreePath: worktreePath
+              ) else {
+            return
+        }
+        let root = TeamPresenceStorage.defaultRoot()
+        _ = try? CodexHookSessionBinder.bind(
+            threadID: sessionID,
+            teamID: TeamLookup.id(of: resolved.team),
+            worktree: resolved.worktreePath,
+            paneSessionName: paneSessionName,
+            agentID: agentID,
+            allowRebind: event == .sessionStart,
+            presenceStorage: TeamPresenceStorage(rootDirectory: root),
+            sessionStorage: CodexAppServerSessionStorage(rootDirectory: root)
+        )
     }
 }
 
@@ -382,11 +493,11 @@ struct TeamInbox: ParsableCommand {
 struct TeamMsg: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "msg",
-        abstract: "Send a message to a teammate by name"
+        abstract: "Send a message to a worktree or exact canonical agent address"
     )
 
-    @Argument(help: "Member name (sanitized branch name) of the teammate to message")
-    var member: String
+    @Argument(help: "Worktree name/path or <canonical-worktree-path>#<agent-id>")
+    var address: String
 
     @Argument(help: "Message text")
     var text: String
@@ -394,7 +505,13 @@ struct TeamMsg: ParsableCommand {
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
         let response = try CLIEnv.sendRequest(
-            .teamSend(callerWorktree: worktreePath, recipient: member, text: text, priority: .normal)
+            .teamSend(
+                callerWorktree: worktreePath,
+                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                recipient: address,
+                text: text,
+                priority: .normal
+            )
         )
         try CLIEnv.expectOk(response)
     }
@@ -428,6 +545,15 @@ struct TeamRegister: ParsableCommand {
     @Option(name: .long, help: "PID of the long-running agent process to register")
     var pid: Int32?
 
+    @Option(name: .long, help: "Canonical Graftty agent ID")
+    var agentID: String?
+
+    @Option(name: .long, help: "Stable native provider session identifier")
+    var sessionID: String?
+
+    @Option(name: .long, help: "Provider display label (not a routing identity)")
+    var nativeName: String?
+
     func run() throws {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
@@ -443,6 +569,16 @@ struct TeamRegister: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        let resolvedAgentID = agentID
+            ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
+        if let resolvedAgentID {
+            guard let identity = TeamAgentIdentity(rawValue: resolvedAgentID) else {
+                throw ValidationError("--agent-id must be shaped as <runtime>-<12 lowercase hex characters>")
+            }
+            guard identity.runtime == runtimeValue else {
+                throw ValidationError("--agent-id runtime must match --runtime")
+            }
+        }
         let record = TeamPresenceRecord(
             teamID: teamID,
             worktree: resolved.worktreePath,
@@ -450,7 +586,10 @@ struct TeamRegister: ParsableCommand {
             paneSessionName: paneSessionName,
             pid: runtimeIdentity.pid,
             processStartTimeMicroseconds: runtimeIdentity.processStartTimeMicroseconds,
-            registeredAt: Date()
+            registeredAt: Date(),
+            runtimeSessionID: sessionID,
+            nativeDisplayName: nativeName,
+            agentID: resolvedAgentID
         )
         try storage.write(record)
         _ = try? TeamPresenceCLI.deleteLegacyMemberNamePresence(
@@ -508,6 +647,9 @@ struct TeamUnregister: ParsableCommand {
     @Option(name: .long, help: "Runtime: codex or claude")
     var runtime: String
 
+    @Option(name: .long, help: "Canonical Graftty agent ID")
+    var agentID: String?
+
     func run() throws {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
@@ -520,12 +662,15 @@ struct TeamUnregister: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        let resolvedAgentID = agentID
+            ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
         let prior = try TeamUnregisterCore.unregister(
             storage: storage,
             teamID: teamID,
             worktree: resolved.worktreePath,
             runtime: runtimeValue,
-            paneSessionName: paneSessionName
+            paneSessionName: paneSessionName,
+            agentID: resolvedAgentID
         )
         let legacyPrior = try TeamPresenceCLI.deleteLegacyMemberNamePresence(
             storage: storage,
@@ -836,6 +981,29 @@ struct TeamWatchInbox: ParsableCommand {
             .appendingPathComponent("team-inbox", isDirectory: true)
         let pidRoot = TeamPresenceStorage.defaultRoot()
 
+        // The claim path skips rows pinned to other agents, so the watcher
+        // must know this session's own canonical identity: the wrapper's
+        // exported nonce, else the presence record it matches, else the
+        // canonical hash of the native session ID (the same derivation the
+        // hook and send paths use).
+        let hookSessionID = payload["session_id"] as? String
+        let inheritedIdentity = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
+            .flatMap(TeamAgentIdentity.init(rawValue:))
+        let watcherAgentID = (inheritedIdentity?.runtime == runtimeValue
+            ? inheritedIdentity?.rawValue
+            : nil)
+            ?? TeamAgentSessionIdentityResolver.agentID(
+                records: records,
+                teamID: teamID,
+                worktree: resolved.worktreePath,
+                runtime: runtimeValue,
+                sessionID: hookSessionID,
+                paneSessionName: paneSessionName
+            )
+            ?? hookSessionID.map {
+                TeamAgentIdentity(runtime: runtimeValue, nativeSessionID: $0).rawValue
+            }
+
         let outcome = WatcherOutcome()
         guard let watcher = Self.makeWatcherIfOwner(decision: decision, makeWatcher: {
             InboxWatcher(
@@ -845,6 +1013,7 @@ struct TeamWatchInbox: ParsableCommand {
                     worktree: resolved.worktreePath,
                     runtime: runtimeValue
                 ),
+                agentID: watcherAgentID,
                 teamID: teamID,
                 inboxRootDirectory: inboxRoot,
                 outcome: outcome,
@@ -934,8 +1103,61 @@ struct InternalGroup: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "internal",
         abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
-        subcommands: [SyncCodexHome.self]
+        subcommands: [SyncCodexHome.self, ClaudePeerSend.self]
     )
+}
+
+/// Temporary live-session harness for AGENT-6.1. Keeping this under
+/// `internal` lets us test Claude's native transport without committing the
+/// team-routing surface to an undocumented peer protocol.
+struct ClaudePeerSend: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "claude-peer-send",
+        abstract: "Send a protocol-v1 message directly to a Claude peer socket."
+    )
+
+    @Option(name: .long, help: "Claude session's Unix-domain socket path")
+    var socket: String
+
+    @Option(name: .long, help: "Optional local socket Claude can reply to")
+    var replySocket: String?
+
+    @Option(name: .long, help: "Peer display name shown by Claude")
+    var fromName: String = "Graftty prototype"
+
+    @Flag(name: .long, help: "Read message text from standard input")
+    var stdin: Bool = false
+
+    @Argument(help: "Message text")
+    var text: String?
+
+    func validate() throws {
+        if stdin, text != nil {
+            throw ValidationError("message text and --stdin are mutually exclusive")
+        }
+        if !stdin, text == nil {
+            throw ValidationError("provide message text or --stdin")
+        }
+    }
+
+    func run() throws {
+        let body: String
+        if stdin {
+            body = String(
+                decoding: FileHandle.standardInput.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+        } else {
+            body = text ?? ""
+        }
+        let messageID = try ClaudePeerSocketClient.sendUserMessage(
+            body,
+            to: socket,
+            replySocketPath: replySocket,
+            senderName: fromName
+        )
+        print(messageID.uuidString.lowercased())
+    }
 }
 
 struct SyncCodexHome: ParsableCommand {
@@ -949,7 +1171,8 @@ struct SyncCodexHome: ParsableCommand {
         let mirror = CodexHomeMirror(
             sourceDirectory: CodexHomeMirror.defaultSourceDirectory(),
             mirrorDirectory: CodexHomeMirror.defaultMirrorDirectory(),
-            grafttyCLIPath: cliPath
+            grafttyCLIPath: cliPath,
+            grafttyHooksEnabled: ProcessInfo.processInfo.environment["GRAFTTY_PROVIDER_PLUGINS"] != "1"
         )
         try mirror.rebuild()
     }
@@ -972,6 +1195,13 @@ enum TeamPresenceCLI {
             return nil
         }
         guard let worktreePath = try? WorktreeResolver.resolve() else {
+            return nil
+        }
+        return resolveTeamAndWorktree(state: state, worktreePath: worktreePath)
+    }
+
+    static func resolveTeamAndWorktree(worktreePath: String) -> Resolved? {
+        guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
             return nil
         }
         return resolveTeamAndWorktree(state: state, worktreePath: worktreePath)
@@ -1013,6 +1243,24 @@ enum TeamPresenceCLI {
 }
 
 private enum TeamMessageInput {
+    static func currentAgentID(worktreePath: String) -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        if let explicit = environment["GRAFTTY_AGENT_ID"]
+            .flatMap(TeamAgentIdentity.init(rawValue:)) {
+            return explicit.rawValue
+        }
+        let records = (try? TeamPresenceStorage(
+            rootDirectory: TeamPresenceStorage.defaultRoot()
+        ).listAll()) ?? []
+        return TeamCallerAgentIdentityResolver.resolve(
+            explicitAgentID: nil,
+            worktree: worktreePath,
+            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment),
+            records: records,
+            isReachable: TeamAgentReachability.isReachable
+        )
+    }
+
     static func resolve(text: String?, stdin: Bool) throws -> String {
         if stdin {
             let data = FileHandle.standardInput.readDataToEndOfFile()
@@ -1053,6 +1301,13 @@ private enum TeamOutput {
                 print("team=\(teamName)  members=\(members.count)")
                 for m in members {
                     print(memberLine(m))
+                    for agent in m.agents {
+                        let label = agent.displayName.map { "  name=\($0)" } ?? ""
+                        print("  agent=\(agent.address)  runtime=\(agent.runtime.rawValue)  reachable=\(agent.isReachable)\(label)")
+                        if let pane = agent.paneSessionName {
+                            print("    pane=\(pane)")
+                        }
+                    }
                 }
             }
         case .error(let msg):

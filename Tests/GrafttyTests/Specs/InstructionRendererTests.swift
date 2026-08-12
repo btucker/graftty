@@ -13,25 +13,25 @@ private func set(_ pairs: [String: String]) -> InstructionSet {
 @Suite("@spec INSTR-6.1: The application shall render a session-start instructions section containing the viewer's own instruction stack, the shared portions of files applying to each other worktree, and the shared portions of files applying to no worktree, shall note in place of the shared text where a file has no shared portion, and shall omit any block that is empty and the whole section when nothing applies.")
 struct InstructionRendererTests {
 
-    @Test func ownStackConcatenatesRootThroughLeafWithPrivateText() {
+    @Test func ownStackConcatenatesRootThroughExactWorktreeWithPrivateText() {
         let text = InstructionRenderer.render(
             viewer: .init(key: "research/vector-db", displayName: "vector-db"),
             others: [],
             set: set([
                 "GRAFTTY.md": "repo wide",
                 "research/GRAFTTY.md": "group shared\n## Private\ngroup private",
-                "research/GRAFTTY.vector-db.md": "leaf text",
+                "research/vector-db/GRAFTTY.md": "worktree text",
             ])
         )
         #expect(text.contains("repo wide"))
         #expect(text.contains("group shared"))
         #expect(text.contains("group private"))
-        #expect(text.contains("leaf text"))
+        #expect(text.contains("worktree text"))
         if let repoWide = text.range(of: "repo wide"),
-           let leaf = text.range(of: "leaf text") {
-            #expect(repoWide.lowerBound < leaf.lowerBound)
+           let worktree = text.range(of: "worktree text") {
+            #expect(repoWide.lowerBound < worktree.lowerBound)
         } else {
-            Issue.record("expected both the repo-wide and leaf sections")
+            Issue.record("expected both the repo-wide and exact-worktree sections")
         }
     }
 
@@ -40,7 +40,7 @@ struct InstructionRendererTests {
             viewer: .init(key: "research/vector-db", displayName: "vector-db"),
             others: [.init(key: "product", displayName: "product")],
             set: set([
-                "GRAFTTY.product.md": "ask product for roadmap calls\n## Private\nproduct internals",
+                "product/GRAFTTY.md": "ask product for roadmap calls\n## Private\nproduct internals",
             ])
         )
         #expect(text.contains("ask product for roadmap calls"))
@@ -101,7 +101,7 @@ struct InstructionRendererTests {
         let text = InstructionRenderer.render(
             viewer: .init(key: "a", displayName: "a"),
             others: [.init(key: "b", displayName: "b")],
-            set: set(["GRAFTTY.b.md": "## Private\nb internals"])
+            set: set(["b/GRAFTTY.md": "## Private\nb internals"])
         )
         #expect(text.contains("`b`"))
         #expect(text.contains(InstructionRenderer.noSharedInstructionsNote))
@@ -119,7 +119,7 @@ struct InstructionRendererTests {
         #expect(!text.contains("marketing internals"))
     }
 
-    @Test func oneResolvedLeafIsSharedBySameKeyAudiences() {
+    @Test func oneResolvedScopeIsSharedBySameKeyAudiences() {
         let text = InstructionRenderer.render(
             viewer: .init(key: "main", displayName: "main"),
             others: [
@@ -127,7 +127,7 @@ struct InstructionRendererTests {
             ],
             set: InstructionSet(
                 documents: [
-                    "GRAFTTY.main.md": .parse(
+                    "main/GRAFTTY.md": .parse(
                         "main role\n## Private\nmain private"
                     ),
                 ]

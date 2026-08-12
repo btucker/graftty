@@ -1,0 +1,14 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "graftty",
+  "owner": {
+    "name": "Graftty"
+  },
+  "plugins": [
+    {
+      "name": "graftty-team",
+      "source": "./plugins/graftty-team",
+      "description": "Coordinate Codex and Claude agents through Graftty worktrees."
+    }
+  ]
+}

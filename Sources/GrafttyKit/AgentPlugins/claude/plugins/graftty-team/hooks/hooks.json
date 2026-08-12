@@ -1,0 +1,35 @@
+{
+  "description": "Register Claude's native peer socket with Graftty while the plugin skill owns team instructions.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude session-start --skill-managed"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude post-tool-use --skill-managed"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude stop --skill-managed"
+          }
+        ]
+      }
+    ]
+  }
+}

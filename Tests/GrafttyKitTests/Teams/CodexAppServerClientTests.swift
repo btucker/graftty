@@ -4,6 +4,48 @@ import Testing
 
 @Suite("CodexAppServerClient", .serialized)
 struct CodexAppServerClientTests {
+    @Test("""
+    @spec AGENT-6.7: When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
+    """)
+    func exactIdleThreadStartsWithoutDiscovery() async throws {
+        let fake = try makeFakeProxy(threads: ["other"], cwd: "/same")
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        let result = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/same",
+            message: "untrusted peer context",
+            target: CodexAppServerTarget(threadID: "exact", activeTurnID: nil)
+        )
+
+        #expect(result.threadID == "exact")
+        let requests = try fake.recordedRequests()
+        #expect(try methods(in: requests) == ["initialize", "initialized", "thread/read", "turn/start"])
+        let params = try #require(requests.last?["params"] as? [String: Any])
+        #expect(params["threadId"] as? String == "exact")
+    }
+
+    @Test("Exact active thread steers the observed turn.")
+    func exactActiveThreadSteers() async throws {
+        let fake = try makeFakeProxy(threads: [], cwd: "/same", activeTurnID: "turn-7")
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        _ = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/same",
+            message: "untrusted peer context",
+            target: CodexAppServerTarget(threadID: "exact", activeTurnID: nil)
+        )
+
+        let requests = try fake.recordedRequests()
+        #expect(try methods(in: requests) == ["initialize", "initialized", "thread/read", "turn/steer"])
+        let params = try #require(requests.last?["params"] as? [String: Any])
+        #expect(params["threadId"] as? String == "exact")
+        #expect(params["expectedTurnId"] as? String == "turn-7")
+    }
+
     @Test("Single loaded thread with matching cwd starts a turn and returns the thread id.")
     func singleLoadedThreadStartsTurn() async throws {
         let fake = try makeFakeProxy(threads: ["thread-123"], cwd: "/repo/.worktrees/alice")
@@ -436,6 +478,7 @@ struct CodexAppServerClientTests {
         notificationBeforeLoadedListResponse: Bool = false,
         threadPages: [[String]]? = nil,
         fragmentThreadReadResponse: Bool = false,
+        activeTurnID: String? = nil,
         mode: FakeProxyMode = .normal
     ) throws -> FakeProxy {
         let dir = FileManager.default.temporaryDirectory
@@ -450,6 +493,9 @@ struct CodexAppServerClientTests {
         let cwdByThreadJSON = try jsonLine(cwdByThread)
         let parentThreadIDByThreadJSON = try jsonLine(parentThreadIDByThread)
         let subagentSourceThreadIDsJSON = try jsonLine(subagentSourceThreadIDs)
+        let activeTurnsJSON = try jsonLine(activeTurnID.map {
+            [["id": $0, "status": "inProgress"]]
+        } ?? [])
         let turnResponseKind: String
         let turnErrorMessage: String
         switch turnStartResponse {
@@ -484,7 +530,7 @@ struct CodexAppServerClientTests {
             : ""
 
         let body = """
-        #!/usr/bin/env ruby
+        #!/usr/bin/ruby --disable-gems
         require 'json'
         STDIN.binmode
         STDOUT.binmode
@@ -559,6 +605,9 @@ struct CodexAppServerClientTests {
         subagent_source_thread_ids = JSON.parse(<<'GRAFTTY_JSON')
         \(subagentSourceThreadIDsJSON)
         GRAFTTY_JSON
+        active_turns = JSON.parse(<<'GRAFTTY_JSON')
+        \(activeTurnsJSON)
+        GRAFTTY_JSON
         default_cwd = '\(shellSingleQuoted(cwd))'
         turn_response_kind = '\(turnResponseKind)'
         turn_error_message = '\(shellSingleQuoted(turnErrorMessage))'
@@ -584,12 +633,13 @@ struct CodexAppServerClientTests {
           when 'thread/read'
             thread_id = request.dig('params', 'threadId')
             thread = { cwd: cwd_by_thread.fetch(thread_id, default_cwd) }
+            thread[:turns] = active_turns
             thread[:parentThreadId] = parent_thread_id_by_thread[thread_id] if parent_thread_id_by_thread.key?(thread_id)
             thread[:source] = { subAgent: { other: 'test' } } if subagent_source_thread_ids.include?(thread_id)
             \(writeThreadReadResponse)(JSON.generate({ id: request['id'], result: { thread: thread } }))
         \(afterThreadRead)
         \(closeStdinAfterThreadRead)
-          when 'turn/start'
+          when 'turn/start', 'turn/steer'
             case turn_response_kind
             when 'accepted'
               write_text(JSON.generate({ id: request['id'], result: {} }))

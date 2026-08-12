@@ -1754,7 +1754,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain its non-empty built-in automated-event default and render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
+**TEAM-1.6** The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain a non-empty compact automated-event default that renders the event body first, adds only event-specific actionable guidance, and omits generic delivery and same-worktree preambles; it shall render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
 
 **TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
@@ -1934,7 +1934,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-3.x
 
-**INSTR-3.1** The application shall recognize exactly two instruction filename forms — a group file named GRAFTTY.md applying to every key beneath its directory, and a leaf file named GRAFTTY.<leaf>.md applying to the single key formed by its directory and leaf — and shall skip every other name.
+**INSTR-3.1** The application shall recognize hierarchical files named GRAFTTY.md and map each containing directory to the same worktree key and its descendants; if a root contains a legacy GRAFTTY.<leaf>.md file, then the application shall treat it as a fallback alias for the equivalent hierarchical path, prefer the hierarchical file when both exist in that root while emitting a diagnostic naming both files, and skip every other filename.
 
 ### INSTR-4.x
 
@@ -1942,7 +1942,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-5.x
 
-**INSTR-5.1** The application shall resolve a worktree instruction stack as the group file at every ancestor level from the root inward, followed by the worktree leaf file located at its parent level.
+**INSTR-5.1** The application shall resolve a worktree instruction stack as the GRAFTTY.md file at the repository root and every directory component of the worktree key, ordered from root to the exact worktree.
 
 ### INSTR-6.x
 
@@ -1952,9 +1952,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
 
-**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the shared and per-worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place a leaf where a child can receive it in its first and later sessions.
+**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the hierarchical repository and worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place an exact-worktree file where a child can receive it in its first and later sessions.
 
-**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's leaf from that new checkout's filesystem so the child receives its role in the first session.
+**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's exact-worktree instruction file from that new checkout's filesystem so the child receives its role in the first session.
 
 **INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's instruction stack ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
 
@@ -2268,7 +2268,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
-**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews session-start team context under its untrusted-peer contract, completes one turn, and thereby establishes the runtime's idle-message wake path.
+**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
 **AGENT-5.5** Once the app accepts an agent worktree-creation request, it shall own the staged prompt until the terminal backend accepts the loader; if creation fails before then, the app shall remove the prompt. At startup it shall snapshot crash leftovers, prune expired files immediately, and remove the remaining snapshot after the recovery grace period without touching prompts created by current live operations.
 
@@ -2277,6 +2277,54 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.7** `graftty worktree remove <worktree>` shall resolve a tracked worktree name, absolute path, or `.` for the current worktree; reject ambiguous names and the repository's main checkout; and route removal through the same application flow as the native Delete Worktree action so successful removal tears down its panes, removes it from the UI and per-path stores, emits team departure state, and preserves its Git branch. A normal removal shall fail when Git reports modified, staged, or untracked files, include `git status --short` in the CLI error, and instruct the user to rerun with `--force`; `--force` shall mirror the UI's Force Delete action. The CLI shall poll an asynchronous operation status so slow removal does not exceed the control socket request timeout.
 
 **AGENT-5.8** Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
+
+### AGENT-6.x
+
+**AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.
+
+**AGENT-6.2** When Graftty observes a top-level Claude or Codex session, the application shall expose a stable canonical agent ID shaped as `<runtime>-<12 lowercase hex characters>` and an address shaped as `<canonical-worktree-path>#<agent-id>`; provider and worktree display names shall not participate in routing identity.
+
+**AGENT-6.3** While multiple top-level agents are live in one worktree, the application shall route the unsuffixed worktree address to the earliest reachable agent across runtimes, route a canonical suffixed address only to that exact agent, exclude native subagents, and reject an explicit stale or unknown address without enqueuing or falling back.
+
+**AGENT-6.4** When `graftty team list` describes a worktree with observed agents, the application shall expose repository-to-worktree-to-agent-to-pane hierarchy in its stable JSON model, including canonical address, runtime, reachability, optional native display label, and optional pane session.
+
+**AGENT-6.5** When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session in Claude's configured state directory, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
+
+**AGENT-6.6** When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped by advancing the watermark past it; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+
+**AGENT-6.7** When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
+
+**AGENT-6.8** When a wrapped Codex SessionStart hook reports its native `session_id`, the application shall bind that exact thread ID to the wrapper's canonical agent presence and app-server socket while preserving process identity and pane ownership.
+
+**AGENT-6.9** When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
+
+**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
+
+**AGENT-6.11** While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
+
+**AGENT-6.12** When a top-level agent becomes reachable in a worktree, the application shall notify every reachable top-level agent in that worktree at its exact canonical address with the joined agents and current worktree roster; repeated observations and native subagents shall not create duplicate notifications.
+
+**AGENT-6.13** When exact-agent inbox rows for different runtimes are adjacent in one worktree queue, the application shall retry all available native delivery transports while the shared watermark advances so a row consumed by one provider immediately unblocks the next provider without waiting for the presence ticker.
+
+**AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
+
+**AGENT-6.15** When Graftty launches with agent teams enabled and the current bundled provider integration has been neither installed nor acknowledged, the application shall prepare its app-owned snapshots and offer to install both plugins with explicit consent; the settings control shall transition from legacy to native messaging only after the current integration revision is installed, an incomplete installation shall preserve the previously selected messaging mode, and acknowledging or completing that integration revision shall suppress repeat launch offers while a newer revision may offer again.
+
+**AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
+
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every wrapper-path delivered row (hook and Codex app-server delivery) as one `<graftty-peer-message agent="<canonical-sender-address>">` element, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
+
+**AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
+
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived sender name per frame, with bodies joined by a blank line and no per-message envelope, leaving later runs for subsequent frames.
+
+**AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
+
+**AGENT-6.21** When Graftty materializes a provider team skill, the skill shall explain the durable hierarchical `.graftty/**/GRAFTTY.md` instruction system's repository and worktree scopes, its `## Private` sharing boundary, next-session delivery, and the authorization required before editing an instruction file.
+
+**AGENT-6.22** If appending a join announcement fails partway through a worktree's recipients, then the application shall still advance that worktree's observed roster so already-committed announcements are never re-appended on a later reconciliation, and shall continue announcing the remaining worktrees in the same pass.
+
+**AGENT-6.23** If a Codex hook reports a thread ID that differs from a stored non-empty thread binding, then the application shall rebind the presence and app-server records only for a session-start invocation; a straggling post-tool-use invocation shall return the stored binding unchanged.
 
 ## CLI — CLI
 

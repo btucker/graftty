@@ -1,0 +1,35 @@
+{
+  "description": "Bind Codex lifecycle events to Graftty while the plugin skill owns team instructions.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex session-start --skill-managed"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex post-tool-use --skill-managed"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex stop --skill-managed"
+          }
+        ]
+      }
+    ]
+  }
+}

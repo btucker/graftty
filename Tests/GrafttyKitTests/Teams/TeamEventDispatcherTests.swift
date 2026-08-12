@@ -289,4 +289,39 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.to.worktree == "/repo")
         #expect(messages.first?.kind == "team_member_left")
     }
+
+    @Test("""
+    @spec AGENT-6.20: When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
+    """)
+    func routableEventPersistsProviderSource() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root)
+        let prefs = TeamEventRoutingPreferences(
+            prStateChanged: [.worktree],
+            prMerged: [],
+            ciConclusionChanged: [],
+            mergabilityChanged: []
+        )
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { prefs },
+            templateProvider: { "" }
+        )
+        let event = ChannelServerMessage.event(
+            type: TeamChannelEvents.WireType.prStateChanged,
+            attrs: ["worktree": "/repo/.worktrees/alice", "to": "open", "from": "draft", "pr_number": "42", "pr_url": "https://x", "provider": "github", "repo": "x/y"],
+            body: "PR #42 state changed: draft → open"
+        )
+
+        try dispatcher.dispatchRoutableEvent(
+            event,
+            subjectWorktreePath: "/repo/.worktrees/alice",
+            repos: [repo]
+        )
+
+        let messages = try inbox.messages(teamID: TeamLookup.id(forRepoPath: "/repo"))
+        #expect(!messages.isEmpty)
+        #expect(messages.allSatisfy { $0.source == "github" })
+    }
 }

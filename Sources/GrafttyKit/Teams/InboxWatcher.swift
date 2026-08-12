@@ -77,6 +77,11 @@ public actor InboxWatcher {
 
     public let sessionID: String
     public let recipient: Recipient
+    /// Canonical agent identity of the session this watcher wakes. Rows
+    /// pinned to this exact agent are claimable; rows pinned to any other
+    /// agent are left for their own delivery path. A nil identity claims
+    /// only unpinned rows.
+    public let agentID: String?
     public let teamID: String
     public let inboxRootDirectory: URL
     public let outcome: WatcherOutcome
@@ -109,6 +114,7 @@ public actor InboxWatcher {
     public init(
         sessionID: String,
         recipient: Recipient,
+        agentID: String? = nil,
         teamID: String,
         inboxRootDirectory: URL,
         outcome: WatcherOutcome,
@@ -120,6 +126,7 @@ public actor InboxWatcher {
     ) {
         self.sessionID = sessionID
         self.recipient = recipient
+        self.agentID = agentID
         self.teamID = teamID
         self.inboxRootDirectory = inboxRootDirectory
         self.outcome = outcome
@@ -301,7 +308,8 @@ public actor InboxWatcher {
                 teamID: teamID,
                 sessionID: sessionID,
                 recipientWorktree: recipient.worktree,
-                runtime: recipient.runtime.rawValue
+                runtime: recipient.runtime.rawValue,
+                agentID: agentID
             )
         } catch {
             // TEAM-11.8: distinguish "claim failed" (typically

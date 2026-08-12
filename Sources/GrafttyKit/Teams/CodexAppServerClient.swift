@@ -10,6 +10,16 @@ public struct CodexAppServerDeliveryResult: Sendable, Equatable {
     }
 }
 
+public struct CodexAppServerTarget: Sendable, Equatable {
+    public let threadID: String
+    public let activeTurnID: String?
+
+    public init(threadID: String, activeTurnID: String?) {
+        self.threadID = threadID
+        self.activeTurnID = activeTurnID
+    }
+}
+
 public protocol CodexAppServerClienting: Sendable {
     func deliver(
         binaryPath: String,
@@ -17,6 +27,31 @@ public protocol CodexAppServerClienting: Sendable {
         expectedCWD: String,
         message: String
     ) async throws -> CodexAppServerDeliveryResult
+
+    func deliver(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        message: String,
+        target: CodexAppServerTarget?
+    ) async throws -> CodexAppServerDeliveryResult
+}
+
+public extension CodexAppServerClienting {
+    func deliver(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        message: String,
+        target: CodexAppServerTarget?
+    ) async throws -> CodexAppServerDeliveryResult {
+        try await deliver(
+            binaryPath: binaryPath,
+            socketPath: socketPath,
+            expectedCWD: expectedCWD,
+            message: message
+        )
+    }
 }
 
 public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
@@ -32,6 +67,22 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         expectedCWD: String,
         message: String
     ) async throws -> CodexAppServerDeliveryResult {
+        try await deliver(
+            binaryPath: binaryPath,
+            socketPath: socketPath,
+            expectedCWD: expectedCWD,
+            message: message,
+            target: nil
+        )
+    }
+
+    public func deliver(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        message: String,
+        target: CodexAppServerTarget?
+    ) async throws -> CodexAppServerDeliveryResult {
         #if os(macOS)
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
@@ -40,7 +91,8 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                         binaryPath: binaryPath,
                         socketPath: socketPath,
                         expectedCWD: expectedCWD,
-                        message: message
+                        message: message,
+                        target: target
                     ))
                 } catch {
                     continuation.resume(throwing: error)
@@ -57,7 +109,8 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         binaryPath: String,
         socketPath: String,
         expectedCWD: String,
-        message: String
+        message: String,
+        target: CodexAppServerTarget?
     ) throws -> CodexAppServerDeliveryResult {
         let process = Process()
         let stdin = Pipe()
@@ -110,32 +163,77 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
             )
 
             var nextRequestID = 2
-            let threadIDs = try loadedThreadIDs(
-                connection: connection,
-                deadline: deadline,
-                nextRequestID: &nextRequestID
-            )
-            let threadID = try matchingLoadedThreadID(
-                from: threadIDs,
+            let threadID: String
+            if let target {
+                threadID = target.threadID
+            } else {
+                let threadIDs = try loadedThreadIDs(
+                    connection: connection,
+                    deadline: deadline,
+                    nextRequestID: &nextRequestID
+                )
+                threadID = try matchingLoadedThreadID(
+                    from: threadIDs,
+                    expectedCWD: expectedCWD,
+                    connection: connection,
+                    deadline: deadline,
+                    nextRequestID: &nextRequestID
+                )
+            }
+
+            var activeTurnID = target == nil ? nil : try readActiveTurnID(
+                threadID: threadID,
                 expectedCWD: expectedCWD,
                 connection: connection,
                 deadline: deadline,
                 nextRequestID: &nextRequestID
             )
-
-            try sendRequest(
-                ["id": nextRequestID, "method": "turn/start", "params": [
+            var attempt = 0
+            while true {
+                let method: String
+                var params: [String: Any] = [
                     "threadId": threadID,
-                    "cwd": expectedCWD,
                     "input": [["type": "text", "text": message]],
-                ]],
-                to: connection,
-                deadline: deadline
-            )
-            try requireNoRPCError(
-                in: readResponse(connection: connection, deadline: deadline, expectedID: nextRequestID, method: "turn/start"),
-                method: "turn/start"
-            )
+                ]
+                if let activeTurnID {
+                    method = "turn/steer"
+                    params["expectedTurnId"] = activeTurnID
+                } else {
+                    method = "turn/start"
+                    params["cwd"] = expectedCWD
+                }
+                let requestID = nextRequestID
+                nextRequestID += 1
+                try sendRequest(
+                    ["id": requestID, "method": method, "params": params],
+                    to: connection,
+                    deadline: deadline
+                )
+                do {
+                    try requireNoRPCError(
+                        in: readResponse(
+                            connection: connection,
+                            deadline: deadline,
+                            expectedID: requestID,
+                            method: method
+                        ),
+                        method: method
+                    )
+                    break
+                } catch CodexAppServerClientError.jsonRPCError where target != nil && attempt == 0 {
+                    // The turn may have started or completed between the exact
+                    // thread/read and the mutation. Refresh once and retry with
+                    // the protocol's expectedTurnId precondition.
+                    attempt += 1
+                    activeTurnID = try readActiveTurnID(
+                        threadID: threadID,
+                        expectedCWD: expectedCWD,
+                        connection: connection,
+                        deadline: deadline,
+                        nextRequestID: &nextRequestID
+                    )
+                }
+            }
 
             return CodexAppServerDeliveryResult(threadID: threadID)
         } catch let error as CodexAppServerClientError {
@@ -364,6 +462,52 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
             expected: expectedCWD,
             count: threadIDs.count
         )
+    }
+
+    private func readActiveTurnID(
+        threadID: String,
+        expectedCWD: String,
+        connection: CodexAppServerWebSocketConnection,
+        deadline: Date,
+        nextRequestID: inout Int
+    ) throws -> String? {
+        let requestID = nextRequestID
+        nextRequestID += 1
+        try sendRequest(
+            ["id": requestID, "method": "thread/read", "params": [
+                "threadId": threadID,
+                "includeTurns": true,
+            ]],
+            to: connection,
+            deadline: deadline
+        )
+        let result = try resultObject(
+            from: readResponse(
+                connection: connection,
+                deadline: deadline,
+                expectedID: requestID,
+                method: "thread/read"
+            ),
+            method: "thread/read"
+        )
+        guard let thread = result["thread"] as? [String: Any] else {
+            throw CodexAppServerClientError.invalidResponse("thread/read result missing thread")
+        }
+        if let returnedID = thread["id"] as? String, returnedID != threadID {
+            throw CodexAppServerClientError.invalidResponse(
+                "thread/read returned \(returnedID) for exact thread \(threadID)"
+            )
+        }
+        // A hook-bound thread ID can go stale (session storage rebound, or
+        // Codex re-hosting the thread elsewhere). Refuse to inject into a
+        // thread whose cwd no longer matches the recipient worktree.
+        if let threadCWD = thread["cwd"] as? String, threadCWD != expectedCWD {
+            throw CodexAppServerClientError.invalidResponse(
+                "thread/read returned cwd \(threadCWD) for exact thread \(threadID); expected \(expectedCWD)"
+            )
+        }
+        let turns = thread["turns"] as? [[String: Any]] ?? []
+        return turns.reversed().first(where: { $0["status"] as? String == "inProgress" })?["id"] as? String
     }
 
     private func threadMetadata(in result: [String: Any]) throws -> (cwd: String, isSubagent: Bool) {

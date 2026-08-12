@@ -23,6 +23,7 @@ public struct TeamEvent: Codable, Sendable {
         // Codex delivery no longer writes zmx nudge events.
         case zmxNudgeAttempt
         case codexAppServerDeliveryAttempt
+        case nativePeerDeliveryAttempt
     }
 
     public let teamID: String
