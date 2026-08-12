@@ -63,6 +63,15 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
     /// and falls through to `body` otherwise; activity log / watcher /
     /// `team inbox` CLI ignore it. See @spec TEAM-1.6.
     public let agentPrompt: String?
+    /// @spec AGENT-6.20
+    /// When the dispatcher writes a routable-event system row that carries a
+    /// provider attribute, the application shall persist that provider on the
+    /// inbox row as its source.
+    ///
+    /// `"github"` / `"gitlab"` for forge-originated system rows; nil for
+    /// authored messages and non-forge system rows. Optional and additive:
+    /// rows written before this field decode with nil.
+    public let source: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -72,6 +81,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         case repoPath = "repo_path"
         case from, to, priority, kind, body
         case agentPrompt = "agent_prompt"
+        case source
     }
 
     public init(
@@ -85,7 +95,8 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         priority: TeamInboxPriority,
         kind: String = "team_message",
         body: String,
-        agentPrompt: String? = nil
+        agentPrompt: String? = nil,
+        source: String? = nil
     ) {
         self.id = id
         self.batchID = batchID
@@ -98,6 +109,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         self.kind = kind
         self.body = body
         self.agentPrompt = agentPrompt
+        self.source = source
     }
 }
 
@@ -200,7 +212,8 @@ public final class TeamInbox {
         priority: TeamInboxPriority,
         kind: String = "team_message",
         body: String,
-        agentPrompt: String? = nil
+        agentPrompt: String? = nil,
+        source: String? = nil
     ) throws -> TeamInboxMessage {
         let message = TeamInboxMessage(
             id: idGenerator(),
@@ -213,7 +226,8 @@ public final class TeamInbox {
             priority: priority,
             kind: kind,
             body: body,
-            agentPrompt: agentPrompt
+            agentPrompt: agentPrompt,
+            source: source
         )
         try append(message, teamID: teamID)
         return message

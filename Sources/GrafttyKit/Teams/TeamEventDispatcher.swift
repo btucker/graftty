@@ -160,7 +160,8 @@ public final class TeamEventDispatcher {
                 priority: .normal,
                 kind: type,
                 body: rendered.body,
-                agentPrompt: rendered.agentPrompt
+                agentPrompt: rendered.agentPrompt,
+                source: attrs["provider"]
             )
         }
     }
