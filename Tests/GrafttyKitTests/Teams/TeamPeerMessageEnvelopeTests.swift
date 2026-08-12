@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 @Suite("""
-    @spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
+    @spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every wrapper-path delivered row (hook and Codex app-server delivery) as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
 """)
 struct TeamPeerMessageEnvelopeTests {
     @Test("A plugin-only session recovers its exact identity from the current pane presence.")

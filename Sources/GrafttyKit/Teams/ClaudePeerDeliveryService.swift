@@ -103,18 +103,27 @@ public actor ClaudePeerDeliveryService {
         )
         guard !pending.isEmpty else { return false }
 
+        // One frame carries one native sender identity, so a frame may only
+        // contain the leading run of rows that share a derived name; the
+        // arrival loop redelivers, sending later runs in follow-up frames.
+        let senderName = ClaudePeerSenderName.name(for: pending[0])
+        let run = Array(pending.prefix(while: {
+            ClaudePeerSenderName.name(for: $0) == senderName
+        }))
+
         do {
             // A batch that overflows the peer protocol's frame cap would
             // otherwise be retried identically forever, wedging the queue.
             // Halve the batch until it fits; the next pass delivers the rest.
-            var batch = pending
+            var batch = run
             while true {
                 do {
                     _ = try await client.send(
-                        body: TeamPeerMessageFormatter.context(messages: batch),
+                        body: batch.map { TeamHookRenderer.content(message: $0) }
+                            .joined(separator: "\n\n"),
                         socketPath: socketPath,
                         replySocketPath: nil,
-                        senderName: "Graftty team"
+                        senderName: senderName
                     )
                     break
                 } catch ClaudePeerMessagingError.messageTooLarge where batch.count > 1 {
@@ -140,7 +149,7 @@ public actor ClaudePeerDeliveryService {
                 worktree: worktree,
                 outcome: "error_delivery",
                 agentID: selected.id.rawValue,
-                messageIDs: pending.map(\.id),
+                messageIDs: run.map(\.id),
                 error: String(describing: error)
             )
             return false

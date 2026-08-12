@@ -5,7 +5,7 @@ import Testing
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
     @Test("""
-    @spec AGENT-6.6: When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+    @spec AGENT-6.6: When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
     """)
     func exactAgentDeliveryAdvancesOnlyAfterAcceptance() async throws {
         let fixture = try Fixture()
@@ -19,9 +19,9 @@ struct ClaudePeerDeliveryServiceTests {
         let calls = await fixture.client.calls
         #expect(calls.count == 1)
         #expect(calls[0].socketPath == fixture.socketPath)
-        #expect(calls[0].body.contains("please review"))
-        #expect(calls[0].body.contains("<graftty-peer-message agent=\"/repo\">"))
-        #expect(!calls[0].body.contains("untrusted"))
+        #expect(calls[0].body == "please review")
+        #expect(!calls[0].body.contains("<graftty-peer-message"))
+        #expect(calls[0].senderName == "repo/main")
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
             worktree: fixture.worktree
@@ -42,6 +42,42 @@ struct ClaudePeerDeliveryServiceTests {
             teamID: fixture.teamID,
             worktree: fixture.worktree
         ) == nil)
+    }
+
+    @Test("""
+    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived sender name per frame, with bodies joined by a blank line and no per-message envelope, leaving later runs for subsequent frames.
+    """)
+    func mixedSendersSplitIntoPerSenderFrames() async throws {
+        let fixture = try Fixture()
+        let codexSender = TeamInboxEndpoint(
+            member: "main",
+            worktree: fixture.teamID,
+            runtime: "codex",
+            agentID: "codex-0123456789ab"
+        )
+        _ = try fixture.append(body: "first", from: codexSender)
+        _ = try fixture.append(body: "second", from: codexSender)
+        _ = try fixture.append(body: "PR #42 opened", from: .system(repoPath: fixture.teamID), source: "github")
+        let last = try fixture.append(body: "roster changed", from: .system(repoPath: fixture.teamID))
+
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+
+        let calls = await fixture.client.calls
+        #expect(calls.count == 3)
+        #expect(calls[0].body == "first\n\nsecond")
+        #expect(calls[0].senderName == "repo/main#codex-0123456789ab")
+        #expect(calls[1].body == "PR #42 opened")
+        #expect(calls[1].senderName == "GitHub")
+        #expect(calls[2].body == "roster changed")
+        #expect(calls[2].senderName == "Graftty team")
+        #expect(calls.allSatisfy { !$0.body.contains("<graftty-peer-message") })
+        #expect(try fixture.inbox.worktreeWatermark(
+            teamID: fixture.teamID,
+            worktree: fixture.worktree
+        )?.lastDeliveredToAnySessionID == last.id)
     }
 
     @Test("A Claude-qualified default ignores an earlier Codex agent.")
@@ -74,7 +110,8 @@ struct ClaudePeerDeliveryServiceTests {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let inbox = TeamInbox(rootDirectory: root, idGenerator: { "message-1" })
+            let counter = IDCounter()
+            let inbox = TeamInbox(rootDirectory: root, idGenerator: { counter.next() })
             let client = StubClient(error: error)
             let agentID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "session-1").rawValue
             let presence = TeamPresenceRecord(
@@ -112,12 +149,17 @@ struct ClaudePeerDeliveryServiceTests {
             )
         }
 
-        func append(body: String, exact: Bool = true) throws -> TeamInboxMessage {
+        func append(
+            body: String,
+            exact: Bool = true,
+            from: TeamInboxEndpoint? = nil,
+            source: String? = nil
+        ) throws -> TeamInboxMessage {
             try inbox.appendMessage(
                 teamID: teamID,
                 teamName: "repo",
                 repoPath: teamID,
-                from: TeamInboxEndpoint(member: "main", worktree: teamID, runtime: nil),
+                from: from ?? TeamInboxEndpoint(member: "main", worktree: teamID, runtime: nil),
                 to: TeamInboxEndpoint(
                     member: "feature",
                     worktree: worktree,
@@ -125,12 +167,24 @@ struct ClaudePeerDeliveryServiceTests {
                     agentID: exact ? agentID : nil
                 ),
                 priority: .normal,
-                body: body
+                body: body,
+                source: source
             )
         }
     }
 
     private enum StubError: Error { case failed }
+
+    private final class IDCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func next() -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            n += 1
+            return "message-\(n)"
+        }
+    }
 
     private actor StubClient: ClaudePeerClienting {
         struct Call: Sendable {
