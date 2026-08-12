@@ -415,7 +415,7 @@ struct InstructionStoreDeadlineTests {
         let set = await InstructionStore.loadWithinBudget(
             .milliseconds(20)
         ) {
-            _ = releaseOperation.wait(timeout: .now() + 2)
+            releaseOperation.wait()
             operationFinished.markFinished()
             return InstructionSet(documents: [
                 "GRAFTTY.md": InstructionDocument.parse("too late"),
