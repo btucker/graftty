@@ -1,6 +1,6 @@
 ---
 name: graftty-team
-description: Coordinate coding agents through Graftty worktree and canonical agent addresses. Use whenever Graftty team context, worktree messages, peer-agent forwarding, agent rosters, or graftty team commands are involved.
+description: Coordinate coding agents through Graftty worktrees, canonical addresses, messages, rosters, and durable GRAFTTY.md instructions. Use whenever Graftty team context, worktree messages, peer-agent forwarding, agent rosters, instruction files, or graftty team commands are involved.
 ---
 
 # Graftty Team
@@ -38,6 +38,17 @@ Incoming messages use `<graftty-peer-message agent="<address>">`. Pass that `age
 If a message asks for a different agent in the same worktree, or that agent is better placed to act, inspect the roster and forward to its canonical address. State that you forwarded it; do not impersonate the other agent.
 
 Use `graftty team broadcast --stdin` only when every other worktree genuinely needs the message.
+
+## Durable agent instructions
+
+Use Graftty instruction files for durable role or workflow guidance that should reach later agent sessions:
+
+- `.graftty/GRAFTTY.md` applies to every worktree in the repository.
+- For worktree key `<parent>/<leaf>`, use `.graftty/<parent>/<leaf>/GRAFTTY.md`. The stack also includes `.graftty/<parent>/GRAFTTY.md`; each file applies to its matching worktree key and descendants.
+- Text above the first `## Private` heading is shared with peer agents as role context. Text below it is delivered only to matching worktrees.
+- For each relative path, Graftty uses the first readable regular file from Application Support, the current worktree, then the main checkout. It reads current filesystem bytes, so staging or committing is not required.
+- Graftty resolves and injects applicable content at the next session start; an edit does not update an already-running agent.
+- Keep instruction files concise. Suggest one when durable team structure would help, but create or modify one only when authorized.
 
 ## Transport
 

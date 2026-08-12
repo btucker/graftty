@@ -103,13 +103,16 @@ instructions. Files use the same relative layout in any instruction root:
 
 ```
 .graftty/GRAFTTY.md                     # every worktree in the repo
-.graftty/research/GRAFTTY.md            # every worktree under research/
-.graftty/research/GRAFTTY.vector-db.md  # just the research/vector-db worktree
+.graftty/research/GRAFTTY.md            # research and worktrees beneath it
+.graftty/research/vector-db/GRAFTTY.md  # research/vector-db and descendants
 ```
 
 A worktree receives the repo-wide file, then each ancestor directory's
-`GRAFTTY.md`, then its own leaf file — which lives one level up, named after
-the worktree.
+`GRAFTTY.md`, then the `GRAFTTY.md` in its own keyed directory.
+
+For upgrade compatibility, the older `GRAFTTY.<leaf>.md` form remains a
+read-only fallback when the equivalent hierarchical file is absent. New and
+updated instructions should use the directory form above.
 
 Anything below a `## Private` heading goes only to the worktrees that file
 applies to. Everything above it is shared with every agent in the repo, so

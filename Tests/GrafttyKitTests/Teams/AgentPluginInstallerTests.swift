@@ -52,7 +52,34 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.1.1""#))
+        #expect(claudeManifest.contains(#""version": "0.1.2""#))
+        let codexManifest = try String(contentsOf: destination
+            .appendingPathComponent("codex/plugins/graftty-team/.codex-plugin/plugin.json"))
+        #expect(codexManifest.contains(#""version": "0.1.2""#))
+    }
+
+    @Test("""
+    @spec AGENT-6.21: When Graftty materializes a provider team skill, the skill shall explain the durable hierarchical `.graftty/**/GRAFTTY.md` instruction system's repository and worktree scopes, its `## Private` sharing boundary, next-session delivery, and the authorization required before editing an instruction file.
+    """)
+    func materializedSkillsExplainDurableInstructionFiles() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugin-instructions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let skill = try String(contentsOf: destination
+                .appendingPathComponent(provider)
+                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+            #expect(skill.contains("## Durable agent instructions"))
+            #expect(skill.contains("`.graftty/GRAFTTY.md`"))
+            #expect(skill.contains("`.graftty/<parent>/GRAFTTY.md`"))
+            #expect(skill.contains("`.graftty/<parent>/<leaf>/GRAFTTY.md`"))
+            #expect(skill.contains("`## Private`"))
+            #expect(skill.contains("next session start"))
+            #expect(skill.contains("only when authorized"))
+        }
     }
 
     @Test("""

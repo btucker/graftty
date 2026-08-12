@@ -38,8 +38,8 @@ loading them; current filesystem bytes take effect at the next session start.
 
 The mechanism is deliberately unopinionated about *why* worktrees are grouped.
 Nesting serves environment tiers, task classes, ownership, simulated
-organizations, or nothing at all — a repo can use only leaf files, or only the
-repo-wide file.
+organizations, or nothing at all — a repo can use only exact-worktree files,
+only inherited files, or only the repo-wide file.
 
 ## Storage and resolution
 
@@ -51,7 +51,7 @@ uses the first readable, materialized regular file in this order:
 3. the repository's main checkout `.graftty/`
 
 Resolution is **per relative path**, not per directory. A sparse Application
-Support overlay can replace `GRAFTTY.md` without hiding a group file that
+Support overlay can replace `GRAFTTY.md` without hiding a nested file that
 exists only in the main checkout. Identical roots (the main checkout viewing
 itself) are deduplicated.
 
@@ -68,7 +68,7 @@ the main actor. File-count and byte limits bound the resulting prompt.
 
 ### Configuring a child before launch
 
-An agent configures a child by creating the child's leaf somewhere the first
+An agent configures a child by creating the child's exact-worktree file somewhere the first
 session can resolve it: Application Support, the main checkout, or the child's
 starting tree. A linked-worktree agent can choose to include the file in the
 starting tree by committing it and creating the child from that exact commit:
@@ -81,7 +81,7 @@ The CLI resolves `HEAD` in the caller's worktree before creating the new
 branch, so Git happens to copy that file into the child. Graftty itself neither
 commits nor reads Git: the child's session reads the resulting filesystem file.
 Once the child exists, editing its own `.graftty/` changes later sessions
-without a commit. A main-checkout leaf is another useful pre-launch path: a
+without a commit. A main-checkout copy is another useful pre-launch path: a
 new child that lacks its own copy falls back to the main checkout immediately,
 including when that main file is uncommitted.
 
@@ -114,7 +114,7 @@ out", so it remains stable when an agent changes what is checked out there.
 **If the default branch is unresolved, the main checkout receives only
 `.graftty/GRAFTTY.md`.** Graftty's `SidebarWorktreeLabel` falls back to the
 literal string `main` when the snapshot has not resolved; inheriting that
-fallback here would load `GRAFTTY.main.md` into a repo whose default is
+fallback here would load `main/GRAFTTY.md` into a repo whose default is
 `master`. Loading wrong instructions is worse than loading none.
 
 A worktree at `.worktrees/main` in a repo whose default branch is `main` would
@@ -125,51 +125,42 @@ share a file.
 
 ## File layout
 
-Every file in `.graftty/` is named `GRAFTTY*.md`. There are exactly two forms:
-
-| Form | Applies to |
-|---|---|
-| `<dir>/GRAFTTY.md` | every worktree whose key is **beneath** `<dir>` |
-| `<dir>/GRAFTTY.<leaf>.md` | the single worktree whose key is `<dir>/<leaf>` |
-
-A worktree's own leaf file lives at its **parent** level. For key
-`research/vector-db`:
+Every instruction file is named exactly `GRAFTTY.md`. Its containing directory
+is the worktree key where its scope begins, and the file applies to that key and
+all descendants. For key `research/vector-db`:
 
 ```
 .graftty/GRAFTTY.md                     ← all worktrees
-.graftty/research/GRAFTTY.md            ← everything under research/
-.graftty/research/GRAFTTY.vector-db.md  ← just this worktree
+.graftty/research/GRAFTTY.md            ← research and descendants
+.graftty/research/vector-db/GRAFTTY.md  ← research/vector-db and descendants
 ```
 
 For a top-level key `foo`, the chain is `.graftty/GRAFTTY.md` then
-`.graftty/GRAFTTY.foo.md`.
+`.graftty/foo/GRAFTTY.md`.
 
-Placing the leaf file at the parent level is what removes the leaf/group
-collision. `research` as a *group* is the directory `.graftty/research/`;
-`research` as a *worktree* is the file `.graftty/GRAFTTY.research.md` one level
-up. Different names in different directories, so no precedence rule is needed.
+This deliberately makes scope hierarchical: `research/GRAFTTY.md` applies to a
+worktree keyed `research` as well as `research/*`. Git can technically place a
+linked worktree inside another linked worktree, but the parent sees the child
+directory as untracked, and Graftty's normal branch-backed creation cannot use
+both `research` and `research/vector-db` branch names because Git rejects the
+ref file/directory collision. The natural inheritance rule is preferable to a
+second filename form for that pathological arrangement.
 
-`<dir>/GRAFTTY.md` covers descendants **only**, not a worktree whose key is
-exactly `<dir>`. That worktree is addressed by its leaf file at the level above.
-The distinction is observable only when a worktree and a group share a name,
-which through Graftty's own Add Worktree flow cannot happen — the name becomes
-both branch and path, and git's ref directory/file conflict rejects branches
-`research` and `research/vector-db` coexisting in either creation order. It is
-reachable only for externally created worktrees whose branch and path diverge.
+**Skipped, each logged:** any regular file in `.graftty/` whose name is neither
+exactly `GRAFTTY.md` nor the legacy `GRAFTTY.<leaf>.md` form.
 
-**Skipped, each logged:** any file in `.graftty/` not matching `GRAFTTY.md` or
-`GRAFTTY.<leaf>.md`, and any file whose leaf component is empty
-(`GRAFTTY..md`). Leaf names containing `.` are fine — parsing anchors on the
-`GRAFTTY.` prefix and `.md` suffix, so `GRAFTTY.api.v2.md` unambiguously means
-leaf `api.v2`.
+For upgrade compatibility with v0.4.x, `GRAFTTY.<leaf>.md` remains a read-only
+alias for `<leaf>/GRAFTTY.md` at the same directory level. Discovery stores it
+under the canonical hierarchical path. When both forms exist in one overlay
+root, the hierarchical file wins; across roots, the normal Application
+Support/current-worktree/main-checkout precedence still wins. The built-in
+prompt and provider skill teach only the hierarchical form.
 
-**Wildcard patterns were considered and rejected.** Prefix globs
-(`GRAFTTY.research-*.md`) would provide grouping without namespaced names, but
-they require a specificity ranking, `*`-position validation, and a rule for how
-a glob match orders against a directory match. Directory depth supplies the same
-grouping with ordering that falls out for free. The cost is that grouping
-requires namespaced worktree names, and existing flat names get no grouping
-until renamed.
+**Wildcard patterns were considered and rejected.** They require a specificity
+ranking, pattern validation, and a rule for how a wildcard orders against a
+directory match. Directory depth supplies grouping with ordering that falls out
+for free. The cost is that grouping requires namespaced worktree names, and
+existing flat names get no grouping until renamed.
 
 ## Shared and private portions
 
@@ -204,9 +195,9 @@ only the applicable worktrees' own method (below it).
 
 ## Composition
 
-An agent's own instruction stack is the chain from root to leaf, concatenated in
-path-depth order: each ancestor directory's `GRAFTTY.md`, then its own leaf
-file. Within a file, the shared portion precedes the private portion.
+An agent's own instruction stack is the chain from root to its exact key,
+concatenated in path-depth order: the root and each successive directory's
+`GRAFTTY.md`. Within a file, the shared portion precedes the private portion.
 
 Later sections may override earlier prose; the ordering rule exists so that
 override direction is predictable. There is no specificity ranking to compute —
@@ -268,7 +259,7 @@ not intrinsically more trustworthy; precedence only selects which bytes win.
 Application Support is user-machine policy, the current-worktree tier is
 editable by that worktree, and the main-checkout tier is the shared fallback.
 
-Another worktree's shared leaf content is not an instruction to the reader. It
+Another worktree's shared content is not an instruction to the reader. It
 is explicitly framed as that worktree's self-authored role description, and the
 rendered section directs coordination through `graftty team send`. Under the
 filesystem model the org chart is the viewer's resolved overlay: it does not
@@ -283,7 +274,7 @@ or modify files only when the user has authorized that work.
 
 Repository files may still change through ordinary reviewed commits, but that
 is an authoring policy rather than a loader requirement. A worktree may author
-its own leaf in its own checkout and the current bytes take effect in its next
+its own exact-worktree file in its own checkout and the current bytes take effect in its next
 session. To configure a not-yet-created child, an agent uses Application
 Support, the main checkout, or arranges for the file to exist in the child's
 starting tree. Agents never need to write into an existing peer worktree.
@@ -299,9 +290,9 @@ The governing rule is to degrade to omission and never block session start.
 | Symlink, FIFO, socket, device, or other non-regular entry | Skip without opening it |
 | Evicted iCloud/File Provider (`SF_DATALESS`) entry | Skip without reading it |
 | The aggregate filesystem load exceeds one second | Omit the section without awaiting the late I/O |
-| Filename not matching `GRAFTTY.md` / `GRAFTTY.<leaf>.md` | Skip, log |
-| Empty leaf component (`GRAFTTY..md`) | Skip, log |
-| Main checkout with unresolved default branch | Root file only, no leaf file |
+| Filename neither `GRAFTTY.md` nor legacy `GRAFTTY.<leaf>.md` | Skip, log |
+| Canonical and legacy forms for one scope in one root | Use the canonical hierarchical file |
+| Main checkout with unresolved default branch | Root file only, no keyed file |
 | Worktree outside the repo's worktrees directory | Root file only |
 | Per-file size cap exceeded | Truncate with a visible marker |
 | Total stack size cap exceeded | Truncate with a visible marker |
@@ -319,9 +310,9 @@ Three pure units and one I/O unit, each testable in isolation:
 - **`InstructionKey`** — derives a worktree's key from its path, the repo path,
   and the resolved default branch; returns none for out-of-tree worktrees. No
   I/O.
-- **`InstructionChain`** — turns a key into the ordered list of file paths to
-  read, and classifies a discovered filename as a group file, a leaf file, or
-  skippable. No I/O.
+- **`InstructionChain`** — turns a key into the ordered list of hierarchical
+  file paths to read. **`InstructionFile`** classifies a discovered path as a
+  canonical scope, legacy alias, or skippable. No I/O.
 - **`InstructionDocument`** — splits raw markdown into shared and private
   portions. No I/O.
 - **`InstructionStore`** — discovers valid paths across the three filesystem
@@ -360,8 +351,8 @@ the EARS text.
 
 Unit coverage on the three pure components: key derivation for nested,
 top-level, main-checkout, unresolved-default-branch, and out-of-tree worktrees;
-chain construction at several depths; filename classification including leaf
-names containing dots and the rejected forms; the split marker at each heading
+chain construction at several depths; canonical and legacy filename
+classification, same-root preference, and rejected forms; the split marker at each heading
 level, with no marker, and as the first line; and renderer output for own-stack,
 roster, and unmatched-entry cases.
 
@@ -371,7 +362,7 @@ ragged cap remainders, the one-second deadline, ancestor and final-component
 symlink rejection, case-distinct overlay paths, FIFO rejection, and the
 `SF_DATALESS` materialization predicate.
 Session rendering tests use the same real-filesystem behavior to prove that a
-creating child receives its current-worktree leaf in its first session and
+creating child receives its current-worktree instructions in its first session and
 that viewer paths win prompt limits.
 
 ## Non-goals

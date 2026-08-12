@@ -127,13 +127,13 @@ struct TeamInstructionsRendererTests {
     }
 
     @Test("""
-    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the shared and per-worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place a leaf where a child can receive it in its first and later sessions.
+    @spec INSTR-6.4: When the built-in team session prompt is rendered, the application shall explain the hierarchical repository and worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place an exact-worktree file where a child can receive it in its first and later sessions.
     """)
     func defaultTemplateExplainsInstructionFileAuthoring() {
         let template = TeamInstructionsRenderer.defaultTemplate
 
         #expect(template.contains(".graftty/GRAFTTY.md"))
-        #expect(template.contains("GRAFTTY.<leaf>.md"))
+        #expect(template.contains(".graftty/<parent>/<leaf>/GRAFTTY.md"))
         #expect(template.contains("path relative to the main checkout's `.worktrees/`"))
         #expect(template.contains("main checkout's key is the repository's default branch"))
         #expect(template.contains(
@@ -142,8 +142,8 @@ struct TeamInstructionsRendererTests {
         #expect(template.contains(
             "main checkout receives only `.graftty/GRAFTTY.md`"
         ))
-        #expect(template.contains("shared section"))
-        #expect(template.contains("shown to peers"))
+        #expect(template.contains("shared with peers"))
+        #expect(template.contains("matching scope"))
         #expect(template.contains(
             "~/Library/Application Support/Graftty/.graftty"
         ))
@@ -154,7 +154,7 @@ struct TeamInstructionsRendererTests {
         #expect(template.contains("does not inspect Git"))
         #expect(template.contains("staging or committing is not required"))
         #expect(template.contains("evicted iCloud placeholders are ignored"))
-        #expect(template.contains("create its leaf where its first session can see it"))
+        #expect(template.contains("create its exact-worktree `GRAFTTY.md` where its first session can see it"))
         #expect(template.contains(
             "graftty worktree add <name> --base HEAD --agent <codex|claude>"
         ))

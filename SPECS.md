@@ -1934,7 +1934,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-3.x
 
-**INSTR-3.1** The application shall recognize exactly two instruction filename forms — a group file named GRAFTTY.md applying to every key beneath its directory, and a leaf file named GRAFTTY.<leaf>.md applying to the single key formed by its directory and leaf — and shall skip every other name.
+**INSTR-3.1** The application shall recognize hierarchical files named GRAFTTY.md and map each containing directory to the same worktree key and its descendants; if a root contains a legacy GRAFTTY.<leaf>.md file, then the application shall treat it as a fallback alias for the equivalent hierarchical path, prefer the hierarchical file when both exist in that root, and skip every other filename.
 
 ### INSTR-4.x
 
@@ -1942,7 +1942,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-5.x
 
-**INSTR-5.1** The application shall resolve a worktree instruction stack as the group file at every ancestor level from the root inward, followed by the worktree leaf file located at its parent level.
+**INSTR-5.1** The application shall resolve a worktree instruction stack as the GRAFTTY.md file at the repository root and every directory component of the worktree key, ordered from root to the exact worktree.
 
 ### INSTR-6.x
 
@@ -1952,9 +1952,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
 
-**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the shared and per-worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place a leaf where a child can receive it in its first and later sessions.
+**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the hierarchical repository and worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place an exact-worktree file where a child can receive it in its first and later sessions.
 
-**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's leaf from that new checkout's filesystem so the child receives its role in the first session.
+**INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's exact-worktree instruction file from that new checkout's filesystem so the child receives its role in the first session.
 
 **INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's instruction stack ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
 
@@ -2290,7 +2290,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.5** When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session in Claude's configured state directory, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
 
-**AGENT-6.6** When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+**AGENT-6.6** When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
 
 **AGENT-6.7** When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
 
@@ -2312,7 +2312,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
-**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every wrapper-path delivered row (hook and Codex app-server delivery) as one `<graftty-peer-message agent="<canonical-sender-address>">` element without a trust preamble.
+
+**AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
+
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived sender name per frame, with bodies joined by a blank line and no per-message envelope, leaving later runs for subsequent frames.
+
+**AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
+
+**AGENT-6.21** When Graftty materializes a provider team skill, the skill shall explain the durable hierarchical `.graftty/**/GRAFTTY.md` instruction system's repository and worktree scopes, its `## Private` sharing boundary, next-session delivery, and the authorization required before editing an instruction file.
 
 ## CLI — CLI
 

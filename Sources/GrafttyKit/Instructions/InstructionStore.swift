@@ -24,7 +24,14 @@ public enum InstructionStore {
 
     private struct RootInventory: Sendable {
         let instructionDirectory: URL
-        let discoveredPaths: Set<String>
+        /// Canonical logical path → actual path inside this root. Legacy
+        /// filenames alias to their canonical path without rewriting disk.
+        let actualPathByCanonicalPath: [String: String]
+    }
+
+    private struct DiscoveredPath {
+        let actualPath: String
+        let isLegacy: Bool
     }
 
     private static let logger = Logger(
@@ -129,26 +136,25 @@ public enum InstructionStore {
                 directoryName,
                 isDirectory: true
             )
-            var rootPaths: Set<String> = []
+            var rootPaths: [String: DiscoveredPath] = [:]
             discoverFiles(
                 beneath: instructionDirectory,
                 relativeDirectory: "",
                 discovered: &rootPaths,
                 skippedCount: &skippedCount
             )
-            discovered.formUnion(rootPaths)
+            discovered.formUnion(rootPaths.keys)
             inventories.append(
                 RootInventory(
                     instructionDirectory: instructionDirectory,
-                    discoveredPaths: rootPaths
+                    actualPathByCanonicalPath: rootPaths.mapValues(\.actualPath)
                 )
             )
         }
         if skippedCount > 0 {
             logger.info(
                 """
-                skipped \(skippedCount, privacy: .public) .graftty entries not named \
-                GRAFTTY.md or GRAFTTY.<leaf>.md
+                skipped \(skippedCount, privacy: .public) unrecognized .graftty files
                 """
             )
         }
@@ -200,7 +206,7 @@ public enum InstructionStore {
     private static func discoverFiles(
         beneath directory: URL,
         relativeDirectory: String,
-        discovered: inout Set<String>,
+        discovered: inout [String: DiscoveredPath],
         skippedCount: inout Int
     ) {
         guard !Task.isCancelled,
@@ -225,8 +231,21 @@ public enum InstructionStore {
                     skippedCount: &skippedCount
                 )
             } else if isMaterializedRegularFile(st) {
-                if InstructionFile.classify(relativePath: relativePath) != nil {
-                    discovered.insert(relativePath)
+                if let instruction = InstructionFile.classify(relativePath: relativePath) {
+                    let canonicalPath = instruction.canonicalRelativePath
+                    if let existing = discovered[canonicalPath] {
+                        if existing.isLegacy && !instruction.isLegacy {
+                            discovered[canonicalPath] = DiscoveredPath(
+                                actualPath: relativePath,
+                                isLegacy: false
+                            )
+                        }
+                    } else {
+                        discovered[canonicalPath] = DiscoveredPath(
+                            actualPath: relativePath,
+                            isLegacy: instruction.isLegacy
+                        )
+                    }
                 } else {
                     skippedCount += 1
                 }
@@ -239,11 +258,13 @@ public enum InstructionStore {
         inventories: [RootInventory],
         limit: Int
     ) -> String? {
-        for inventory in inventories
-            where inventory.discoveredPaths.contains(relativePath) {
+        for inventory in inventories {
             guard !Task.isCancelled else { return nil }
+            guard let actualPath = inventory.actualPathByCanonicalPath[relativePath] else {
+                continue
+            }
             if let body = readMaterializedRegularFile(
-                relativePath: relativePath,
+                relativePath: actualPath,
                 beneath: inventory.instructionDirectory,
                 limit: limit
             ) {

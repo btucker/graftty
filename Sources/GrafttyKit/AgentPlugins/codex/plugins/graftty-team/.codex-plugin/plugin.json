@@ -1,15 +1,15 @@
 {
   "name": "graftty-team",
-  "version": "0.1.1",
-  "description": "Coordinate Codex and Claude agents through Graftty's durable worktree inbox.",
+  "version": "0.1.2",
+  "description": "Coordinate Codex and Claude agents through Graftty's durable worktree inbox and instructions.",
   "author": {
     "name": "Graftty"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Graftty Team",
-    "shortDescription": "Coordinate agents through Graftty worktrees.",
-    "longDescription": "Adds provider-neutral Graftty team routing, exact agent addresses, forwarding guidance, and lifecycle hooks.",
+    "shortDescription": "Coordinate agents and durable worktree instructions.",
+    "longDescription": "Adds provider-neutral Graftty team routing, exact agent addresses, forwarding guidance, durable worktree instructions, and lifecycle hooks.",
     "developerName": "Graftty",
     "category": "Productivity",
     "capabilities": ["Agent coordination"],
