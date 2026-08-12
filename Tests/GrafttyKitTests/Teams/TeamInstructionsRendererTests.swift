@@ -168,8 +168,9 @@ struct TeamInstructionsRendererTests {
         for member in view.members {
             let prompt = TeamInstructionsRenderer.render(team: view, viewer: member)
             #expect(prompt.components(separatedBy: "graftty team inbox").count - 1 == 1)
-            #expect(prompt.components(separatedBy: "graftty team list").count - 1 == 1)
+            #expect(prompt.components(separatedBy: "graftty team list").count - 1 == 2)
             #expect(prompt.contains("<graftty-peer-message agent=\"<address>\">"))
+            #expect(prompt.contains("<project>/<worktree>#<agent-id>"))
             #expect(!prompt.lowercased().contains("untrusted peer"))
         }
     }

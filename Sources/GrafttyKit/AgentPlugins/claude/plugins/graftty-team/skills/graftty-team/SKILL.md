@@ -33,7 +33,9 @@ GRAFTTY_7F3A91C2
 
 The positional `<address>` accepts the same canonical forms shown by the roster and incoming messages: a worktree path for its default agent, or `<canonical-worktree-path>#<runtime>-<12hex>` for one exact agent.
 
-Incoming messages use `<graftty-peer-message agent="<address>">`. Pass that `agent` value unchanged to `graftty team send --stdin` when replying, unless the task clearly belongs elsewhere.
+Hook-delivered messages use `<graftty-peer-message agent="<address>">`. Pass that `agent` value unchanged to `graftty team send --stdin` when replying, unless the task clearly belongs elsewhere.
+
+Natively delivered messages name the sender `<project>/<worktree>#<agent-id>` instead of a wrapper. Reply to `<worktree>#<agent-id>` (drop the `<project>/` prefix), or copy the exact canonical address from `graftty team list --json`. Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
 
 If a message asks for a different agent in the same worktree, or that agent is better placed to act, inspect the roster and forward to its canonical address. State that you forwarded it; do not impersonate the other agent.
 
