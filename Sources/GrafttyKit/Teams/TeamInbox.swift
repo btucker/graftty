@@ -43,6 +43,9 @@ extension TeamInboxEndpoint {
     public static func system(repoPath: String) -> TeamInboxEndpoint {
         TeamInboxEndpoint(member: "system", worktree: repoPath, runtime: nil)
     }
+
+    /// True for rows authored by Graftty itself via `system(repoPath:)`.
+    public var isSystem: Bool { member == "system" }
 }
 
 public struct TeamInboxMessage: Codable, Sendable, Equatable {

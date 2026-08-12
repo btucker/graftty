@@ -188,15 +188,14 @@ public actor ClaudePeerDeliveryService {
 /// generic team label.
 public enum ClaudePeerSenderName {
     public static func name(for message: TeamInboxMessage) -> String {
-        guard message.from.member != "system" else {
+        guard !message.from.isSystem else {
             guard let source = message.source, !source.isEmpty else {
                 return "Graftty team"
             }
-            switch source {
-            case "github": return "GitHub"
-            case "gitlab": return "GitLab"
-            default: return source.prefix(1).uppercased() + source.dropFirst()
-            }
+            let known = HostingProvider(rawValue: source)
+                .flatMap(HostCLIAvailability.metadata(for:))?
+                .displayName
+            return known ?? source.prefix(1).uppercased() + source.dropFirst()
         }
         let base = "\(message.team)/\(message.from.member)"
         guard let agentID = message.from.agentID else { return base }
