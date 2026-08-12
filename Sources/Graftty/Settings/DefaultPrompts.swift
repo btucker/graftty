@@ -11,27 +11,17 @@ enum DefaultPrompts {
     /// each session starts.
     static let sessionPrompt = TeamInstructionsRenderer.defaultTemplate
 
-    /// Rendered fresh for each automated event delivery and prepended to the
-    /// event body. Branches on `agent.this_worktree` / `agent.other_worktree`
-    /// so the agent knows whether the event concerns its own branch, then
-    /// branches on `event.type` for event-specific guidance — Stencil has no
-    /// `case` tag, so the "switch on event.type" is expressed as a chained
-    /// `{% if event.type == "…" %} … {% elif … %} …` block.
+    /// Rendered fresh for each automated event delivery. The event body already
+    /// carries its scope and transition, so the default adds only guidance that
+    /// can change what the recipient should do.
     static let eventPrompt: String = """
-    A Graftty automated team event was just delivered to you.
-
-    {% if agent.this_worktree -%}
-    This event is about your own worktree.
-    {%- elif agent.other_worktree -%}
-    This event is about a different worktree in your team — only react if it changes how you should proceed.
-    {%- endif %}
-
+    {{ body }}
     {% if event.type == "merge_state_changed" -%}
-    Your branch's mergeability against the default branch changed. If your branch can no longer merge cleanly, merge the default branch into your branch and resolve any conflicts before continuing.
-    {%- elif event.type == "pr_state_changed" -%}
-    A PR's state changed. If it concerns your branch, react to the new state.
-    {%- elif event.type == "ci_conclusion_changed" -%}
-    A PR's CI conclusion changed. If it concerns your branch and CI is failing, investigate the failures and push fixes.
+
+    If the branch no longer merges cleanly, merge the default branch and resolve conflicts.
+    {%- elif event.type == "ci_conclusion_changed" and event.attrs.to == "failure" -%}
+
+    Investigate the failed checks and push a fix.
     {%- endif %}
     """
 

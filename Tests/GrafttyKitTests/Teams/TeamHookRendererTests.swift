@@ -113,6 +113,9 @@ struct TeamHookRendererTests {
         // The prompt already contains the body content; we shouldn't see
         // the body emitted a SECOND time after the prompt.
         #expect(rendered.components(separatedBy: "EVENT-BODY").count - 1 == 1)
+        #expect(!rendered.contains("[id="))
+        #expect(!rendered.contains("priority="))
+        #expect(!rendered.contains("runtime="))
     }
 
     @Test("format(messages:) falls through to body when agentPrompt is nil.")

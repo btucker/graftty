@@ -89,11 +89,7 @@ public enum TeamHookRenderer {
         if message.kind == TeamChannelEvents.EventType.message {
             return message.body
         }
-
-        return """
-        [id=\(message.id) priority=\(message.priority.rawValue) from=\(message.from.member) runtime=\(message.from.runtime ?? "unknown") at=\(timestamp(message.createdAt))]
-        \(message.agentPrompt ?? message.body)
-        """
+        return message.agentPrompt ?? message.body
     }
 
     private static func hookJSON(eventName: String, additionalContext: String) throws -> String {
@@ -107,9 +103,4 @@ public enum TeamHookRenderer {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    private static let isoFormatter = ISO8601DateFormatter()
-
-    private static func timestamp(_ date: Date) -> String {
-        isoFormatter.string(from: date)
-    }
 }
