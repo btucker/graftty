@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@Suite("@spec TECH-6.1: If an iOS CI test shard loses its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
+@Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
     @Test("recreates a simulator that disappears during destination resolution")
     func retriesMissingSimulatorOnce() throws {
@@ -10,6 +10,49 @@ struct IOSTestShardRunnerTests {
         #expect(result.exitCode == 0)
         #expect(result.xcodebuildAttempts == 2)
         #expect(result.simulatorsCreated == 2)
+        #expect(result.simulatorsRemaining == 0)
+    }
+
+    @Test("recreates a simulator that remains listed but becomes unavailable")
+    func retriesUnavailableSimulatorOnce() throws {
+        let result = try runFixture(
+            firstExitCode: 70,
+            removeSimulator: false,
+            markSimulatorUnavailable: true
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.xcodebuildAttempts == 2)
+        #expect(result.simulatorsCreated == 2)
+        #expect(result.simulatorsRemaining == 0)
+    }
+
+    @Test("recreates a simulator xcodebuild cannot resolve even while simctl lists it as available")
+    func retriesUnresolvableSimulatorOnce() throws {
+        let result = try runFixture(
+            firstExitCode: 70,
+            removeSimulator: false,
+            reportDestinationResolutionFailure: true
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.xcodebuildAttempts == 2)
+        #expect(result.simulatorsCreated == 2)
+        #expect(result.simulatorsRemaining == 0)
+    }
+
+    @Test("does not retry an ordinary exit 70 while the selected simulator remains available")
+    func preservesOrdinaryExit70() throws {
+        let result = try runFixture(
+            firstExitCode: 70,
+            removeSimulator: false,
+            availableTrailingLines: 20_000
+        )
+
+        #expect(result.exitCode == 70)
+        #expect(result.xcodebuildAttempts == 1)
+        #expect(result.simulatorsCreated == 1)
+        #expect(result.simulatorsRemaining == 0)
     }
 
     @Test("does not retry an ordinary xcodebuild failure")
@@ -19,6 +62,7 @@ struct IOSTestShardRunnerTests {
         #expect(result.exitCode == 65)
         #expect(result.xcodebuildAttempts == 1)
         #expect(result.simulatorsCreated == 1)
+        #expect(result.simulatorsRemaining == 0)
     }
 
     @Test("limits missing-simulator recovery to one retry")
@@ -32,11 +76,15 @@ struct IOSTestShardRunnerTests {
         #expect(result.exitCode == 70)
         #expect(result.xcodebuildAttempts == 2)
         #expect(result.simulatorsCreated == 2)
+        #expect(result.simulatorsRemaining == 0)
     }
 
     private func runFixture(
         firstExitCode: Int32,
         removeSimulator: Bool,
+        markSimulatorUnavailable: Bool = false,
+        reportDestinationResolutionFailure: Bool = false,
+        availableTrailingLines: Int = 0,
         secondExitCode: Int32 = 0
     ) throws -> FixtureResult {
         let fileManager = FileManager.default
@@ -81,6 +129,10 @@ struct IOSTestShardRunnerTests {
         environment["FAKE_FIRST_EXIT"] = String(firstExitCode)
         environment["FAKE_SECOND_EXIT"] = String(secondExitCode)
         environment["FAKE_REMOVE_SIMULATOR"] = removeSimulator ? "1" : "0"
+        environment["FAKE_MARK_SIMULATOR_UNAVAILABLE"] = markSimulatorUnavailable ? "1" : "0"
+        environment["FAKE_REPORT_DESTINATION_RESOLUTION_FAILURE"] =
+            reportDestinationResolutionFailure ? "1" : "0"
+        environment["FAKE_AVAILABLE_TRAILING_LINES"] = String(availableTrailingLines)
         environment["GITHUB_ENV"] = root.appendingPathComponent("github-env").path
         environment["SHARD_NAME"] = "fixture"
         environment["SIMULATOR_UDID"] = "sim-1"
@@ -100,7 +152,10 @@ struct IOSTestShardRunnerTests {
             ),
             simulatorsCreated: try integer(
                 at: state.appendingPathComponent("create-count")
-            )
+            ),
+            simulatorsRemaining: try fileManager.contentsOfDirectory(
+                atPath: state.path
+            ).count { $0.hasPrefix("device-") }
         )
     }
 
@@ -132,7 +187,16 @@ struct IOSTestShardRunnerTests {
       "simctl list")
         current="$(cat "$FAKE_STATE/current")"
         if [[ -e "$FAKE_STATE/device-$current" ]]; then
-          echo "    Graftty CI ($current) ($current) (Booted)"
+          if [[ -e "$FAKE_STATE/unavailable-$current" ]]; then
+            if [[ "${4:-}" != "available" ]]; then
+              echo "    Graftty CI ($current) ($current) (Shutdown) (unavailable, runtime profile not found)"
+            fi
+          else
+            echo "    Graftty CI ($current) ($current) (Booted)"
+            for ((line = 0; line < FAKE_AVAILABLE_TRAILING_LINES; line++)); do
+              echo "    trailing available device $line"
+            done
+          fi
         fi
         ;;
       "simctl create")
@@ -145,9 +209,12 @@ struct IOSTestShardRunnerTests {
         ;;
       "simctl boot"|"simctl bootstatus")
         ;;
-      "simctl shutdown"|"simctl delete")
+      "simctl shutdown")
+        ;;
+      "simctl delete")
         current="${3:-}"
         rm -f "$FAKE_STATE/device-$current"
+        rm -f "$FAKE_STATE/unavailable-$current"
         ;;
       *)
         echo "unexpected xcrun arguments: $*" >&2
@@ -170,6 +237,13 @@ struct IOSTestShardRunnerTests {
         current="$(cat "$FAKE_STATE/current")"
         rm -f "$FAKE_STATE/device-$current"
       fi
+      if [[ "$FAKE_MARK_SIMULATOR_UNAVAILABLE" == "1" ]]; then
+        current="$(cat "$FAKE_STATE/current")"
+        touch "$FAKE_STATE/unavailable-$current"
+      fi
+      if [[ "$FAKE_REPORT_DESTINATION_RESOLUTION_FAILURE" == "1" ]]; then
+        echo "xcodebuild: error: Unable to find a device matching the provided destination specifier:" >&2
+      fi
       exit "$FAKE_FIRST_EXIT"
     fi
     exit "$FAKE_SECOND_EXIT"
@@ -180,4 +254,5 @@ private struct FixtureResult {
     let exitCode: Int32
     let xcodebuildAttempts: Int
     let simulatorsCreated: Int
+    let simulatorsRemaining: Int
 }
