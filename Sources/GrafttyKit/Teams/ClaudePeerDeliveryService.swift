@@ -60,46 +60,51 @@ public actor ClaudePeerDeliveryService {
             records: records,
             isReachable: agentReachability
         )
-        let watermark: String?
         let allUnread: [TeamInboxMessage]
         do {
-            watermark = try inbox.worktreeWatermark(
-                teamID: team,
-                worktree: worktree
-            )?.lastDeliveredToAnySessionID
-            allUnread = try inbox.unreadMessages(
+            allUnread = try inbox.worktreePendingMessages(
                 teamID: team,
                 recipientWorktree: worktree,
-                after: watermark
             )
         } catch {
             log(team: team, worktree: worktree, outcome: "error_inbox_read")
             return false
         }
-        guard let first = allUnread.first else { return false }
+        guard !allUnread.isEmpty else { return false }
 
         let selected: TeamAgentDescriptor?
-        do {
-            let targetRuntime = first.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
-            selected = try directory.resolve(
-                worktreePath: worktree,
-                runtime: targetRuntime,
-                explicitAgentID: first.to.agentID
-            )
-        } catch {
+        selected = allUnread.lazy.compactMap { message -> TeamAgentDescriptor? in
+            do {
+                let targetRuntime = message.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
+                let candidate = try directory.resolve(
+                    worktreePath: worktree,
+                    runtime: targetRuntime,
+                    explicitAgentID: message.to.agentID
+                )
+                return candidate?.runtime == .claude ? candidate : nil
+            } catch {
+                return nil
+            }
+        }.first
+        guard let selected else {
             log(team: team, worktree: worktree, outcome: "skipped_unreachable")
             return false
         }
-        guard let selected, selected.runtime == .claude else { return false }
         guard case .claude(let socketPath, let protocolVersion) = selected.transport,
               protocolVersion == ClaudePeerProtocol.version else {
             log(team: team, worktree: worktree, outcome: "skipped_missing_transport")
             return false
         }
-        let pending = TeamInbox.runtimeDeliverablePrefix(
+        let defaultAgent = try? directory.resolve(
+            worktreePath: worktree,
+            explicitAgentID: nil
+        )
+        let acceptsUntargeted = defaultAgent?.id == selected.id
+        let pending = TeamInbox.runtimeDeliverableMessages(
             allUnread,
             runtime: TeamHookRuntime.claude.rawValue,
-            agentID: selected.id.rawValue
+            agentID: selected.id.rawValue,
+            acceptsUntargeted: acceptsUntargeted
         )
         guard !pending.isEmpty else { return false }
 
@@ -120,8 +125,7 @@ public actor ClaudePeerDeliveryService {
             while true {
                 do {
                     _ = try await client.send(
-                        body: batch.map { TeamHookRenderer.content(message: $0) }
-                            .joined(separator: "\n\n"),
+                        body: TeamPeerMessageFormatter.context(messages: batch),
                         socketPath: socketPath,
                         replySocketPath: nil,
                         senderName: senderName
@@ -149,10 +153,10 @@ public actor ClaudePeerDeliveryService {
         }
 
         do {
-            try inbox.compareAndAdvanceWorktreeWatermark(
+            try inbox.acknowledgeMessages(
                 teamID: team,
                 worktree: worktree,
-                to: batch[batch.count - 1].id
+                messageIDs: batch.map(\.id)
             )
         } catch {
             log(
@@ -200,11 +204,11 @@ public actor ClaudePeerDeliveryService {
     }
 }
 
-/// Derives the native cross-session sender label for one inbox row.
-/// Agent rows: `<team>/<worktree-member>#<agent-id>`; the suffix minus the
-/// team prefix is a routable `graftty team send` address. System rows: the
-/// originating SCM's display name when a source was persisted, else the
-/// generic team label.
+/// Derives the native cross-session display label for one inbox row.
+/// Agent rows resemble `<team>/<worktree-member>#<agent-id>`, but the native
+/// protocol may truncate the label, so routing identity lives in the message
+/// envelope instead. System rows use the originating SCM's display name when
+/// a source was persisted, else the generic team label.
 public enum ClaudePeerSenderName {
     public static func name(for message: TeamInboxMessage) -> String {
         guard !message.from.isSystem else {
@@ -226,10 +230,14 @@ public enum TeamPeerMessageFormatter {
     public static func context(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
             let address = escapeAttribute(message.from.canonicalAddress)
+            let fallbackSuffix = message.from.runtime.map { runtime in
+                let fallback = escapeAttribute("\(message.from.worktree)#\(runtime)")
+                return #" fallback-agent="\#(fallback)""#
+            } ?? ""
             // Neutralize both peer-authored closes (early termination) and
             // peer-authored opens (sender-attribution forgery of a sibling
-            // element); the `agent` attribute is the recipient's only
-            // provenance cue.
+            // element). Only attributes synthesized here may carry routing
+            // provenance; peer body text remains inert.
             let body = TeamHookRenderer.content(message: message)
                 .replacingOccurrences(
                     of: "</graftty-peer-message",
@@ -245,7 +253,7 @@ public enum TeamPeerMessageFormatter {
                 ? #" priority="urgent""#
                 : ""
             return """
-            <graftty-peer-message agent="\(address)"\(urgencySuffix)>
+            <graftty-peer-message agent="\(address)"\(fallbackSuffix)\(urgencySuffix)>
             \(body)
             </graftty-peer-message>
             """

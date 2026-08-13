@@ -194,6 +194,8 @@ struct NotificationMessageTests {
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {
         let original: NotificationMessage = .teamInbox(TeamInboxPageRequest(
             callerWorktree: "/r/a",
+            callerAgentID: "codex-0123456789ab",
+            consuming: true,
             worktree: "feature-auth",
             repo: "/r",
             member: "main",
@@ -209,6 +211,8 @@ struct NotificationMessageTests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_inbox")
         #expect(json["caller_worktree"] as? String == "/r/a")
+        #expect(json["caller_agent_id"] as? String == "codex-0123456789ab")
+        #expect(json["consuming"] as? Bool == true)
         #expect(json["worktree"] as? String == "feature-auth")
         #expect(json["repo"] as? String == "/r")
         #expect(json["member"] as? String == "main")
@@ -227,12 +231,14 @@ struct NotificationMessageTests {
     @Test func teamInboxAdvanceRequestRoundTrips() throws {
         let request = NotificationMessage.teamInboxAdvance(
             callerWorktree: "/r/a",
+            callerAgentID: "codex-0123456789ab",
             throughID: "message-123"
         )
         let requestData = try JSONEncoder().encode(request)
         let requestJSON = try JSONSerialization.jsonObject(with: requestData) as! [String: Any]
         #expect(requestJSON["type"] as? String == "team_inbox_advance")
         #expect(requestJSON["caller_worktree"] as? String == "/r/a")
+        #expect(requestJSON["caller_agent_id"] as? String == "codex-0123456789ab")
         #expect(requestJSON["through_id"] as? String == "message-123")
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: requestData) == request)
 

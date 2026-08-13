@@ -140,15 +140,26 @@ public struct TeamInboxCursor: Codable, Sendable, Equatable {
 public struct TeamInboxWorktreeWatermark: Codable, Sendable, Equatable {
     public let worktree: String
     public let lastDeliveredToAnySessionID: String?
+    /// Still-pending message IDs that precede the latest row delivered to any
+    /// session. This lets one runtime advance past rows reserved for another
+    /// provider without losing them, while storage grows only with unresolved
+    /// gaps rather than every later delivered row.
+    public let pendingBeforeWatermarkIDs: [String]?
 
     enum CodingKeys: String, CodingKey {
         case worktree
         case lastDeliveredToAnySessionID = "last_delivered_to_any_session_id"
+        case pendingBeforeWatermarkIDs = "pending_before_watermark_ids"
     }
 
-    public init(worktree: String, lastDeliveredToAnySessionID: String?) {
+    public init(
+        worktree: String,
+        lastDeliveredToAnySessionID: String?,
+        pendingBeforeWatermarkIDs: [String]? = nil
+    ) {
         self.worktree = worktree
         self.lastDeliveredToAnySessionID = lastDeliveredToAnySessionID
+        self.pendingBeforeWatermarkIDs = pendingBeforeWatermarkIDs
     }
 }
 
@@ -160,6 +171,7 @@ public enum TeamInboxError: Error, Equatable, CustomStringConvertible {
     case watermarkLockTimeout
     case advanceTargetNotFound(String)
     case advanceTargetNotAddressed(messageID: String, worktree: String)
+    case advanceTargetNotDeliverable(messageID: String, agentID: String?)
 
     public var description: String {
         switch self {
@@ -169,6 +181,8 @@ public enum TeamInboxError: Error, Equatable, CustomStringConvertible {
             return "team inbox message not found: \(messageID)"
         case .advanceTargetNotAddressed(let messageID, let worktree):
             return "team inbox message \(messageID) is not addressed to \(worktree)"
+        case .advanceTargetNotDeliverable(let messageID, let agentID):
+            return "team inbox message \(messageID) is not deliverable to \(agentID ?? "this unbound caller")"
         }
     }
 }
@@ -324,23 +338,23 @@ public final class TeamInbox {
         }
     }
 
-    /// Returns the leading rows that `runtime` may consume. A row targeted to
-    /// another runtime stops the prefix so the shared worktree watermark never
-    /// advances past a message that still needs its own delivery path.
-    static func runtimeDeliverablePrefix(
+    /// Returns every row this runtime agent may consume, preserving its
+    /// relative inbox order while skipping rows reserved for other targets.
+    /// Durable pending-gap IDs keep those skipped rows available.
+    static func runtimeDeliverableMessages(
         _ messages: [TeamInboxMessage],
         runtime: String,
         agentID: String? = nil,
         acceptsUntargeted: Bool = true
     ) -> [TeamInboxMessage] {
-        Array(messages.prefix {
+        messages.filter {
             isDeliverable(
                 $0,
                 toRuntime: runtime,
                 agentID: agentID,
                 acceptsUntargeted: acceptsUntargeted
             )
-        })
+        }
     }
 
     static func isDeliverable(
@@ -377,6 +391,22 @@ public final class TeamInbox {
         teamID: String
     ) throws {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: watermark.worktree) {
+            let allMessages = try messages(teamID: teamID)
+            if watermark.pendingBeforeWatermarkIDs == nil,
+               let targetIndex = messageIndex(
+                   watermark.lastDeliveredToAnySessionID,
+                   in: allMessages
+               ) {
+                _ = try acknowledgeMessagesUnlocked(
+                    teamID: teamID,
+                    worktree: watermark.worktree,
+                    messageIDs: allMessages[...targetIndex]
+                        .filter { $0.to.worktree == watermark.worktree }
+                        .map(\.id),
+                    allMessages: allMessages
+                )
+                return
+            }
             if try shouldWriteWorktreeWatermarkUnlocked(
                 teamID: teamID,
                 worktree: watermark.worktree,
@@ -405,18 +435,33 @@ public final class TeamInbox {
         recipientWorktree: String
     ) throws -> (messages: [TeamInboxMessage], throughID: String?) {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
-            let watermarkID = try worktreeWatermark(
+            let watermark = try worktreeWatermark(
                 teamID: teamID,
                 worktree: recipientWorktree
-            )?.lastDeliveredToAnySessionID
+            )
             let allMessages = try messages(teamID: teamID)
-            let unread = unreadMessages(
+            let unread = pendingMessages(
                 from: allMessages,
                 recipientWorktree: recipientWorktree,
-                after: watermarkID
+                watermark: watermark
             )
             return (unread, unread.last?.id)
         }
+    }
+
+    public func worktreePendingMessages(
+        teamID: String,
+        recipientWorktree: String
+    ) throws -> [TeamInboxMessage] {
+        let watermark = try worktreeWatermark(
+            teamID: teamID,
+            worktree: recipientWorktree
+        )
+        return pendingMessages(
+            from: try messages(teamID: teamID),
+            recipientWorktree: recipientWorktree,
+            watermark: watermark
+        )
     }
 
     public func advanceRead(
@@ -426,11 +471,6 @@ public final class TeamInbox {
     ) throws {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
             let allMessages = try messages(teamID: teamID)
-            let currentID = try worktreeWatermark(
-                teamID: teamID,
-                worktree: recipientWorktree
-            )?.lastDeliveredToAnySessionID
-
             guard let targetIndex = allMessages.lastIndex(where: { $0.id == throughID }) else {
                 throw TeamInboxError.advanceTargetNotFound(throughID)
             }
@@ -442,17 +482,32 @@ public final class TeamInbox {
                 )
             }
 
-            let currentIndex = messageIndex(currentID, in: allMessages)
-            if let currentIndex, currentIndex >= targetIndex {
-                return
-            }
+            _ = try acknowledgeMessagesUnlocked(
+                teamID: teamID,
+                worktree: recipientWorktree,
+                messageIDs: allMessages[...targetIndex]
+                    .filter { $0.to.worktree == recipientWorktree }
+                    .map(\.id),
+                allMessages: allMessages
+            )
+        }
+    }
 
-            try writeWorktreeWatermarkUnlocked(
-                TeamInboxWorktreeWatermark(
-                    worktree: recipientWorktree,
-                    lastDeliveredToAnySessionID: target.id
-                ),
-                teamID: teamID
+    /// Records accepted rows without discarding skipped rows targeted to a
+    /// different runtime or exact agent. The watermark advances to the newest
+    /// accepted row while skipped IDs stay as explicit pending gaps.
+    @discardableResult
+    public func acknowledgeMessages(
+        teamID: String,
+        worktree: String,
+        messageIDs: [String]
+    ) throws -> Bool {
+        guard !messageIDs.isEmpty else { return false }
+        return try withWorktreeWatermarkLock(teamID: teamID, worktree: worktree) {
+            try acknowledgeMessagesUnlocked(
+                teamID: teamID,
+                worktree: worktree,
+                messageIDs: messageIDs
             )
         }
     }
@@ -466,10 +521,11 @@ public final class TeamInbox {
         recipientWorktree: String,
         sessionLastSeenID: String?
     ) throws -> (readPosition: String?, messages: [TeamInboxMessage]) {
-        let watermarkID = try worktreeWatermark(
+        let watermark = try worktreeWatermark(
             teamID: teamID,
             worktree: recipientWorktree
-        )?.lastDeliveredToAnySessionID
+        )
+        let watermarkID = watermark?.lastDeliveredToAnySessionID
         let allMessages = try messages(teamID: teamID)
         let readPosition = effectiveHookReadPosition(
             sessionLastSeenID: sessionLastSeenID,
@@ -478,10 +534,11 @@ public final class TeamInbox {
         )
         return (
             readPosition.id,
-            unreadMessages(
+            pendingMessages(
                 from: allMessages,
                 recipientWorktree: recipientWorktree,
-                afterIndex: readPosition.index
+                afterIndex: readPosition.index,
+                retainedPendingIDs: Set(watermark?.pendingBeforeWatermarkIDs ?? [])
             )
         )
     }
@@ -514,10 +571,9 @@ public final class TeamInbox {
     /// surfacing the same message. The session cursor mirrors successful
     /// claims for per-session diagnostics and catch-up.
     ///
-    /// A runtime-targeted row at the head of the worktree's unread queue
-    /// blocks other runtimes rather than being skipped. That keeps the
-    /// shared watermark ordered and prevents advancing past an earlier
-    /// message that still needs its own delivery path.
+    /// Rows targeted to another runtime remain pending while this watcher
+    /// claims the next row it can consume. Out-of-order acknowledgement keeps
+    /// the skipped row durable without blocking later work.
     public func claimNextUnreadMessage(
         teamID: String,
         sessionID: String,
@@ -533,10 +589,11 @@ public final class TeamInbox {
             }
 
             let allMessages = try messages(teamID: teamID)
-            let watermarkID = try worktreeWatermark(
+            let watermark = try worktreeWatermark(
                 teamID: teamID,
                 worktree: recipientWorktree
-            )?.lastDeliveredToAnySessionID
+            )
+            let watermarkID = watermark?.lastDeliveredToAnySessionID
             let cursorIndex = messageIndex(cursor.lastSeenID, in: allMessages)
             let watermarkIndex = messageIndex(watermarkID, in: allMessages)
             let lastDeliveredIndex = max(cursorIndex ?? -1, watermarkIndex ?? -1)
@@ -545,12 +602,12 @@ public final class TeamInbox {
                 offsetBy: lastDeliveredIndex + 1
             )
 
-            guard let message = allMessages[unreadStart...].first(where: {
-                $0.to.worktree == recipientWorktree
-            }) else {
-                return nil
-            }
-            guard Self.isDeliverable(message, toRuntime: runtime, agentID: agentID) else {
+            let retainedPendingIDs = Set(watermark?.pendingBeforeWatermarkIDs ?? [])
+            guard let message = allMessages.enumerated().first(where: { index, message in
+                message.to.worktree == recipientWorktree
+                    && (retainedPendingIDs.contains(message.id) || index >= unreadStart)
+                    && Self.isDeliverable(message, toRuntime: runtime, agentID: agentID)
+            })?.element else {
                 return nil
             }
 
@@ -559,19 +616,30 @@ public final class TeamInbox {
             // If the cursor write fails, still surface the claimed message:
             // the watermark prevents a replacement watcher from duplicating
             // it and supplies that watcher with the effective delivery floor.
-            try writeWorktreeWatermarkUnlocked(
-                TeamInboxWorktreeWatermark(
-                    worktree: recipientWorktree,
-                    lastDeliveredToAnySessionID: message.id
-                ),
-                teamID: teamID
+            var claimedIDs = [message.id]
+            if let cursorIndex,
+               cursorIndex > (watermarkIndex ?? -1) {
+                claimedIDs.append(contentsOf: allMessages[...cursorIndex]
+                    .filter { $0.to.worktree == recipientWorktree }
+                    .map(\.id))
+            }
+            _ = try acknowledgeMessagesUnlocked(
+                teamID: teamID,
+                worktree: recipientWorktree,
+                messageIDs: claimedIDs,
+                allMessages: allMessages,
+                currentWatermark: watermark
             )
+            let deliveryFloorID = try worktreeWatermark(
+                teamID: teamID,
+                worktree: recipientWorktree
+            )?.lastDeliveredToAnySessionID
             try? writeCursor(
                 TeamInboxCursor(
                     sessionID: sessionID,
                     worktree: recipientWorktree,
                     runtime: runtime,
-                    lastSeenID: message.id
+                    lastSeenID: deliveryFloorID
                 ),
                 teamID: teamID
             )
@@ -586,22 +654,18 @@ public final class TeamInbox {
         to proposedMessageID: String
     ) throws -> Bool {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: worktree) {
-            if try shouldWriteWorktreeWatermarkUnlocked(
+            let allMessages = try messages(teamID: teamID)
+            guard let targetIndex = messageIndex(proposedMessageID, in: allMessages) else {
+                return false
+            }
+            return try acknowledgeMessagesUnlocked(
                 teamID: teamID,
                 worktree: worktree,
-                proposedID: proposedMessageID,
-                allowUnknownProposedID: false
-            ) {
-                try writeWorktreeWatermarkUnlocked(
-                    TeamInboxWorktreeWatermark(
-                        worktree: worktree,
-                        lastDeliveredToAnySessionID: proposedMessageID
-                    ),
-                    teamID: teamID
-                )
-                return true
-            }
-            return false
+                messageIDs: allMessages[...targetIndex]
+                    .filter { $0.to.worktree == worktree }
+                    .map(\.id),
+                allMessages: allMessages
+            )
         }
     }
 
@@ -611,6 +675,92 @@ public final class TeamInbox {
     ) -> Int? {
         guard let messageID else { return nil }
         return messages.lastIndex(where: { $0.id == messageID })
+    }
+
+    private func pendingMessages(
+        from allMessages: [TeamInboxMessage],
+        recipientWorktree: String,
+        watermark: TeamInboxWorktreeWatermark?
+    ) -> [TeamInboxMessage] {
+        pendingMessages(
+            from: allMessages,
+            recipientWorktree: recipientWorktree,
+            afterIndex: messageIndex(watermark?.lastDeliveredToAnySessionID, in: allMessages),
+            retainedPendingIDs: Set(watermark?.pendingBeforeWatermarkIDs ?? [])
+        )
+    }
+
+    private func pendingMessages(
+        from allMessages: [TeamInboxMessage],
+        recipientWorktree: String,
+        afterIndex: Int?,
+        retainedPendingIDs: Set<String>
+    ) -> [TeamInboxMessage] {
+        let floor = afterIndex ?? -1
+        return allMessages.enumerated().compactMap { index, message in
+            guard message.to.worktree == recipientWorktree,
+                  retainedPendingIDs.contains(message.id) || index > floor else {
+                return nil
+            }
+            return message
+        }
+    }
+
+    private func acknowledgeMessagesUnlocked(
+        teamID: String,
+        worktree: String,
+        messageIDs: [String],
+        allMessages suppliedMessages: [TeamInboxMessage]? = nil,
+        currentWatermark suppliedWatermark: TeamInboxWorktreeWatermark? = nil
+    ) throws -> Bool {
+        let allMessages = try suppliedMessages ?? messages(teamID: teamID)
+        let current = try suppliedWatermark ?? worktreeWatermark(
+            teamID: teamID,
+            worktree: worktree
+        )
+        let requested = Set(messageIDs)
+        for id in requested {
+            guard let message = allMessages.last(where: { $0.id == id }) else {
+                throw TeamInboxError.advanceTargetNotFound(id)
+            }
+            guard message.to.worktree == worktree else {
+                throw TeamInboxError.advanceTargetNotAddressed(
+                    messageID: id,
+                    worktree: worktree
+                )
+            }
+        }
+
+        let currentIndex = messageIndex(current?.lastDeliveredToAnySessionID, in: allMessages)
+        var retainedPending = Set(current?.pendingBeforeWatermarkIDs ?? [])
+        retainedPending.subtract(requested)
+
+        let newestRequestedIndex = requested.compactMap {
+            messageIndex($0, in: allMessages)
+        }.filter { $0 > (currentIndex ?? -1) }.max()
+        var watermarkID = current?.lastDeliveredToAnySessionID
+        if let newestRequestedIndex {
+            let start = (currentIndex ?? -1) + 1
+            if start <= newestRequestedIndex {
+                for message in allMessages[start...newestRequestedIndex]
+                    where message.to.worktree == worktree && !requested.contains(message.id) {
+                    retainedPending.insert(message.id)
+                }
+            }
+            watermarkID = allMessages[newestRequestedIndex].id
+        }
+
+        let orderedPending = allMessages.compactMap { message in
+            retainedPending.contains(message.id) ? message.id : nil
+        }
+        let updated = TeamInboxWorktreeWatermark(
+            worktree: worktree,
+            lastDeliveredToAnySessionID: watermarkID,
+            pendingBeforeWatermarkIDs: orderedPending.isEmpty ? nil : orderedPending
+        )
+        guard updated != current else { return false }
+        try writeWorktreeWatermarkUnlocked(updated, teamID: teamID)
+        return true
     }
 
     private func shouldWriteWorktreeWatermarkUnlocked(

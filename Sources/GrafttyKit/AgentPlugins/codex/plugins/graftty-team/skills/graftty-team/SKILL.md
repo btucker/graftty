@@ -14,9 +14,10 @@ Run `graftty team list --json` before choosing among multiple agents. Read the h
 Treat canonical addresses as routing identities:
 
 - A worktree name or canonical path selects the earliest reachable top-level agent in that worktree.
+- `<canonical-worktree-path>#<runtime>` targets that provider without pinning one session, so the message remains queued while its agent is between turns.
 - `<canonical-worktree-path>#<runtime>-<12hex>` selects only that exact agent and fails closed if it is gone.
 - Copy exact addresses from `graftty team list --json`; do not construct them from display names.
-- Provider display names are labels only. Never route by them.
+- Native provider sender labels are display metadata and may be truncated. Never route by them.
 - Native subagents are not independently routable.
 
 When an agent-joined notice arrives, refresh the roster before forwarding or assigning work.
@@ -31,9 +32,11 @@ graftty team send --stdin '<address>' <<'GRAFTTY_7F3A91C2'
 GRAFTTY_7F3A91C2
 ```
 
-The positional `<address>` accepts the same canonical forms shown by the roster and incoming messages: a worktree path for its default agent, or `<canonical-worktree-path>#<runtime>-<12hex>` for one exact agent.
+The positional `<address>` accepts a worktree path for its default agent, `<canonical-worktree-path>#<runtime>` for the next agent of one provider, or `<canonical-worktree-path>#<runtime>-<12hex>` for one exact live agent.
 
-Incoming messages use `<graftty-peer-message agent="<address>">`. Pass that `agent` value unchanged to `graftty team send --stdin` when replying, unless the task clearly belongs elsewhere.
+Agent-authored messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. If the exact sender is listed with `is_reachable: true` in `graftty team list --json`, reply by passing `agent` unchanged to `graftty team send --stdin`. Otherwise pass `fallback-agent` unchanged; the reply will wait durably for the provider's next agent.
+
+Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses. Those tools use a separate roster, and their native sender label is not a canonical Graftty route. Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
 
 If a message asks for a different agent in the same worktree, or that agent is better placed to act, inspect the roster and forward to its canonical address. State that you forwarded it; do not impersonate the other agent.
 

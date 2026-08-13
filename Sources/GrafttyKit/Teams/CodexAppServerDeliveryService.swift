@@ -64,26 +64,11 @@ public actor CodexAppServerDeliveryService {
     @discardableResult
     private func deliverOnce(team: String, worktree: String) async -> Bool {
         let runtime = TeamHookRuntime.codex.rawValue
-        let watermark: String?
-        do {
-            watermark = try inbox.worktreeWatermark(teamID: team, worktree: worktree)?
-                .lastDeliveredToAnySessionID
-        } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_watermark_read"
-            )
-            return false
-        }
-
         let allUnread: [TeamInboxMessage]
         do {
-            allUnread = try inbox.unreadMessages(
+            allUnread = try inbox.worktreePendingMessages(
                 teamID: team,
-                recipientWorktree: worktree,
-                after: watermark
+                recipientWorktree: worktree
             )
         } catch {
             log(
@@ -94,7 +79,7 @@ public actor CodexAppServerDeliveryService {
             )
             return false
         }
-        guard let first = allUnread.first else { return false }
+        guard !allUnread.isEmpty else { return false }
 
         let worktreeRecords = presenceRecords().filter {
             $0.teamID == team && $0.worktree == worktree
@@ -112,20 +97,32 @@ public actor CodexAppServerDeliveryService {
                 )
             }
         )
-        let selected: TeamAgentDescriptor?
-        do {
-            let targetRuntime = first.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
-            selected = try directory.resolve(
-                worktreePath: worktree,
-                runtime: targetRuntime,
-                explicitAgentID: first.to.agentID
+        let selected = allUnread.lazy.compactMap { message -> TeamAgentDescriptor? in
+            do {
+                let targetRuntime = message.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
+                let candidate = try directory.resolve(
+                    worktreePath: worktree,
+                    runtime: targetRuntime,
+                    explicitAgentID: message.to.agentID
+                )
+                return candidate?.runtime == .codex ? candidate : nil
+            } catch {
+                return nil
+            }
+        }.first
+        guard let selected else {
+            let hasReachableCodex = directory.agents.contains {
+                $0.runtime == .codex && $0.isReachable
+            }
+            log(
+                team: team,
+                worktree: worktree,
+                runtime: runtime,
+                outcome: hasReachableCodex ? "skipped_unreachable" : "skipped_no_owner"
             )
-        } catch {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_unreachable")
             return false
         }
-        guard let selected, selected.runtime == .codex,
-              let ownerPane = selected.paneSessionName else {
+        guard let ownerPane = selected.paneSessionName else {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_owner")
             return false
         }
@@ -169,13 +166,18 @@ public actor CodexAppServerDeliveryService {
             return false
         }
 
-        let pending = TeamInbox.runtimeDeliverablePrefix(
+        let defaultAgent = try? directory.resolve(
+            worktreePath: worktree,
+            explicitAgentID: nil
+        )
+        let pending = TeamInbox.runtimeDeliverableMessages(
             allUnread,
             runtime: runtime,
-            agentID: selected.id.rawValue
+            agentID: selected.id.rawValue,
+            acceptsUntargeted: defaultAgent?.id == selected.id
         )
 
-        guard let lastMessage = pending.last else {
+        guard !pending.isEmpty else {
             log(
                 team: team,
                 worktree: worktree,
@@ -214,10 +216,10 @@ public actor CodexAppServerDeliveryService {
         }
 
         do {
-            try inbox.compareAndAdvanceWorktreeWatermark(
+            try inbox.acknowledgeMessages(
                 teamID: team,
                 worktree: worktree,
-                to: lastMessage.id
+                messageIDs: pending.map(\.id)
             )
         } catch {
             log(

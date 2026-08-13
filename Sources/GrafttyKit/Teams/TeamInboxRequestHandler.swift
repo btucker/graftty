@@ -177,11 +177,11 @@ public final class TeamInboxRequestHandler {
             throw TeamInboxRequestError.recipientNotFound(name: recipient, available: available)
         }
         // AGENT-6.17: an explicit `#agent-id` suffix binds the row to that
-        // exact reachable agent and fails closed here when it is gone. A
-        // plain worktree address must stay unpinned: delivery re-resolves
-        // the default agent per attempt (AGENT-6.3), so stamping the
-        // send-time default would wedge the whole worktree queue behind a
-        // row no live agent may consume once that agent exits.
+        // exact reachable agent and fails closed here when it is gone.
+        // AGENT-6.24: a `#runtime` suffix intentionally stays session-free
+        // so it can wait durably for that provider's next agent. A plain
+        // worktree address also stays unpinned: delivery re-resolves its
+        // default agent per attempt (AGENT-6.3).
         let selectedAgent: TeamAgentDescriptor?
         if let explicitAgentID = addressed.agentID {
             do {
@@ -214,7 +214,7 @@ public final class TeamInboxRequestHandler {
             teamsEnabled: teamsEnabled,
             senderRuntime: senderIdentity?.runtime,
             senderAgentID: senderIdentity?.rawValue,
-            recipientRuntime: selectedAgent?.runtime,
+            recipientRuntime: selectedAgent?.runtime ?? addressed.runtime,
             recipientAgentID: selectedAgent?.id.rawValue
         )!
         return TeamInboxDelivery(recipient: recipientMember, message: message)
@@ -249,6 +249,7 @@ public final class TeamInboxRequestHandler {
 
     public func advanceRead(
         callerWorktree: String,
+        callerAgentID: String? = nil,
         throughID: String,
         repos: [RepoEntry],
         teamsEnabled: Bool
@@ -258,10 +259,38 @@ public final class TeamInboxRequestHandler {
             repos: repos,
             teamsEnabled: teamsEnabled
         )
-        try inbox.advanceRead(
-            teamID: teamID(context.team),
-            recipientWorktree: context.sender.worktreePath,
-            throughID: throughID
+        let resolvedTeamID = teamID(context.team)
+        let allMessages = try inbox.messages(teamID: resolvedTeamID)
+        guard let target = allMessages.last(where: { $0.id == throughID }) else {
+            throw TeamInboxError.advanceTargetNotFound(throughID)
+        }
+        guard target.to.worktree == context.sender.worktreePath else {
+            throw TeamInboxError.advanceTargetNotAddressed(
+                messageID: throughID,
+                worktree: context.sender.worktreePath
+            )
+        }
+        let pending = try inbox.worktreePendingMessages(
+            teamID: resolvedTeamID,
+            recipientWorktree: context.sender.worktreePath
+        )
+        guard pending.contains(where: { $0.id == throughID }) else { return }
+        let deliverable = manuallyDeliverableMessages(
+            pending,
+            callerAgentID: callerAgentID,
+            team: context.team,
+            worktree: context.sender.worktreePath
+        )
+        guard let targetIndex = deliverable.lastIndex(where: { $0.id == throughID }) else {
+            throw TeamInboxError.advanceTargetNotDeliverable(
+                messageID: throughID,
+                agentID: callerAgentID
+            )
+        }
+        try inbox.acknowledgeMessages(
+            teamID: resolvedTeamID,
+            worktree: context.sender.worktreePath,
+            messageIDs: deliverable[...targetIndex].map(\.id)
         )
     }
 
@@ -314,6 +343,8 @@ public final class TeamInboxRequestHandler {
 
     public func diagnosticPage(
         callerWorktree: String?,
+        callerAgentID: String? = nil,
+        consuming: Bool = false,
         worktree: String?,
         repo: String?,
         member: String?,
@@ -355,6 +386,10 @@ public final class TeamInboxRequestHandler {
             let effectiveSnapshotID: String?
             if let afterID {
                 let allMessages = try inbox.messages(teamID: resolvedTeamID)
+                let pendingIDs = Set(try inbox.worktreePendingMessages(
+                    teamID: resolvedTeamID,
+                    recipientWorktree: context.viewer.worktreePath
+                ).map(\.id))
                 guard let snapshotThroughID else {
                     throw TeamInboxRequestError.paginationRequired
                 }
@@ -369,6 +404,7 @@ public final class TeamInboxRequestHandler {
                 }
                 messages = allMessages[(afterIndex + 1)...snapshotIndex].filter {
                     $0.to.worktree == context.viewer.worktreePath
+                        && pendingIDs.contains($0.id)
                 }
                 effectiveSnapshotID = snapshotThroughID
             } else {
@@ -380,13 +416,19 @@ public final class TeamInboxRequestHandler {
                 effectiveSnapshotID = snapshot.throughID
             }
 
+            let callerMessages = consuming ? manuallyDeliverableMessages(
+                messages,
+                callerAgentID: callerAgentID,
+                team: context.team,
+                worktree: context.viewer.worktreePath
+            ) : messages
             let filteredMessages: [TeamInboxMessage]
             if let member {
-                filteredMessages = messages.filter {
+                filteredMessages = callerMessages.filter {
                     $0.to.member == member || $0.from.member == member
                 }
             } else {
-                filteredMessages = messages
+                filteredMessages = callerMessages
             }
             let candidates = filteredMessages[...]
             let pageMessages = try TeamInboxDiagnosticPaginator.oldestPage(
@@ -466,8 +508,8 @@ public final class TeamInboxRequestHandler {
                 worktree: context.sender.worktreePath,
                 runtime: runtime
             ) : nil
-            let readPosition: String?
             let pending: [TeamInboxMessage]
+            let readPosition: String?
             if let cursor {
                 let unread = try inbox.hookUnreadMessages(
                     teamID: teamID,
@@ -506,14 +548,13 @@ public final class TeamInboxRequestHandler {
                 messages: pending
             )
             if cursor != nil {
-                try advanceCursorAcrossDeliveredPrefix(
+                try acknowledgeDeliveredMessages(
                     delivered: pending,
-                    allUnread: pending,
                     teamID: teamID,
                     sessionID: sessionID,
                     worktree: context.sender.worktreePath,
                     runtime: runtime,
-                    after: readPosition
+                    previouslyDeliveredThroughID: readPosition
                 )
             }
             return output
@@ -552,14 +593,13 @@ public final class TeamInboxRequestHandler {
                 runtime: runtime,
                 messages: messages
             )
-            try advanceCursorAcrossDeliveredPrefix(
+            try acknowledgeDeliveredMessages(
                 delivered: messages,
-                allUnread: deliverableUnread,
                 teamID: teamID,
                 sessionID: sessionID,
                 worktree: context.sender.worktreePath,
                 runtime: runtime,
-                after: unread.readPosition
+                previouslyDeliveredThroughID: unread.readPosition
             )
             return output
         case .stop:
@@ -688,42 +728,56 @@ public final class TeamInboxRequestHandler {
         return cursor
     }
 
-    private func advanceCursorAcrossDeliveredPrefix(
+    private func acknowledgeDeliveredMessages(
         delivered: [TeamInboxMessage],
-        allUnread: [TeamInboxMessage],
         teamID: String,
         sessionID: String,
         worktree: String,
         runtime: TeamHookRuntime,
-        after lastSeenID: String?
+        previouslyDeliveredThroughID: String?
     ) throws {
         guard !delivered.isEmpty else { return }
-        let deliveredIDs = Set(delivered.map(\.id))
-        var advanceTo = lastSeenID
-        for message in allUnread {
-            guard deliveredIDs.contains(message.id) else { break }
-            advanceTo = message.id
-        }
-        guard advanceTo != lastSeenID else { return }
         // TEAM-11.7: commit the (fallible, lock-guarded) watermark before
         // the cursor, mirroring `claimNextUnreadMessage`. If the watermark
         // advance times out under lock contention, the cursor must not
         // already point past messages this hook never delivered — that
         // would skip them permanently. A watermark that lands without its
         // cursor mirror at worst redelivers (at-least-once), never loses.
-        try inbox.writeWorktreeWatermark(
-            TeamInboxWorktreeWatermark(
-                worktree: worktree,
-                lastDeliveredToAnySessionID: advanceTo
-            ),
-            teamID: teamID
+        let allMessages = try inbox.messages(teamID: teamID)
+        let priorIndex = previouslyDeliveredThroughID.flatMap { priorID in
+            allMessages.lastIndex(where: { $0.id == priorID })
+        }
+        let watermarkIndex = try inbox.worktreeWatermark(
+            teamID: teamID,
+            worktree: worktree
+        ).flatMap { watermark in
+            allMessages.lastIndex(where: {
+                $0.id == watermark.lastDeliveredToAnySessionID
+            })
+        }
+        let priorIDs: [String]
+        if let priorIndex, priorIndex > (watermarkIndex ?? -1) {
+            priorIDs = allMessages[...priorIndex]
+                .filter { $0.to.worktree == worktree }
+                .map(\.id)
+        } else {
+            priorIDs = []
+        }
+        try inbox.acknowledgeMessages(
+            teamID: teamID,
+            worktree: worktree,
+            messageIDs: priorIDs + delivered.map(\.id)
         )
+        let deliveryFloorID = try inbox.worktreeWatermark(
+            teamID: teamID,
+            worktree: worktree
+        )?.lastDeliveredToAnySessionID
         try? inbox.writeCursor(
             TeamInboxCursor(
                 sessionID: sessionID,
                 worktree: worktree,
                 runtime: runtime.rawValue,
-                lastSeenID: advanceTo
+                lastSeenID: deliveryFloorID
             ),
             teamID: teamID
         )
@@ -733,10 +787,44 @@ public final class TeamInboxRequestHandler {
         TeamInboxEndpoint(member: member.name, worktree: member.worktreePath, runtime: runtime)
     }
 
+    private func manuallyDeliverableMessages(
+        _ messages: [TeamInboxMessage],
+        callerAgentID: String?,
+        team: TeamView,
+        worktree: String
+    ) -> [TeamInboxMessage] {
+        guard let identity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:)) else {
+            return messages.filter { $0.to.runtime == nil && $0.to.agentID == nil }
+        }
+        let directory = TeamAgentDirectory(
+            records: agentRecords().filter { $0.teamID == teamID(team) },
+            isReachable: agentReachability
+        )
+        let resolvedCaller = try? directory.resolve(
+            worktreePath: worktree,
+            explicitAgentID: identity.rawValue
+        )
+        guard resolvedCaller?.id == identity else {
+            return messages.filter { $0.to.runtime == nil && $0.to.agentID == nil }
+        }
+        return TeamInbox.runtimeDeliverableMessages(
+            messages,
+            runtime: identity.runtime.rawValue,
+            agentID: identity.rawValue,
+            acceptsUntargeted: true
+        )
+    }
+
+    private struct AddressedRecipient {
+        let member: String
+        let runtime: TeamHookRuntime?
+        let agentID: String?
+    }
+
     private func splitAgentAddress(
         _ recipient: String,
         in team: TeamView
-    ) -> (member: String, agentID: String?) {
+    ) -> AddressedRecipient {
         let literal = splitLiteralAgentAddress(recipient, in: team)
         if team.memberNamed(literal.member) != nil {
             return literal
@@ -763,7 +851,7 @@ public final class TeamInboxRequestHandler {
         )
         let acceptsUntargeted = defaultAgent == nil
             || (defaultAgent?.runtime == runtime && defaultAgent?.id.rawValue == agentID)
-        return TeamInbox.runtimeDeliverablePrefix(
+        return TeamInbox.runtimeDeliverableMessages(
             messages,
             runtime: runtime.rawValue,
             agentID: agentID,
@@ -774,14 +862,14 @@ public final class TeamInboxRequestHandler {
     private func splitLiteralAgentAddress(
         _ recipient: String,
         in team: TeamView
-    ) -> (member: String, agentID: String?) {
+    ) -> AddressedRecipient {
         // Prefer an exact member/path match so existing branch names that
         // contain `#` remain valid. Canonical suffixes are recognized only
         // after a known absolute worktree path or convenience display name
         // plus a literal separator. Paths sort first naturally in most cases,
         // but explicit length ordering also handles names nested in paths.
         if team.memberNamed(recipient) != nil {
-            return (recipient, nil)
+            return AddressedRecipient(member: recipient, runtime: nil, agentID: nil)
         }
         let candidates = team.members.flatMap { member in
             [
@@ -794,10 +882,21 @@ public final class TeamInboxRequestHandler {
         for candidate in candidates {
             let prefix = candidate.address + "#"
             guard recipient.hasPrefix(prefix) else { continue }
-            let id = String(recipient.dropFirst(prefix.count))
-            return (candidate.member, id.isEmpty ? nil : id)
+            let suffix = String(recipient.dropFirst(prefix.count))
+            if let runtime = TeamHookRuntime(rawValue: suffix) {
+                return AddressedRecipient(
+                    member: candidate.member,
+                    runtime: runtime,
+                    agentID: nil
+                )
+            }
+            return AddressedRecipient(
+                member: candidate.member,
+                runtime: nil,
+                agentID: suffix.isEmpty ? nil : suffix
+            )
         }
-        return (recipient, nil)
+        return AddressedRecipient(member: recipient, runtime: nil, agentID: nil)
     }
 
     private static func unescapeXMLAttribute(_ value: String) -> String {

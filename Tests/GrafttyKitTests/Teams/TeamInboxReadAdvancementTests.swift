@@ -9,7 +9,7 @@ struct TeamInboxReadAdvancementTests {
         let fixture = try Fixture(ids: ["a-1", "b-1", "a-2"])
         let aliceFirst = try fixture.append(to: fixture.alice, body: "alice one")
         let bobMessage = try fixture.append(to: fixture.bob, body: "bob one")
-        let aliceSecond = try fixture.append(to: fixture.alice, runtime: "claude", body: "alice two")
+        let aliceSecond = try fixture.append(to: fixture.alice, body: "alice two")
         try fixture.inbox.writeWorktreeWatermark(
             TeamInboxWorktreeWatermark(
                 worktree: fixture.bob,
@@ -55,6 +55,121 @@ struct TeamInboxReadAdvancementTests {
                 teamsEnabled: true
             )
         }
+    }
+
+    @Test("A consuming CLI read exposes and acknowledges only rows deliverable to its caller identity.")
+    func consumingReadCannotConsumeAnotherRuntimeTarget() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GrafttyTeamInboxManualRuntimeTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let alice = "/repo/.worktrees/alice"
+        let codex = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .codex,
+            paneSessionName: "graftty-codex", pid: 101,
+            processStartTimeMicroseconds: 1_001,
+            registeredAt: Date(timeIntervalSince1970: 20),
+            runtimeSessionID: "codex-session"
+        )
+        let claude = TeamPresenceRecord(
+            teamID: "/repo", worktree: alice, runtime: .claude,
+            paneSessionName: "graftty-claude", pid: 102,
+            processStartTimeMicroseconds: 1_002,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            runtimeSessionID: "claude-session"
+        )
+        var ids = ["targeted", "shared"]
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: { ids.removeFirst() }
+        )
+        let handler = TeamInboxRequestHandler(
+            inbox: inbox,
+            dispatcher: TeamEventDispatcher(
+                inbox: inbox,
+                preferencesProvider: { TeamEventRoutingPreferences() },
+                templateProvider: { "" }
+            ),
+            agentRecords: { [claude, codex] },
+            agentReachability: { _ in true }
+        )
+        let targeted = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: alice, runtime: "codex"),
+            priority: .normal,
+            body: "Codex only"
+        )
+        let shared = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: alice, runtime: nil),
+            priority: .normal,
+            body: "Claude may consume"
+        )
+        let claudeID = TeamAgentDirectory.identity(for: claude).rawValue
+        let claudePage = try handler.diagnosticPage(
+            callerWorktree: alice,
+            callerAgentID: claudeID,
+            consuming: true,
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: true,
+            all: false,
+            beforeID: nil,
+            forwardPagination: true,
+            limit: 100,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(claudePage.messages.map(\.id) == [shared.id])
+        try handler.advanceRead(
+            callerWorktree: alice,
+            callerAgentID: claudeID,
+            throughID: shared.id,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        let skipped = try inbox.worktreeWatermark(teamID: "/repo", worktree: alice)
+        #expect(skipped?.lastDeliveredToAnySessionID == shared.id)
+        #expect(skipped?.pendingBeforeWatermarkIDs == [targeted.id])
+
+        let codexID = TeamAgentDirectory.identity(for: codex).rawValue
+        let codexPage = try handler.diagnosticPage(
+            callerWorktree: alice,
+            callerAgentID: codexID,
+            consuming: true,
+            worktree: nil,
+            repo: nil,
+            member: nil,
+            unread: true,
+            all: false,
+            beforeID: nil,
+            forwardPagination: true,
+            limit: 100,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(codexPage.messages.map(\.id) == [targeted.id])
+        try handler.advanceRead(
+            callerWorktree: alice,
+            callerAgentID: codexID,
+            throughID: targeted.id,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        let compacted = try inbox.worktreeWatermark(teamID: "/repo", worktree: alice)
+        #expect(compacted?.lastDeliveredToAnySessionID == shared.id)
+        #expect(compacted?.pendingBeforeWatermarkIDs == nil)
     }
 
     @Test("Unread peeks use the scoped watermark without mutation")

@@ -196,7 +196,8 @@ struct TeamInboxTests {
         try inbox.writeWorktreeWatermark(
             TeamInboxWorktreeWatermark(
                 worktree: "/repo/acme/.worktrees/feature-auth",
-                lastDeliveredToAnySessionID: "m120"
+                lastDeliveredToAnySessionID: "m120",
+                pendingBeforeWatermarkIDs: ["m122"]
             ),
             teamID: "acme"
         )
@@ -206,8 +207,81 @@ struct TeamInboxTests {
             try inbox.worktreeWatermark(
                 teamID: "acme",
                 worktree: "/repo/acme/.worktrees/feature-auth"
-            )?.lastDeliveredToAnySessionID == "m120"
+            ) == TeamInboxWorktreeWatermark(
+                worktree: "/repo/acme/.worktrees/feature-auth",
+                lastDeliveredToAnySessionID: "m120",
+                pendingBeforeWatermarkIDs: ["m122"]
+            )
         )
+    }
+
+    @Test("Pending gaps stay bounded to unresolved rows while the delivery watermark advances.")
+    func pendingGapsDoNotAccumulateDeliveredRows() throws {
+        let inbox = TeamInbox(
+            rootDirectory: try temporaryDirectory(),
+            idGenerator: IncrementingIDGenerator(prefix: "m").next
+        )
+        let sender = TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil)
+        let recipient = TeamInboxEndpoint(
+            member: "feature",
+            worktree: "/repo/.worktrees/feature",
+            runtime: nil
+        )
+        let reserved = try inbox.appendMessage(
+            teamID: "repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: sender,
+            to: TeamInboxEndpoint(
+                member: recipient.member,
+                worktree: recipient.worktree,
+                runtime: "codex"
+            ),
+            priority: .normal,
+            body: "reserved"
+        )
+        let second = try inbox.appendMessage(
+            teamID: "repo", teamName: "repo", repoPath: "/repo",
+            from: sender, to: recipient, priority: .normal, body: "second"
+        )
+        let third = try inbox.appendMessage(
+            teamID: "repo", teamName: "repo", repoPath: "/repo",
+            from: sender, to: recipient, priority: .normal, body: "third"
+        )
+
+        try inbox.acknowledgeMessages(
+            teamID: "repo",
+            worktree: recipient.worktree,
+            messageIDs: [second.id]
+        )
+        try inbox.acknowledgeMessages(
+            teamID: "repo",
+            worktree: recipient.worktree,
+            messageIDs: [third.id]
+        )
+
+        let skipped = try inbox.worktreeWatermark(
+            teamID: "repo",
+            worktree: recipient.worktree
+        )
+        #expect(skipped?.lastDeliveredToAnySessionID == third.id)
+        #expect(skipped?.pendingBeforeWatermarkIDs == [reserved.id])
+        #expect(try inbox.worktreePendingMessages(
+            teamID: "repo",
+            recipientWorktree: recipient.worktree
+        ).map(\.id) == [reserved.id])
+
+        try inbox.acknowledgeMessages(
+            teamID: "repo",
+            worktree: recipient.worktree,
+            messageIDs: [reserved.id]
+        )
+        let compacted = try inbox.worktreeWatermark(
+            teamID: "repo",
+            worktree: recipient.worktree
+        )
+        #expect(compacted?.lastDeliveredToAnySessionID == third.id)
+        #expect(compacted?.pendingBeforeWatermarkIDs == nil)
     }
 
     @Test func compareAndAdvanceWorktreeWatermarkRefusesToRegress() throws {

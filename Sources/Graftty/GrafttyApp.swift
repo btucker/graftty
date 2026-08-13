@@ -2939,25 +2939,23 @@ struct GrafttyApp: App {
             for recipientWorktree in recipientWorktrees {
                 group.addTask {
                     for _ in 0..<maximumPasses {
-                        let before = (try? inbox.worktreeWatermark(
+                        let before = try? inbox.worktreeWatermark(
                             teamID: teamID,
                             worktree: recipientWorktree
-                        ))?.lastDeliveredToAnySessionID
-                        // Sequential on purpose: both services contend on the
-                        // same queue head and shared watermark, so parallel
-                        // fan-out can double-send an untargeted head row when
-                        // their reachability views differ; only one of them
-                        // can advance the watermark per pass anyway.
+                        )
+                        // Sequential on purpose: both services may see the
+                        // same untargeted row, and only its selected default
+                        // owner may acknowledge it.
                         for delivery in deliveries {
                             await delivery.onMessageArrival(
                                 team: teamID,
                                 worktree: recipientWorktree
                             )
                         }
-                        let after = (try? inbox.worktreeWatermark(
+                        let after = try? inbox.worktreeWatermark(
                             teamID: teamID,
                             worktree: recipientWorktree
-                        ))?.lastDeliveredToAnySessionID
+                        )
                         if before == after { break }
                     }
                 }
@@ -3003,12 +3001,10 @@ struct GrafttyApp: App {
                 teamID: record.teamID,
                 worktree: record.worktree
             )
-            // Unlike the codex-only retry helper, do not gate on the head
-            // row's runtime: a claude-targeted head that failed its initial
-            // native delivery must be retried here (AGENT-6.6/6.13); each
-            // delivery service re-checks the head row itself.
+            // Do not gate on the oldest row's runtime: each delivery service
+            // scans the pending set for rows it can consume.
             guard seen.insert(key).inserted,
-                  Self.firstUnreadMessage(inbox: inbox, key: key) != nil else {
+                  !Self.pendingUnreadMessages(inbox: inbox, key: key).isEmpty else {
                 continue
             }
             keys.append(key)
@@ -3051,36 +3047,29 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Head-of-queue gate for the codex-only retry helper: waits for another
-    /// runtime to consume a non-codex head row rather than waking codex
-    /// delivery for a row it can never send.
+    /// Gate for the Codex-only retry helper. Rows for another provider do not
+    /// suppress a later Codex or untargeted row because delivery positions can
+    /// acknowledge matching rows out of order.
     private nonisolated static func hasPendingUnreadMessage(
         inbox: TeamInbox,
         key: TeamDeliveryPresenceWorktreeKey
     ) -> Bool {
-        guard let first = firstUnreadMessage(inbox: inbox, key: key) else {
-            return false
+        pendingUnreadMessages(inbox: inbox, key: key).contains {
+            $0.to.runtime == nil || $0.to.runtime == TeamHookRuntime.codex.rawValue
         }
-        return first.to.runtime == nil ||
-            first.to.runtime == TeamHookRuntime.codex.rawValue
     }
 
-    private nonisolated static func firstUnreadMessage(
+    private nonisolated static func pendingUnreadMessages(
         inbox: TeamInbox,
         key: TeamDeliveryPresenceWorktreeKey
-    ) -> TeamInboxMessage? {
+    ) -> [TeamInboxMessage] {
         do {
-            let watermark = try inbox.worktreeWatermark(
+            return try inbox.worktreePendingMessages(
                 teamID: key.teamID,
-                worktree: key.worktree
-            )?.lastDeliveredToAnySessionID
-            return try inbox.unreadMessages(
-                teamID: key.teamID,
-                recipientWorktree: key.worktree,
-                after: watermark
-            ).first
+                recipientWorktree: key.worktree
+            )
         } catch {
-            return nil
+            return []
         }
     }
 
@@ -3753,9 +3742,10 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamInboxAdvance(let callerPath, let throughID):
+        case .teamInboxAdvance(let callerPath, let callerAgentID, let throughID):
             return await handleTeamInboxAdvance(
                 callerPath: callerPath,
+                callerAgentID: callerAgentID,
                 throughID: throughID,
                 appState: appState,
                 teamInbox: teamInbox,
@@ -4350,6 +4340,8 @@ struct GrafttyApp: App {
             let page = try await OffMainIO.run {
                 try handler.diagnosticPage(
                     callerWorktree: request.callerWorktree,
+                    callerAgentID: request.callerAgentID,
+                    consuming: request.consuming,
                     worktree: request.worktree,
                     repo: request.repo,
                     member: request.member,
@@ -4380,6 +4372,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func handleTeamInboxAdvance(
         callerPath: String,
+        callerAgentID: String?,
         throughID: String,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
@@ -4397,6 +4390,7 @@ struct GrafttyApp: App {
             try await OffMainIO.run {
                 try handler.advanceRead(
                     callerWorktree: callerPath,
+                    callerAgentID: callerAgentID,
                     throughID: throughID,
                     repos: repos,
                     teamsEnabled: teamsEnabled

@@ -54,6 +54,7 @@ struct TeamInboxReadCLITests {
 
         try command.execute(
             callerWorktree: "/repo/.worktrees/alice",
+            callerAgentID: "codex-0123456789ab",
             sendRequest: { request in
                 requests.append(request)
                 switch request {
@@ -65,7 +66,8 @@ struct TeamInboxReadCLITests {
                         nextAfterID: nil,
                         snapshotThroughID: "m2"
                     )
-                case .teamInboxAdvance(_, let throughID):
+                case .teamInboxAdvance(_, let callerAgentID, let throughID):
+                    #expect(callerAgentID == "codex-0123456789ab")
                     events.append("advance:\(throughID)")
                     return .ok
                 default:
@@ -109,6 +111,36 @@ struct TeamInboxReadCLITests {
         #expect(requests.count == 1)
     }
 
+    @Test("A consuming read fails closed when an older app returns a row targeted to another runtime.")
+    func consumingReadRejectsUnscopedLegacyResponse() throws {
+        let command = try TeamInbox.parse([])
+        var requests: [NotificationMessage] = []
+        var writes = 0
+        var errors: [String] = []
+
+        #expect(throws: ExitCode.self) {
+            try command.execute(
+                callerWorktree: "/repo/.worktrees/alice",
+                callerAgentID: "codex-0123456789ab",
+                sendRequest: { request in
+                    requests.append(request)
+                    return .teamInbox(
+                        messages: [Self.message("m1", runtime: "claude")],
+                        nextBeforeID: nil,
+                        nextAfterID: nil,
+                        snapshotThroughID: "m1"
+                    )
+                },
+                writeOutput: { _ in writes += 1 },
+                writeError: { errors.append($0) }
+            )
+        }
+
+        #expect(requests.count == 1)
+        #expect(writes == 0)
+        #expect(errors.joined().contains("update or restart"))
+    }
+
     @Test("An all-pages read carries a fixed snapshot forward and advances through its last row")
     func allPagesUseOneSnapshotAndAdvanceThroughLastDisplayedRow() throws {
         let command = try TeamInbox.parse(["--all"])
@@ -140,7 +172,7 @@ struct TeamInboxReadCLITests {
                         nextAfterID: nil,
                         snapshotThroughID: "m3"
                     )
-                case .teamInboxAdvance(_, "m3"):
+                case .teamInboxAdvance(_, _, "m3"):
                     return .ok
                 default:
                     return .error("unexpected request: \(request)")
@@ -288,7 +320,7 @@ struct TeamInboxReadCLITests {
         #expect(error.contains("rerun `graftty team inbox`"))
     }
 
-    private static func message(_ id: String) -> TeamInboxMessage {
+    private static func message(_ id: String, runtime: String? = nil) -> TeamInboxMessage {
         TeamInboxMessage(
             id: id,
             batchID: nil,
@@ -299,7 +331,7 @@ struct TeamInboxReadCLITests {
             to: TeamInboxEndpoint(
                 member: "alice",
                 worktree: "/repo/.worktrees/alice",
-                runtime: nil
+                runtime: runtime
             ),
             priority: .normal,
             body: id
