@@ -34,11 +34,11 @@ struct CodexAppServerDeliveryTests {
         #expect(event.detail["threadID"] == f.threadID)
     }
 
-    @Test("Codex delivery stops before a message targeted to another runtime.")
-    func runtimeTargetedMessageBlocksLaterDelivery() async throws {
+    @Test("Codex delivery skips another runtime's row without consuming it or blocking later Codex rows.")
+    func runtimeTargetedMessageDoesNotBlockLaterDelivery() async throws {
         let f = try Fixture()
-        let codexMessage = try f.appendUnread(body: "for Codex")
         let claudeMessage = try f.appendUnread(body: "for Claude", runtime: "claude")
+        let codexMessage = try f.appendUnread(body: "for Codex")
         try f.writeOwnerSession()
 
         await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree)
@@ -46,14 +46,15 @@ struct CodexAppServerDeliveryTests {
         let calls = await f.client.calls()
         #expect(calls.count == 1)
         #expect(calls[0].message == TeamPeerMessageFormatter.context(messages: [codexMessage]))
-        #expect(try f.inbox.worktreeWatermark(
+        let watermark = try f.inbox.worktreeWatermark(
             teamID: f.teamID,
             worktree: f.worktree
-        )?.lastDeliveredToAnySessionID == codexMessage.id)
-        #expect(try f.inbox.unreadMessages(
+        )
+        #expect(watermark?.lastDeliveredToAnySessionID == codexMessage.id)
+        #expect(watermark?.pendingBeforeWatermarkIDs == [claudeMessage.id])
+        #expect(try f.inbox.worktreePendingMessages(
             teamID: f.teamID,
-            recipientWorktree: f.worktree,
-            after: codexMessage.id
+            recipientWorktree: f.worktree
         ) == [claudeMessage])
     }
 

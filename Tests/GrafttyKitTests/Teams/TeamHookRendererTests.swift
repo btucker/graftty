@@ -22,7 +22,7 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("unrelated to the tool result"))
         #expect(context.contains("continue your current work"))
-        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" priority=\"urgent\">"))
+        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" fallback-agent=\"/repo/acme#claude\" priority=\"urgent\">"))
         #expect(!context.lowercased().contains("untrusted"))
         #expect(context.contains("CI is blocking you"))
     }
@@ -78,9 +78,9 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team broadcast --stdin"))
-        #expect(context.contains("<graftty-peer-message agent=\"<address>\">"))
+        #expect(context.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
         #expect(context.contains("stable reply address"))
-        #expect(context.contains("to `graftty team send --stdin <address>`"))
+        #expect(context.contains("send to `fallback-agent`"))
         #expect(context.contains("<<'GRAFTTY_<random>'"))
         #expect(context.contains("fresh quoted high-entropy heredoc delimiter"))
         #expect(context.contains("absent from the body"))
@@ -143,7 +143,7 @@ struct TeamHookRendererTests {
         let rendered = TeamHookRenderer.format(messages: [msg])
 
         #expect(rendered == """
-        <graftty-peer-message agent="/repo/acme">
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude">
         Please check the parser.
         </graftty-peer-message>
         """)
@@ -159,7 +159,7 @@ struct TeamHookRendererTests {
         let rendered = TeamHookRenderer.format(messages: [msg])
 
         #expect(rendered == """
-        <graftty-peer-message agent="/repo/acme" priority="urgent">
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" priority="urgent">
         This blocks the merge.
         </graftty-peer-message>
         """)

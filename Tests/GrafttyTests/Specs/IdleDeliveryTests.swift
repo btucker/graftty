@@ -286,12 +286,12 @@ struct CodexAppServerInboxDeliveryWiringTests {
         ]))
     }
 
-    @Test("Presence refresh waits for another runtime to consume the head message.")
-    func presenceRefreshRespectsRuntimeTargetedHeadOfLine() async throws {
+    @Test("Presence refresh retries Codex when another runtime has an earlier pending message.")
+    func presenceRefreshSkipsRuntimeTargetedGap() async throws {
         let delivery = RecordingCodexDelivery()
         let inbox = try Self.makeInbox()
         let worktree = "/repo/.worktrees/alice"
-        let claudeMessage = try Self.appendMessage(
+        _ = try Self.appendMessage(
             to: worktree,
             runtime: TeamHookRuntime.claude.rawValue,
             inbox: inbox
@@ -311,25 +311,13 @@ struct CodexAppServerInboxDeliveryWiringTests {
             records: records,
             delivery: delivery
         )
-        #expect(await delivery.calls.isEmpty)
-
-        #expect(try inbox.compareAndAdvanceWorktreeWatermark(
-            teamID: "/repo",
-            worktree: worktree,
-            to: claudeMessage.id
-        ))
-        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
-            inbox: inbox,
-            records: records,
-            delivery: delivery
-        )
         #expect(await delivery.calls == [
             .init(team: "/repo", worktree: worktree),
         ])
     }
 
     @Test("""
-    @spec AGENT-6.13: When exact-agent inbox rows for different runtimes are adjacent in one worktree queue, the application shall retry all available native delivery transports while the shared watermark advances so a row consumed by one provider immediately unblocks the next provider without waiting for the presence ticker.
+    @spec AGENT-6.13: When one worktree has pending exact-agent rows for different runtimes, the application shall retry all available native delivery transports while shared delivery state changes so each provider can consume its rows without waiting for another provider or the presence ticker.
     """)
     func nativeDrainCrossesRuntimeBoundariesWithoutTickerDelay() async throws {
         let inbox = try Self.makeInbox()
@@ -528,27 +516,16 @@ struct CodexAppServerInboxDeliveryWiringTests {
         }
 
         func onMessageArrival(team: String, worktree: String) async {
-            let watermark: String?
-            do {
-                watermark = try inbox.worktreeWatermark(
-                    teamID: team,
-                    worktree: worktree
-                )?.lastDeliveredToAnySessionID
-            } catch {
-                return
-            }
-            guard let next = try? inbox.unreadMessages(
+            guard let next = try? inbox.worktreePendingMessages(
                 teamID: team,
-                recipientWorktree: worktree,
-                after: watermark
-            ).first,
-            next.to.runtime == runtime.rawValue else {
+                recipientWorktree: worktree
+            ).first(where: { $0.to.runtime == runtime.rawValue }) else {
                 return
             }
-            if (try? inbox.compareAndAdvanceWorktreeWatermark(
+            if (try? inbox.acknowledgeMessages(
                 teamID: team,
                 worktree: worktree,
-                to: next.id
+                messageIDs: [next.id]
             )) == true {
                 deliveryCount += 1
             }

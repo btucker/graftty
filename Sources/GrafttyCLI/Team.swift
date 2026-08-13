@@ -25,7 +25,7 @@ struct Team: ParsableCommand {
 struct TeamSend: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "send",
-        abstract: "Send a message to a worktree or exact canonical agent address"
+        abstract: "Send a message to a worktree, provider, or exact canonical agent"
     )
 
     @Flag(name: .long, help: "Deliver at the next post-tool hook boundary when possible")
@@ -34,7 +34,7 @@ struct TeamSend: ParsableCommand {
     @Flag(name: .long, help: "Read message text from standard input")
     var stdin: Bool = false
 
-    @Argument(help: "Worktree name/path or <canonical-worktree-path>#<agent-id>")
+    @Argument(help: "Worktree name/path, <path>#<runtime>, or <path>#<agent-id>")
     var address: String
 
     @Argument(help: "Message text")
@@ -359,6 +359,9 @@ struct TeamInbox: ParsableCommand {
         }
         try execute(
             callerWorktree: callerWorktree,
+            callerAgentID: callerWorktree.flatMap {
+                TeamMessageInput.currentAgentID(worktreePath: $0)
+            },
             sendRequest: CLIEnv.sendRequest,
             writeOutput: { try FileHandle.standardOutput.write(contentsOf: $0) },
             writeError: CLIEnv.printError
@@ -367,6 +370,7 @@ struct TeamInbox: ParsableCommand {
 
     func execute(
         callerWorktree: String?,
+        callerAgentID: String? = nil,
         sendRequest: (NotificationMessage) throws -> ResponseMessage,
         writeOutput: (Data) throws -> Void,
         writeError: (String) -> Void
@@ -381,6 +385,8 @@ struct TeamInbox: ParsableCommand {
             let response = try sendRequest(
                 .teamInbox(TeamInboxPageRequest(
                     callerWorktree: callerWorktree,
+                    callerAgentID: callerAgentID,
+                    consuming: readMode == .consumeUnread,
                     worktree: worktree,
                     repo: repo,
                     member: member,
@@ -397,6 +403,11 @@ struct TeamInbox: ParsableCommand {
             )
             switch response {
             case .teamInbox(let messages, let nextBeforeID, let nextAfterID, let responseSnapshotThroughID):
+                if readMode == .consumeUnread,
+                   !messages.allSatisfy({ Self.isDeliverable($0, to: callerAgentID) }) {
+                    writeError("Team inbox response is not scoped to this agent; update or restart the Graftty app before consuming provider-targeted messages")
+                    throw ExitCode(1)
+                }
                 guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
                     writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
                     throw ExitCode(1)
@@ -460,7 +471,11 @@ struct TeamInbox: ParsableCommand {
         let response: ResponseMessage
         do {
             response = try sendRequest(
-                .teamInboxAdvance(callerWorktree: callerWorktree, throughID: throughID)
+                .teamInboxAdvance(
+                    callerWorktree: callerWorktree,
+                    callerAgentID: callerAgentID,
+                    throughID: throughID
+                )
             )
         } catch {
             writeError(Self.advanceFailureGuidance)
@@ -488,15 +503,29 @@ struct TeamInbox: ParsableCommand {
 
     private static let peekGuidance = "Inbox left unread. To mark that worktree's messages read, run `graftty team inbox` from that worktree without peek or diagnostic flags. Do not edit Graftty state files."
     private static let advanceFailureGuidance = "Messages were displayed but remain unread; rerun `graftty team inbox`. Do not edit Graftty state files."
+
+    private static func isDeliverable(
+        _ message: TeamInboxMessage,
+        to callerAgentID: String?
+    ) -> Bool {
+        if message.to.runtime == nil, message.to.agentID == nil { return true }
+        guard let identity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:)) else {
+            return false
+        }
+        guard message.to.runtime == nil || message.to.runtime == identity.runtime.rawValue else {
+            return false
+        }
+        return message.to.agentID == nil || message.to.agentID == identity.rawValue
+    }
 }
 
 struct TeamMsg: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "msg",
-        abstract: "Send a message to a worktree or exact canonical agent address"
+        abstract: "Send a message to a worktree, provider, or exact canonical agent"
     )
 
-    @Argument(help: "Worktree name/path or <canonical-worktree-path>#<agent-id>")
+    @Argument(help: "Worktree name/path, <path>#<runtime>, or <path>#<agent-id>")
     var address: String
 
     @Argument(help: "Message text")
@@ -515,6 +544,7 @@ struct TeamMsg: ParsableCommand {
         )
         try CLIEnv.expectOk(response)
     }
+
 }
 
 struct TeamList: ParsableCommand {

@@ -173,6 +173,76 @@ struct TeamInboxRequestHandlerTests {
         )?.lastDeliveredToAnySessionID == "0001")
     }
 
+    @Test("@spec AGENT-6.24: When a sender addresses `<canonical-worktree-path>#<runtime>`, the application shall durably queue the row for that provider without requiring a currently reachable agent or binding the row to one exact session, allow other runtimes to consume later deliverable rows without discarding or blocking on it, and permit only an agent of the addressed runtime to consume the targeted row.")
+    func runtimeAddressQueuesAcrossProviderTurns() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let alice = "/repo/.worktrees/alice"
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001", "0002"]),
+            now: { Self.fixedDate }
+        )
+        // No presence is registered for Alice at send time: provider-scoped
+        // routing is deliberately durable across the gap between turns.
+        let handler = Self.makeHandler(inbox: inbox)
+
+        let delivery = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "\(alice)#codex",
+            text: "reply when Codex resumes",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(delivery.message.to.runtime == "codex")
+        #expect(delivery.message.to.agentID == nil)
+        _ = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: alice, runtime: nil),
+            priority: .normal,
+            body: "shared while Codex is away"
+        )
+
+        let claudeOutput = try handler.hook(
+            callerWorktree: alice,
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "claude-present",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(!claudeOutput.contains("reply when Codex resumes"))
+        #expect(claudeOutput.contains("shared while Codex is away"))
+        let skippedWatermark = try inbox.worktreeWatermark(teamID: "/repo", worktree: alice)
+        #expect(skippedWatermark?.lastDeliveredToAnySessionID == "0002")
+        #expect(skippedWatermark?.pendingBeforeWatermarkIDs == ["0001"])
+
+        let codexOutput = try handler.hook(
+            callerWorktree: alice,
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "codex-resumed",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(codexOutput.contains("reply when Codex resumes"))
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: alice
+        )?.lastDeliveredToAnySessionID == "0002")
+    }
+
     @Test("Explicit canonical recipient rejects stale identity without appending.")
     func explicitRecipientFailsClosed() throws {
         let root = try Self.temporaryDirectory()
@@ -744,8 +814,8 @@ struct TeamInboxRequestHandlerTests {
         )?.lastDeliveredToAnySessionID == "0001")
     }
 
-    @Test("SessionStart stops at a message targeted to another runtime.")
-    func sessionStartPreservesRuntimeTargetedHeadOfLine() throws {
+    @Test("SessionStart skips a message targeted to another runtime without consuming it or blocking later rows.")
+    func sessionStartSkipsRuntimeTargetWithoutBlockingLaterRows() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
@@ -789,18 +859,20 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(!claudeOutput.contains("for Codex"))
-        #expect(!claudeOutput.contains("shared after Codex"))
+        #expect(claudeOutput.contains("shared after Codex"))
         #expect(try inbox.cursor(
             teamID: "/repo",
             sessionID: "claude-session"
-        )?.lastSeenID == nil)
-        #expect(try inbox.worktreeWatermark(
+        )?.lastSeenID == "0002")
+        let watermark = try inbox.worktreeWatermark(
             teamID: "/repo",
             worktree: aliceWorktree
-        ) == nil)
+        )
+        #expect(watermark?.lastDeliveredToAnySessionID == "0002")
+        #expect(watermark?.pendingBeforeWatermarkIDs == ["0001"])
     }
 
-    @Test func claudePostToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {
+    @Test func claudePostToolUseRetainsUndeliveredNormalMessageBehindUrgentDelivery() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let ids = Self.fixedIDs(["0001", "0002"])
@@ -837,7 +909,11 @@ struct TeamInboxRequestHandlerTests {
         #expect(postToolOutput.contains("urgent second"))
         #expect(!postToolOutput.contains("normal first"))
         let cursor = try inbox.cursor(teamID: "/repo", sessionID: "session-1")
-        #expect(cursor?.lastSeenID == nil)
+        #expect(cursor?.lastSeenID == "0002")
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice"
+        )?.pendingBeforeWatermarkIDs == ["0001"])
 
         // Stop hook in both runtimes only accepts top-level fields,
         // so the rendered output is `{}` regardless of the inbox
@@ -857,15 +933,28 @@ struct TeamInboxRequestHandlerTests {
 
         // Critical side-effect contract: because Stop emits `{}`
         // and never delivers content to the agent, it must NOT
-        // advance the cursor. Advancing it would silently mark
-        // pending messages "delivered" and bury them past the next
-        // real delivery path — every Stop firing during an idle
-        // period would walk the cursor forward over messages the
-        // agent never saw. The cursor stays nil here for the same
-        // reason it stayed nil after PostToolUse skipped the
-        // normal-priority message above.
+        // change the cursor or the explicit pending gap.
         let cursorAfterStop = try inbox.cursor(teamID: "/repo", sessionID: "session-1")
-        #expect(cursorAfterStop?.lastSeenID == nil)
+        #expect(cursorAfterStop?.lastSeenID == "0002")
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice"
+        )?.pendingBeforeWatermarkIDs == ["0001"])
+
+        let nextSessionOutput = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "session-1",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(nextSessionOutput.contains("normal first"))
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice"
+        )?.pendingBeforeWatermarkIDs == nil)
     }
 
     @Test("Codex owner PostToolUse does not render, advance delivery state, or fire delivery callbacks.")

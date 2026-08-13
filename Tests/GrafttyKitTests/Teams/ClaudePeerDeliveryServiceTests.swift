@@ -5,7 +5,7 @@ import Testing
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
     @Test("""
-    @spec AGENT-6.6: When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped by advancing the watermark past it; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+    @spec AGENT-6.6: When inbox rows are deliverable to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of all rows deliverable to that agent through Claude's native peer socket, preserve skipped rows for other targets as pending gaps, and update shared delivery state only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
     """)
     func exactAgentDeliveryAdvancesOnlyAfterAcceptance() async throws {
         let fixture = try Fixture()
@@ -19,8 +19,8 @@ struct ClaudePeerDeliveryServiceTests {
         let calls = await fixture.client.calls
         #expect(calls.count == 1)
         #expect(calls[0].socketPath == fixture.socketPath)
-        #expect(calls[0].body == "please review")
-        #expect(!calls[0].body.contains("<graftty-peer-message"))
+        #expect(calls[0].body == TeamPeerMessageFormatter.context(messages: [message]))
+        #expect(calls[0].body.contains(#"agent="/repo""#))
         #expect(calls[0].senderName == "repo/main")
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
@@ -62,11 +62,13 @@ struct ClaudePeerDeliveryServiceTests {
         // Batch of two overflows, halves to the oversized row alone, which
         // still overflows and is skipped; the next pass delivers the rest.
         let calls = await fixture.client.calls
-        #expect(calls.map(\.body) == [
-            "OVERSIZED payload\n\nplease review",
-            "OVERSIZED payload",
-            "please review",
-        ])
+        #expect(calls.count == 3)
+        #expect(calls[0].body.contains("OVERSIZED payload"))
+        #expect(calls[0].body.contains("please review"))
+        #expect(calls[1].body.contains("OVERSIZED payload"))
+        #expect(!calls[1].body.contains("please review"))
+        #expect(calls[2].body.contains("please review"))
+        #expect(!calls[2].body.contains("OVERSIZED payload"))
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
             worktree: fixture.worktree
@@ -125,7 +127,7 @@ struct ClaudePeerDeliveryServiceTests {
             if body.contains("\n\n") {
                 return ClaudePeerMessagingError.messageTooLarge(bytes: 99_999, maxBytes: 1)
             }
-            return body == "first" ? StubError.failed : nil
+            return body.contains("first") ? StubError.failed : nil
         })
         let first = try fixture.append(body: "first")
         _ = try fixture.append(body: "second")
@@ -135,7 +137,12 @@ struct ClaudePeerDeliveryServiceTests {
             worktree: fixture.worktree
         )
 
-        #expect(await fixture.client.calls.map(\.body) == ["first\n\nsecond", "first"])
+        let calls = await fixture.client.calls
+        #expect(calls.count == 2)
+        #expect(calls[0].body.contains("first"))
+        #expect(calls[0].body.contains("second"))
+        #expect(calls[1].body.contains("first"))
+        #expect(!calls[1].body.contains("second"))
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
             worktree: fixture.worktree
@@ -147,7 +154,7 @@ struct ClaudePeerDeliveryServiceTests {
     }
 
     @Test("""
-    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived sender name per frame, with bodies joined by a blank line and no per-message envelope, leaving later runs for subsequent frames.
+    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in its full canonical provenance and runtime-fallback envelope, join the envelopes with a blank line, and leave later runs for subsequent frames.
     """)
     func mixedSendersSplitIntoPerSenderFrames() async throws {
         let fixture = try Fixture()
@@ -169,17 +176,60 @@ struct ClaudePeerDeliveryServiceTests {
 
         let calls = await fixture.client.calls
         #expect(calls.count == 3)
-        #expect(calls[0].body == "first\n\nsecond")
+        #expect(calls[0].body.contains(#"agent="/repo#codex-0123456789ab" fallback-agent="/repo#codex""#))
+        #expect(calls[0].body.contains("first"))
+        #expect(calls[0].body.contains("second"))
         #expect(calls[0].senderName == "repo/main#codex-0123456789ab")
-        #expect(calls[1].body == "PR #42 opened")
+        #expect(calls[1].body.contains(#"<graftty-peer-message agent="/repo">"#))
+        #expect(calls[1].body.contains("PR #42 opened"))
         #expect(calls[1].senderName == "GitHub")
-        #expect(calls[2].body == "roster changed")
+        #expect(calls[2].body.contains(#"<graftty-peer-message agent="/repo">"#))
+        #expect(calls[2].body.contains("roster changed"))
         #expect(calls[2].senderName == "Graftty team")
-        #expect(calls.allSatisfy { !$0.body.contains("<graftty-peer-message") })
+        #expect(calls.allSatisfy { $0.body.contains("<graftty-peer-message") })
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
             worktree: fixture.worktree
         )?.lastDeliveredToAnySessionID == last.id)
+    }
+
+    @Test("Native display-name truncation leaves the full canonical reply routes in the body.")
+    func truncatedDisplayNamePreservesCanonicalEnvelope() throws {
+        let longComponent = String(repeating: "long-worktree-", count: 6)
+        let worktree = "/repo/.worktrees/\(longComponent)"
+        let senderID = "codex-0123456789ab"
+        let message = TeamInboxMessage(
+            id: "message-1",
+            batchID: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800),
+            team: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(
+                member: longComponent,
+                worktree: worktree,
+                runtime: "codex",
+                agentID: senderID
+            ),
+            to: TeamInboxEndpoint(
+                member: "recipient",
+                worktree: "/repo/recipient",
+                runtime: "claude"
+            ),
+            priority: .normal,
+            body: "reply to this"
+        )
+        let senderName = ClaudePeerSenderName.name(for: message)
+        #expect(senderName.count > 64)
+
+        let line = try ClaudePeerProtocol.encodeUserMessage(
+            body: TeamPeerMessageFormatter.context(messages: [message]),
+            senderName: senderName
+        )
+        let decoded = try ClaudePeerProtocol.decodeUserMessageLine(line)
+
+        #expect(decoded.senderName?.hasSuffix("…") == true)
+        #expect(decoded.body.contains(#"agent="\#(worktree)#\#(senderID)""#))
+        #expect(decoded.body.contains(#"fallback-agent="\#(worktree)#codex""#))
     }
 
     @Test("A Claude-qualified default ignores an earlier Codex agent.")
@@ -197,6 +247,45 @@ struct ClaudePeerDeliveryServiceTests {
             teamID: fixture.teamID,
             worktree: fixture.worktree
         )?.lastDeliveredToAnySessionID == message.id)
+    }
+
+    @Test("Claude delivery skips another runtime's row without consuming it or blocking a later Claude row.")
+    func runtimeTargetedGapDoesNotBlockClaudeDelivery() async throws {
+        let fixture = try Fixture()
+        let codex = try fixture.inbox.appendMessage(
+            teamID: fixture.teamID,
+            teamName: "repo",
+            repoPath: fixture.teamID,
+            from: TeamInboxEndpoint(member: "main", worktree: fixture.teamID, runtime: nil),
+            to: TeamInboxEndpoint(
+                member: "feature",
+                worktree: fixture.worktree,
+                runtime: "codex"
+            ),
+            priority: .normal,
+            body: "for Codex"
+        )
+        let claude = try fixture.append(body: "for Claude")
+
+        await fixture.service.onMessageArrival(
+            team: fixture.teamID,
+            worktree: fixture.worktree
+        )
+
+        let calls = await fixture.client.calls
+        #expect(calls.count == 1)
+        #expect(calls[0].body.contains("for Claude"))
+        #expect(!calls[0].body.contains("for Codex"))
+        let watermark = try fixture.inbox.worktreeWatermark(
+            teamID: fixture.teamID,
+            worktree: fixture.worktree
+        )
+        #expect(watermark?.lastDeliveredToAnySessionID == claude.id)
+        #expect(watermark?.pendingBeforeWatermarkIDs == [codex.id])
+        #expect(try fixture.inbox.worktreePendingMessages(
+            teamID: fixture.teamID,
+            recipientWorktree: fixture.worktree
+        ).map(\.id) == [codex.id])
     }
 
     private struct Fixture {

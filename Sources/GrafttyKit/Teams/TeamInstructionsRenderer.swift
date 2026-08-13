@@ -46,9 +46,10 @@ public enum TeamInstructionsRenderer {
     - `graftty team list --json`; `graftty team inbox` reads the oldest unread page and marks displayed rows read after successful output. Add `--keep-unread` (`--unread` is an alias) to peek, or `--history` to inspect prior messages.
     - Inbox worktree, repository, and member selectors are diagnostic peeks and do not mark messages read.
     - Never edit Graftty state files to change inbox delivery positions; rerun the supported inbox command if advancement fails.
-    - Hook-delivered messages use `<graftty-peer-message agent="<address>">`. Reply by passing that `agent` value unchanged to `graftty team send --stdin <address>`.
-    - Natively delivered messages name the sender `<project>/<worktree>#<agent-id>` instead of a wrapper. Reply to `<worktree>#<agent-id>` (drop the `<project>/` prefix), or copy the exact canonical address from `graftty team list --json`. Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
-    - A worktree name or path selects its default agent. `<canonical-worktree-path>#<runtime>-<12hex>` selects one exact agent; copy exact addresses from the JSON roster.
+    - Agent-authored messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. Reply to the exact `agent` while the JSON roster reports it as reachable; otherwise send to `fallback-agent` so the reply waits for the provider's next agent.
+    - Native provider sender labels are display metadata and may be truncated. Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses; always use `graftty team`.
+    - Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
+    - A worktree name or path selects its default agent. `<canonical-worktree-path>#<runtime>` waits for that provider's next agent. `<canonical-worktree-path>#<runtime>-<12hex>` selects one exact live agent; copy exact addresses from the JSON roster.
     - Send message bodies via stdin, never shell arguments. Use a fresh quoted high-entropy heredoc delimiter absent from the body:
       graftty team send --stdin <address> <<'GRAFTTY_<random>'
       <message>

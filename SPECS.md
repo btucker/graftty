@@ -2290,7 +2290,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.5** When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session in Claude's configured state directory, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
 
-**AGENT-6.6** When an inbox row is bound to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of the pending exact-agent prefix through Claude's native peer socket and advance the shared worktree watermark only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped by advancing the watermark past it; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
+**AGENT-6.6** When inbox rows are deliverable to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of all rows deliverable to that agent through Claude's native peer socket, preserve skipped rows for other targets as pending gaps, and update shared delivery state only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
 
 **AGENT-6.7** When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
 
@@ -2304,7 +2304,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.12** When a top-level agent becomes reachable in a worktree, the application shall notify every reachable top-level agent in that worktree at its exact canonical address with the joined agents and current worktree roster; repeated observations and native subagents shall not create duplicate notifications.
 
-**AGENT-6.13** When exact-agent inbox rows for different runtimes are adjacent in one worktree queue, the application shall retry all available native delivery transports while the shared watermark advances so a row consumed by one provider immediately unblocks the next provider without waiting for the presence ticker.
+**AGENT-6.13** When one worktree has pending exact-agent rows for different runtimes, the application shall retry all available native delivery transports while shared delivery state changes so each provider can consume its rows without waiting for another provider or the presence ticker.
 
 **AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
 
@@ -2312,11 +2312,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
-**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every wrapper-path delivered row (hook and Codex app-server delivery) as one `<graftty-peer-message agent="<canonical-sender-address>">` element, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 
-**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived sender name per frame, with bodies joined by a blank line and no per-message envelope, leaving later runs for subsequent frames.
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in its full canonical provenance and runtime-fallback envelope, join the envelopes with a blank line, and leave later runs for subsequent frames.
 
 **AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
 
@@ -2325,6 +2325,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.22** If appending a join announcement fails partway through a worktree's recipients, then the application shall still advance that worktree's observed roster so already-committed announcements are never re-appended on a later reconciliation, and shall continue announcing the remaining worktrees in the same pass.
 
 **AGENT-6.23** If a Codex hook reports a thread ID that differs from a stored non-empty thread binding, then the application shall rebind the presence and app-server records only for a session-start invocation; a straggling post-tool-use invocation shall return the stored binding unchanged.
+
+**AGENT-6.24** When a sender addresses `<canonical-worktree-path>#<runtime>`, the application shall durably queue the row for that provider without requiring a currently reachable agent or binding the row to one exact session, allow other runtimes to consume later deliverable rows without discarding or blocking on it, and permit only an agent of the addressed runtime to consume the targeted row.
 
 ## CLI — CLI
 

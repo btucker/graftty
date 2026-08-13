@@ -27,6 +27,8 @@ public extension TeamHookEvent {
 
 public struct TeamInboxPageRequest: Sendable, Equatable {
     public let callerWorktree: String?
+    public let callerAgentID: String?
+    public let consuming: Bool
     public let worktree: String?
     public let repo: String?
     public let member: String?
@@ -40,6 +42,8 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 
     public init(
         callerWorktree: String?,
+        callerAgentID: String? = nil,
+        consuming: Bool = false,
         worktree: String?,
         repo: String?,
         member: String?,
@@ -52,6 +56,8 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
         limit: Int?
     ) {
         self.callerWorktree = callerWorktree
+        self.callerAgentID = callerAgentID
+        self.consuming = consuming
         self.worktree = worktree
         self.repo = repo
         self.member = member
@@ -97,7 +103,11 @@ public enum NotificationMessage: Sendable, Equatable {
         skillManaged: Bool = false
     )
     case teamInbox(TeamInboxPageRequest)
-    case teamInboxAdvance(callerWorktree: String, throughID: String)
+    case teamInboxAdvance(
+        callerWorktree: String,
+        callerAgentID: String? = nil,
+        throughID: String
+    )
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
     case createWorktree(
@@ -137,7 +147,7 @@ extension NotificationMessage: Codable {
         case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
-        case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit
+        case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit, consuming
         case beforeID = "before_id"
         case afterID = "after_id"
         case snapshotThroughID = "snapshot_through_id"
@@ -224,6 +234,8 @@ extension NotificationMessage: Codable {
         case .teamInbox(let request):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(request.callerWorktree, forKey: .callerWorktree)
+            try container.encodeIfPresent(request.callerAgentID, forKey: .callerAgentID)
+            try container.encode(request.consuming, forKey: .consuming)
             try container.encodeIfPresent(request.worktree, forKey: .worktree)
             try container.encodeIfPresent(request.repo, forKey: .repo)
             try container.encodeIfPresent(request.member, forKey: .member)
@@ -234,9 +246,10 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(request.snapshotThroughID, forKey: .snapshotThroughID)
             try container.encodeIfPresent(request.forwardPagination, forKey: .forwardPagination)
             try container.encodeIfPresent(request.limit, forKey: .limit)
-        case .teamInboxAdvance(let callerWorktree, let throughID):
+        case .teamInboxAdvance(let callerWorktree, let callerAgentID, let throughID):
             try container.encode("team_inbox_advance", forKey: .type)
             try container.encode(callerWorktree, forKey: .callerWorktree)
+            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(throughID, forKey: .throughID)
         case .teamMembers(let callerWorktree, let worktree, let repo):
             try container.encode("team_members", forKey: .type)
@@ -368,6 +381,8 @@ extension NotificationMessage: Codable {
                              skillManaged: skillManaged)
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
+            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
+            let consuming = try container.decodeIfPresent(Bool.self, forKey: .consuming) ?? false
             let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
             let repo = try container.decodeIfPresent(String.self, forKey: .repo)
             let member = try container.decodeIfPresent(String.self, forKey: .member)
@@ -380,6 +395,8 @@ extension NotificationMessage: Codable {
             let limit = try container.decodeIfPresent(Int.self, forKey: .limit)
             self = .teamInbox(TeamInboxPageRequest(
                 callerWorktree: callerWorktree,
+                callerAgentID: callerAgentID,
+                consuming: consuming,
                 worktree: worktree,
                 repo: repo,
                 member: member,
@@ -394,6 +411,7 @@ extension NotificationMessage: Codable {
         case "team_inbox_advance":
             self = .teamInboxAdvance(
                 callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                callerAgentID: try container.decodeIfPresent(String.self, forKey: .callerAgentID),
                 throughID: try container.decode(String.self, forKey: .throughID)
             )
         case "team_members":

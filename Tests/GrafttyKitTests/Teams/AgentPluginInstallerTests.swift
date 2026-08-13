@@ -41,8 +41,11 @@ struct AgentPluginInstallerTests {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
-            #expect(skill.contains("<graftty-peer-message agent=\"<address>\">"))
+            #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
             #expect(skill.contains("<canonical-worktree-path>#<runtime>-<12hex>"))
+            #expect(skill.contains("<canonical-worktree-path>#<runtime>"))
+            #expect(skill.contains("display metadata and may be truncated"))
+            #expect(skill.contains("Do not use provider-native agent messaging tools"))
             #expect(!skill.contains("## Trust boundary"))
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
@@ -52,10 +55,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.1.2""#))
+        #expect(claudeManifest.contains(#""version": "0.2.0""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.1.2""#))
+        #expect(codexManifest.contains(#""version": "0.2.0""#))
     }
 
     @Test("""
