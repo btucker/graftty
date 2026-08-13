@@ -10,15 +10,16 @@ public enum TeamUnregisterCore {
         teamID: String,
         worktree: String,
         runtime: TeamHookRuntime,
-        paneSessionName: String?
+        paneSessionName: String?,
+        agentID: String? = nil
     ) throws -> TeamPresenceRecord? {
         let prior = try storage.read(
             teamID: teamID, worktree: worktree,
-            runtime: runtime, paneSessionName: paneSessionName
+            runtime: runtime, paneSessionName: paneSessionName, agentID: agentID
         )
         try storage.delete(
             teamID: teamID, worktree: worktree,
-            runtime: runtime, paneSessionName: paneSessionName
+            runtime: runtime, paneSessionName: paneSessionName, agentID: agentID
         )
         return prior
     }

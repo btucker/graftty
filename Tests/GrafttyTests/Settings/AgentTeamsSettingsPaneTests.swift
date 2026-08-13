@@ -7,7 +7,7 @@ import GrafttyKit
 struct AgentTeamsSettingsPaneTests {
 
     @Test("""
-    @spec TEAM-1.6: The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain its non-empty built-in automated-event default and render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
+    @spec TEAM-1.6: The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain a non-empty compact automated-event default that renders the event body first, adds only event-specific actionable guidance, and omits generic delivery and same-worktree preambles; it shall render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
     """)
     func defaultPromptsAreVisibleAndEditable() {
         #expect(!DefaultPrompts.sessionPrompt.isEmpty)
@@ -28,11 +28,12 @@ struct AgentTeamsSettingsPaneTests {
         #expect(p.contains("team.other_worktrees"))
     }
 
-    /// Per-event prompt runs per delivery and should react to whether the
-    /// event concerns the agent's own worktree.
-    @Test func eventPromptUsesEventScopedVariables() {
+    @Test func eventPromptIsCompactAndUsesEventContext() {
         let p = DefaultPrompts.eventPrompt
-        #expect(p.contains("agent.this_worktree") || p.contains("agent.other_worktree"))
+        #expect(p.contains("{{ body }}"))
+        #expect(p.contains("event.type"))
+        #expect(!p.contains("automated team event"))
+        #expect(!p.lowercased().contains("this event is about"))
     }
 
     /// Catches Stencil syntax errors in the full session prompt for both
@@ -67,7 +68,16 @@ struct AgentTeamsSettingsPaneTests {
                 thisWorktree: s.thisWorktree,
                 otherWorktree: s.otherWorktree
             )
-            #expect(EventBodyRenderer.renderAgentTemplate(DefaultPrompts.eventPrompt,   agent: ctx) != nil)
+            #expect(EventBodyRenderer.renderAgentTemplate(
+                DefaultPrompts.eventPrompt,
+                agent: ctx,
+                body: "PR #42 CI: pending → failure",
+                event: [
+                    "type": "ci_conclusion_changed",
+                    "attrs": ["from": "pending", "to": "failure"],
+                    "body": "PR #42 CI: pending → failure",
+                ]
+            ) != nil)
         }
     }
 
@@ -132,18 +142,52 @@ struct AgentTeamsSettingsPaneTests {
         #expect(prompt.contains("merge the default branch"))
         // Sanity: the unrelated `pr_state_changed` branch must not have rendered.
         #expect(!prompt.contains("react to the new state"))
-        // The `{%- ... -%}` whitespace controls should produce a flat, three-paragraph
-        // output without spurious blank lines from the multi-line template source.
+        #expect(!prompt.contains("automated team event"))
+        #expect(!prompt.contains("your own worktree"))
         let expected = """
-        A Graftty automated team event was just delivered to you.
-
-        This event is about your own worktree.
-
-        Your branch's mergeability against the default branch changed. If your branch can no longer merge cleanly, merge the default branch into your branch and resolve any conflicts before continuing.
-
         PR #42 mergability: clean → dirty
+        If the branch no longer merges cleanly, merge the default branch and resolve conflicts.
         """
         #expect(prompt == expected)
+    }
+
+    @Test func defaultEventPromptAddsGuidanceOnlyForActionableFailures() throws {
+        let agent = EventBodyRenderer.makeAgentContext(
+            branch: "alice",
+            isMainWorktree: false,
+            thisWorktree: true
+        )
+        func render(type: String, from: String, to: String, body: String) -> String? {
+            EventBodyRenderer.renderAgentTemplate(
+                DefaultPrompts.eventPrompt,
+                agent: agent,
+                body: body,
+                event: [
+                    "type": type,
+                    "attrs": ["from": from, "to": to],
+                    "body": body,
+                ]
+            )
+        }
+
+        #expect(render(
+            type: "ci_conclusion_changed",
+            from: "pending",
+            to: "failure",
+            body: "CI on PR #42: pending → failure"
+        ) == "CI on PR #42: pending → failure\nInvestigate the failed checks and push a fix.")
+        #expect(render(
+            type: "ci_conclusion_changed",
+            from: "failure",
+            to: "pending",
+            body: "CI on PR #42: failure → pending"
+        ) == "CI on PR #42: failure → pending")
+        #expect(render(
+            type: "pr_state_changed",
+            from: "open",
+            to: "merged",
+            body: "PR #42 state changed: open → merged"
+        ) == "PR #42 state changed: open → merged")
     }
 
     @Test func teamSessionPromptAndTeamPromptAreIndependent() {

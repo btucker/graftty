@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graftty Team"
+  short_description: "Coordinate agents and durable worktree instructions"
+  default_prompt: "Use Graftty team routing to coordinate with another worktree or agent."

@@ -6,16 +6,31 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.5.0</title>
+            <sparkle:version>0.5.0</sparkle:version>
+            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+            <pubDate>Wed, 12 Aug 2026 21:36:27 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.4.4 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5111596112" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/311" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/311/hovercard" href="https://github.com/btucker/graftty/pull/311">#311</a></li>
+<li>Harden CLI control socket timeouts by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5110722657" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/310" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/310/hovercard" href="https://github.com/btucker/graftty/pull/310">#310</a></li>
+<li>Add native Codex and Claude team messaging by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5126565532" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/312" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/312/hovercard" href="https://github.com/btucker/graftty/pull/312">#312</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.4...v0.5.0"><tt>v0.4.4...v0.5.0</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.5.0/Graftty-0.5.0.zip" length="32102145" type="application/octet-stream" sparkle:edSignature="6p88FQm1yZJMEU2mEjGJlFv8uWjvimX4eiZPEaiuRSoVM30yqrgBq7ejafQcEyuzl3imi1Pf+FXdbwzgoJrLAQ=="/>
+        </item>
+        <item>
             <title>Version 0.4.4</title>
             <sparkle:version>0.4.4</sparkle:version>
             <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
             <pubDate>Mon, 10 Aug 2026 15:14:53 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>Fix Codex app-server control directory by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5095573561" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/309" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/309/hovercard" href="https://github.com/btucker/graftty/pull/309">#309</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.3...v0.4.4"><tt>v0.4.3...v0.4.4</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;Fix Codex app-server control directory by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5095573561" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/309" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/309/hovercard" href="https://github.com/btucker/graftty/pull/309"&gt;#309&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.4.3...v0.4.4"&gt;&lt;tt&gt;v0.4.3...v0.4.4&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.4.4/Graftty-0.4.4.zip" length="31716793" type="application/octet-stream" sparkle:edSignature="ZN1fElfaXGCx0krR+MUQyhSB1q8DmdVXvQrGywBEethH6e0a5UaRUSzTRaQ8GRxVQLchaTh1XknO4OJavnwZAw=="/>
         </item>
         <item>

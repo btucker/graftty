@@ -328,6 +328,80 @@ struct CodexAppServerInboxDeliveryWiringTests {
         ])
     }
 
+    @Test("""
+    @spec AGENT-6.13: When exact-agent inbox rows for different runtimes are adjacent in one worktree queue, the application shall retry all available native delivery transports while the shared watermark advances so a row consumed by one provider immediately unblocks the next provider without waiting for the presence ticker.
+    """)
+    func nativeDrainCrossesRuntimeBoundariesWithoutTickerDelay() async throws {
+        let inbox = try Self.makeInbox()
+        let worktree = "/repo/.worktrees/alice"
+        _ = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.claude.rawValue,
+            inbox: inbox
+        )
+        let codex = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.codex.rawValue,
+            inbox: inbox
+        )
+        let claudeDelivery = RuntimeAdvancingDelivery(
+            runtime: .claude,
+            inbox: inbox
+        )
+        let codexDelivery = RuntimeAdvancingDelivery(
+            runtime: .codex,
+            inbox: inbox
+        )
+
+        await GrafttyApp.drainNativeDeliveryMessages(
+            teamID: "/repo",
+            recipientWorktrees: [worktree],
+            inbox: inbox,
+            deliveries: [codexDelivery, claudeDelivery]
+        )
+
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: worktree
+        )?.lastDeliveredToAnySessionID == codex.id)
+        #expect(await claudeDelivery.deliveryCount == 1)
+        #expect(await codexDelivery.deliveryCount == 1)
+    }
+
+    @Test("Presence retry drains a claude-targeted head row through the native claude transport.")
+    func presenceRetryDrainsClaudeTargetedHead() async throws {
+        let inbox = try Self.makeInbox()
+        let worktree = "/repo/.worktrees/alice"
+        let claude = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.claude.rawValue,
+            inbox: inbox
+        )
+        let claudeDelivery = RuntimeAdvancingDelivery(runtime: .claude, inbox: inbox)
+        let record = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: worktree,
+            runtime: .claude,
+            paneSessionName: "graftty-claude",
+            pid: 101,
+            processStartTimeMicroseconds: 1_001,
+            registeredAt: Date(timeIntervalSince1970: 10),
+            transport: .claude(socketPath: "/tmp/cc-socks/101.sock", protocolVersion: 1)
+        )
+
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: [record],
+            deliveries: [claudeDelivery]
+        )
+
+        #expect(await claudeDelivery.deliveryCount == 1)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: worktree
+        )?.lastDeliveredToAnySessionID == claude.id)
+    }
+
     private static func waitUntil(
         timeout: TimeInterval = 1.0,
         condition: () async -> Bool
@@ -440,6 +514,44 @@ struct CodexAppServerInboxDeliveryWiringTests {
 
         func onMessageArrival(team: String, worktree: String) async {
             recordedCalls.append(.init(team: team, worktree: worktree))
+        }
+    }
+
+    actor RuntimeAdvancingDelivery: CodexAppServerDeliveryTrigger {
+        let runtime: TeamHookRuntime
+        let inbox: TeamInbox
+        private(set) var deliveryCount = 0
+
+        init(runtime: TeamHookRuntime, inbox: TeamInbox) {
+            self.runtime = runtime
+            self.inbox = inbox
+        }
+
+        func onMessageArrival(team: String, worktree: String) async {
+            let watermark: String?
+            do {
+                watermark = try inbox.worktreeWatermark(
+                    teamID: team,
+                    worktree: worktree
+                )?.lastDeliveredToAnySessionID
+            } catch {
+                return
+            }
+            guard let next = try? inbox.unreadMessages(
+                teamID: team,
+                recipientWorktree: worktree,
+                after: watermark
+            ).first,
+            next.to.runtime == runtime.rawValue else {
+                return
+            }
+            if (try? inbox.compareAndAdvanceWorktreeWatermark(
+                teamID: team,
+                worktree: worktree,
+                to: next.id
+            )) == true {
+                deliveryCount += 1
+            }
         }
     }
 

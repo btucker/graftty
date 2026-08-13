@@ -14,15 +14,27 @@ public struct TeamInboxEndpoint: Codable, Sendable, Equatable, Hashable {
     public let member: String
     public let worktree: String
     public let runtime: String?
+    public let agentID: String?
 
-    public init(member: String, worktree: String, runtime: String?) {
+    public init(
+        member: String,
+        worktree: String,
+        runtime: String?,
+        agentID: String? = nil
+    ) {
         self.member = member
         self.worktree = worktree
         self.runtime = runtime
+        self.agentID = agentID
     }
 }
 
 extension TeamInboxEndpoint {
+    public var canonicalAddress: String {
+        guard let agentID else { return worktree }
+        return "\(worktree)#\(agentID)"
+    }
+
     /// @spec TEAM-5.4
     /// Synthetic sender used by automated team events (PR/CI/membership)
     /// where there is no human author. The activity window and hook
@@ -31,6 +43,9 @@ extension TeamInboxEndpoint {
     public static func system(repoPath: String) -> TeamInboxEndpoint {
         TeamInboxEndpoint(member: "system", worktree: repoPath, runtime: nil)
     }
+
+    /// True for rows authored by Graftty itself via `system(repoPath:)`.
+    public var isSystem: Bool { member == "system" }
 }
 
 public struct TeamInboxMessage: Codable, Sendable, Equatable {
@@ -51,6 +66,15 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
     /// and falls through to `body` otherwise; activity log / watcher /
     /// `team inbox` CLI ignore it. See @spec TEAM-1.6.
     public let agentPrompt: String?
+    /// @spec AGENT-6.20
+    /// When the dispatcher writes a routable-event system row that carries a
+    /// provider attribute, the application shall persist that provider on the
+    /// inbox row as its source.
+    ///
+    /// `"github"` / `"gitlab"` for forge-originated system rows; nil for
+    /// authored messages and non-forge system rows. Optional and additive:
+    /// rows written before this field decode with nil.
+    public let source: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -60,6 +84,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         case repoPath = "repo_path"
         case from, to, priority, kind, body
         case agentPrompt = "agent_prompt"
+        case source
     }
 
     public init(
@@ -73,7 +98,8 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         priority: TeamInboxPriority,
         kind: String = "team_message",
         body: String,
-        agentPrompt: String? = nil
+        agentPrompt: String? = nil,
+        source: String? = nil
     ) {
         self.id = id
         self.batchID = batchID
@@ -86,6 +112,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         self.kind = kind
         self.body = body
         self.agentPrompt = agentPrompt
+        self.source = source
     }
 }
 
@@ -188,7 +215,8 @@ public final class TeamInbox {
         priority: TeamInboxPriority,
         kind: String = "team_message",
         body: String,
-        agentPrompt: String? = nil
+        agentPrompt: String? = nil,
+        source: String? = nil
     ) throws -> TeamInboxMessage {
         let message = TeamInboxMessage(
             id: idGenerator(),
@@ -201,7 +229,8 @@ public final class TeamInbox {
             priority: priority,
             kind: kind,
             body: body,
-            agentPrompt: agentPrompt
+            agentPrompt: agentPrompt,
+            source: source
         )
         try append(message, teamID: teamID)
         return message
@@ -300,16 +329,34 @@ public final class TeamInbox {
     /// advances past a message that still needs its own delivery path.
     static func runtimeDeliverablePrefix(
         _ messages: [TeamInboxMessage],
-        runtime: String
+        runtime: String,
+        agentID: String? = nil,
+        acceptsUntargeted: Bool = true
     ) -> [TeamInboxMessage] {
-        Array(messages.prefix { isDeliverable($0, toRuntime: runtime) })
+        Array(messages.prefix {
+            isDeliverable(
+                $0,
+                toRuntime: runtime,
+                agentID: agentID,
+                acceptsUntargeted: acceptsUntargeted
+            )
+        })
     }
 
     static func isDeliverable(
         _ message: TeamInboxMessage,
-        toRuntime runtime: String
+        toRuntime runtime: String,
+        agentID: String? = nil,
+        acceptsUntargeted: Bool = true
     ) -> Bool {
-        message.to.runtime == nil || message.to.runtime == runtime
+        if message.to.runtime == nil, message.to.agentID == nil {
+            return acceptsUntargeted
+        }
+        guard message.to.runtime == nil || message.to.runtime == runtime else {
+            return false
+        }
+        guard let targetedAgentID = message.to.agentID else { return true }
+        return targetedAgentID == agentID
     }
 
     public func writeCursor(_ cursor: TeamInboxCursor, teamID: String) throws {
@@ -475,7 +522,8 @@ public final class TeamInbox {
         teamID: String,
         sessionID: String,
         recipientWorktree: String,
-        runtime: String
+        runtime: String,
+        agentID: String? = nil
     ) throws -> TeamInboxMessage? {
         try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
             guard let cursor = try cursor(teamID: teamID, sessionID: sessionID),
@@ -502,7 +550,7 @@ public final class TeamInbox {
             }) else {
                 return nil
             }
-            guard Self.isDeliverable(message, toRuntime: runtime) else {
+            guard Self.isDeliverable(message, toRuntime: runtime, agentID: agentID) else {
                 return nil
             }
 

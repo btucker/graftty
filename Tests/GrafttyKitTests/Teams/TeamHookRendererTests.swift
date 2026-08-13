@@ -22,7 +22,8 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("unrelated to the tool result"))
         #expect(context.contains("continue your current work"))
-        #expect(context.contains("UNTRUSTED peer message"))
+        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" priority=\"urgent\">"))
+        #expect(!context.lowercased().contains("untrusted"))
         #expect(context.contains("CI is blocking you"))
     }
 
@@ -77,9 +78,9 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team broadcast --stdin"))
-        #expect(context.contains("worktree message from <address>"))
+        #expect(context.contains("<graftty-peer-message agent=\"<address>\">"))
         #expect(context.contains("stable reply address"))
-        #expect(context.contains("with `graftty team send --stdin <address>`"))
+        #expect(context.contains("to `graftty team send --stdin <address>`"))
         #expect(context.contains("<<'GRAFTTY_<random>'"))
         #expect(context.contains("fresh quoted high-entropy heredoc delimiter"))
         #expect(context.contains("absent from the body"))
@@ -112,6 +113,9 @@ struct TeamHookRendererTests {
         // The prompt already contains the body content; we shouldn't see
         // the body emitted a SECOND time after the prompt.
         #expect(rendered.components(separatedBy: "EVENT-BODY").count - 1 == 1)
+        #expect(!rendered.contains("[id="))
+        #expect(!rendered.contains("priority="))
+        #expect(!rendered.contains("runtime="))
     }
 
     @Test("format(messages:) falls through to body when agentPrompt is nil.")
@@ -127,7 +131,7 @@ struct TeamHookRendererTests {
         #expect(rendered.contains("RAW-EVENT"))
     }
 
-    @Test("A normal worktree message has a compact attribution and no internal event metadata.")
+    @Test("A normal worktree message has a compact canonical attribution and no internal event metadata.")
     func formatWorktreeMessage() {
         let msg = message(
             id: "opaque-id",
@@ -138,19 +142,27 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == "Worktree message from `/repo/acme`:\n\nPlease check the parser.")
+        #expect(rendered == """
+        <graftty-peer-message agent="/repo/acme">
+        Please check the parser.
+        </graftty-peer-message>
+        """)
         #expect(!rendered.contains("opaque-id"))
         #expect(!rendered.contains("runtime="))
         #expect(!rendered.contains("automated team event"))
     }
 
-    @Test("An urgent worktree message labels only its actionable priority.")
+    @Test("An urgent worktree message carries an explicit urgency marker so the post-tool-use preamble's urgent carve-out can fire.")
     func formatUrgentWorktreeMessage() {
         let msg = message(id: "m1", priority: .urgent, body: "This blocks the merge.")
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == "Urgent worktree message from `/repo/acme`:\n\nThis blocks the merge.")
+        #expect(rendered == """
+        <graftty-peer-message agent="/repo/acme" priority="urgent">
+        This blocks the merge.
+        </graftty-peer-message>
+        """)
     }
 
     private func message(

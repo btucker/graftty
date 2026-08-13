@@ -121,12 +121,18 @@ struct GitWorktreeAddArgsTests {
             at: instructionsDirectory,
             withIntermediateDirectories: true
         )
-        let leaf = instructionsDirectory.appendingPathComponent(
-            "GRAFTTY.from-caller-head.md"
+        let worktreeInstructionsDirectory = instructionsDirectory.appendingPathComponent(
+            "from-caller-head",
+            isDirectory: true
         )
-        try "child role".write(to: leaf, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(
+            at: worktreeInstructionsDirectory,
+            withIntermediateDirectories: true
+        )
+        let instructions = worktreeInstructionsDirectory.appendingPathComponent("GRAFTTY.md")
+        try "child role".write(to: instructions, atomically: true, encoding: .utf8)
         #expect(try shellInRepo(
-            "git add .graftty/GRAFTTY.from-caller-head.md && git commit -m caller",
+            "git add .graftty/from-caller-head/GRAFTTY.md && git commit -m caller",
             at: caller
         ) == 0)
 
@@ -146,7 +152,8 @@ struct GitWorktreeAddArgsTests {
         #expect(try String(
             contentsOf: target
                 .appendingPathComponent(".graftty", isDirectory: true)
-                .appendingPathComponent("GRAFTTY.from-caller-head.md"),
+                .appendingPathComponent("from-caller-head", isDirectory: true)
+                .appendingPathComponent("GRAFTTY.md"),
             encoding: .utf8
         ) == "child role")
     }

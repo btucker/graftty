@@ -19,6 +19,7 @@ public struct TeamDeliveryOwner: Equatable, Sendable {
     public let processStartTimeMicroseconds: Int64
     public let registeredAt: Date
     public let runtimeSessionID: String?
+    public let agentID: String
 
     public init(
         key: TeamDeliveryOwnerKey,
@@ -26,7 +27,8 @@ public struct TeamDeliveryOwner: Equatable, Sendable {
         pid: Int32,
         processStartTimeMicroseconds: Int64,
         registeredAt: Date,
-        runtimeSessionID: String?
+        runtimeSessionID: String?,
+        agentID: String
     ) {
         self.key = key
         self.paneSessionName = paneSessionName
@@ -34,6 +36,7 @@ public struct TeamDeliveryOwner: Equatable, Sendable {
         self.processStartTimeMicroseconds = processStartTimeMicroseconds
         self.registeredAt = registeredAt
         self.runtimeSessionID = runtimeSessionID
+        self.agentID = agentID
     }
 }
 
@@ -119,6 +122,7 @@ public struct TeamDeliveryOwnershipResolver: Sendable {
         guard record.teamID == key.teamID,
               record.worktree == key.worktree,
               record.runtime == key.runtime,
+              record.isSubagent != true,
               let paneSessionName = record.paneSessionName,
               liveness.isLivePaneSession(paneSessionName),
               let recordedStart = record.processStartTimeMicroseconds,
@@ -132,7 +136,8 @@ public struct TeamDeliveryOwnershipResolver: Sendable {
             pid: record.pid,
             processStartTimeMicroseconds: recordedStart,
             registeredAt: record.registeredAt,
-            runtimeSessionID: nil
+            runtimeSessionID: record.runtimeSessionID,
+            agentID: TeamAgentDirectory.identity(for: record).rawValue
         )
     }
 }

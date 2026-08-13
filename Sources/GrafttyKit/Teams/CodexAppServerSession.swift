@@ -9,6 +9,9 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
     public let appServerPID: Int32
     public let appServerProcessStartTimeMicroseconds: Int64?
     public let registeredAt: Date
+    public let agentID: String?
+    public let threadID: String?
+    public let activeTurnID: String?
 
     public init(
         teamID: String,
@@ -18,7 +21,10 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
         realBinaryPath: String,
         appServerPID: Int32,
         appServerProcessStartTimeMicroseconds: Int64? = nil,
-        registeredAt: Date
+        registeredAt: Date,
+        agentID: String? = nil,
+        threadID: String? = nil,
+        activeTurnID: String? = nil
     ) {
         self.teamID = teamID
         self.worktree = worktree
@@ -28,6 +34,9 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
         self.appServerPID = appServerPID
         self.appServerProcessStartTimeMicroseconds = appServerProcessStartTimeMicroseconds
         self.registeredAt = registeredAt
+        self.agentID = agentID
+        self.threadID = threadID
+        self.activeTurnID = activeTurnID
     }
 }
 

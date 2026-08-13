@@ -293,16 +293,7 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     private func handleClient(fd: Int32, lease: ClientLease) {
-        var buffer = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        let cap = maxPerClientBytes
-        while buffer.count < cap {
-            let remaining = cap - buffer.count
-            let toRead = min(chunk.count, remaining)
-            let bytesRead = Darwin.read(fd, &chunk, toRead)
-            if bytesRead <= 0 { break }
-            buffer.append(contentsOf: chunk[0..<bytesRead])
-        }
+        let buffer = Self.readClientPayload(fd: fd, cap: maxPerClientBytes)
         let messages = String(data: buffer, encoding: .utf8)?
             .components(separatedBy: "\n")
             .filter { !$0.isEmpty }
@@ -314,6 +305,22 @@ public final class SocketServer: @unchecked Sendable {
                 )
             } ?? []
         processMessages(messages, at: 0, fd: fd, lease: lease)
+    }
+
+    /// The bounded read loop used for every accepted client. Internal so the
+    /// cap can be exercised with a deterministic socket pair without relying
+    /// on unrelated accept-time socket configuration.
+    static func readClientPayload(fd: Int32, cap: Int) -> Data {
+        var buffer = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while buffer.count < cap {
+            let remaining = cap - buffer.count
+            let toRead = min(chunk.count, remaining)
+            let bytesRead = Darwin.read(fd, &chunk, toRead)
+            if bytesRead <= 0 { break }
+            buffer.append(contentsOf: chunk[0..<bytesRead])
+        }
+        return buffer
     }
 
     private func processMessages(
