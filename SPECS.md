@@ -866,7 +866,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TECH-6.x
 
-**TECH-6.1** If an iOS CI test shard loses its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+**TECH-6.1** If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
 
 ## ZMX — zmx Session Backing
 
