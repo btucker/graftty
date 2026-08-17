@@ -6,18 +6,32 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.5.2</title>
+            <sparkle:version>0.5.2</sparkle:version>
+            <sparkle:shortVersionString>0.5.2</sparkle:shortVersionString>
+            <pubDate>Mon, 17 Aug 2026 19:48:56 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.5.1 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5146152800" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/316" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/316/hovercard" href="https://github.com/btucker/graftty/pull/316">#316</a></li>
+<li>Allow native messaging without provider CLIs by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5174608909" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/317" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/317/hovercard" href="https://github.com/btucker/graftty/pull/317">#317</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.5.1...v0.5.2"><tt>v0.5.1...v0.5.2</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.5.2/Graftty-0.5.2.zip" length="32210597" type="application/octet-stream" sparkle:edSignature="zAN0sXzPwz8KYH5EFlRwelYWTgRdX8fuFTvTWyMXXjqvV/wCYx3Fpa4f/aad3Dt2jQhO0EcSOS1BS8dOGguWAw=="/>
+        </item>
+        <item>
             <title>Version 0.5.1</title>
             <sparkle:version>0.5.1</sparkle:version>
             <sparkle:shortVersionString>0.5.1</sparkle:shortVersionString>
             <pubDate>Thu, 13 Aug 2026 21:52:48 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.5.0 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5135517832" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/314" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/314/hovercard" href="https://github.com/btucker/graftty/pull/314">#314</a></li>
-<li>Fix durable provider-targeted team replies by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5145915234" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/315" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/315/hovercard" href="https://github.com/btucker/graftty/pull/315">#315</a></li>
-<li>Fix iOS terminal teardown during navigation by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5134751018" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/313" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/313/hovercard" href="https://github.com/btucker/graftty/pull/313">#313</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.5.0...v0.5.1"><tt>v0.5.0...v0.5.1</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.5.0 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5135517832" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/314" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/314/hovercard" href="https://github.com/btucker/graftty/pull/314"&gt;#314&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Fix durable provider-targeted team replies by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5145915234" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/315" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/315/hovercard" href="https://github.com/btucker/graftty/pull/315"&gt;#315&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Fix iOS terminal teardown during navigation by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5134751018" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/313" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/313/hovercard" href="https://github.com/btucker/graftty/pull/313"&gt;#313&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.5.0...v0.5.1"&gt;&lt;tt&gt;v0.5.0...v0.5.1&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.5.1/Graftty-0.5.1.zip" length="32209186" type="application/octet-stream" sparkle:edSignature="TmNEMsoMHkNp70Lc0qMVFF28r05Knwc45iy2mayMobVGlrl9I3YlNvOz3rPnZMBaZv9yLIzETBFrL9ONQY6DAQ=="/>
         </item>
         <item>
