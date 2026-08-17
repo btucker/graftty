@@ -76,7 +76,7 @@ public struct AgentPluginInstallationReport: Equatable, Sendable {
     public var summary: String {
         let successCount = results.count(where: \.succeeded)
         guard successCount != results.count else {
-            return "Installed all provider plugins. Restart Graftty, then start new Codex and Claude sessions."
+            return "Installed all provider plugins. Start new Codex and Claude sessions."
         }
         let failures = results.compactMap { result -> String? in
             guard let error = result.errorDescription else { return nil }

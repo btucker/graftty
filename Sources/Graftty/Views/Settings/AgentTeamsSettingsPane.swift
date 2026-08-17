@@ -20,6 +20,11 @@ struct AgentTeamsSettingsPane: View {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        _nativeAgentMessagingEnabled = AppStorage(
+            wrappedValue: false,
+            SettingsKeys.nativeAgentMessagingEnabled,
+            store: defaults
+        )
         _teamSessionPrompt = AppStorage(
             wrappedValue: DefaultPrompts.sessionPrompt,
             SettingsKeys.teamSessionPrompt,
@@ -75,7 +80,7 @@ struct AgentTeamsSettingsPane: View {
                 } header: {
                     Text("Native provider integration")
                 } footer: {
-                    Text("Preparation copies a Graftty-owned marketplace snapshot and five provider-native setup commands to the clipboard, then offers to run those commands. Graftty changes provider configuration only after you explicitly approve that offer. The plugins install the shared team skill and lifecycle hooks. Native mode removes Graftty's Claude wrapper and uses Claude's peer socket. Codex 0.147 still needs a small Graftty transport wrapper to launch an app-server/remote pair; its plugin owns hooks and instructions. After changing this setting or installing the plugins, restart Graftty and then start new provider sessions.")
+                    Text("Preparation copies a Graftty-owned marketplace snapshot and five provider-native setup commands to the clipboard, then offers to run those commands. Graftty changes provider configuration only after you explicitly approve that offer. You can enable native messaging before Codex, Claude, or their plugins are installed. The plugins install the shared team skill and lifecycle hooks. Native mode removes Graftty's Claude wrapper and uses Claude's peer socket. Codex 0.147 still needs a small Graftty transport wrapper to launch an app-server/remote pair; its plugin owns hooks and instructions. After changing this setting or installing the plugins, start new provider sessions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -143,7 +148,9 @@ struct AgentTeamsSettingsPane: View {
         ) {
             Button(nativeAgentMessagingEnabled ? "Install Both Plugins" : "Install and Enable") {
                 AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
-                installPreparedProviderPlugins()
+                installPreparedProviderPlugins(
+                    enableNativeMessagingOnSuccess: !nativeAgentMessagingEnabled
+                )
             }
             Button("Not Now", role: .cancel) {
                 AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
@@ -167,16 +174,18 @@ struct AgentTeamsSettingsPane: View {
         Binding(
             get: { nativeAgentMessagingEnabled },
             set: { enabled in
+                nativeAgentMessagingEnabled = AgentPluginIntegrationActivation.applyUserSelection(
+                    enabled: enabled,
+                    defaults: defaults,
+                    refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
+                )
                 guard enabled else {
-                    nativeAgentMessagingEnabled = false
                     return
                 }
                 guard AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(in: defaults) else {
-                    nativeAgentMessagingEnabled = false
                     prepareProviderPlugins()
                     return
                 }
-                nativeAgentMessagingEnabled = true
             }
         )
     }
@@ -203,20 +212,30 @@ struct AgentTeamsSettingsPane: View {
         }
     }
 
-    private func installPreparedProviderPlugins() {
+    private func installPreparedProviderPlugins(
+        enableNativeMessagingOnSuccess: Bool
+    ) {
         guard let plan = preparedPluginPlan else { return }
         pluginInstallInProgress = true
         pluginSetupStatus = "Installing Codex and Claude plugins…"
+        let userSelectionRevision = AgentPluginIntegrationActivation
+            .userSelectionRevision(in: defaults)
         Task {
             let report = await AgentPluginInstaller(
                 grafttyCLIPath: GrafttyApp.agentHookCLIPath()
             ).install(plan)
             if AgentPluginIntegrationActivation.apply(
                 successfulInstallation: report.succeeded,
+                enableNativeMessagingOnSuccess: enableNativeMessagingOnSuccess,
+                userSelectionRevisionAtStart: userSelectionRevision,
                 defaults: defaults,
                 refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
-            ) {
-                nativeAgentMessagingEnabled = true
+            ), enableNativeMessagingOnSuccess,
+               AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)
+                == userSelectionRevision {
+                nativeAgentMessagingEnabled = defaults.bool(
+                    forKey: SettingsKeys.nativeAgentMessagingEnabled
+                )
             }
             pluginInstallInProgress = false
             pluginSetupStatus = report.summary

@@ -73,12 +73,15 @@ enum AgentPluginInstallOfferPresenter {
         defaults: UserDefaults,
         on window: NSWindow
     ) {
+        let actionDescription = nativeMessagingWasEnabled
+            ? "Installing both plugins preserves your messaging-mode selection."
+            : "This install-and-enable action enables native messaging after every command succeeds."
         SheetAlert.present(
             .init(
                 messageText: nativeMessagingWasEnabled
                     ? "Install Codex and Claude Plugins?"
                     : "Install Plugins and Enable Native Messaging?",
-                informativeText: "Graftty can run the provider-native commands that install the shared team skill and lifecycle hooks. Native messaging is enabled only after every command succeeds, preventing the plugins and legacy wrappers from registering duplicate hooks. You can also do this later from Agent Teams Settings.",
+                informativeText: "Graftty can run the provider-native commands that install the shared team skill and lifecycle hooks. \(actionDescription) If a provider CLI is not installed, you can still enable native messaging independently in Agent Teams Settings.",
                 style: .informational,
                 primaryButton: nativeMessagingWasEnabled
                     ? "Install Both Plugins"
@@ -89,18 +92,26 @@ enum AgentPluginInstallOfferPresenter {
         ) { response in
             AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
             guard response == .primary else { return }
+            let userSelectionRevision = AgentPluginIntegrationActivation
+                .userSelectionRevision(in: defaults)
 
             Task { @MainActor in
                 let report = await installer.install(plan)
+                let enabledByInstallation = report.succeeded
+                    && !nativeMessagingWasEnabled
+                    && AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)
+                        == userSelectionRevision
                 _ = AgentPluginIntegrationActivation.apply(
                     successfulInstallation: report.succeeded,
+                    enableNativeMessagingOnSuccess: !nativeMessagingWasEnabled,
+                    userSelectionRevisionAtStart: userSelectionRevision,
                     defaults: defaults,
                     refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
                 )
                 let details = report.succeeded
-                    ? report.summary + (nativeMessagingWasEnabled
-                        ? ""
-                        : " Native messaging is now enabled.")
+                    ? report.summary + (enabledByInstallation
+                        ? " Native messaging is now enabled."
+                        : "")
                     : report.summary + " Review and retry the displayed commands in Agent Teams Settings."
                 SheetAlert.present(
                     .init(
