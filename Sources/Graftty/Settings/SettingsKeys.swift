@@ -5,6 +5,7 @@ import GrafttyKit
 enum SettingsKeys {
     static let agentTeamsEnabled         = "agentTeamsEnabled"
     static let nativeAgentMessagingEnabled = "nativeAgentMessagingEnabled"
+    static let nativeAgentMessagingSelectionRevision = "nativeAgentMessagingSelectionRevision"
     static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"
     static let agentPluginInstalledRevision = "agentPluginInstalledRevision"
     static let channelsEnabled           = "channelsEnabled"

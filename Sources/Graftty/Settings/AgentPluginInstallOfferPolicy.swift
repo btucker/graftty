@@ -54,19 +54,44 @@ enum AgentPluginInstallOfferPolicy {
 }
 
 enum AgentPluginIntegrationActivation {
-    /// Activates plugin-owned hooks only after both provider installations
-    /// complete. Until then the compatibility wrappers remain authoritative.
-    /// A failed installation preserves the previously selected messaging
-    /// mode: a revision-bump re-offer that fails must not demote an
-    /// already-native user to legacy mode while the earlier plugins remain
-    /// installed, which would register duplicate hooks.
+    static func userSelectionRevision(in defaults: UserDefaults) -> Int {
+        defaults.integer(forKey: SettingsKeys.nativeAgentMessagingSelectionRevision)
+    }
+
+    /// Applies the user's messaging-mode selection independently of provider
+    /// plugin availability. A user may intentionally choose native delivery
+    /// before installing Codex, Claude, or either bundled plugin.
     @discardableResult
-    static func apply(
-        successfulInstallation: Bool,
+    static func applyUserSelection(
+        enabled: Bool,
         defaults: UserDefaults,
         refreshHookAssets: () -> Void
     ) -> Bool {
-        if successfulInstallation {
+        defaults.set(
+            userSelectionRevision(in: defaults) &+ 1,
+            forKey: SettingsKeys.nativeAgentMessagingSelectionRevision
+        )
+        defaults.set(enabled, forKey: SettingsKeys.nativeAgentMessagingEnabled)
+        refreshHookAssets()
+        return enabled
+    }
+
+    /// Records a complete provider installation and optionally enables native
+    /// messaging when the accepted action was explicitly "Install and
+    /// Enable." An install-only action, a failed installation, and any install
+    /// superseded by a newer Settings selection preserve the independently
+    /// selected messaging mode.
+    @discardableResult
+    static func apply(
+        successfulInstallation: Bool,
+        enableNativeMessagingOnSuccess: Bool,
+        userSelectionRevisionAtStart: Int,
+        defaults: UserDefaults,
+        refreshHookAssets: () -> Void
+    ) -> Bool {
+        if successfulInstallation,
+           enableNativeMessagingOnSuccess,
+           userSelectionRevision(in: defaults) == userSelectionRevisionAtStart {
             defaults.set(true, forKey: SettingsKeys.nativeAgentMessagingEnabled)
         }
         refreshHookAssets()
