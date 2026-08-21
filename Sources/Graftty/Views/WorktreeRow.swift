@@ -236,7 +236,7 @@ struct WorktreeRow: View {
     let baseRef: String?
     /// Narrow PR snapshot for this worktree, or nil when no PR/MR is
     /// associated. Drives (a) the leading-icon swap to the pull-request
-    /// glyph (PR-3.1) and (b) the colored `#<number>` badge rendered
+    /// glyph (PR-3.1) and (b) the colored forge reference badge rendered
     /// between icon and branch label (PR-3.2, PR-3.3). `PRBadge` is
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
@@ -310,7 +310,7 @@ struct WorktreeRow: View {
         Button {
             NSWorkspace.shared.open(badge.url)
         } label: {
-            Text("#\(badge.number)")
+            Text(verbatim: badge.referenceText)
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(color(for: tone))
@@ -328,8 +328,8 @@ struct WorktreeRow: View {
                 .modifier(PulseIfPending(isPending: tone.pulses))
         }
         .buttonStyle(.plain)
-        .help("Open #\(badge.number) on \(badge.url.host ?? "")")
-        .accessibilityLabel(badgeAccessibilityLabel(badge, tone: tone))
+        .help(Self.badgeTooltip(for: badge))
+        .accessibilityLabel(Self.badgeAccessibilityLabel(for: badge, tone: tone))
     }
 
     private func color(for tone: PRBadgeStyle.Tone) -> Color {
@@ -343,7 +343,14 @@ struct WorktreeRow: View {
         }
     }
 
-    private func badgeAccessibilityLabel(_ badge: PRBadge, tone: PRBadgeStyle.Tone) -> String {
+    static func badgeTooltip(for badge: PRBadge) -> String {
+        "Open \(badge.referenceText) on \(badge.url.host ?? "")"
+    }
+
+    static func badgeAccessibilityLabel(
+        for badge: PRBadge,
+        tone: PRBadgeStyle.Tone
+    ) -> String {
         let stateWord: String
         switch badge.state {
         case .open:   stateWord = "open"

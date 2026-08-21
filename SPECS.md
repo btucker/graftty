@@ -1262,13 +1262,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-3.1** While a worktree has a resolved PR/MR (open or merged), its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 
-**PR-3.2** While a worktree has a resolved PR/MR, its sidebar row shall display a `#<number>` badge between the leading icon and the branch label. The badge text shall be colored using the PR's state color: green for open, purple for merged. While the PR is open, the CI verdict from `PR-3.5` overrides the open-state green.
+**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading icon and branch label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
 
-**PR-3.3** The `#<number>` sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
+**PR-3.3** The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
 
-**PR-3.4** The `#<number>` sidebar badge shall have an accessibility label of the form "Pull request `<number>`, open/merged[, CI failing|CI running]. Click to open in browser." and a tooltip showing "Open #`<number>` on `<host>`". The CI suffix is appended only when the CI tone is `ciFailure` or `ciPending` per `PR-3.5`.
+**PR-3.4** The forge-specific PR/MR reference sidebar badge shall have an accessibility label of the form "Pull request `<number>`, open|merged|closed[, CI failing|CI running|merge conflict]. Click to open in browser." and a tooltip showing "Open `<reference>` on `<host>`". The optional suffix shall match the badge's `ciFailure`, `ciPending`, or `conflicting` tone per `PR-3.5` and `PR-8.20`.
 
-**PR-3.5** While a worktree's PR/MR is open, the `#<number>` sidebar badge text shall be colored to reflect CI state, overriding the open-state green: red (matching the breadcrumb PR-button failure dot, RGB ~0.97/0.32/0.29) when the latest checks verdict is `failure`, orange (matching the pending dot, RGB ~0.82/0.60/0.13) and pulsing in opacity when the verdict is `pending`. A `success` or absent (`none`) verdict shall keep the open-state green so repos without CI do not lose the open-vs-merged signal. While the PR is merged, the badge shall remain purple regardless of the CI verdict, since CI status on a merged PR is stale and would distract from the actionable signal on still-open PRs.
+**PR-3.5** While a worktree's PR/MR is open, the forge-specific reference sidebar badge text shall be colored to reflect CI state, overriding the open-state green: red (matching the breadcrumb PR-button failure dot, RGB ~0.97/0.32/0.29) when the latest checks verdict is `failure`, orange (matching the pending dot, RGB ~0.82/0.60/0.13) and pulsing in opacity when the verdict is `pending`. A `success` or absent (`none`) verdict shall keep the open-state green so repos without CI do not lose the open-vs-merged signal. While the PR is merged, the badge shall remain purple regardless of the CI verdict, since CI status on a merged PR is stale and would distract from the actionable signal on still-open PRs.
 
 ### PR-4.x — Host Detection
 
@@ -1346,7 +1346,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.19**
 
-**PR-8.20** When the application picks the sidebar `#<number>` badge tone for a worktree's PR, the priority shall be merged/closed > CI failure > CI pending > merge conflict > open. CI signals win over a merge conflict because they're tighter feedback on the user's current change; once CI is clean, the conflict tone surfaces and tells the user to rebase. Terminal states (`.merged` and `.closed`-without-merging) ignore CI entirely — CI on a dead PR is stale. The `.conflicting` tone gives "PR has conflicts but CI is green" a visually distinct signal from "PR is broken in CI".
+**PR-8.20** When the application picks the sidebar reference badge tone for a worktree's PR/MR, the priority shall be merged/closed > CI failure > CI pending > merge conflict > open. CI signals win over a merge conflict because they're tighter feedback on the user's current change; once CI is clean, the conflict tone surfaces and tells the user to rebase. Terminal states (`.merged` and `.closed`-without-merging) ignore CI entirely — CI on a dead PR/MR is stale. The `.conflicting` tone gives "PR/MR has conflicts but CI is green" a visually distinct signal from "PR/MR is broken in CI".
 
 **PR-8.21**
 
