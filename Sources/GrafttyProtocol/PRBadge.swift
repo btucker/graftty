@@ -5,9 +5,9 @@ import Foundation
 /// row badge renders — so that unrelated `PRInfo` changes (title,
 /// fetchedAt) do not invalidate the row via SwiftUI's equality
 /// diffing. `checks` and `mergeable` are included because the
-/// `#<number>` color reflects CI state (`PR-3.5`) and merge-conflict
-/// state (`PR-8.20`), so a transition in either must invalidate the
-/// row.
+/// reference badge's color reflects CI state (`PR-3.5`) and
+/// merge-conflict state (`PR-8.20`), so a transition in either must
+/// invalidate the row.
 ///
 /// `Codable` so it can travel on the wire to mobile clients via
 /// `GET /worktrees/panes`.
@@ -41,5 +41,15 @@ public struct PRBadge: Codable, Equatable, Sendable, Hashable {
             mergeable: info.mergeable,
             url: info.url
         )
+    }
+
+    /// Forge-native PR/MR reference with locale-independent digits.
+    /// GitLab MR URLs use `merge_requests` as the route segment immediately
+    /// before the number, including on self-hosted instances; other supported
+    /// URLs are GitHub PRs and retain the conventional `#` prefix.
+    public var referenceText: String {
+        let route = url.path.split(separator: "/").dropLast().last
+        let prefix = route == "merge_requests" ? "!" : "#"
+        return prefix + String(number)
     }
 }

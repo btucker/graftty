@@ -94,7 +94,7 @@ struct PRButton: View {
 extension PRInfo.State {
     /// Color representing this PR's state. Green for open, purple for
     /// merged, red for closed-without-merging. Shared between the
-    /// sidebar badge (foreground color of `#<number>`) and the
+    /// sidebar reference badge and the
     /// breadcrumb pill (foreground color when merged/closed).
     var statusColor: Color {
         switch self {
@@ -107,7 +107,7 @@ extension PRInfo.State {
 
 extension PRInfo.Checks {
     /// Color encoding the CI verdict. Reused by the breadcrumb PR
-    /// button's dot and, per `PR-3.5`, the sidebar `#<number>` badge.
+    /// button's dot and, per `PR-3.5`, the sidebar reference badge.
     /// The `.success` green intentionally matches `PRInfo.State.open`
     /// so an open PR with passing CI reads as a single signal.
     var statusColor: Color {
@@ -124,7 +124,7 @@ extension PRInfo.Mergeable {
     /// Color for the merge-conflict cue. Distinct from CI failure
     /// red so a "PR has conflicts but CI is green" state reads
     /// differently from "PR is broken in CI". Used by the sidebar
-    /// `#<number>` badge when `PRBadgeStyle` returns `.conflicting`
+    /// reference badge when `PRBadgeStyle` returns `.conflicting`
     /// and by the breadcrumb's "merge conflict" pill.
     var statusColor: Color {
         switch self {

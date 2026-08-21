@@ -1,6 +1,6 @@
 import Foundation
 
-/// Decides what color/animation tone the sidebar `#<number>` badge
+/// Decides what color/animation tone the sidebar PR/MR reference badge
 /// should use, given a worktree's PR state, CI verdict, and
 /// mergeable state.
 ///

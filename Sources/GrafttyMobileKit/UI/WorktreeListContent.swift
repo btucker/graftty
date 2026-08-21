@@ -1117,7 +1117,7 @@ private struct AttentionCapsule: View {
     }
 }
 
-/// `#<number>` PR/MR badge tinted by `PRBadgeStyle.tone`. Tapping
+/// Forge-native PR/MR reference badge tinted by `PRBadgeStyle.tone`. Tapping
 /// opens the PR URL; pulses while CI is pending.
 private struct PRBadgeLabel: View {
     let badge: PRBadge
@@ -1132,7 +1132,7 @@ private struct PRBadgeLabel: View {
         Button {
             openURL(badge.url)
         } label: {
-            Text("#\(badge.number)")
+            Text(verbatim: badge.referenceText)
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundStyle(color(for: tone))
