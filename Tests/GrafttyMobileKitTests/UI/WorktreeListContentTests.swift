@@ -200,6 +200,24 @@ struct WorktreeListContentTests {
         ))
     }
 
+    @Test("downstream Mac rows expose state-specific reconnect actions")
+    func remoteMacConnectionRowActions() {
+        #expect(RemoteMacConnectionSummary.State.offline.mobileCanReconnect)
+        #expect(RemoteMacConnectionSummary.State.failed.mobileCanReconnect)
+        #expect(RemoteMacConnectionSummary.State.discovered.mobileCanReconnect)
+        #expect(!RemoteMacConnectionSummary.State.connecting.mobileCanReconnect)
+        #expect(RemoteMacConnectionSummary.State.connected.mobileCanReconnect)
+        #expect(!RemoteMacConnectionSummary.State.needsPairing.mobileCanReconnect)
+        #expect(
+            RemoteMacConnectionSummary.State.discovered.mobileReconnectLabel
+                == "Connect"
+        )
+        #expect(
+            RemoteMacConnectionSummary.State.offline.mobileReconnectLabel
+                == "Reconnect"
+        )
+    }
+
     @Test("""
     @spec IOS-4.29: While the initial authenticated worktree load remains \
     incomplete for at least 750 milliseconds, the application shall reveal \

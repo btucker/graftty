@@ -2154,7 +2154,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
 
-**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip host presentation, repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree or downstream Mac connection, the application shall round-trip host presentation, repository, connection status, reconnect, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
 
 **REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
 
@@ -2195,6 +2195,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.22** A successful remote split shall return the exact created pane session through direct and relayed pane-control responses so rapid split focus never depends on coalesced snapshot leaf order.
 
 **REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
+
+**REMOTE-13.24** While GrafttyMobile views a paired Mac, the application shall show each saved downstream Mac's connection state and allow an unavailable downstream Mac to reconnect from the mobile list.
 
 ## URL — Worktree URL Handler
 

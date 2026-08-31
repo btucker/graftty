@@ -1,5 +1,58 @@
 import Foundation
 
+/// @spec REMOTE-13.24
+/// While GrafttyMobile views a paired Mac, the application shall show each
+/// saved downstream Mac's connection state and allow an unavailable
+/// downstream Mac to reconnect from the mobile list.
+public struct RemoteMacConnectionSummary: Codable, Sendable, Hashable,
+    Identifiable {
+    public struct ID: Codable, Sendable, Hashable {
+        public let deviceID: RemoteDeviceID
+        public let fingerprint: RemoteIdentityFingerprint
+
+        public init(
+            deviceID: RemoteDeviceID,
+            fingerprint: RemoteIdentityFingerprint
+        ) {
+            self.deviceID = deviceID
+            self.fingerprint = fingerprint
+        }
+    }
+
+    public enum State: String, Codable, Sendable, Hashable {
+        case offline
+        case discovered
+        case connecting
+        case connected
+        case failed
+        case needsPairing
+    }
+
+    public let deviceID: RemoteDeviceID
+    public let fingerprint: RemoteIdentityFingerprint
+    public let label: String
+    public let lastKnownHost: String?
+    public let state: State
+
+    public var id: ID {
+        ID(deviceID: deviceID, fingerprint: fingerprint)
+    }
+
+    public init(
+        deviceID: RemoteDeviceID,
+        fingerprint: RemoteIdentityFingerprint,
+        label: String,
+        lastKnownHost: String?,
+        state: State
+    ) {
+        self.deviceID = deviceID
+        self.fingerprint = fingerprint
+        self.label = label
+        self.lastKnownHost = lastKnownHost
+        self.state = state
+    }
+}
+
 /// Host appearance and shortcut metadata that mobile clients previously
 /// fetched from unauthenticated Web Access HTTP routes. It now rides the
 /// mutually-authenticated worktree-management SSH subsystem with the rest of
@@ -98,6 +151,11 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
 public enum WorktreeManagementRequest: Sendable, Equatable {
     case hostPresentation
     case listRepositories
+    case listRemoteMacConnections
+    case connectRemoteMac(
+        deviceID: RemoteDeviceID,
+        fingerprint: RemoteIdentityFingerprint
+    )
     case create(repositoryID: String, worktreeName: String, branchName: String, existingSource: RemoteRepositoryInfo.Branch.Source?)
     case pullDefaultBranch(repositoryID: String)
     case open(worktreeID: String)
@@ -108,7 +166,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID
+             existingSource, force, paneID, deviceID, fingerprint
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -118,6 +176,12 @@ extension WorktreeManagementRequest: Codable {
             try c.encode("host_presentation", forKey: .type)
         case .listRepositories:
             try c.encode("list_repositories", forKey: .type)
+        case .listRemoteMacConnections:
+            try c.encode("list_remote_mac_connections", forKey: .type)
+        case let .connectRemoteMac(deviceID, fingerprint):
+            try c.encode("connect_remote_mac", forKey: .type)
+            try c.encode(deviceID, forKey: .deviceID)
+            try c.encode(fingerprint, forKey: .fingerprint)
         case let .create(repositoryID, worktreeName, branchName, existingSource):
             try c.encode("create", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
@@ -148,6 +212,16 @@ extension WorktreeManagementRequest: Codable {
             self = .hostPresentation
         case "list_repositories":
             self = .listRepositories
+        case "list_remote_mac_connections":
+            self = .listRemoteMacConnections
+        case "connect_remote_mac":
+            self = .connectRemoteMac(
+                deviceID: try c.decode(RemoteDeviceID.self, forKey: .deviceID),
+                fingerprint: try c.decode(
+                    RemoteIdentityFingerprint.self,
+                    forKey: .fingerprint
+                )
+            )
         case "create":
             self = .create(
                 repositoryID: try c.decode(String.self, forKey: .repositoryID),
@@ -189,6 +263,7 @@ extension WorktreeManagementRequest: Codable {
 public enum WorktreeManagementResponse: Sendable, Equatable {
     case hostPresentation(RemoteHostPresentation)
     case repositories([RemoteRepositoryInfo])
+    case remoteMacConnections([RemoteMacConnectionSummary])
     case created(worktreeID: String, paneID: String)
     case deleted(dismissed: Bool)
     case ok
@@ -197,8 +272,9 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
 
 extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, presentation, repositories, worktreeID, paneID, dismissed,
-             code, message, forceAllowed, shortStatus
+        case type, presentation, repositories, remoteMacConnections,
+             worktreeID, paneID, dismissed, code, message, forceAllowed,
+             shortStatus
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -210,6 +286,9 @@ extension WorktreeManagementResponse: Codable {
         case .repositories(let repositories):
             try c.encode("repositories", forKey: .type)
             try c.encode(repositories, forKey: .repositories)
+        case .remoteMacConnections(let connections):
+            try c.encode("remote_mac_connections", forKey: .type)
+            try c.encode(connections, forKey: .remoteMacConnections)
         case let .created(worktreeID, paneID):
             try c.encode("created", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -241,6 +320,13 @@ extension WorktreeManagementResponse: Codable {
         case "repositories":
             self = .repositories(
                 try c.decode([RemoteRepositoryInfo].self, forKey: .repositories)
+            )
+        case "remote_mac_connections":
+            self = .remoteMacConnections(
+                try c.decode(
+                    [RemoteMacConnectionSummary].self,
+                    forKey: .remoteMacConnections
+                )
             )
         case "created":
             self = .created(
