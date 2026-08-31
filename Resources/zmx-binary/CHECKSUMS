@@ -1,6 +1,6 @@
 # zmx 0.7.0-gccf8e9f-graftty2 — built from https://github.com/neurosnap/zmx commit ccf8e9f43a946a86a1aac0c4e4944f4884a12d54
 # Built with Zig 0.16.0.
-# Graftty patch SHA256 4098e525da2c57b393c23dd5912322c52f1dd25a4f2e112c6eb8708881e01e9d — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw.
-28f81cc2468af7f310e3bb5e40757d22c7957bec9a5a89df0f691d75c5736f80  zmx-aarch64
-052248b6813829fff106b39537504e7f1cc241e4d79c5697e6bc4c22c8e395ab  zmx-x86_64
-d6ca49de6d9c1cf5bd3e8247f72d6f5353e140cc86202080600a883a343fbfd2  zmx (universal)
+# Graftty patch SHA256 226c081a4765b81e577ac59d9ea80a1f6f96f6dbf83ece5f1e26ddfd7def9788 — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw.
+eaa71889795c6e3e60fae52e9a79f190a9a5968ec1989c1e473f27123ec7a16a  zmx-aarch64
+36ee908bdd7d6de597455132f2a864c28c816b88eedacbd8c05c55e6a5550911  zmx-x86_64
+6c88b77f2ba4ac4fc13319289f69a32b8d30645f7a931a547ea8a15d291e43c1  zmx (universal)

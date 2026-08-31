@@ -158,7 +158,7 @@ index a43b5a7..4bf7951 100644
  }
 
 diff --git a/src/loop.zig b/src/loop.zig
-index 4509ec0..a1c42e8 100644
+index 4509ec0..3b5678a 100644
 --- a/src/loop.zig
 +++ b/src/loop.zig
 @@ -20,7 +20,6 @@ pub fn clientLoop(
@@ -457,7 +457,7 @@ index 4509ec0..a1c42e8 100644
          const inp_flags = lib_posix.POLL.IN | lib_posix.POLL.HUP | lib_posix.POLL.ERR | lib_posix.POLL.NVAL;
          if (poll_fds.items[1].revents & inp_flags != 0) {
              // Read from PTY. Buffer is sized to N_TTY_BUF_SIZE (4096): the hard
-@@ -434,7 +598,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -434,12 +598,11 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];
                      defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);
                      for (daemon.clients.items) |client| {
@@ -466,6 +466,11 @@ index 4509ec0..a1c42e8 100644
                              std.log.warn(
                                  "failed to buffer output for client err={s}",
                                  .{@errorName(err)},
+                             );
+                             continue;
+                         };
+-                        client.has_pending_output = true;
+                     }
 @@ -465,7 +629,6 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
          // Only iterate over clients that were present when poll_fds was constructed
          // poll_fds contains [server, pty, sig_pipe, client0, client1, ...]
