@@ -30,8 +30,15 @@ public enum TeamInstructionsRenderer {
     - Graftty reads current filesystem bytes and does not inspect Git; staging or committing is not required for an edit to affect the next session. Symlinks, non-regular files, and evicted iCloud placeholders are ignored.
     - Keep instruction files concise. When team structure or a specialized child role would help, suggest an appropriate instruction file; create or modify one only when authorized.
 
-    Create an agent:
-    `graftty worktree add <name> --agent <codex|claude> [--base <ref>]`
+    Delegate work into a new worktree:
+    - Proactively delegate a bounded task when it can run independently and useful parent work can continue. Do not delegate tiny, sequential, or overlapping work. Send the task to a suitable existing agent when one is already reachable.
+    - `graftty worktree add <name>` without `--agent` only creates another worktree for the current agent. It does not delegate the task.
+    - Before creating a child, refresh the roster with the command above and copy the parent's exact canonical address for the return instructions.
+    - Launch the child with:
+      `graftty worktree add <name> --agent <codex|claude> --prompt-stdin [--base <ref>]`
+      The prompt names one objective, the child's owned files or subsystem, verification, and the parent's exact canonical address. Require the child to return its result and commit hash with `graftty team send --stdin`.
+    - If the handoff stays inside the repository work the user requested, do not ask for confirmation only because you are delegating. A child agent does not grant new authority.
+    - After the command returns, stop working on the delegated scope in the parent worktree. Do not change into the child worktree or implement its task. Continue only with separate work until the child replies.
     - `--base` selects an exact locally resolvable start ref and cannot be combined with `--existing`.
     - To tune a new agent through an instruction file, create its exact-worktree `GRAFTTY.md` where its first session can see it: in Application Support, in the main checkout, or in the child's starting tree. From a linked worktree, one way to include it in the starting tree is to commit the file, then use:
       `graftty worktree add <name> --base HEAD --agent <codex|claude>`

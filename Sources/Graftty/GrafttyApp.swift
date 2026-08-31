@@ -292,7 +292,6 @@ final class AppServices {
     /// the app's lifetime.
     var codexAppServerDeliveryService: CodexAppServerDeliveryService?
     var claudePeerDeliveryService: ClaudePeerDeliveryService?
-    var teamAgentRosterNotifier: TeamAgentRosterNotifier?
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -1535,8 +1534,7 @@ struct GrafttyApp: App {
                         prStatusStore: services.prStatusStore,
                         worktreeCreations: services.cliWorktreeCreations,
                         worktreeRemovals: services.cliWorktreeRemovals,
-                        remoteBranchStore: services.remoteBranchStore,
-                        teamAgentRosterNotifier: services.teamAgentRosterNotifier
+                        remoteBranchStore: services.remoteBranchStore
                     )
                 }
             )
@@ -1755,21 +1753,11 @@ struct GrafttyApp: App {
                 )
             }
         )
-        let teamAgentRosterNotifier = TeamAgentRosterNotifier(
-            inbox: services.teamInbox,
-            initialRecords: presenceIndex.allRecords(),
-            isReachable: { TeamAgentReachability.isReachable($0) }
-        )
-        services.teamAgentRosterNotifier = teamAgentRosterNotifier
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
             let records = refreshPresenceIndex()
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            if teamsEnabled, Self.nativeAgentMessagingEnabled() {
-                let repos = await MainActor.run { binding.wrappedValue.repos }
-                try? await teamAgentRosterNotifier.reconcile(records: records, repos: repos)
-            }
             await Self.retryNativeDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: records,
@@ -3636,8 +3624,7 @@ struct GrafttyApp: App {
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore,
-        remoteBranchStore: RemoteBranchStore,
-        teamAgentRosterNotifier: TeamAgentRosterNotifier? = nil
+        remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -3732,8 +3719,7 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
                 terminalManager: terminalManager,
-                remoteBranchStore: remoteBranchStore,
-                teamAgentRosterNotifier: teamAgentRosterNotifier
+                remoteBranchStore: remoteBranchStore
             )
         case .teamInbox(let request):
             return await handleTeamInbox(
@@ -4107,8 +4093,7 @@ struct GrafttyApp: App {
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         terminalManager: TerminalManager,
-        remoteBranchStore: RemoteBranchStore,
-        teamAgentRosterNotifier: TeamAgentRosterNotifier?
+        remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage {
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
@@ -4126,16 +4111,6 @@ struct GrafttyApp: App {
                 ).listAll()) ?? []
             }
             let repos = appState.wrappedValue.repos
-            // Reconcile the roster only when a session joins: PostToolUse
-            // fires on every tool call of every agent, and the 30s presence
-            // ticker already covers departures. Roster I/O failures must not
-            // fail the hook response itself.
-            if event == .sessionStart, teamsEnabled, nativeAgentMessagingEnabled() {
-                try? await teamAgentRosterNotifier?.reconcile(
-                    records: presenceRecords,
-                    repos: repos
-                )
-            }
             // The wrapper-launched CLI knows its own canonical identity
             // (GRAFTTY_AGENT_ID / pane presence), so a caller-supplied agent
             // ID wins; the session-based resolver covers older CLIs, and the

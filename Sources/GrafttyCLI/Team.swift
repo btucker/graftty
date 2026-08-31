@@ -233,12 +233,19 @@ struct TeamHook: ParsableCommand {
             agentID: canonicalAgentID
         )
         // PostToolUse fires on every tool call; skip the registry scan and
-        // rewrite while the stored record still points at a live socket.
+        // rewrite while the stored record still points at a live socket. The
+        // binder still checks for a newer identity on the shared endpoint so
+        // a straggling hook cannot keep an identity superseded by `/clear`.
         if event == .postToolUse,
            let prior,
            prior.runtimeSessionID == sessionID,
            case .claude(let socketPath, _)? = prior.transport,
            ClaudePeerSessionRegistry.isSocket(atPath: socketPath) {
+            _ = try? ClaudeHookSessionBinder.bind(
+                prior,
+                event: event,
+                storage: storage
+            )
             return
         }
         // Claude's Stop hook fires at the end of every assistant turn — the
@@ -265,7 +272,11 @@ struct TeamHook: ParsableCommand {
             }
             return
         }
-        try? storage.write(record)
+        _ = try? ClaudeHookSessionBinder.bind(
+            record,
+            event: event,
+            storage: storage
+        )
     }
 
     private func bindCodexNativeSession(

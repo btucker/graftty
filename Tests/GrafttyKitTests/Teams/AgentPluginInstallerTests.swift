@@ -86,6 +86,32 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
+    @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to stop working the delegated scope, and preserve the user's authorization boundaries.
+    """)
+    func materializedSkillsExplainRealWorktreeDelegation() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugin-delegation-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let skill = try String(contentsOf: destination
+                .appendingPathComponent(provider)
+                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+            #expect(skill.contains("## Delegate work into a new worktree"))
+            #expect(skill.contains("Proactively delegate"))
+            #expect(skill.contains(
+                "graftty worktree add <name> --agent <codex|claude> --prompt-stdin"
+            ))
+            #expect(skill.contains("does not delegate the task"))
+            #expect(skill.contains("Stop working on the delegated scope"))
+            #expect(skill.contains("parent's exact canonical address"))
+            #expect(skill.contains("does not grant new authority"))
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.16: While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
     """)
     func materializedSkillsDiagnoseSandboxDeniedControlSocket() throws {

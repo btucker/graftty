@@ -19,6 +19,28 @@ struct CLIWorktreeCreationTests {
         #expect(help.contains("team send --stdin"))
     }
 
+    @Test("""
+    @spec AGENT-5.9: When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to stop working on the delegated scope while it continues only separate work.
+    """)
+    func readyAgentOutputClosesTheParentHandoff() {
+        let lines = WorktreeAdd.successOutputLines(
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth",
+            agent: "codex"
+        )
+
+        #expect(lines.contains(where: { $0.contains("created worktree=") }))
+        #expect(lines.contains(where: {
+            $0.contains("message-with=graftty team send --stdin")
+                && $0.contains("/repo/.worktrees/fix-auth")
+        }))
+        #expect(lines.contains(where: {
+            $0.contains("handoff=complete")
+                && $0.contains("stop working on delegated scope")
+                && $0.contains("continue only separate work")
+        }))
+    }
+
     @Test("Parsed --base is forwarded into the create-worktree request")
     func parsedBaseReachesProtocolRequest() throws {
         let command = try WorktreeAdd.parse([
@@ -638,6 +660,10 @@ struct CLIWorktreeCreationTests {
         #expect(primer.contains("inherits that file for its first session"))
         #expect(primer.contains("its own `.graftty` can tune later sessions"))
         #expect(primer.contains("--prompt-stdin"))
+        #expect(primer.contains("Proactively delegate"))
+        #expect(primer.contains("does not delegate the task"))
+        #expect(primer.contains("stop working on the delegated scope"))
+        #expect(primer.contains("parent's exact canonical address"))
         #expect(!primer.contains("Spawn a teammate"))
     }
 }

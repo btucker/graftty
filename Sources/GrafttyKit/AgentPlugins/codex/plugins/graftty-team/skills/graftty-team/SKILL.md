@@ -20,7 +20,26 @@ Treat canonical addresses as routing identities:
 - Native provider sender labels are display metadata and may be truncated. Never route by them.
 - Native subagents are not independently routable.
 
-When an agent-joined notice arrives, refresh the roster before forwarding or assigning work.
+## Delegate work into a new worktree
+
+Proactively delegate a concrete, bounded task when it can run independently and useful parent work can continue. Do not delegate a tiny task, a sequential dependency, or work likely to edit the same files. If a suitable agent already exists, send the task to that agent instead of creating another worktree.
+
+`graftty worktree add <name>` alone creates a worktree for the current agent. It does not delegate the task. A real handoff launches a new top-level agent and gives that agent the task in its first prompt:
+
+```sh
+graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
+Objective: <one bounded outcome>
+Owned scope: <files or subsystem the child may change>
+Verify: <tests or checks to run>
+Return: send the result, changed paths, verification, and commit hash to <parent-exact-address> with graftty team send --stdin.
+GRAFTTY_DELEGATE_7F3A91C2
+```
+
+Before creating the child, run `graftty team list --json` and copy the parent's exact canonical address into the prompt. Use a fresh heredoc delimiter. Use `--base <ref>` when the child needs a start point other than the repository default branch or `HEAD`.
+
+If the handoff stays within the repository work the user requested, treat worktree and agent creation as a normal implementation step. Do not ask for confirmation only because you are delegating. A child agent does not grant new authority. Ask before any action that the parent could not already take within the user's request.
+
+After the command returns, save the delegated worktree's stable address. Stop working on the delegated scope in the parent worktree. Do not change into the child worktree or implement the child's task yourself. Continue only with separate work, then review and integrate the child's result when it replies.
 
 ## Send and reply
 

@@ -92,16 +92,16 @@ struct TeamInstructionsRendererTests {
         }
     }
 
-    @Test func neitherVariantPrescribesPolicy() {
-        // Cleanup verification: prompts describe mechanism only, no "you must…" / "you should…"
+    @Test func bothVariantsRequireRealDelegationRatherThanParentContinuation() {
         let view = makeView()
         let mainPrompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
         let linkedMember = view.members.first(where: { $0.name == "feature/login" })!
         let linkedPrompt = TeamInstructionsRenderer.render(team: view, viewer: linkedMember)
         for prompt in [mainPrompt, linkedPrompt] {
-            #expect(!prompt.contains("MUST proactively"))
-            #expect(!prompt.contains("You should "))   // case-sensitive "You should" sentence-start
-            #expect(!prompt.contains("you should "))
+            #expect(prompt.contains("Proactively delegate"))
+            #expect(prompt.contains("does not delegate the task"))
+            #expect(prompt.contains("stop working on the delegated scope"))
+            #expect(prompt.contains("parent's exact canonical address"))
         }
     }
 
