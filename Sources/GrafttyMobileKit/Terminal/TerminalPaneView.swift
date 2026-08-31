@@ -18,13 +18,16 @@ import UIKit
 public struct TerminalPaneView: UIViewRepresentable {
     public struct CommittedSoftwareInput {
         public let insertText: (String) -> Void
+        public let insertControlByte: ((UInt8) -> Void)?
         public let deleteBackward: () -> Void
 
         public init(
             insertText: @escaping (String) -> Void,
+            insertControlByte: ((UInt8) -> Void)? = nil,
             deleteBackward: @escaping () -> Void
         ) {
             self.insertText = insertText
+            self.insertControlByte = insertControlByte
             self.deleteBackward = deleteBackward
         }
     }
@@ -165,6 +168,12 @@ public final class TerminalInputContainerView: UIView,
     TerminalSoftwareInputDelegate,
     TerminalHardwareInputDelegate
 {
+    public enum StickyControlActivation: Equatable, Sendable {
+        case inactive
+        case armed
+        case locked
+    }
+
     private struct HardwareKeyboardCommandSignature: Equatable {
         let id: String
         let title: String
@@ -185,9 +194,10 @@ public final class TerminalInputContainerView: UIView,
     /// instead of its printable character; Tab can also be consumed by UIKit's
     /// focus traversal before Ghostty receives it. Reserve only those logical
     /// UIKit chords and feed their exact terminal text through the same
-    /// committed-input transport as the software keyboard. Shift+Return
-    /// deliberately remains with Ghostty so user bindings such as
-    /// `shift+enter=text:\\n` keep working.
+    /// committed-input transport as the software keyboard. Ctrl+A through
+    /// Ctrl+Z are handled separately by `hardwareControlByte(for:)` below.
+    /// Shift+Return deliberately remains with Ghostty so user bindings such
+    /// as `shift+enter=text:\\n` keep working.
     private static let terminalHardwareTextCommands = [
         TerminalHardwareTextCommand(
             id: "terminal-return",
@@ -238,6 +248,9 @@ public final class TerminalInputContainerView: UIView,
                 isCommittedSoftwareInputEligible = true
                 terminalView.isKeyboardInputEnabled = true
             } else {
+                if wasEligible {
+                    resetStickyModifiers()
+                }
                 isCommittedSoftwareInputEligible = false
                 terminalView.isKeyboardInputEnabled = false
                 storedCommittedSoftwareInput = nil
@@ -262,6 +275,46 @@ public final class TerminalInputContainerView: UIView,
     /// without host output, so a finger on the surface must count as
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
+
+    public var stickyControlActivation: StickyControlActivation {
+        #if !targetEnvironment(macCatalyst)
+        switch terminalView.stickyActivation(for: .ctrl) {
+        case .inactive: .inactive
+        case .armed: .armed
+        case .locked: .locked
+        }
+        #else
+        .inactive
+        #endif
+    }
+
+    public func toggleStickyControlModifier() {
+        #if !targetEnvironment(macCatalyst)
+        terminalView.toggleStickyModifier(.ctrl)
+        #endif
+    }
+
+    public func resetStickyModifiers() {
+        #if !targetEnvironment(macCatalyst)
+        terminalView.resetStickyModifiers()
+        #endif
+    }
+
+    public func setStickyControlActivationChangeHandler(
+        _ handler: ((StickyControlActivation) -> Void)?
+    ) {
+        #if !targetEnvironment(macCatalyst)
+        guard let handler else {
+            terminalView.setStickyModifierChangeHandler(nil)
+            return
+        }
+        terminalView.setStickyModifierChangeHandler { [weak self] in
+            guard let self else { return }
+            handler(self.stickyControlActivation)
+        }
+        #endif
+    }
+
     public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
         get { storedHardwareKeyboardCommands }
         set {
@@ -351,12 +404,6 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
 
-    private lazy var longPressRecognizer: UILongPressGestureRecognizer = {
-        let r = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        r.minimumPressDuration = 0.45
-        return r
-    }()
-
     private lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
         let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
         r.isEnabled = false
@@ -389,9 +436,16 @@ public final class TerminalInputContainerView: UIView,
         isOpaque = false
 
         terminalView.translatesAutoresizingMaskIntoConstraints = false
+        terminalView.delegate = self
         terminalView.softwareInputDelegate = self
         terminalView.hardwareInputDelegate = self
         terminalView.isKeyboardInputEnabled = false
+        #if !targetEnvironment(macCatalyst)
+        // libghostty's hidden stock accessory installs its own sticky-state
+        // observer the first time it is created. Initialize it before the host
+        // installs its observer so later ordinary text cannot replace ours.
+        _ = terminalView.inputAccessoryView
+        #endif
         terminalView.showsInputAccessory = false
         addSubview(terminalView)
         NSLayoutConstraint.activate([
@@ -409,7 +463,6 @@ public final class TerminalInputContainerView: UIView,
 
         addInteraction(longPressMenu)
         addInteraction(selectionMenu)
-        addGestureRecognizer(longPressRecognizer)
         addGestureRecognizer(selectionPanRecognizer)
         addGestureRecognizer(anyTouchObserver)
     }
@@ -431,10 +484,7 @@ public final class TerminalInputContainerView: UIView,
         terminalView.becomeFirstResponder()
     }
 
-    /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
-    @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
-        guard recognizer.state == .began else { return }
-        let point = recognizer.location(in: self)
+    private func presentLongPressMenu(at point: CGPoint) {
         lastLongPressPoint = point
         longPressMenuGeneration &+= 1
         pendingPasteRefocusGeneration = nil
@@ -603,6 +653,13 @@ public final class TerminalInputContainerView: UIView,
         onUserInteraction?()
     }
 
+    func longPressMenuActionTitlesForTesting(hasPasteString: Bool) -> [String] {
+        longPressUIMenu(
+            for: longPressMenuGeneration,
+            hasPasteString: hasPasteString
+        ).children.compactMap { ($0 as? UIAction)?.title }
+    }
+
     private func refocusKeyboardAfterEditMenuDismissalIfReady(for generation: UInt) {
         guard pendingPasteRefocusGeneration == generation,
               completedLongPressMenuDismissalGeneration == generation
@@ -647,10 +704,51 @@ public final class TerminalInputContainerView: UIView,
             $0.modifierFlags.appCommandModifiers == normalizedModifiers
                 && inputs.contains(canonicalHardwareCommandInput($0.input))
         }) else {
-            return false
+            guard isCommittedSoftwareInputEligible,
+                  let byte = hardwareControlByte(for: event),
+                  let committedInput = storedCommittedSoftwareInput
+            else { return false }
+            if let insertControlByte = committedInput.insertControlByte {
+                insertControlByte(byte)
+            } else {
+                committedInput.insertText(String(UnicodeScalar(byte)))
+            }
+            return true
         }
         command.perform()
         return true
+    }
+
+    private func hardwareControlByte(for event: TerminalHardwareKeyEvent) -> UInt8? {
+        guard event.modifierFlags.appCommandModifiers == [.control] else { return nil }
+
+        let logicalInput = canonicalHardwareCommandInput(event.charactersIgnoringModifiers)
+        if let byte = asciiControlByte(for: logicalInput) {
+            return byte
+        }
+
+        guard logicalInput.isEmpty,
+              let hardwareInput = hardwareLetterInput(for: event.usage)
+        else { return nil }
+        return asciiControlByte(for: hardwareInput)
+    }
+
+    private func hardwareLetterInput(for usage: UInt16) -> String? {
+        let firstLetterUsage = UInt16(UIKeyboardHIDUsage.keyboardA.rawValue)
+        let lastLetterUsage = UInt16(UIKeyboardHIDUsage.keyboardZ.rawValue)
+        guard usage >= firstLetterUsage, usage <= lastLetterUsage else {
+            return nil
+        }
+        let asciiLowercaseA: UInt16 = 0x61
+        let ascii = asciiLowercaseA + usage - firstLetterUsage
+        return String(UnicodeScalar(ascii)!)
+    }
+
+    private func asciiControlByte(for input: String) -> UInt8? {
+        guard input.utf8.count == 1, let ascii = input.utf8.first,
+              ascii >= 0x61, ascii <= 0x7A
+        else { return nil }
+        return ascii & 0x1F
     }
 
     private func hardwareCommandInputs(for event: TerminalHardwareKeyEvent) -> Set<String> {
@@ -658,6 +756,9 @@ public final class TerminalInputContainerView: UIView,
             return [canonicalHardwareCommandInput(event.charactersIgnoringModifiers)]
         }
         if let input = Self.hardwareCommandInputByUsage[event.usage] {
+            return [input]
+        }
+        if let input = hardwareLetterInput(for: event.usage) {
             return [input]
         }
         return []
@@ -738,6 +839,13 @@ public final class TerminalInputContainerView: UIView,
     }
 }
 
+extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegate {
+    /// @spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
+    public func terminalDidRequestTextSelection(_ request: TerminalTextSelectionRequest) {
+        presentLongPressMenu(at: request.sourcePoint)
+    }
+}
+
 /// Observes touch-begin without claiming the gesture: reports, then
 /// immediately fails so libghostty's pan/pinch and the selection
 /// recognizers proceed untouched. Powers render-pace promotion —
@@ -767,7 +875,10 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         if interaction === longPressMenu {
             guard configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
             else { return nil }
-            return longPressUIMenu(for: longPressMenuGeneration)
+            return longPressUIMenu(
+                for: longPressMenuGeneration,
+                hasPasteString: UIPasteboard.general.hasStrings
+            )
         }
         return selectionUIMenu()
     }
@@ -788,12 +899,12 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         }
     }
 
-    private func longPressUIMenu(for generation: UInt) -> UIMenu {
+    private func longPressUIMenu(for generation: UInt, hasPasteString: Bool) -> UIMenu {
         var children: [UIMenuElement] = [
             UIAction(title: "Select") { [weak self] _ in self?.performSelectAtLongPressPoint() },
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
-        if UIPasteboard.general.hasStrings {
+        if hasPasteString {
             children.append(UIAction(title: "Paste") { [weak self] _ in
                 self?.performPaste(for: generation)
             })

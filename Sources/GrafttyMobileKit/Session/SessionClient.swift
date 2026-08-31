@@ -267,15 +267,14 @@ public final class SessionClient {
         )
         // Keystroke path: owner-typed bytes go straight onto the WS.
         // Follower keystrokes request ownership and queue until confirmed;
-        // previews still block PTY-bound input locally. IOS-6.3:
-        // a standalone LF is the soft-keyboard Return; translate to CR so
-        // TUIs see "submit" rather than "insert newline."
+        // previews still block PTY-bound input locally. Raw terminal bytes
+        // remain exact here, including Ctrl+J's LF. IOS-6.3 maps software
+        // Return to CR earlier, at the committed-text API boundary.
         box.onBytes = { [weak self] data in
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let isSoftReturn = data.count == 1 && data.first == 0x0A
-                self.sendInput(isSoftReturn ? Self.cr : data)
+                self.sendInput(data)
             }
         }
         // Layout path: libghostty tells us "the iOS view is now N×M".
@@ -576,10 +575,16 @@ public final class SessionClient {
         sendInput(Data(text.utf8))
     }
 
+    /// Send one terminal control byte without applying committed-text Return
+    /// normalization. Physical Ctrl+letter corrections use this path so
+    /// Ctrl+J remains LF instead of becoming CR.
+    public func sendControlByte(_ byte: UInt8) {
+        sendInput(Data([byte]))
+    }
+
     /// IOS-11.9: send clipboard text as a single bracketed-paste frame.
-    /// Bypasses the IOS-6.3 single-byte LF→CR translation — pastes are
-    /// not per-keystroke input and the payload's line endings are part
-    /// of the paste's meaning.
+    /// Committed software Return normalization does not apply here; the
+    /// payload's line endings are part of the paste's meaning.
     public func sendPaste(_ text: String) {
         guard !text.isEmpty else { return }
         var payload = Data("\u{1B}[200~".utf8)
@@ -623,7 +628,7 @@ public final class SessionClient {
         case .d:
             byte = 0x04
         }
-        sendInput(Data([byte]))
+        sendControlByte(byte)
     }
 
     public func stop() {

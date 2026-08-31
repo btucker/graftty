@@ -511,32 +511,37 @@ struct SessionClientTests {
         }
     }
 
-    /// The iOS soft keyboard's Return produces LF via `UIKeyInput.insertText`,
-    /// but TUIs expect CR (what a physical terminal Return sends). Without
-    /// translation, Enter inserts a literal newline in the prompt rather than
-    /// submitting. IOS-6.3.
+    /// The committed software-keyboard path maps Return's LF to CR, while raw
+    /// libghostty bytes remain untouched so Ctrl+J can still emit LF. IOS-6.3.
     @Test("""
-    @spec IOS-6.3: When the outbound keystroke pipe (`SessionClient.box.onBytes`) receives a payload consisting of exactly one LF byte (`0x0A`), the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. This reconciles iOS's soft-keyboard Return — which UIKit delivers as LF via `UIKeyInput.insertText("\\n")` — with the CR convention that physical terminals send on Return and that TUIs (Claude Code, readline, etc.) interpret as "submit." Without this translation, tapping Return on the iOS keyboard inserts a literal newline into the TUI's input buffer instead of submitting the current line, and there is no way to produce a submit keystroke from the soft keyboard. The rule is narrowed to a *standalone* single-byte LF so that multi-byte payloads with embedded newlines (pastes from the clipboard, programmatic text insertion) pass through unchanged and preserve their own line structure.
+    @spec IOS-6.3: When committed software-keyboard input supplies a newline, the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. Bytes emitted by libghostty's terminal session shall otherwise pass through unchanged, including Ctrl+J's LF byte (`0x0A`).
     """)
-    func softKeyboardReturnLFIsTranslatedToCR() async throws {
+    func softwareReturnMapsToCRWithoutChangingRawTerminalLF() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
-        client.session.sendInput(Data([0x0A]))
-        try await waitUntil("soft-keyboard Return to reach the WebSocket as CR") {
+
+        client.sendSoftwareKeyboardText("\n")
+        try await waitUntil("software-keyboard Return to reach the WebSocket as CR") {
             binaryFrames(ws).contains(Data([0x0D]))
         }
+
+        client.session.sendInput(Data([0x0A]))
+        try await waitUntil("raw terminal LF to reach the WebSocket unchanged") {
+            binaryFrames(ws).contains(Data([0x0A]))
+        }
+
         #expect(binaryFrames(ws).contains(Data([0x0D])))
-        #expect(!binaryFrames(ws).contains(Data([0x0A])))
+        #expect(binaryFrames(ws).contains(Data([0x0A])))
     }
 
     /// The in-app "Newline" button has to send a literal LF — it exists
     /// precisely to reach the newline code that the keyboard's Return
     /// can no longer emit after IOS-6.3. IOS-6.4.
     @Test("""
-    @spec IOS-6.4: When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
+    @spec IOS-6.4: When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session via `SessionClient.insertNewline()`. This is the explicit way to insert a multi-line boundary into a TUI prompt after software Return has been reserved for submission.
     """)
     func insertNewlineSendsLiteralLF() async throws {
         let ws = FakeWS()
@@ -659,9 +664,7 @@ struct SessionClientTests {
         #expect(binaryFrames(ws).contains(Data([0x04])))
     }
 
-    /// Multi-byte paste buffers with embedded LFs must pass through
-    /// unchanged — the LF→CR rule only applies to a standalone Return
-    /// keystroke, not to arbitrary content that happens to contain LF.
+    /// Multi-byte terminal buffers with embedded LFs pass through unchanged.
     @Test
     func multiByteBufferWithEmbeddedLFIsNotTranslated() async throws {
         let ws = FakeWS()
@@ -678,7 +681,7 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-11.9: `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. The single-byte LF→CR translation of `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
+    @spec IOS-11.9: `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. Committed software Return normalization from `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
     """)
     func sendPasteWrapsInBracketedPasteDelimiters() async throws {
         let ws = FakeWS()
@@ -707,7 +710,7 @@ struct SessionClientTests {
             binaryFrames(ws).contains(expected)
         }
         #expect(binaryFrames(ws).contains(expected))
-        // The IOS-6.3 LF→CR translation must NOT apply here.
+        // IOS-6.3's committed software Return normalization does not apply here.
         #expect(!binaryFrames(ws).contains(Data("\u{1B}[200~a\rb\u{1B}[201~".utf8)))
     }
 
