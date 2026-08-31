@@ -828,7 +828,11 @@ public struct AgentHookInstaller: Sendable {
                 hooks[event.camelCaseKey] = hookEntries(
                     command: "\(cmd) team hook claude \(event.rawValue)",
                     matcher: event == .preToolUse
-                        ? "AskUserQuestion|ExitPlanMode|request_user_input|exit_plan_mode"
+                        ? "AskUserQuestion|ExitPlanMode"
+                        : nil,
+                    timeout: event == .preToolUse || event == .permissionRequest
+                        || event == .userPromptSubmit || event == .postToolUseFailure
+                        ? 2
                         : nil
                 )
             }
@@ -868,15 +872,18 @@ public struct AgentHookInstaller: Sendable {
 
     private static func hookEntries(
         command: String,
-        matcher: String? = nil
+        matcher: String? = nil,
+        timeout: Int? = nil
     ) -> [[String: Any]] {
+        var handler: [String: Any] = [
+            "type": "command",
+            "command": command,
+        ]
+        if let timeout {
+            handler["timeout"] = timeout
+        }
         var group: [String: Any] = [
-            "hooks": [
-                [
-                    "type": "command",
-                    "command": command,
-                ],
-            ],
+            "hooks": [handler],
         ]
         if let matcher {
             group["matcher"] = matcher

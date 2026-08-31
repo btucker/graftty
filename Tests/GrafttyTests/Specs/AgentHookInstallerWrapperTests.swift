@@ -20,11 +20,14 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("\"SessionStart\""))
         #expect(script.contains("\"PermissionRequest\""))
         #expect(script.contains("\"PreToolUse\""))
+        #expect(script.contains("\"UserPromptSubmit\""))
         #expect(script.contains("\"PostToolUse\""))
+        #expect(script.contains("\"PostToolUseFailure\""))
         #expect(script.contains("\"Stop\""))
         #expect(script.contains("graftty team hook claude session-start"))
         #expect(script.contains("graftty team hook claude permission-request"))
         #expect(script.contains("graftty team hook claude pre-tool-use"))
+        #expect(script.contains("\"timeout\":2"))
 
         // Foreground child: the wrapper keeps a post-runtime cleanup phase.
         #expect(!script.contains("trap"))

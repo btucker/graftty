@@ -5,7 +5,7 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
-    @spec AGENT-6.28: When Graftty installs Codex or Claude provider hooks, the application shall subscribe to explicit permission requests and blocking question or plan-review tool starts without treating Stop as a needs-input signal.
+    @spec AGENT-6.28: When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
     """)
     func providerHooksCaptureExplicitAttentionSignals() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -21,8 +21,29 @@ struct AgentPluginInstallerTests {
             let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let hooks = try #require(root["hooks"] as? [String: Any])
 
-            #expect(hooks["PermissionRequest"] != nil)
             #expect(hooks["PreToolUse"] != nil)
+            #expect(hooks["UserPromptSubmit"] != nil)
+            let preToolUse = try #require(hooks["PreToolUse"] as? [[String: Any]])
+            #expect(preToolUse.first?["matcher"] as? String == (provider == "claude"
+                ? "AskUserQuestion|ExitPlanMode"
+                : "request_user_input|exit_plan_mode"))
+            var boundedEvents = ["PreToolUse", "UserPromptSubmit"]
+            if provider == "claude" {
+                #expect(hooks["PermissionRequest"] != nil)
+                #expect(hooks["PostToolUseFailure"] != nil)
+                boundedEvents += ["PermissionRequest", "PostToolUseFailure"]
+            } else {
+                #expect(hooks["PermissionRequest"] == nil)
+                #expect(hooks["PostToolUseFailure"] == nil)
+            }
+            for event in boundedEvents {
+                let groups = try #require(hooks[event] as? [[String: Any]])
+                let handlers = groups.flatMap { group in
+                    (group["hooks"] as? [[String: Any]]) ?? []
+                }
+                #expect(!handlers.isEmpty)
+                #expect(handlers.allSatisfy { $0["timeout"] as? Int == 2 })
+            }
             let stop = try #require(hooks["Stop"] as? [[String: Any]])
             let stopCommands = stop.flatMap { group in
                 (group["hooks"] as? [[String: Any]])?.compactMap { $0["command"] as? String } ?? []
@@ -79,7 +100,8 @@ struct AgentPluginInstallerTests {
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
-            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == 5)
+            let expectedHookCount = provider == "claude" ? 7 : 5
+            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == expectedHookCount)
             #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
         }
         let claudeManifest = try String(contentsOf: destination

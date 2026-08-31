@@ -5,8 +5,17 @@ import GrafttyProtocol
 
 @Suite("WorktreeEntry attention API")
 struct WorktreeEntryAttentionTests {
-    private func att(_ text: String, _ source: AttentionSource) -> Attention {
-        Attention(text: text, timestamp: Date(timeIntervalSince1970: 1), source: source)
+    private func att(
+        _ text: String,
+        _ source: AttentionSource,
+        providerSessionKey: String? = nil
+    ) -> Attention {
+        Attention(
+            text: text,
+            timestamp: Date(timeIntervalSince1970: 1),
+            source: source,
+            providerSessionKey: providerSessionKey
+        )
     }
 
     @Test func setAttentionScopesByPaneOrWorktree() {
@@ -21,7 +30,7 @@ struct WorktreeEntryAttentionTests {
     }
 
     @Test("""
-    @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated or overlapping provider signals shall not replace that attention or post another desktop notification.
+    @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated signals from the same stable provider session shall not replace that attention or post another desktop notification.
     """)
     func repeatedProviderAttentionIsDeduplicated() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
@@ -29,12 +38,14 @@ struct WorktreeEntryAttentionTests {
         let first = Attention(
             text: "Claude has a question",
             timestamp: Date(timeIntervalSince1970: 1),
-            source: .agentStop
+            source: .agentStop,
+            providerSessionKey: "claude:session:one"
         )
         let duplicate = Attention(
             text: "Claude needs permission",
             timestamp: Date(timeIntervalSince1970: 2),
-            source: .agentStop
+            source: .agentStop,
+            providerSessionKey: "claude:session:one"
         )
 
         let recordedFirst = e.setAgentStopAttentionIfAbsent(first, pane: slot)
@@ -43,6 +54,19 @@ struct WorktreeEntryAttentionTests {
         #expect(recordedFirst)
         #expect(!recordedDuplicate)
         #expect(e.paneAttention[slot] == first)
+    }
+
+    @Test func differentProviderSessionCanReplaceAttentionAtTheSameTarget() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let slot = PaneSlotID(id: UUID())
+        let first = att("Claude has a question", .agentStop, providerSessionKey: "claude:session:one")
+        let second = att("Codex has a question", .agentStop, providerSessionKey: "codex:session:two")
+
+        let recordedFirst = e.setAgentStopAttentionIfAbsent(first, pane: slot)
+        let recordedSecond = e.setAgentStopAttentionIfAbsent(second, pane: slot)
+        #expect(recordedFirst)
+        #expect(recordedSecond)
+        #expect(e.paneAttention[slot] == second)
     }
 
     @Test func acknowledgePaneClearsOnlyThatPane() {
@@ -69,29 +93,30 @@ struct WorktreeEntryAttentionTests {
     }
 
     @Test("""
-    @spec AGENT-3.4: When a provider reports SessionStart, PostToolUse, or Stop after an explicit attention request, the application shall clear provider-owned attention at that hook's pane or worktree target while preserving user notifications and command-finished markers.
+    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
     """)
-    func providerProgressClearsOnlyTargetedAgentAttention() {
+    func providerProgressClearsOnlyMatchingSessionAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let target = PaneSlotID(id: UUID())
         let notify = PaneSlotID(id: UUID())
         let sibling = PaneSlotID(id: UUID())
-        e.paneAttention[target] = att("needs input", .agentStop)
+        e.attention = att("needs input", .agentStop, providerSessionKey: "claude:session:one")
+        e.paneAttention[target] = att("needs input", .agentStop, providerSessionKey: "claude:session:one")
         e.paneAttention[notify] = att("user ping", .userNotify)
-        e.paneAttention[sibling] = att("needs input", .agentStop)
+        e.paneAttention[sibling] = att("needs input", .agentStop, providerSessionKey: "claude:session:two")
 
-        e.clearAgentStopAttention(pane: target)
-        e.clearAgentStopAttention(pane: notify)
+        e.clearAgentStopAttention(providerSessionKey: "claude:session:one")
 
+        #expect(e.attention == nil)
         #expect(e.paneAttention[target] == nil)
         #expect(e.paneAttention[notify] != nil)
         #expect(e.paneAttention[sibling] != nil)
     }
 
-    @Test func providerProgressClearsWorktreeScopedAgentAttention() {
+    @Test func missingProviderIdentityDoesNotClearPersistedAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         e.attention = att("needs input", .agentStop)
-        e.clearAgentStopAttention(pane: nil)
-        #expect(e.attention == nil)
+        e.clearAgentStopAttention(providerSessionKey: nil)
+        #expect(e.attention != nil)
     }
 }

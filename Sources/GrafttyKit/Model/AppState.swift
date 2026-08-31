@@ -131,25 +131,19 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
-    /// Applies AGENT-3.4 to the pane identified by a provider hook, falling
-    /// back to worktree-scoped attention when no live pane resolves.
+    /// Applies AGENT-3.4 to the attention originally recorded for this stable
+    /// provider session, even if its pane mapping changed in the meantime.
     public mutating func clearAgentStopAttention(
         worktreePath: String,
-        paneSessionName: String?
+        providerSessionKey: String?
     ) {
+        guard let providerSessionKey else { return }
         for repoIdx in repos.indices {
             for wtIdx in repos[repoIdx].worktrees.indices
                 where repos[repoIdx].worktrees[wtIdx].path == worktreePath {
-                let target = AgentStopAttentionTarget.resolve(
-                    worktree: repos[repoIdx].worktrees[wtIdx],
-                    paneSessionName: paneSessionName
+                repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(
+                    providerSessionKey: providerSessionKey
                 )
-                switch target {
-                case .pane(let slot):
-                    repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(pane: slot)
-                case .worktree:
-                    repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(pane: nil)
-                }
                 return
             }
         }

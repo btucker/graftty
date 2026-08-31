@@ -7,8 +7,10 @@ public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
 
 public enum TeamHookEvent: String, Codable, Sendable, Equatable, CaseIterable {
     case sessionStart = "session-start"
+    case userPromptSubmit = "user-prompt-submit"
     case preToolUse = "pre-tool-use"
     case postToolUse = "post-tool-use"
+    case postToolUseFailure = "post-tool-use-failure"
     case permissionRequest = "permission-request"
     case stop
 }
@@ -21,8 +23,10 @@ public extension TeamHookEvent {
     var camelCaseKey: String {
         switch self {
         case .sessionStart: return "SessionStart"
+        case .userPromptSubmit: return "UserPromptSubmit"
         case .preToolUse: return "PreToolUse"
         case .postToolUse: return "PostToolUse"
+        case .postToolUseFailure: return "PostToolUseFailure"
         case .permissionRequest: return "PermissionRequest"
         case .stop: return "Stop"
         }

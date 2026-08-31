@@ -119,7 +119,7 @@ struct TeamHook: ParsableCommand {
     @Argument(help: "Runtime: codex or claude")
     var runtime: String
 
-    @Argument(help: "Hook event: session-start, pre-tool-use, post-tool-use, permission-request, or stop")
+    @Argument(help: "Hook event: session-start, user-prompt-submit, pre-tool-use, post-tool-use, post-tool-use-failure, permission-request, or stop")
     var event: String
 
     @Option(name: [.customLong("session-id"), .customLong("session")], help: "Stable runtime session identifier")
@@ -134,7 +134,7 @@ struct TeamHook: ParsableCommand {
         }
         guard TeamHookEvent(rawValue: event) != nil else {
             throw ValidationError(
-                "event must be one of: session-start, pre-tool-use, post-tool-use, permission-request, stop"
+                "event must be one of: session-start, user-prompt-submit, pre-tool-use, post-tool-use, post-tool-use-failure, permission-request, stop"
             )
         }
     }
@@ -151,6 +151,7 @@ struct TeamHook: ParsableCommand {
         let runtime = TeamHookRuntime(rawValue: runtime)!
         let event = TeamHookEvent(rawValue: event)!
         let attentionReason = AgentHookAttentionClassifier.reason(
+            runtime: runtime,
             event: event,
             stdinJSON: stdinPayload
         )

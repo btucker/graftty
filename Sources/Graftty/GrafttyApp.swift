@@ -4103,26 +4103,34 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager,
         remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage {
-        if let attentionReason {
+        switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
+        case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,
+                callerAgentID: callerAgentID,
                 runtime: runtime,
-                reason: attentionReason,
+                reason: reason,
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
                 appState: appState
             )
-        } else if event == .sessionStart || event == .postToolUse || event == .stop {
+        case .clear:
             clearAgentAttention(
                 callerPath: callerPath,
-                paneSessionName: paneSessionName,
+                callerAgentID: callerAgentID,
+                runtime: runtime,
+                sessionID: sessionID,
                 appState: appState
             )
+        case .none:
+            break
         }
 
         // Attention-only hooks must return quickly and must not depend on the
         // team feature being enabled. They carry no inbox or instruction data.
-        if event == .preToolUse || event == .permissionRequest {
+        if event == .preToolUse || event == .permissionRequest
+            || event == .userPromptSubmit || event == .postToolUseFailure
+            || (runtime == .codex && event == .postToolUse && !skillManaged) {
             return .teamHookOutput("{}")
         }
 
@@ -4246,12 +4254,20 @@ struct GrafttyApp: App {
     @MainActor
     private static func recordAgentAttention(
         callerPath: String,
+        callerAgentID: String?,
         runtime: TeamHookRuntime,
         reason: AgentHookAttentionReason,
         sessionID: String?,
         paneSessionName: String?,
         appState: Binding<AppState>
     ) {
+        guard let providerSessionKey = AgentHookAttentionIdentity.key(
+            runtime: runtime,
+            sessionID: sessionID,
+            callerAgentID: callerAgentID
+        ) else {
+            return
+        }
         let timestamp = Date()
         for repoIndex in appState.wrappedValue.repos.indices {
             for worktreeIndex in appState.wrappedValue.repos[repoIndex].worktrees.indices
@@ -4266,7 +4282,8 @@ struct GrafttyApp: App {
                 let attention = Attention(
                     text: attentionText,
                     timestamp: timestamp,
-                    source: .agentStop
+                    source: .agentStop,
+                    providerSessionKey: providerSessionKey
                 )
                 let pane: PaneSlotID?
                 switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
@@ -4296,12 +4313,19 @@ struct GrafttyApp: App {
     @MainActor
     private static func clearAgentAttention(
         callerPath: String,
-        paneSessionName: String?,
+        callerAgentID: String?,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
         appState: Binding<AppState>
     ) {
+        let providerSessionKey = AgentHookAttentionIdentity.key(
+            runtime: runtime,
+            sessionID: sessionID,
+            callerAgentID: callerAgentID
+        )
         appState.wrappedValue.clearAgentStopAttention(
             worktreePath: callerPath,
-            paneSessionName: paneSessionName
+            providerSessionKey: providerSessionKey
         )
     }
 

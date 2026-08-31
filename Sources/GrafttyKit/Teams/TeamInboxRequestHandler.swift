@@ -602,7 +602,7 @@ public final class TeamInboxRequestHandler {
                 previouslyDeliveredThroughID: unread.readPosition
             )
             return output
-        case .preToolUse, .permissionRequest:
+        case .preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure:
             // These hooks exist only to carry normalized attention signals.
             // They must not consume inbox rows or inject provider context.
             return "{}"

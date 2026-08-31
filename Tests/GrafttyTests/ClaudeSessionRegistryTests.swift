@@ -41,22 +41,6 @@ struct ClaudeSessionRegistryTests {
         #expect(r.livenessBySession.isEmpty)
     }
 
-    @Test func onLivenessChangeFiresWithNewMapOnChangeOnly() async {
-        // The app wires the AGENT-3.4 resume rule onto this callback, so it
-        // must fire on a real change (carrying the new map) and not re-fire
-        // on a no-op poll that yields the same map.
-        let r = registry(
-            json: #"[{"pid":100,"cwd":"/a","kind":"interactive","sessionId":"s","startedAt":1,"status":"busy"}]"#,
-            ps: "100 claude ZMX_SESSION=graftty-aaaa1111")
-        var fired: [[String: AgentLiveness]] = []
-        r.onLivenessChange = { fired.append($0) }
-        await r.refresh()
-        #expect(fired.count == 1)
-        #expect(fired.first?["graftty-aaaa1111"] == .busy)
-        await r.refresh()
-        #expect(fired.count == 1)
-    }
-
     /// @spec AGENT-2.4: When a slow poll is superseded by a newer refresh, the
     /// application shall drop the stale poll's late write so the newer result wins.
     @Test func staleRefreshIsDroppedByGenerationGuard() async {

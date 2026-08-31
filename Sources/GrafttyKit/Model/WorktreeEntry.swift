@@ -206,10 +206,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         }
     }
 
-    /// @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated or overlapping provider signals shall not replace that attention or post another desktop notification.
-    /// Records one provider attention transition per target. Overlapping
-    /// provider hooks for the same prompt do not replace the first signal or
-    /// produce another desktop notification.
+    /// @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated signals from the same stable provider session shall not replace that attention or post another desktop notification.
+    /// Records one provider attention transition per target and provider
+    /// session. A different provider session may own a later request at the
+    /// same target; suppressing it would hide a real prompt.
     @discardableResult
     public mutating func setAgentStopAttentionIfAbsent(
         _ attention: Attention,
@@ -221,7 +221,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         } else {
             existing = self.attention
         }
-        guard existing?.source != .agentStop else { return false }
+        if existing?.source == .agentStop,
+           existing?.providerSessionKey == attention.providerSessionKey {
+            return false
+        }
         setAttention(attention, pane: pane)
         return true
     }
@@ -243,16 +246,18 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, PostToolUse, or Stop after an explicit attention request, the application shall clear provider-owned attention at that hook's pane or worktree target while preserving user notifications and command-finished markers.
-    /// Clears provider-owned attention at exactly one resolved target while
-    /// preserving user notifications and command-finished markers.
-    public mutating func clearAgentStopAttention(pane: PaneSlotID?) {
-        if let pane {
-            if paneAttention[pane]?.source == .agentStop {
-                paneAttention[pane] = nil
-            }
-        } else if attention?.source == .agentStop {
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+    /// Finds attention by its persisted owner rather than re-resolving the
+    /// provider's current pane, which may have moved since the prompt began.
+    public mutating func clearAgentStopAttention(providerSessionKey: String?) {
+        guard let providerSessionKey else { return }
+        if attention?.source == .agentStop,
+           attention?.providerSessionKey == providerSessionKey {
             attention = nil
+        }
+        paneAttention = paneAttention.filter { _, attention in
+            attention.source != .agentStop
+                || attention.providerSessionKey != providerSessionKey
         }
     }
 
