@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import Testing
 @testable import GrafttyKit
 
@@ -222,5 +223,69 @@ struct TeamPresenceStorageTests {
         let all = try storage.listAll()
         #expect(all.count == 1)
         #expect(all.first?.paneSessionName == "graftty-bbbbbbbb")
+    }
+
+    @Test("Scoped presence listing reads only one team's worktree and runtime.")
+    func scopedPresenceListing() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let expected = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            paneSessionName: "graftty-aaaaaaaa",
+            pid: 1,
+            registeredAt: registeredAt
+        )
+        try storage.write(expected)
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/bob", runtime: .claude,
+            paneSessionName: "graftty-cccccccc", pid: 3, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/other", worktree: "/repo/.worktrees/alice", runtime: .claude,
+            paneSessionName: "graftty-dddddddd", pid: 4, registeredAt: registeredAt
+        ))
+
+        #expect(try storage.list(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: .claude
+        ) == [expected])
+    }
+
+    @Test("Claude session binding mutations are serialized within a process.")
+    func claudeBindingMutationsAreSerialized() throws {
+        let storage = try makeStorage()
+        let firstEntered = DispatchSemaphore(value: 0)
+        let releaseFirst = DispatchSemaphore(value: 0)
+        let secondEntered = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            _ = try? storage.withClaudeBindingLock(teamID: "/repo") {
+                firstEntered.signal()
+                releaseFirst.wait()
+            }
+            completed.signal()
+        }
+        #expect(firstEntered.wait(timeout: .now() + 1) == .success)
+
+        DispatchQueue.global().async {
+            _ = try? storage.withClaudeBindingLock(teamID: "/repo") {
+                secondEntered.signal()
+            }
+            completed.signal()
+        }
+
+        #expect(secondEntered.wait(timeout: .now() + 0.05) == .timedOut)
+        releaseFirst.signal()
+        #expect(secondEntered.wait(timeout: .now() + 1) == .success)
+        #expect(completed.wait(timeout: .now() + 1) == .success)
+        #expect(completed.wait(timeout: .now() + 1) == .success)
     }
 }

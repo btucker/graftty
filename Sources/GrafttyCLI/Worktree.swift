@@ -161,11 +161,12 @@ struct WorktreeAdd: ParsableCommand {
                         deadline: deadline
                     )
                 case .ready:
-                    let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
-                    let address = WorktreeAgentLaunchCommand.shellLiteral(operation.messageAddress)
-                    print("created worktree=\(path)  address=\(address)")
-                    if let agent {
-                        print("agent=\(agent)  message-with=graftty team send --stdin \(address)")
+                    for line in Self.successOutputLines(
+                        worktreePath: operation.worktreePath,
+                        messageAddress: operation.messageAddress,
+                        agent: agent
+                    ) {
+                        print(line)
                     }
                     return
                 case .failed:
@@ -184,6 +185,26 @@ struct WorktreeAdd: ParsableCommand {
                 throw ExitCode(1)
             }
         }
+    }
+
+    static func successOutputLines(
+        worktreePath: String,
+        messageAddress: String,
+        agent: String?
+    ) -> [String] {
+        let path = WorktreeAgentLaunchCommand.shellLiteral(worktreePath)
+        let address = WorktreeAgentLaunchCommand.shellLiteral(messageAddress)
+        var lines = ["created worktree=\(path)  address=\(address)"]
+        if let agent {
+            lines.append("agent=\(agent)  message-with=graftty team send --stdin \(address)")
+            lines.append(
+                "handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json"
+            )
+            lines.append(
+                "after-reachable=stop working on delegated scope; continue only separate work"
+            )
+        }
+        return lines
     }
 
     static func readPromptFromStdin(

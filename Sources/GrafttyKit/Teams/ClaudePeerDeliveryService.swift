@@ -229,35 +229,65 @@ public enum ClaudePeerSenderName {
 public enum TeamPeerMessageFormatter {
     public static func context(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
+            let envelope = envelope(for: message)
+            let body = neutralizedBody(message: message)
+            let urgencySuffix = message.priority == .urgent
+                ? #" priority="urgent""#
+                : ""
+            return """
+            <\(envelope.name)\(envelope.attributes)\(urgencySuffix)>
+            \(body)
+            </\(envelope.name)>
+            """
+        }.joined(separator: "\n\n")
+    }
+
+    private static func envelope(
+        for message: TeamInboxMessage
+    ) -> (name: String, attributes: String) {
+        guard message.from.isSystem else {
             let address = escapeAttribute(message.from.canonicalAddress)
             let fallbackSuffix = message.from.runtime.map { runtime in
                 let fallback = escapeAttribute("\(message.from.worktree)#\(runtime)")
                 return #" fallback-agent="\#(fallback)""#
             } ?? ""
-            // Neutralize both peer-authored closes (early termination) and
-            // peer-authored opens (sender-attribution forgery of a sibling
-            // element). Only attributes synthesized here may carry routing
-            // provenance; peer body text remains inert.
-            let body = TeamHookRenderer.content(message: message)
+            return (
+                "graftty-peer-message",
+                #" agent="\#(address)"\#(fallbackSuffix)"#
+            )
+        }
+        guard let source = message.source, !source.isEmpty else {
+            return ("graftty-system-message", "")
+        }
+        return (
+            "graftty-forge-message",
+            #" provider="\#(escapeAttribute(source))""#
+        )
+    }
+
+    private static func neutralizedBody(message: TeamInboxMessage) -> String {
+        // Only tags synthesized by this formatter may carry provenance.
+        // Treat tag-shaped body text as inert even when a PR title or an
+        // agent-authored message tries to open or close a sibling envelope.
+        var body = TeamHookRenderer.content(message: message)
+        for name in [
+            "graftty-peer-message",
+            "graftty-forge-message",
+            "graftty-system-message",
+        ] {
+            body = body
                 .replacingOccurrences(
-                    of: "</graftty-peer-message",
-                    with: #"<\/graftty-peer-message"#,
+                    of: "</\(name)",
+                    with: "<\\/\(name)",
                     options: [.caseInsensitive]
                 )
                 .replacingOccurrences(
-                    of: "<graftty-peer-message",
-                    with: #"<\graftty-peer-message"#,
+                    of: "<\(name)",
+                    with: "<\\\(name)",
                     options: [.caseInsensitive]
                 )
-            let urgencySuffix = message.priority == .urgent
-                ? #" priority="urgent""#
-                : ""
-            return """
-            <graftty-peer-message agent="\(address)"\(fallbackSuffix)\(urgencySuffix)>
-            \(body)
-            </graftty-peer-message>
-            """
-        }.joined(separator: "\n\n")
+        }
+        return body
     }
 
     private static func escapeAttribute(_ value: String) -> String {

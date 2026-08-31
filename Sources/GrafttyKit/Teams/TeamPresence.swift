@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// @spec TEAM-PRESENCE-1.2
 /// @spec TEAM-IDLE-2.9
@@ -72,6 +77,9 @@ public enum TeamAgentTransport: Codable, Equatable, Sendable {
 /// On-disk storage for `TeamPresenceRecord`s under a directory the caller controls
 /// (production: `~/.graftty/teams/`; tests: a tmp dir).
 public struct TeamPresenceStorage: Sendable {
+    private static let claudeBindingProcessLocksGuard = NSLock()
+    private static var claudeBindingProcessLocks: [String: NSLock] = [:]
+
     public let rootDirectory: URL
 
     public init(rootDirectory: URL) {
@@ -164,22 +172,100 @@ public struct TeamPresenceStorage: Sendable {
         guard let teamDirs = try? fm.contentsOfDirectory(at: rootDirectory, includingPropertiesForKeys: nil) else {
             return []
         }
-        var records: [TeamPresenceRecord] = []
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        var allRecords: [TeamPresenceRecord] = []
         for teamDir in teamDirs {
             let presenceDir = teamDir.appendingPathComponent("presence", isDirectory: true)
-            guard let files = try? fm.contentsOfDirectory(at: presenceDir, includingPropertiesForKeys: nil) else {
-                continue
-            }
-            for file in files where file.pathExtension == "json" {
-                if let data = try? Data(contentsOf: file),
-                   let record = try? decoder.decode(TeamPresenceRecord.self, from: data) {
-                    records.append(record)
-                }
-            }
+            allRecords.append(contentsOf: records(in: presenceDir))
         }
-        return records
+        return allRecords
+    }
+
+    /// Reads only the team directory needed by endpoint-binding hooks instead
+    /// of walking every repository registered with Graftty.
+    public func list(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime
+    ) throws -> [TeamPresenceRecord] {
+        records(in: presenceDirectory(teamID: teamID)).filter {
+            $0.teamID == teamID
+                && $0.worktree == worktree
+                && $0.runtime == runtime
+        }
+    }
+
+    /// Serializes Claude identity replacement across hook CLI processes. The
+    /// in-process lock is necessary because advisory file locks alone do not
+    /// consistently serialize multiple file descriptors owned by one process.
+    func withClaudeBindingLock<T>(
+        teamID: String,
+        _ body: () throws -> T
+    ) throws -> T {
+        let url = presenceDirectory(teamID: teamID)
+            .appendingPathComponent(".claude-binding.lock")
+        let processLock = Self.claudeBindingProcessLock(for: url)
+        processLock.lock()
+        defer { processLock.unlock() }
+
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let permissions = S_IRUSR | S_IWUSR
+        #if canImport(Darwin)
+        let fd = Darwin.open(url.path, O_RDWR | O_CREAT, permissions)
+        #elseif canImport(Glibc)
+        let fd = Glibc.open(url.path, O_RDWR | O_CREAT, mode_t(permissions))
+        #else
+        #error("Unsupported platform")
+        #endif
+        guard fd >= 0 else { throw Self.currentPOSIXError() }
+        defer {
+            _ = flock(fd, LOCK_UN)
+            #if canImport(Darwin)
+            _ = Darwin.close(fd)
+            #elseif canImport(Glibc)
+            _ = Glibc.close(fd)
+            #endif
+        }
+        guard flock(fd, LOCK_EX) == 0 else {
+            throw Self.currentPOSIXError()
+        }
+        return try body()
+    }
+
+    private func records(in directory: URL) -> [TeamPresenceRecord] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return files.compactMap { file in
+            guard file.pathExtension == "json",
+                  let data = try? Data(contentsOf: file) else {
+                return nil
+            }
+            return try? decoder.decode(TeamPresenceRecord.self, from: data)
+        }
+    }
+
+    private static func claudeBindingProcessLock(for url: URL) -> NSLock {
+        let key = url.standardizedFileURL.path
+        claudeBindingProcessLocksGuard.lock()
+        defer { claudeBindingProcessLocksGuard.unlock() }
+        if let lock = claudeBindingProcessLocks[key] {
+            return lock
+        }
+        let lock = NSLock()
+        claudeBindingProcessLocks[key] = lock
+        return lock
+    }
+
+    private static func currentPOSIXError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
     private func presenceDirectory(teamID: String) -> URL {

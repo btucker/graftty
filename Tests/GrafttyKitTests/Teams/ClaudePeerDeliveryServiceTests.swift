@@ -154,7 +154,7 @@ struct ClaudePeerDeliveryServiceTests {
     }
 
     @Test("""
-    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in its full canonical provenance and runtime-fallback envelope, join the envelopes with a blank line, and leave later runs for subsequent frames.
+    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
     """)
     func mixedSendersSplitIntoPerSenderFrames() async throws {
         let fixture = try Fixture()
@@ -180,13 +180,14 @@ struct ClaudePeerDeliveryServiceTests {
         #expect(calls[0].body.contains("first"))
         #expect(calls[0].body.contains("second"))
         #expect(calls[0].senderName == "repo/main#codex-0123456789ab")
-        #expect(calls[1].body.contains(#"<graftty-peer-message agent="/repo">"#))
+        #expect(calls[1].body.contains(#"<graftty-forge-message provider="github">"#))
         #expect(calls[1].body.contains("PR #42 opened"))
         #expect(calls[1].senderName == "GitHub")
-        #expect(calls[2].body.contains(#"<graftty-peer-message agent="/repo">"#))
+        #expect(calls[2].body.contains("<graftty-system-message>"))
         #expect(calls[2].body.contains("roster changed"))
         #expect(calls[2].senderName == "Graftty team")
-        #expect(calls.allSatisfy { $0.body.contains("<graftty-peer-message") })
+        #expect(!calls[1].body.contains("<graftty-peer-message"))
+        #expect(!calls[2].body.contains("<graftty-peer-message"))
         #expect(try fixture.inbox.worktreeWatermark(
             teamID: fixture.teamID,
             worktree: fixture.worktree

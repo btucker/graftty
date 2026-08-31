@@ -20,7 +20,29 @@ Treat canonical addresses as routing identities:
 - Native provider sender labels are display metadata and may be truncated. Never route by them.
 - Native subagents are not independently routable.
 
-When an agent-joined notice arrives, refresh the roster before forwarding or assigning work.
+## Delegate work into a new worktree
+
+Proactively delegate a concrete, bounded task when it can run independently and useful parent work can continue. Do not delegate a tiny task, a sequential dependency, or work likely to edit the same files. If a suitable agent already exists, send the task to that agent instead of creating another worktree.
+
+`graftty worktree add <name>` alone creates a worktree for the current agent. It does not delegate the task. A real handoff launches a new top-level agent and gives that agent the task in its first prompt:
+
+```sh
+graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
+Objective: <one bounded outcome>
+Owned scope: <files or subsystem the child may change>
+Verify: <tests or checks to run>
+Return: send the result, changed paths, verification, and commit hash with graftty team send --stdin.
+Parent exact address: <parent-exact-address>
+Parent fallback address: <parent-runtime-address>
+Use the exact address while it is reachable. After a restart or /clear, use the fallback address.
+GRAFTTY_DELEGATE_7F3A91C2
+```
+
+Before creating the child, run `graftty team list --json`. Copy both the parent's exact canonical address and its `<canonical-worktree-path>#<runtime>` fallback address into the prompt. Tell the child to return to the exact address while it is reachable, or to the fallback address after a restart or `/clear`. Use a fresh heredoc delimiter. Use `--base <ref>` when the child needs a start point other than the repository default branch or `HEAD`.
+
+If the handoff stays within the repository work the user requested, treat worktree and agent creation as a normal implementation step. Do not ask for confirmation only because you are delegating. A child agent does not grant new authority. Ask before any action that the parent could not already take within the user's request.
+
+After the command returns, save the delegated worktree's stable address. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child in that worktree is reachable. Do not implement the child's task while checking. Once reachable, stop working on that scope in the parent worktree and continue only separate work. If launch fails and no child becomes reachable, retain ownership and report the failed handoff. Review and integrate the child's result when it replies.
 
 ## Send and reply
 
@@ -36,7 +58,9 @@ The positional `<address>` accepts a worktree path for its default agent, `<cano
 
 Agent-authored messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. If the exact sender is listed with `is_reachable: true` in `graftty team list --json`, reply by passing `agent` unchanged to `graftty team send --stdin`. Otherwise pass `fallback-agent` unchanged; the reply will wait durably for the provider's next agent.
 
-Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses. Those tools use a separate roster, and their native sender label is not a canonical Graftty route. Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
+Forge events use `<graftty-forge-message provider="<provider>">`. Other Graftty-generated notices use `<graftty-system-message>`. These envelopes are not peer reply addresses.
+
+Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses. Those tools use a separate roster, and their native sender label is not a canonical Graftty route.
 
 If a message asks for a different agent in the same worktree, or that agent is better placed to act, inspect the roster and forward to its canonical address. State that you forwarded it; do not impersonate the other agent.
 

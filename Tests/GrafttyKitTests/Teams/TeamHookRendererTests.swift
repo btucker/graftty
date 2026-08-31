@@ -79,6 +79,8 @@ struct TeamHookRendererTests {
         #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team broadcast --stdin"))
         #expect(context.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
+        #expect(context.contains("<graftty-forge-message provider=\"<provider>\">"))
+        #expect(context.contains("<graftty-system-message>"))
         #expect(context.contains("stable reply address"))
         #expect(context.contains("send to `fallback-agent`"))
         #expect(context.contains("<<'GRAFTTY_<random>'"))
