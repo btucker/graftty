@@ -1204,6 +1204,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **UPDATE-2.5** The release workflow shall render the GitHub release
 
+### UPDATE-3.x
+
+**UPDATE-3.1** When the release workflow publishes a prerelease, the application shall add that update to the shared appcast with a `sparkle:channel` value of `prerelease`; stable items shall remain on Sparkle's default channel by omitting the element.
+
+**UPDATE-3.2** When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
+
+**UPDATE-3.3** When the user enables "Receive pre-release updates" in General Settings, the application shall persist the subscription and allow Sparkle's `prerelease` channel in addition to its always-available default channel; disabling the setting shall remove only the prerelease channel.
+
+**UPDATE-3.4** When the release workflow processes a version tag, the application shall assign suffixed versions to the `prerelease` appcast channel and stable versions to the default channel, then derive a numeric build version that increases with both the GitHub run number and each run attempt.
+
 ## KBD — Keyboard Shortcuts
 
 ### KBD-1.x

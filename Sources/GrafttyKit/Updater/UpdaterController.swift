@@ -19,29 +19,61 @@ import Sparkle
 @MainActor
 public final class UpdaterController: NSObject, ObservableObject {
 
+    public static let prereleaseChannel = "prerelease"
+    public static let prereleaseUpdatesDefaultsKey = "prereleaseUpdatesEnabled"
+
     /// Non-nil iff a newer version has been announced by Sparkle and not
     /// yet acted on. Badge visibility and label both derive from this.
     @Published public private(set) var availableVersion: String?
+
+    @Published private var storedPrereleaseUpdatesEnabled: Bool
+
+    private let userDefaults: UserDefaults
 
     /// Nil in test mode; populated in live mode after `super.init` so the
     /// delegate self-reference is legal.
     private var standardController: SPUStandardUpdaterController?
 
     public override init() {
+        let defaults = UserDefaults.standard
+        self.userDefaults = defaults
+        self.storedPrereleaseUpdatesEnabled = defaults.bool(
+            forKey: Self.prereleaseUpdatesDefaultsKey
+        )
         super.init()
         self.standardController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: self
         )
     }
 
-    public static func forTesting() -> UpdaterController {
-        UpdaterController(skipWiring: ())
+    public static func forTesting(userDefaults: UserDefaults = .standard) -> UpdaterController {
+        UpdaterController(skipWiring: (), userDefaults: userDefaults)
     }
 
-    private init(skipWiring: Void) {
+    private init(skipWiring: Void, userDefaults: UserDefaults) {
+        self.userDefaults = userDefaults
+        self.storedPrereleaseUpdatesEnabled = userDefaults.bool(
+            forKey: Self.prereleaseUpdatesDefaultsKey
+        )
         super.init()
+    }
+
+    /// Whether this installation also receives items on Sparkle's prerelease
+    /// channel. Sparkle always includes its default stable channel.
+    public var prereleaseUpdatesEnabled: Bool {
+        get { storedPrereleaseUpdatesEnabled }
+        set {
+            guard newValue != storedPrereleaseUpdatesEnabled else { return }
+            storedPrereleaseUpdatesEnabled = newValue
+            userDefaults.set(newValue, forKey: Self.prereleaseUpdatesDefaultsKey)
+            standardController?.updater.resetUpdateCycleAfterShortDelay()
+        }
+    }
+
+    public var allowedUpdateChannels: Set<String> {
+        prereleaseUpdatesEnabled ? [Self.prereleaseChannel] : []
     }
 
     public var canCheckForUpdates: Bool {

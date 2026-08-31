@@ -7,7 +7,7 @@ it builds the bundle, signs it with the **Developer ID Application:
 Quotably, LLC (67APXH3J92)** identity (hardened runtime + entitlements),
 notarizes it via `xcrun notarytool`, staples the ticket, zips the
 result, attaches the zip to a GitHub release, and pushes a
-version+sha256 bump to the tap.
+version and SHA-256 bump to the tap for stable releases.
 
 ## One-time setup
 
@@ -137,6 +137,30 @@ brew install --cask graftty
 graftty --help
 ```
 
+## Cutting a prerelease
+
+Add a SemVer suffix to publish a prerelease:
+
+```bash
+git tag v0.6.0-beta.1
+git push origin v0.6.0-beta.1
+```
+
+The workflow marks the GitHub release as a prerelease and adds the update to
+Sparkle's `prerelease` channel in the shared `appcast.xml`. It does not update
+the Homebrew cask.
+
+To receive the build, open Graftty Settings, select **General**, and enable
+**Receive pre-release updates**. The subscription also receives stable
+updates. It stays enabled after a stable update so the installation receives
+the next prerelease.
+
+The workflow derives `CFBundleVersion` and `sparkle:version` from
+`GITHUB_RUN_NUMBER` and `GITHUB_RUN_ATTEMPT`. A rerun gets a new internal
+version, so its appcast signature matches the replacement zip. The workflow
+uses the tag value, such as `0.6.0-beta.1`, for `CFBundleShortVersionString`
+and `sparkle:shortVersionString`. Do not reuse a tag for a different release.
+
 ## Signing + notarization secrets
 
 Five GitHub Actions secrets feed the signing and notarization steps.
@@ -164,6 +188,7 @@ testing, set the env var:
 CODESIGN_IDENTITY="Developer ID Application: Quotably, LLC (67APXH3J92)" \
   CONFIGURATION=release \
   GRAFTTY_VERSION=0.0.0-local \
+  GRAFTTY_BUILD_VERSION=100.0.0 \
   SPARKLE_PUBLIC_ED_KEY="…" \
   ./scripts/bundle.sh
 ```

@@ -23,6 +23,8 @@ struct SettingsView: View {
     @State private var resolvedShellEditor: String = ""
     @State private var availableApps: [TextEditorApp] = []
 
+    @ObservedObject var updaterController: UpdaterController
+
     let onRestartZMX: () -> Void
 
     /// Shared with `TerminalManager`; the `shellEditorValue()` probe-cache lives
@@ -77,6 +79,20 @@ struct SettingsView: View {
             }
 
             Text("Used when you cmd-click a file path in a pane.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider().padding(.vertical, 4)
+
+            Text("Updates")
+                .font(.headline)
+
+            Toggle("Receive pre-release updates", isOn: Binding(
+                get: { updaterController.prereleaseUpdatesEnabled },
+                set: { updaterController.prereleaseUpdatesEnabled = $0 }
+            ))
+
+            Text("Includes test builds that may be unstable. Stable updates remain available.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
