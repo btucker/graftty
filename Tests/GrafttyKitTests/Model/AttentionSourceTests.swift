@@ -10,10 +10,12 @@ struct AttentionSourceTests {
             text: "Claude needs input",
             timestamp: Date(timeIntervalSince1970: 1_800_000_000),
             clearAfter: nil,
-            source: .agentStop)
+            source: .agentStop,
+            providerSessionKey: "claude:session:one")
         let decoded = try JSONDecoder().decode(
             Attention.self, from: try JSONEncoder().encode(a))
         #expect(decoded.source == .agentStop)
+        #expect(decoded.providerSessionKey == "claude:session:one")
         #expect(decoded == a)
     }
 
@@ -28,5 +30,6 @@ struct AttentionSourceTests {
         let legacy = #"{"text":"ping","timestamp":631152000}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(Attention.self, from: legacy)
         #expect(decoded.source == .userNotify)
+        #expect(decoded.providerSessionKey == nil)
     }
 }

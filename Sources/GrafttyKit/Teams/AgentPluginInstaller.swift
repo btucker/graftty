@@ -93,7 +93,7 @@ public enum AgentPluginInstallerError: Error, Equatable {
 public struct AgentPluginInstaller: Sendable {
     /// Bump when the bundled provider integration changes in a way that
     /// warrants presenting the launch-time install offer again.
-    public static let integrationRevision = 6
+    public static let integrationRevision = 7
 
     private let resourceRoot: URL?
     private let grafttyCLIPath: String

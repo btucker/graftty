@@ -3,11 +3,19 @@ import Testing
 @testable import GrafttyKit
 import GrafttyProtocol
 
-@Suite("WorktreeEntry attention API — single place to set, acknowledge, and resume-clear.")
+@Suite("WorktreeEntry attention API")
 struct WorktreeEntryAttentionTests {
-    private func name(_ s: PaneSessionID) -> String { ZmxLauncher.sessionName(for: s) }
-    private func att(_ text: String, _ source: AttentionSource) -> Attention {
-        Attention(text: text, timestamp: Date(timeIntervalSince1970: 1), source: source)
+    private func att(
+        _ text: String,
+        _ source: AttentionSource,
+        providerSessionKey: String? = nil
+    ) -> Attention {
+        Attention(
+            text: text,
+            timestamp: Date(timeIntervalSince1970: 1),
+            source: source,
+            providerSessionKey: providerSessionKey
+        )
     }
 
     @Test func setAttentionScopesByPaneOrWorktree() {
@@ -19,6 +27,46 @@ struct WorktreeEntryAttentionTests {
         let wt = att("w", .userNotify)
         e.setAttention(wt, pane: nil)
         #expect(e.attention == wt)
+    }
+
+    @Test("""
+    @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated signals from the same stable provider session shall not replace that attention or post another desktop notification.
+    """)
+    func repeatedProviderAttentionIsDeduplicated() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let slot = PaneSlotID(id: UUID())
+        let first = Attention(
+            text: "Claude has a question",
+            timestamp: Date(timeIntervalSince1970: 1),
+            source: .agentStop,
+            providerSessionKey: "claude:session:one"
+        )
+        let duplicate = Attention(
+            text: "Claude needs permission",
+            timestamp: Date(timeIntervalSince1970: 2),
+            source: .agentStop,
+            providerSessionKey: "claude:session:one"
+        )
+
+        let recordedFirst = e.setAgentStopAttentionIfAbsent(first, pane: slot)
+        let recordedDuplicate = e.setAgentStopAttentionIfAbsent(duplicate, pane: slot)
+
+        #expect(recordedFirst)
+        #expect(!recordedDuplicate)
+        #expect(e.paneAttention[slot] == first)
+    }
+
+    @Test func differentProviderSessionCanReplaceAttentionAtTheSameTarget() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let slot = PaneSlotID(id: UUID())
+        let first = att("Claude has a question", .agentStop, providerSessionKey: "claude:session:one")
+        let second = att("Codex has a question", .agentStop, providerSessionKey: "codex:session:two")
+
+        let recordedFirst = e.setAgentStopAttentionIfAbsent(first, pane: slot)
+        let recordedSecond = e.setAgentStopAttentionIfAbsent(second, pane: slot)
+        #expect(recordedFirst)
+        #expect(recordedSecond)
+        #expect(e.paneAttention[slot] == second)
     }
 
     @Test func acknowledgePaneClearsOnlyThatPane() {
@@ -45,35 +93,30 @@ struct WorktreeEntryAttentionTests {
     }
 
     @Test("""
-    @spec AGENT-3.4: When a pane's agent transitions to busy, the application shall clear that pane's agent-stop "needs input" attention (leaving user notify pings and command-finished markers), so busy and needs-input are mutually exclusive.
+    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
     """)
-    func resumeClearsOnlyAgentStopForBusyPanes() {
+    func providerProgressClearsOnlyMatchingSessionAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
-        let busy = PaneSlotID(id: UUID()); let busyS = PaneSessionID(id: UUID())
-        let notify = PaneSlotID(id: UUID()); let notifyS = PaneSessionID(id: UUID())
-        let idle = PaneSlotID(id: UUID()); let idleS = PaneSessionID(id: UUID())
-        e.paneSessions = [busy: busyS, notify: notifyS, idle: idleS]
-        e.paneAttention[busy] = att("needs input", .agentStop)
+        let target = PaneSlotID(id: UUID())
+        let notify = PaneSlotID(id: UUID())
+        let sibling = PaneSlotID(id: UUID())
+        e.attention = att("needs input", .agentStop, providerSessionKey: "claude:session:one")
+        e.paneAttention[target] = att("needs input", .agentStop, providerSessionKey: "claude:session:one")
         e.paneAttention[notify] = att("user ping", .userNotify)
-        e.paneAttention[idle] = att("needs input", .agentStop)
+        e.paneAttention[sibling] = att("needs input", .agentStop, providerSessionKey: "claude:session:two")
 
-        e.clearAgentStopAttention(forBusySessionNames: [name(busyS), name(notifyS)])
+        e.clearAgentStopAttention(providerSessionKey: "claude:session:one")
 
-        #expect(e.paneAttention[busy] == nil)       // agent-stop + busy → cleared
-        #expect(e.paneAttention[notify] != nil)     // busy but user ping → kept
-        #expect(e.paneAttention[idle] != nil)       // agent-stop but not busy → kept
+        #expect(e.attention == nil)
+        #expect(e.paneAttention[target] == nil)
+        #expect(e.paneAttention[notify] != nil)
+        #expect(e.paneAttention[sibling] != nil)
     }
 
-    @Test func resumeLeavesWorktreeScopedAgentStop() {
-        // A worktree-scoped agent-stop ping means the agent isn't in a
-        // tracked pane, so there's no session to correlate against liveness.
-        // The resume rule must NOT clear it (a busy *sibling* pane is not
-        // evidence the waiting agent resumed); acknowledge/auto-clear owns it.
+    @Test func missingProviderIdentityDoesNotClearPersistedAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
-        let slot = PaneSlotID(id: UUID()); let s = PaneSessionID(id: UUID())
-        e.paneSessions = [slot: s]
         e.attention = att("needs input", .agentStop)
-        e.clearAgentStopAttention(forBusySessionNames: [name(s)])
+        e.clearAgentStopAttention(providerSessionKey: nil)
         #expect(e.attention != nil)
     }
 }

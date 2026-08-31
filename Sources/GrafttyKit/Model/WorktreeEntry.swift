@@ -206,6 +206,29 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         }
     }
 
+    /// @spec AGENT-3.7: While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated signals from the same stable provider session shall not replace that attention or post another desktop notification.
+    /// Records one provider attention transition per target and provider
+    /// session. A different provider session may own a later request at the
+    /// same target; suppressing it would hide a real prompt.
+    @discardableResult
+    public mutating func setAgentStopAttentionIfAbsent(
+        _ attention: Attention,
+        pane: PaneSlotID?
+    ) -> Bool {
+        let existing: Attention?
+        if let pane {
+            existing = paneAttention[pane]
+        } else {
+            existing = self.attention
+        }
+        if existing?.source == .agentStop,
+           existing?.providerSessionKey == attention.providerSessionKey {
+            return false
+        }
+        setAttention(attention, pane: pane)
+        return true
+    }
+
     /// The user is now looking at this worktree (sidebar click or
     /// notification activation): clear ALL attention — worktree-scoped and
     /// every pane (STATE-2.4). One method so both acknowledgement paths
@@ -223,23 +246,18 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4
-    /// An agent resumed work in a busy pane, so it no longer needs input:
-    /// clear that pane's `.agentStop` attention. `.userNotify` and
-    /// `.commandFinished` overlays are deliberately left alone.
-    ///
-    /// Only PANE-scoped attention is cleared. A worktree-scoped `.agentStop`
-    /// ping is placed precisely because the agent is *not* in a tracked pane
-    /// (`AgentStopAttentionTarget.resolve` → `.worktree`), so there's no
-    /// session to correlate against liveness — clearing it on "some pane in
-    /// this worktree is busy" would wipe a still-waiting agent's ping. It's
-    /// left to acknowledge / auto-clear instead.
-    public mutating func clearAgentStopAttention(forBusySessionNames busy: Set<String>) {
-        guard !busy.isEmpty else { return }
-        for (slot, session) in paneSessions
-        where paneAttention[slot]?.source == .agentStop
-            && busy.contains(ZmxLauncher.sessionName(for: session)) {
-            paneAttention[slot] = nil
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+    /// Finds attention by its persisted owner rather than re-resolving the
+    /// provider's current pane, which may have moved since the prompt began.
+    public mutating func clearAgentStopAttention(providerSessionKey: String?) {
+        guard let providerSessionKey else { return }
+        if attention?.source == .agentStop,
+           attention?.providerSessionKey == providerSessionKey {
+            attention = nil
+        }
+        paneAttention = paneAttention.filter { _, attention in
+            attention.source != .agentStop
+                || attention.providerSessionKey != providerSessionKey
         }
     }
 

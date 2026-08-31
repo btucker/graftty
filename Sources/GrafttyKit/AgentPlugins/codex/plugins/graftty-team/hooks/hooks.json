@@ -11,6 +11,29 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex user-prompt-submit --skill-managed",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "request_user_input|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook codex pre-tool-use --skill-managed",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [

@@ -11,12 +11,57 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude permission-request --skill-managed",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude pre-tool-use --skill-managed",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude user-prompt-submit --skill-managed",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude post-tool-use --skill-managed"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude post-tool-use-failure --skill-managed",
+            "timeout": 2
           }
         ]
       }

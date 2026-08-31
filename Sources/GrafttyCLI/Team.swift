@@ -119,7 +119,7 @@ struct TeamHook: ParsableCommand {
     @Argument(help: "Runtime: codex or claude")
     var runtime: String
 
-    @Argument(help: "Hook event: session-start, post-tool-use, or stop")
+    @Argument(help: "Hook event: session-start, user-prompt-submit, pre-tool-use, post-tool-use, post-tool-use-failure, permission-request, or stop")
     var event: String
 
     @Option(name: [.customLong("session-id"), .customLong("session")], help: "Stable runtime session identifier")
@@ -133,7 +133,9 @@ struct TeamHook: ParsableCommand {
             throw ValidationError("runtime must be one of: codex, claude")
         }
         guard TeamHookEvent(rawValue: event) != nil else {
-            throw ValidationError("event must be one of: session-start, post-tool-use, stop")
+            throw ValidationError(
+                "event must be one of: session-start, user-prompt-submit, pre-tool-use, post-tool-use, post-tool-use-failure, permission-request, stop"
+            )
         }
     }
 
@@ -148,6 +150,11 @@ struct TeamHook: ParsableCommand {
         let stdinSessionID = stdinPayload["session_id"] as? String
         let runtime = TeamHookRuntime(rawValue: runtime)!
         let event = TeamHookEvent(rawValue: event)!
+        let attentionReason = AgentHookAttentionClassifier.reason(
+            runtime: runtime,
+            event: event,
+            stdinJSON: stdinPayload
+        )
 
         // TEAM-9.1
         if event == .stop, AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
@@ -165,7 +172,10 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
-        if runtime == .claude, skillManaged, let resolvedSessionID {
+        if runtime == .claude,
+           skillManaged,
+           event == .sessionStart || event == .postToolUse || event == .stop,
+           let resolvedSessionID {
             updateClaudeNativePresence(
                 event: event,
                 sessionID: resolvedSessionID,
@@ -173,7 +183,9 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
-        if runtime == .codex, event != .stop, let resolvedSessionID {
+        if runtime == .codex,
+           event == .sessionStart || event == .postToolUse,
+           let resolvedSessionID {
             bindCodexNativeSession(
                 event: event,
                 sessionID: resolvedSessionID,
@@ -190,6 +202,7 @@ struct TeamHook: ParsableCommand {
                     event: event,
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
+                    attentionReason: attentionReason,
                     skillManaged: skillManaged
                 )
             )
