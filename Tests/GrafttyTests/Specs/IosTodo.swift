@@ -104,11 +104,6 @@ struct IosTodo {
     func ios_5_5() async throws { }
 
     @Test("""
-@spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard. The v1 bar shall expose, at minimum: Esc, Tab, Ctrl-C, Ctrl-D, ↑, ↓, ←, →, submit Return, insert literal LF, and Hide Keyboard. These controls shall send explicit PTY bytes through `SessionClient` rather than relying on UIKit text entry: Esc=`0x1B`, Tab=`0x09`, Ctrl-C=`0x03`, Ctrl-D=`0x04`, arrows=`ESC [ A/B/D/C`, submit Return=`0x0D`, and literal LF=`0x0A`.
-""", .disabled("not yet implemented"))
-    func ios_6_1() async throws { }
-
-    @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
 """, .disabled("not yet implemented"))
     func ios_8_1() async throws { }

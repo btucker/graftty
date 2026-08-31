@@ -212,6 +212,40 @@ final class TerminalContainerBox {
 struct SingleSessionView: View {
     static let sessionRole: SessionClient.Role = .fullscreen
 
+    enum TerminalControlBarItem: String, Hashable {
+        case escape
+        case tab
+        case stickyControl
+        case controlC
+        case controlD
+        case navigationDivider
+        case left
+        case down
+        case up
+        case right
+        case returnDivider
+        case submitReturn
+        case literalLineFeed
+        case hideKeyboard
+    }
+
+    static let terminalControlBarItems: [TerminalControlBarItem] = [
+        .escape,
+        .tab,
+        .stickyControl,
+        .controlC,
+        .controlD,
+        .navigationDivider,
+        .left,
+        .down,
+        .up,
+        .right,
+        .returnDivider,
+        .submitReturn,
+        .literalLineFeed,
+        .hideKeyboard,
+    ]
+
     let step: SessionStep
     @Binding var navigationPath: NavigationPath
     /// True for the iPhone compact path (fullscreen route via
@@ -286,6 +320,8 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    @State private var stickyControlActivation:
+        TerminalInputContainerView.StickyControlActivation = .inactive
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so the follower/ownerless auto-fit path (IOS-5.6) can re-apply
     /// the base config or a font-size override without re-fetching.
@@ -625,6 +661,7 @@ struct SingleSessionView: View {
                         focusRequestCount &+= 1
                     }
                 } else {
+                    paneContainerBox.view?.resetStickyModifiers()
                     paneContainerBox.view?.terminalView.resignFirstResponder()
                 }
             }
@@ -910,49 +947,8 @@ struct SingleSessionView: View {
         // the compiler.
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                terminalTextControl("Esc", accessibilityLabel: "Escape") {
-                    client?.sendEscape()
-                }
-                terminalTextControl("Tab", accessibilityLabel: "Tab") {
-                    client?.sendTab()
-                }
-                terminalTextControl("^C", accessibilityLabel: "Control C") {
-                    client?.sendControl(.c)
-                }
-                terminalTextControl("^D", accessibilityLabel: "Control D") {
-                    client?.sendControl(.d)
-                }
-                Divider()
-                    .frame(height: 28)
-                terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
-                    client?.sendArrow(.left)
-                }
-                terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
-                    client?.sendArrow(.down)
-                }
-                terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
-                    client?.sendArrow(.up)
-                }
-                terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
-                    client?.sendArrow(.right)
-                }
-                Divider()
-                    .frame(height: 28)
-                terminalIconControl("return", accessibilityLabel: "Submit return") {
-                    client?.submitReturn()
-                }
-                terminalTextControl("LF", accessibilityLabel: "Insert newline") {
-                    client?.insertNewline()
-                }
-                terminalIconControl(
-                    "keyboard.chevron.compact.down",
-                    accessibilityLabel: "Hide keyboard"
-                ) {
-                    keyboardAllowed = false
-                    UIApplication.shared.sendAction(
-                        #selector(UIResponder.resignFirstResponder),
-                        to: nil, from: nil, for: nil
-                    )
+                ForEach(Self.terminalControlBarItems, id: \.self) { item in
+                    terminalControlBarItem(item)
                 }
             }
             .padding(.horizontal, 10)
@@ -965,6 +961,74 @@ struct SingleSessionView: View {
         )
         .padding(.horizontal, 8)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func terminalControlBarItem(_ item: TerminalControlBarItem) -> some View {
+        switch item {
+        case .escape:
+            terminalTextControl("Esc", accessibilityLabel: "Escape") {
+                client?.sendEscape()
+            }
+        case .tab:
+            terminalTextControl("Tab", accessibilityLabel: "Tab") {
+                client?.sendTab()
+            }
+        case .stickyControl:
+            terminalModifierControl(
+                "Ctrl",
+                accessibilityLabel: "Sticky Control",
+                activation: stickyControlActivation
+            ) {
+                paneContainerBox.view?.toggleStickyControlModifier()
+            }
+        case .controlC:
+            terminalTextControl("^C", accessibilityLabel: "Control C") {
+                client?.sendControl(.c)
+            }
+        case .controlD:
+            terminalTextControl("^D", accessibilityLabel: "Control D") {
+                client?.sendControl(.d)
+            }
+        case .navigationDivider, .returnDivider:
+            Divider().frame(height: 28)
+        case .left:
+            terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
+                client?.sendArrow(.left)
+            }
+        case .down:
+            terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
+                client?.sendArrow(.down)
+            }
+        case .up:
+            terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
+                client?.sendArrow(.up)
+            }
+        case .right:
+            terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
+                client?.sendArrow(.right)
+            }
+        case .submitReturn:
+            terminalIconControl("return", accessibilityLabel: "Submit return") {
+                client?.submitReturn()
+            }
+        case .literalLineFeed:
+            terminalTextControl("LF", accessibilityLabel: "Insert newline") {
+                client?.insertNewline()
+            }
+        case .hideKeyboard:
+            terminalIconControl(
+                "keyboard.chevron.compact.down",
+                accessibilityLabel: "Hide keyboard"
+            ) {
+                paneContainerBox.view?.resetStickyModifiers()
+                keyboardAllowed = false
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil
+                )
+            }
+        }
     }
 
     /// The terminal body. While not the display owner, applies a font-size
@@ -1006,6 +1070,7 @@ struct SingleSessionView: View {
                 isPaneFocused: isPaneFocused
             ) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
+                insertControlByte: { byte in client.sendControlByte(byte) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
             hardwareKeyboardCommands: isPaneFocused ? ghosttyCommandContext.map {
@@ -1027,7 +1092,17 @@ struct SingleSessionView: View {
                 }
                 client.sendPaste(text)
             },
-            captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
+            captureContainer: { [paneContainerBox] view in
+                paneContainerBox.view = view
+                view.setStickyControlActivationChangeHandler { activation in
+                    // This callback can fire while UIViewRepresentable is
+                    // applying input eligibility. Leave that update cycle
+                    // before mutating SwiftUI state.
+                    DispatchQueue.main.async {
+                        stickyControlActivation = activation
+                    }
+                }
+            }
         )
         pane
             .task(id: TerminalFontFitTaskKey(
@@ -1160,6 +1235,42 @@ struct SingleSessionView: View {
         .buttonStyle(.plain)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func terminalModifierControl(
+        _ title: String,
+        accessibilityLabel: String,
+        activation: TerminalInputContainerView.StickyControlActivation,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: controlBarAction(action)) {
+            Text(title)
+                .font(.footnote.monospaced().weight(.semibold))
+                .foregroundStyle(activation == .inactive ? Color.primary : Color.accentColor)
+                .frame(minWidth: 44, minHeight: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(
+                    activation == .inactive ? Color.clear : Color.accentColor,
+                    lineWidth: activation == .locked ? 2 : 1
+                )
+        }
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(stickyControlAccessibilityValue(activation))
+    }
+
+    private func stickyControlAccessibilityValue(
+        _ activation: TerminalInputContainerView.StickyControlActivation
+    ) -> String {
+        switch activation {
+        case .inactive: "Off"
+        case .armed: "On for next key"
+        case .locked: "Locked"
+        }
     }
 
     private func terminalIconControl(
