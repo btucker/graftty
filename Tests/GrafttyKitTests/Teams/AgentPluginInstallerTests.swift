@@ -5,6 +5,54 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
+    @spec AGENT-6.28: When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
+    """)
+    func providerHooksCaptureExplicitAttentionSignals() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugin-attention-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let data = try Data(contentsOf: destination
+                .appendingPathComponent(provider)
+                .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
+            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try #require(root["hooks"] as? [String: Any])
+
+            #expect(hooks["PreToolUse"] != nil)
+            #expect(hooks["UserPromptSubmit"] != nil)
+            let preToolUse = try #require(hooks["PreToolUse"] as? [[String: Any]])
+            #expect(preToolUse.first?["matcher"] as? String == (provider == "claude"
+                ? "AskUserQuestion|ExitPlanMode"
+                : "request_user_input|exit_plan_mode"))
+            var boundedEvents = ["PreToolUse", "UserPromptSubmit"]
+            if provider == "claude" {
+                #expect(hooks["PermissionRequest"] != nil)
+                #expect(hooks["PostToolUseFailure"] != nil)
+                boundedEvents += ["PermissionRequest", "PostToolUseFailure"]
+            } else {
+                #expect(hooks["PermissionRequest"] == nil)
+                #expect(hooks["PostToolUseFailure"] == nil)
+            }
+            for event in boundedEvents {
+                let groups = try #require(hooks[event] as? [[String: Any]])
+                let handlers = groups.flatMap { group in
+                    (group["hooks"] as? [[String: Any]]) ?? []
+                }
+                #expect(!handlers.isEmpty)
+                #expect(handlers.allSatisfy { $0["timeout"] as? Int == 2 })
+            }
+            let stop = try #require(hooks["Stop"] as? [[String: Any]])
+            let stopCommands = stop.flatMap { group in
+                (group["hooks"] as? [[String: Any]])?.compactMap { $0["command"] as? String } ?? []
+            }
+            #expect(stopCommands.allSatisfy { !$0.contains("needs-input") })
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
     """)
     func preparesBothProviderMarketplacesAndCommands() throws {
@@ -52,7 +100,8 @@ struct AgentPluginInstallerTests {
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
-            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == 3)
+            let expectedHookCount = provider == "claude" ? 7 : 5
+            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == expectedHookCount)
             #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
         }
         let claudeManifest = try String(contentsOf: destination

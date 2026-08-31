@@ -49,14 +49,17 @@ public enum AgentStopNotification {
         worktreePath: String,
         sessionID: String,
         paneSessionName: String?,
+        reason: AgentHookAttentionReason,
         timestamp: Date
     ) -> AgentStopNotificationContent {
-        let runtimeName = displayName(runtime)
+        // Keep the legacy kind so notifications delivered by older builds still
+        // route through the same click handler after an update.
         var userInfo = [
             "kind": "agent_stop",
             "runtime": runtime.rawValue,
             "worktree_path": worktreePath,
             "session_id": sessionID,
+            "attention_reason": reason.rawValue,
             "attention_timestamp": timestampString(timestamp),
         ]
         // Optional: only present when the agent runs in a Graftty pane, so
@@ -65,8 +68,8 @@ public enum AgentStopNotification {
             userInfo["pane_session_name"] = paneSessionName
         }
         return AgentStopNotificationContent(
-            title: "\(runtimeName) needs input",
-            body: "\(worktreeName) is waiting for you.",
+            title: attentionText(runtime: runtime, reason: reason),
+            body: "\(worktreeName) requires your response.",
             userInfo: userInfo
         )
     }
@@ -116,6 +119,21 @@ public enum AgentStopNotification {
             return "Codex"
         case .claude:
             return "Claude"
+        }
+    }
+
+    public static func attentionText(
+        runtime: TeamHookRuntime,
+        reason: AgentHookAttentionReason
+    ) -> String {
+        let runtimeName = displayName(runtime)
+        switch reason {
+        case .permission:
+            return "\(runtimeName) needs permission"
+        case .question:
+            return "\(runtimeName) has a question"
+        case .planReview:
+            return "\(runtimeName) has a plan to review"
         }
     }
 

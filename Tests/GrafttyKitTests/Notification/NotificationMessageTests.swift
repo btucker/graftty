@@ -139,9 +139,10 @@ struct NotificationMessageTests {
             callerWorktree: "/r/a",
             callerAgentID: "codex-abcdef012345",
             runtime: .codex,
-            event: .postToolUse,
+            event: .permissionRequest,
             sessionID: "codex:a:123",
-            paneSessionName: nil
+            paneSessionName: nil,
+            attentionReason: .permission
         )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -149,8 +150,9 @@ struct NotificationMessageTests {
         #expect(json["caller_worktree"] as? String == "/r/a")
         #expect(json["caller_agent_id"] as? String == "codex-abcdef012345")
         #expect(json["runtime"] as? String == "codex")
-        #expect(json["event"] as? String == "post-tool-use")
+        #expect(json["event"] as? String == "permission-request")
         #expect(json["session_id"] as? String == "codex:a:123")
+        #expect(json["attention_reason"] as? String == "permission")
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
@@ -167,7 +169,7 @@ struct NotificationMessageTests {
         )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
-        guard case let .teamHook(_, _, _, _, _, paneSessionName, _) = decoded else {
+        guard case let .teamHook(_, _, _, _, _, paneSessionName, _, _) = decoded else {
             Issue.record("expected .teamHook"); return
         }
         #expect(paneSessionName == "graftty-abc12345")
@@ -184,11 +186,14 @@ struct NotificationMessageTests {
         }
         """
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
-        guard case let .teamHook(_, callerAgentID, _, _, _, paneSessionName, _) = decoded else {
+        guard case let .teamHook(
+            _, callerAgentID, _, _, _, paneSessionName, attentionReason, _
+        ) = decoded else {
             Issue.record("expected .teamHook"); return
         }
         #expect(callerAgentID == nil)
         #expect(paneSessionName == nil)
+        #expect(attentionReason == nil)
     }
 
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {

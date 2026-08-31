@@ -9,8 +9,8 @@ import Foundation
 /// but graftty only registers `Stop`, so the same handler receives both
 /// and needs to disambiguate from the payload. Stop-event CLI commands
 /// (`team hook`, `team watch-inbox`) call this to skip per-Stop work
-/// — overlay, notification, idle-watcher spawn — that should only fire
-/// when a top-level agent actually goes idle.
+/// — lifecycle delivery and idle-watcher spawn — that should only run for
+/// a top-level agent.
 public enum AgentStopHookFilter {
     public static func isSubagentStop(stdinJSON: [String: Any]) -> Bool {
         stdinJSON["agent_id"] is String

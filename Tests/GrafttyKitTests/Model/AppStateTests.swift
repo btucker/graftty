@@ -19,25 +19,39 @@ struct AppStateTests {
         #expect(state.selectedWorktreePath == nil)
     }
 
-    @Test func clearAgentStopAttentionForBusyPanesAppliesAcrossWorktrees() {
+    @Test func clearAgentStopAttentionFindsOriginalProviderTarget() {
         let slotA = PaneSlotID(id: UUID()); let sA = PaneSessionID(id: UUID())
         let slotB = PaneSlotID(id: UUID()); let sB = PaneSessionID(id: UUID())
-        func wt(_ path: String, _ slot: PaneSlotID, _ session: PaneSessionID) -> WorktreeEntry {
+        func wt(
+            _ path: String,
+            _ slot: PaneSlotID,
+            _ session: PaneSessionID,
+            _ providerSessionKey: String
+        ) -> WorktreeEntry {
             var e = WorktreeEntry(path: path, branch: "b")
             e.paneSessions = [slot: session]
             e.paneAttention[slot] = Attention(
-                text: "needs input", timestamp: Date(timeIntervalSince1970: 1), source: .agentStop)
+                text: "needs input",
+                timestamp: Date(timeIntervalSince1970: 1),
+                source: .agentStop,
+                providerSessionKey: providerSessionKey
+            )
             return e
         }
         var state = AppState(repos: [RepoEntry(
             path: "/r", displayName: "r",
-            worktrees: [wt("/r/a", slotA, sA), wt("/r/b", slotB, sB)])])
+            worktrees: [
+                wt("/r/a", slotA, sA, "claude:session:one"),
+                wt("/r/b", slotB, sB, "claude:session:one"),
+            ])])
 
-        state.clearAgentStopAttentionForBusyPanes(
-            liveness: [ZmxLauncher.sessionName(for: sA): .busy])
+        state.clearAgentStopAttention(
+            worktreePath: "/r/a",
+            providerSessionKey: "claude:session:one"
+        )
 
-        #expect(state.repos[0].worktrees[0].paneAttention[slotA] == nil)   // busy → cleared
-        #expect(state.repos[0].worktrees[1].paneAttention[slotB] != nil)   // idle → kept
+        #expect(state.repos[0].worktrees[0].paneAttention[slotA] == nil)
+        #expect(state.repos[0].worktrees[1].paneAttention[slotB] != nil)
     }
 
     @Test func addRepo() {

@@ -7,7 +7,11 @@ public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
 
 public enum TeamHookEvent: String, Codable, Sendable, Equatable, CaseIterable {
     case sessionStart = "session-start"
+    case userPromptSubmit = "user-prompt-submit"
+    case preToolUse = "pre-tool-use"
     case postToolUse = "post-tool-use"
+    case postToolUseFailure = "post-tool-use-failure"
+    case permissionRequest = "permission-request"
     case stop
 }
 
@@ -19,7 +23,11 @@ public extension TeamHookEvent {
     var camelCaseKey: String {
         switch self {
         case .sessionStart: return "SessionStart"
+        case .userPromptSubmit: return "UserPromptSubmit"
+        case .preToolUse: return "PreToolUse"
         case .postToolUse: return "PostToolUse"
+        case .postToolUseFailure: return "PostToolUseFailure"
+        case .permissionRequest: return "PermissionRequest"
         case .stop: return "Stop"
         }
     }
@@ -100,6 +108,7 @@ public enum NotificationMessage: Sendable, Equatable {
         event: TeamHookEvent,
         sessionID: String?,
         paneSessionName: String?,
+        attentionReason: AgentHookAttentionReason? = nil,
         skillManaged: Bool = false
     )
     case teamInbox(TeamInboxPageRequest)
@@ -164,6 +173,7 @@ extension NotificationMessage: Codable {
         case existing
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
+        case attentionReason = "attention_reason"
         case skillManaged = "skill_managed"
         case pressEnter = "press_enter"
     }
@@ -222,7 +232,16 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(let path, let callerAgentID, let runtime, let event, let sessionID, let paneSessionName, let skillManaged):
+        case .teamHook(
+            let path,
+            let callerAgentID,
+            let runtime,
+            let event,
+            let sessionID,
+            let paneSessionName,
+            let attentionReason,
+            let skillManaged
+        ):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
             try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
@@ -230,6 +249,7 @@ extension NotificationMessage: Codable {
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
+            try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
             try container.encode(skillManaged, forKey: .skillManaged)
         case .teamInbox(let request):
             try container.encode("team_inbox", forKey: .type)
@@ -374,10 +394,15 @@ extension NotificationMessage: Codable {
             let event = try container.decode(TeamHookEvent.self, forKey: .event)
             let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
             let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            let attentionReason = try container.decodeIfPresent(
+                AgentHookAttentionReason.self,
+                forKey: .attentionReason
+            )
             let skillManaged = try container.decodeIfPresent(Bool.self, forKey: .skillManaged) ?? false
             self = .teamHook(callerWorktree: path, callerAgentID: callerAgentID,
                              runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
+                             attentionReason: attentionReason,
                              skillManaged: skillManaged)
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)

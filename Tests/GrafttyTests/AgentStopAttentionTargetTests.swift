@@ -11,7 +11,7 @@ struct AgentStopAttentionTargetTests {
     }
 
     @Test("""
-    @spec AGENT-3.1: When an agent-stop event carries a `paneSessionName` resolving to a live pane, the application shall attach the "needs input" attention to that pane rather than the worktree.
+    @spec AGENT-3.1: When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
     """)
     func targetsPaneWhenSessionResolves() {
         let slot = PaneSlotID(id: UUID()); let s = PaneSessionID(id: UUID())
@@ -22,7 +22,7 @@ struct AgentStopAttentionTargetTests {
     }
 
     @Test("""
-    @spec AGENT-3.2: If an agent-stop event has no pane session (the agent is not in a Graftty pane), then the application shall fall back to worktree-scoped "needs input" attention.
+    @spec AGENT-3.2: If an explicit provider attention event has no pane session resolving to a live Graftty pane, then the application shall attach needs-input attention at worktree scope.
     """)
     func fallsBackToWorktreeWhenNoSession() {
         let e = entry(slot: PaneSlotID(id: UUID()), session: PaneSessionID(id: UUID()))

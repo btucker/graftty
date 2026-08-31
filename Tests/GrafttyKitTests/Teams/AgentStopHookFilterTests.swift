@@ -9,12 +9,9 @@ invoked and the JSON the runtime wrote to the hook's stdin contains an \
 `agent_id` string — Claude Code's marker that this Stop fired inside a \
 Task subagent context rather than for a top-level agent turn — the CLI \
 shall short-circuit before doing any per-Stop work: no `teamHook` \
-socket message is sent, no `InboxWatcher` is spawned, and neither the \
-worktree's `"<Agent> needs input"` attention overlay nor the macOS \
-user notification fires. Without this filter, every Task subagent end \
-both produces a spurious 'needs attention' alert and leaks a \
-long-running watcher process while the top-level agent is still \
-working.
+socket message is sent and no `InboxWatcher` is spawned. Without this \
+filter, every Task subagent end can start redundant lifecycle and \
+watcher work while the top-level agent is still working.
 """)
 struct AgentStopHookFilterTests {
     @Test func subagentStopIsDetectedWhenAgentIdIsPresent() {

@@ -13,12 +13,14 @@ struct AgentStopNotificationTests {
             worktreePath: "/repo/.worktrees/feature-auth",
             sessionID: "codex:feature-auth:1",
             paneSessionName: "graftty-aaaa1111",
+            reason: .permission,
             timestamp: timestamp
         )
 
-        #expect(content.title == "Codex needs input")
-        #expect(content.body == "feature-auth is waiting for you.")
+        #expect(content.title == "Codex needs permission")
+        #expect(content.body == "feature-auth requires your response.")
         #expect(content.userInfo["kind"] == "agent_stop")
+        #expect(content.userInfo["attention_reason"] == "permission")
         #expect(content.userInfo["runtime"] == "codex")
         #expect(content.userInfo["worktree_path"] == "/repo/.worktrees/feature-auth")
         #expect(content.userInfo["session_id"] == "codex:feature-auth:1")
@@ -33,6 +35,7 @@ struct AgentStopNotificationTests {
             worktreePath: "/repo/wt",
             sessionID: "codex:wt:1",
             paneSessionName: nil,
+            reason: .question,
             timestamp: Date(timeIntervalSince1970: 1_800_000_000)
         )
         #expect(content.userInfo["pane_session_name"] == nil)

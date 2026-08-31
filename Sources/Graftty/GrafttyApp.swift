@@ -1680,13 +1680,6 @@ struct GrafttyApp: App {
         // (like prStatusStore), so the local var is sufficient — the
         // registry itself outlives startup() via AppServices.
         let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
-        // AGENT-3.4: apply the resume rule at the model layer on every
-        // liveness change, so the iPad/web snapshot and the headless
-        // (window-closed) case stay consistent — not just the on-screen
-        // Mac sidebar.
-        services.claudeSessionRegistry.onLivenessChange = { [appState = $appState] liveness in
-            appState.wrappedValue.clearAgentStopAttentionForBusyPanes(liveness: liveness)
-        }
         services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
 
         // Sweep dangling presence files left behind by SIGKILL'd agents
@@ -3718,6 +3711,7 @@ struct GrafttyApp: App {
             let event,
             let sessionID,
             let paneSessionName,
+            let attentionReason,
             let skillManaged
         ):
             return await handleTeamHook(
@@ -3727,6 +3721,7 @@ struct GrafttyApp: App {
                 event: event,
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
+                attentionReason: attentionReason,
                 skillManaged: skillManaged,
                 appState: appState,
                 teamInbox: teamInbox,
@@ -4101,6 +4096,7 @@ struct GrafttyApp: App {
         event: TeamHookEvent,
         sessionID: String?,
         paneSessionName: String?,
+        attentionReason: AgentHookAttentionReason?,
         skillManaged: Bool,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
@@ -4108,6 +4104,37 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager,
         remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage {
+        switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
+        case .record(let reason):
+            recordAgentAttention(
+                callerPath: callerPath,
+                callerAgentID: callerAgentID,
+                runtime: runtime,
+                reason: reason,
+                sessionID: sessionID,
+                paneSessionName: paneSessionName,
+                appState: appState
+            )
+        case .clear:
+            clearAgentAttention(
+                callerPath: callerPath,
+                callerAgentID: callerAgentID,
+                runtime: runtime,
+                sessionID: sessionID,
+                appState: appState
+            )
+        case .none:
+            break
+        }
+
+        // Attention-only hooks must return quickly and must not depend on the
+        // team feature being enabled. They carry no inbox or instruction data.
+        if event == .preToolUse || event == .permissionRequest
+            || event == .userPromptSubmit || event == .postToolUseFailure
+            || (runtime == .codex && event == .postToolUse && !skillManaged) {
+            return .teamHookOutput("{}")
+        }
+
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             // Snapshotted before the instruction render's `await`; the
@@ -4217,15 +4244,6 @@ struct GrafttyApp: App {
                     skillManaged: skillManaged
                 )
             }
-            if event == .stop {
-                recordAgentStop(
-                    callerPath: callerPath,
-                    runtime: runtime,
-                    sessionID: sessionID,
-                    paneSessionName: paneSessionName,
-                    appState: appState
-                )
-            }
             return .teamHookOutput(output)
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
@@ -4235,13 +4253,22 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    private static func recordAgentStop(
+    private static func recordAgentAttention(
         callerPath: String,
+        callerAgentID: String?,
         runtime: TeamHookRuntime,
+        reason: AgentHookAttentionReason,
         sessionID: String?,
         paneSessionName: String?,
         appState: Binding<AppState>
     ) {
+        guard let providerSessionKey = AgentHookAttentionIdentity.key(
+            runtime: runtime,
+            sessionID: sessionID,
+            callerAgentID: callerAgentID
+        ) else {
+            return
+        }
         let timestamp = Date()
         for repoIndex in appState.wrappedValue.repos.indices {
             for worktreeIndex in appState.wrappedValue.repos[repoIndex].worktrees.indices
@@ -4249,18 +4276,25 @@ struct GrafttyApp: App {
                 let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
                 let worktreeName = WorktreeNameSanitizer.sanitize(worktree.branch)
                 let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
+                let attentionText = AgentStopNotification.attentionText(
+                    runtime: runtime,
+                    reason: reason
+                )
                 let attention = Attention(
-                    text: "\(AgentStopNotification.displayName(runtime)) needs input",
+                    text: attentionText,
                     timestamp: timestamp,
-                    source: .agentStop
+                    source: .agentStop,
+                    providerSessionKey: providerSessionKey
                 )
                 let pane: PaneSlotID?
                 switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
                 case .pane(let slot): pane = slot
                 case .worktree: pane = nil
                 }
-                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
-                    .setAttention(attention, pane: pane)
+                guard appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                    .setAgentStopAttentionIfAbsent(attention, pane: pane) else {
+                    return
+                }
                 AgentNotificationRouter.shared.post(
                     AgentStopNotification.content(
                         runtime: runtime,
@@ -4268,12 +4302,32 @@ struct GrafttyApp: App {
                         worktreePath: callerPath,
                         sessionID: resolvedSessionID,
                         paneSessionName: paneSessionName,
+                        reason: reason,
                         timestamp: timestamp
                     )
                 )
                 return
             }
         }
+    }
+
+    @MainActor
+    private static func clearAgentAttention(
+        callerPath: String,
+        callerAgentID: String?,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        appState: Binding<AppState>
+    ) {
+        let providerSessionKey = AgentHookAttentionIdentity.key(
+            runtime: runtime,
+            sessionID: sessionID,
+            callerAgentID: callerAgentID
+        )
+        appState.wrappedValue.clearAgentStopAttention(
+            worktreePath: callerPath,
+            providerSessionKey: providerSessionKey
+        )
     }
 
     @MainActor
