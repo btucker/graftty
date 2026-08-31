@@ -100,7 +100,8 @@ struct TeamInstructionsRendererTests {
         for prompt in [mainPrompt, linkedPrompt] {
             #expect(prompt.contains("Proactively delegate"))
             #expect(prompt.contains("does not delegate the task"))
-            #expect(prompt.contains("stop working on the delegated scope"))
+            #expect(prompt.contains("confirm that a top-level child"))
+            #expect(prompt.contains("stop working on that scope"))
             #expect(prompt.contains("parent's exact canonical address"))
         }
     }
@@ -170,6 +171,8 @@ struct TeamInstructionsRendererTests {
             #expect(prompt.components(separatedBy: "graftty team inbox").count - 1 == 1)
             #expect(prompt.components(separatedBy: "graftty team list").count - 1 == 1)
             #expect(prompt.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
+            #expect(prompt.contains("<graftty-forge-message provider=\"<provider>\">"))
+            #expect(prompt.contains("<graftty-system-message>"))
             #expect(prompt.contains("<canonical-worktree-path>#<runtime>"))
             #expect(prompt.contains("display metadata and may be truncated"))
             #expect(!prompt.lowercased().contains("untrusted peer"))

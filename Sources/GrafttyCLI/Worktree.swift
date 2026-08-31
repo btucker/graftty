@@ -198,7 +198,10 @@ struct WorktreeAdd: ParsableCommand {
         if let agent {
             lines.append("agent=\(agent)  message-with=graftty team send --stdin \(address)")
             lines.append(
-                "handoff=complete  parent-action=stop working on delegated scope; continue only separate work"
+                "handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json"
+            )
+            lines.append(
+                "after-reachable=stop working on delegated scope; continue only separate work"
             )
         }
         return lines

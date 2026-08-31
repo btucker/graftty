@@ -2266,7 +2266,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to stop working that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to confirm child reachability before relinquishing that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 **AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
@@ -2278,7 +2278,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.8** Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
 
-**AGENT-5.9** When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to stop working on the delegated scope while it continues only separate work.
+**AGENT-5.9** When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to pause that scope until it confirms the child is reachable, then relinquish the scope and continue only separate work.
 
 ### AGENT-6.x
 
@@ -2316,7 +2316,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 
-**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in its full canonical provenance and runtime-fallback envelope, join the envelopes with a blank line, and leave later runs for subsequent frames.
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
 
 **AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
 
@@ -2326,9 +2326,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.24** When a sender addresses `<canonical-worktree-path>#<runtime>`, the application shall durably queue the row for that provider without requiring a currently reachable agent or binding the row to one exact session, allow other runtimes to consume later deliverable rows without discarding or blocking on it, and permit only an agent of the addressed runtime to consume the targeted row.
 
-**AGENT-6.25** When a Claude SessionStart hook binds a new session identity to the same live process and peer socket as an older identity in one worktree, the application shall replace the superseded presence row; if a later non-SessionStart hook reports the superseded identity, then the application shall preserve the new binding rather than resurrect the old agent.
+**AGENT-6.25** When a Claude SessionStart hook binds a new session identity to the same live process and peer socket as an older identity in one worktree, the application shall atomically replace the superseded presence row across concurrent hook processes; if a later non-SessionStart hook reports the superseded identity, then the application shall preserve the new binding rather than resurrect the old agent.
 
-**AGENT-6.26** When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to stop working the delegated scope, and preserve the user's authorization boundaries.
+**AGENT-6.26** When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
+
+**AGENT-6.27** When Graftty delivers an inbox row, the application shall use a `<graftty-peer-message>` envelope only for agent-authored rows, a `<graftty-forge-message provider="<provider>">` envelope for forge-originated system rows, and a `<graftty-system-message>` envelope for other system rows; every envelope shall preserve urgent priority and neutralize body text that could forge a sibling Graftty message envelope.
 
 ## CLI — CLI
 

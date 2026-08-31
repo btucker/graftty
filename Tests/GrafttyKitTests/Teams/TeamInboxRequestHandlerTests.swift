@@ -628,7 +628,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test("""
-    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to stop working that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to confirm child reachability before relinquishing that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
@@ -666,7 +666,8 @@ struct TeamInboxRequestHandlerTests {
 
             #expect(output.contains("graftty worktree add <name> --agent <codex|claude>"))
             #expect(output.contains("Proactively delegate"))
-            #expect(output.contains("stop working on the delegated scope"))
+            #expect(output.contains("confirm that a top-level child"))
+            #expect(output.contains("stop working on that scope"))
             #expect(output.contains("worktree's stable reply address"))
             #expect(output.contains("graftty team send --stdin <address>"))
             #expect(output.contains("queued before launch"))

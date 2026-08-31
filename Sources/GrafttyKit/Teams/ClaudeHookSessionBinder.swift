@@ -17,42 +17,51 @@ public enum ClaudeHookSessionBinder {
             return nil
         }
 
-        let endpointRecords = try storage.listAll().filter {
-            sameEndpoint($0, incoming)
-        }
-        let winner: TeamPresenceRecord
-        if event == .sessionStart {
-            winner = incoming
-        } else if endpointRecords.contains(where: {
-            sameIdentityFile($0, incoming)
-        }) {
-            winner = endpointRecords.max(by: isOlder) ?? incoming
-        } else if let existing = endpointRecords.max(by: isOlder) {
-            // A late Stop or PostToolUse hook can carry the identity that
-            // `/clear` just superseded. Do not recreate a deleted identity
-            // while another session owns the same live endpoint.
-            winner = existing
-        } else {
-            // Plugin installation can occur during a live Claude session,
-            // after its SessionStart hook has already passed.
-            winner = incoming
-        }
+        return try storage.withClaudeBindingLock(teamID: incoming.teamID) {
+            let endpointRecords = try storage.list(
+                teamID: incoming.teamID,
+                worktree: incoming.worktree,
+                runtime: .claude
+            ).filter {
+                sameEndpoint($0, incoming)
+            }
+            let winner: TeamPresenceRecord
+            if event == .sessionStart {
+                winner = incoming
+            } else if endpointRecords.contains(where: {
+                sameIdentityFile($0, incoming)
+            }) {
+                winner = endpointRecords.max(by: isOlder) ?? incoming
+            } else if let existing = endpointRecords.max(by: isOlder) {
+                // A late Stop or PostToolUse hook can carry the identity that
+                // `/clear` just superseded. Do not recreate a deleted identity
+                // while another session owns the same live endpoint.
+                winner = existing
+            } else {
+                // Plugin installation can occur during a live Claude session,
+                // after its SessionStart hook has already passed.
+                winner = incoming
+            }
 
-        for record in endpointRecords where !sameIdentityFile(record, winner) {
-            try storage.delete(
-                teamID: record.teamID,
-                worktree: record.worktree,
-                runtime: record.runtime,
-                paneSessionName: record.paneSessionName,
-                agentID: record.agentID
-            )
-        }
+            // Persist the winner before removing superseded identities. A
+            // process interruption can leave a duplicate for later cleanup,
+            // but cannot leave the live endpoint with no routable identity.
+            if sameIdentityFile(winner, incoming),
+               !endpointRecords.contains(incoming) {
+                try storage.write(incoming)
+            }
+            for record in endpointRecords where !sameIdentityFile(record, winner) {
+                try storage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName,
+                    agentID: record.agentID
+                )
+            }
 
-        guard sameIdentityFile(winner, incoming) else { return winner }
-        if !endpointRecords.contains(incoming) {
-            try storage.write(incoming)
+            return sameIdentityFile(winner, incoming) ? incoming : winner
         }
-        return incoming
     }
 
     private static func sameEndpoint(

@@ -46,7 +46,7 @@ struct ClaudeHookSessionBinderTests {
     }
 
     @Test("""
-    @spec AGENT-6.25: When a Claude SessionStart hook binds a new session identity to the same live process and peer socket as an older identity in one worktree, the application shall replace the superseded presence row; if a later non-SessionStart hook reports the superseded identity, then the application shall preserve the new binding rather than resurrect the old agent.
+    @spec AGENT-6.25: When a Claude SessionStart hook binds a new session identity to the same live process and peer socket as an older identity in one worktree, the application shall atomically replace the superseded presence row across concurrent hook processes; if a later non-SessionStart hook reports the superseded identity, then the application shall preserve the new binding rather than resurrect the old agent.
     """)
     func clearReplacesOldIdentityAndLateStopCannotRestoreIt() throws {
         let fixture = try Fixture()

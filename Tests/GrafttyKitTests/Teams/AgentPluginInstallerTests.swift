@@ -42,6 +42,8 @@ struct AgentPluginInstallerTests {
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
             #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
+            #expect(skill.contains("<graftty-forge-message provider=\"<provider>\">"))
+            #expect(skill.contains("<graftty-system-message>"))
             #expect(skill.contains("<canonical-worktree-path>#<runtime>-<12hex>"))
             #expect(skill.contains("<canonical-worktree-path>#<runtime>"))
             #expect(skill.contains("display metadata and may be truncated"))
@@ -55,10 +57,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.2.0""#))
+        #expect(claudeManifest.contains(#""version": "0.3.0""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.2.0""#))
+        #expect(codexManifest.contains(#""version": "0.3.0""#))
     }
 
     @Test("""
@@ -86,7 +88,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to stop working the delegated scope, and preserve the user's authorization boundaries.
+    @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
     """)
     func materializedSkillsExplainRealWorktreeDelegation() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -105,8 +107,10 @@ struct AgentPluginInstallerTests {
                 "graftty worktree add <name> --agent <codex|claude> --prompt-stdin"
             ))
             #expect(skill.contains("does not delegate the task"))
-            #expect(skill.contains("Stop working on the delegated scope"))
+            #expect(skill.contains("confirm that a top-level child"))
+            #expect(skill.contains("Once reachable, stop working on that scope"))
             #expect(skill.contains("parent's exact canonical address"))
+            #expect(skill.contains("Parent fallback address: <parent-runtime-address>"))
             #expect(skill.contains("does not grant new authority"))
         }
     }

@@ -1,7 +1,7 @@
 {
   "name": "graftty-team",
   "description": "Coordinate Codex and Claude agents through Graftty's durable worktree inbox and instructions.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Graftty"
   }

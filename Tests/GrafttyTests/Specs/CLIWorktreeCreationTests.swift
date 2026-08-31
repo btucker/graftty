@@ -20,9 +20,9 @@ struct CLIWorktreeCreationTests {
     }
 
     @Test("""
-    @spec AGENT-5.9: When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to stop working on the delegated scope while it continues only separate work.
+    @spec AGENT-5.9: When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to pause that scope until it confirms the child is reachable, then relinquish the scope and continue only separate work.
     """)
-    func readyAgentOutputClosesTheParentHandoff() {
+    func readyAgentOutputRequiresReachabilityBeforeClosingTheParentHandoff() {
         let lines = WorktreeAdd.successOutputLines(
             worktreePath: "/repo/.worktrees/fix-auth",
             messageAddress: "/repo/.worktrees/fix-auth",
@@ -35,8 +35,11 @@ struct CLIWorktreeCreationTests {
                 && $0.contains("/repo/.worktrees/fix-auth")
         }))
         #expect(lines.contains(where: {
-            $0.contains("handoff=complete")
-                && $0.contains("stop working on delegated scope")
+            $0.contains("handoff=pending")
+                && $0.contains("confirm child reachability")
+        }))
+        #expect(lines.contains(where: {
+            $0.contains("after-reachable=stop working on delegated scope")
                 && $0.contains("continue only separate work")
         }))
     }
@@ -662,7 +665,8 @@ struct CLIWorktreeCreationTests {
         #expect(primer.contains("--prompt-stdin"))
         #expect(primer.contains("Proactively delegate"))
         #expect(primer.contains("does not delegate the task"))
-        #expect(primer.contains("stop working on the delegated scope"))
+        #expect(primer.contains("confirm that a top-level child"))
+        #expect(primer.contains("stop working on that scope"))
         #expect(primer.contains("parent's exact canonical address"))
         #expect(!primer.contains("Spawn a teammate"))
     }

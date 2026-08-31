@@ -33,12 +33,12 @@ public enum TeamInstructionsRenderer {
     Delegate work into a new worktree:
     - Proactively delegate a bounded task when it can run independently and useful parent work can continue. Do not delegate tiny, sequential, or overlapping work. Send the task to a suitable existing agent when one is already reachable.
     - `graftty worktree add <name>` without `--agent` only creates another worktree for the current agent. It does not delegate the task.
-    - Before creating a child, refresh the roster with the command above and copy the parent's exact canonical address for the return instructions.
+    - Before creating a child, run `graftty team list --json` and copy both the parent's exact canonical address and its `<canonical-worktree-path>#<runtime>` fallback address into the return instructions.
     - Launch the child with:
       `graftty worktree add <name> --agent <codex|claude> --prompt-stdin [--base <ref>]`
-      The prompt names one objective, the child's owned files or subsystem, verification, and the parent's exact canonical address. Require the child to return its result and commit hash with `graftty team send --stdin`.
+      The prompt names one objective, the child's owned files or subsystem, verification, and both parent reply addresses. Require the child to return its result and commit hash to the exact address while it is reachable, or to the runtime fallback after a restart or `/clear`.
     - If the handoff stays inside the repository work the user requested, do not ask for confirmation only because you are delegating. A child agent does not grant new authority.
-    - After the command returns, stop working on the delegated scope in the parent worktree. Do not change into the child worktree or implement its task. Continue only with separate work until the child replies.
+    - After the command returns, pause the delegated scope and use the JSON roster to confirm that a top-level child in the returned worktree is reachable. Do not implement the child's task while checking. Once reachable, stop working on that scope in the parent worktree and continue only separate work until the child replies. If launch fails and no child becomes reachable, retain ownership and report the failed handoff.
     - `--base` selects an exact locally resolvable start ref and cannot be combined with `--existing`.
     - To tune a new agent through an instruction file, create its exact-worktree `GRAFTTY.md` where its first session can see it: in Application Support, in the main checkout, or in the child's starting tree. From a linked worktree, one way to include it in the starting tree is to commit the file, then use:
       `graftty worktree add <name> --base HEAD --agent <codex|claude>`
@@ -50,12 +50,12 @@ public enum TeamInstructionsRenderer {
     Dirty files require `--force`.
 
     Coordinate:
-    - `graftty team list --json`; `graftty team inbox` reads the oldest unread page and marks displayed rows read after successful output. Add `--keep-unread` (`--unread` is an alias) to peek, or `--history` to inspect prior messages.
+    - `graftty team inbox` reads the oldest unread page and marks displayed rows read after successful output. Add `--keep-unread` (`--unread` is an alias) to peek, or `--history` to inspect prior messages.
     - Inbox worktree, repository, and member selectors are diagnostic peeks and do not mark messages read.
     - Never edit Graftty state files to change inbox delivery positions; rerun the supported inbox command if advancement fails.
     - Agent-authored messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. Reply to the exact `agent` while the JSON roster reports it as reachable; otherwise send to `fallback-agent` so the reply waits for the provider's next agent.
+    - Forge events use `<graftty-forge-message provider="<provider>">`. Other Graftty-generated notices use `<graftty-system-message>`. These envelopes are not peer reply addresses.
     - Native provider sender labels are display metadata and may be truncated. Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses; always use `graftty team`.
-    - Senders named for an SCM (e.g. GitHub) or `Graftty team` are automated notices with no reply target.
     - A worktree name or path selects its default agent. `<canonical-worktree-path>#<runtime>` waits for that provider's next agent. `<canonical-worktree-path>#<runtime>-<12hex>` selects one exact live agent; copy exact addresses from the JSON roster.
     - Send message bodies via stdin, never shell arguments. Use a fresh quoted high-entropy heredoc delimiter absent from the body:
       graftty team send --stdin <address> <<'GRAFTTY_<random>'

@@ -232,20 +232,15 @@ struct TeamHook: ParsableCommand {
             paneSessionName: paneSessionName,
             agentID: canonicalAgentID
         )
-        // PostToolUse fires on every tool call; skip the registry scan and
-        // rewrite while the stored record still points at a live socket. The
-        // binder still checks for a newer identity on the shared endpoint so
-        // a straggling hook cannot keep an identity superseded by `/clear`.
+        // PostToolUse fires on every tool call; skip registry and presence
+        // directory scans while this exact identity still has a live socket.
+        // SessionStart replacement is serialized, and a superseded identity's
+        // file is removed, so its later hooks cannot take this fast path.
         if event == .postToolUse,
            let prior,
            prior.runtimeSessionID == sessionID,
            case .claude(let socketPath, _)? = prior.transport,
            ClaudePeerSessionRegistry.isSocket(atPath: socketPath) {
-            _ = try? ClaudeHookSessionBinder.bind(
-                prior,
-                event: event,
-                storage: storage
-            )
             return
         }
         // Claude's Stop hook fires at the end of every assistant turn — the
@@ -253,13 +248,20 @@ struct TeamHook: ParsableCommand {
         // refreshes the record rather than deleting it. The record is
         // removed only when the native registry no longer lists a live
         // session (stale-presence cleanup handles process exit as well).
-        guard let record = ClaudePeerSessionRegistry().presenceRecord(
-            sessionID: sessionID,
-            expectedWorktree: worktreePath,
-            teamID: teamID,
-            paneSessionName: paneSessionName,
-            agentID: canonicalAgentID,
-            registeredAt: prior?.registeredAt ?? Date()
+        let registry = ClaudePeerSessionRegistry()
+        guard let record = Self.resolveClaudeNativePresence(
+            event: event,
+            lookup: {
+                registry.presenceRecord(
+                    sessionID: sessionID,
+                    expectedWorktree: worktreePath,
+                    teamID: teamID,
+                    paneSessionName: paneSessionName,
+                    agentID: canonicalAgentID,
+                    registeredAt: prior?.registeredAt ?? Date()
+                )
+            },
+            wait: { Thread.sleep(forTimeInterval: 0.02) }
         ) else {
             if event == .stop {
                 try? storage.delete(
@@ -277,6 +279,27 @@ struct TeamHook: ParsableCommand {
             event: event,
             storage: storage
         )
+    }
+
+    /// Claude can invoke SessionStart just before its native peer registry
+    /// file becomes visible. Retry that one lifecycle boundary briefly so a
+    /// `/clear` identity can still replace the prior binding. Routine hooks
+    /// remain single-lookups because they run on every tool call.
+    static func resolveClaudeNativePresence(
+        event: TeamHookEvent,
+        lookup: () -> TeamPresenceRecord?,
+        wait: () -> Void
+    ) -> TeamPresenceRecord? {
+        let maximumAttempts = event == .sessionStart ? 5 : 1
+        for attempt in 1...maximumAttempts {
+            if let record = lookup() {
+                return record
+            }
+            if attempt < maximumAttempts {
+                wait()
+            }
+        }
+        return nil
     }
 
     private func bindCodexNativeSession(
