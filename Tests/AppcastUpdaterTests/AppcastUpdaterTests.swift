@@ -14,10 +14,18 @@ struct AppcastUpdaterTests {
     private let fixedDate = Date(timeIntervalSince1970: 1_713_830_400)
     // 2024-04-23 00:00:00 UTC — stable RFC822 for golden-file comparison.
 
-    private func newItem(version: String, notes: String = "notes", signature: String = "sig")
+    private func newItem(
+        version: String,
+        displayVersion: String? = nil,
+        channel: String? = nil,
+        notes: String = "notes",
+        signature: String = "sig"
+    )
     -> AppcastItem {
         AppcastItem(
-            version: version,
+            buildVersion: version,
+            displayVersion: displayVersion ?? version,
+            channel: channel,
             pubDate: fixedDate,
             minimumSystemVersion: "14.0",
             releaseNotesMarkdown: notes,
@@ -100,7 +108,9 @@ struct AppcastUpdaterTests {
 
     @Test func minimumSystemVersionFromItem() throws {
         let item = AppcastItem(
-            version: "0.5.0",
+            buildVersion: "0.5.0",
+            displayVersion: "0.5.0",
+            channel: nil,
             pubDate: fixedDate,
             minimumSystemVersion: "15.0",
             releaseNotesMarkdown: "",
@@ -110,5 +120,45 @@ struct AppcastUpdaterTests {
         )
         let out = try AppcastUpdater.prepend(item: item, to: nil)
         #expect(out.contains("<sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>"))
+    }
+
+    @Test("""
+    @spec UPDATE-3.1: When the release workflow publishes a prerelease, the application shall add that update to the shared appcast with a `sparkle:channel` value of `prerelease`; stable items shall remain on Sparkle's default channel by omitting the element.
+    """)
+    func emitsChannelOnlyForPrereleaseItems() throws {
+        let prerelease = try AppcastUpdater.prepend(
+            item: newItem(version: "100.00.41", displayVersion: "0.6.0-beta.1", channel: "prerelease"),
+            to: nil
+        )
+        let stable = try AppcastUpdater.prepend(
+            item: newItem(version: "100.00.42", displayVersion: "0.6.0"),
+            to: nil
+        )
+
+        #expect(prerelease.contains("<sparkle:channel>prerelease</sparkle:channel>"))
+        #expect(!stable.contains("<sparkle:channel>"))
+    }
+
+    @Test("""
+    @spec UPDATE-3.2: When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
+    """)
+    func separatesBuildAndDisplayVersions() throws {
+        let out = try AppcastUpdater.prepend(
+            item: newItem(version: "100.00.41", displayVersion: "0.6.0-beta.1"),
+            to: nil
+        )
+
+        #expect(out.contains("<title>Version 0.6.0-beta.1</title>"))
+        #expect(out.contains("<sparkle:version>100.00.41</sparkle:version>"))
+        #expect(out.contains("<sparkle:shortVersionString>0.6.0-beta.1</sparkle:shortVersionString>"))
+    }
+
+    @Test func rejectsInvalidChannelNames() {
+        #expect(throws: AppcastUpdater.Error.self) {
+            try AppcastUpdater.prepend(
+                item: newItem(version: "100.00.41", channel: "pre release"),
+                to: nil
+            )
+        }
     }
 }

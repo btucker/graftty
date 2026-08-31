@@ -2,12 +2,17 @@ import Foundation
 
 /// One release entry for the Sparkle appcast feed.
 ///
-/// `version` is the canonical short version string (e.g. "0.2.3"). We do
-/// not distinguish `sparkle:version` from `sparkle:shortVersionString` —
-/// Graftty ships a single versioning series, and the appcast writer emits
-/// both elements with the same value.
+/// @spec UPDATE-3.2: When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
+///
+/// `buildVersion` is the monotonically increasing, machine-readable version
+/// Sparkle compares. `displayVersion` is the release name shown to the user,
+/// such as `0.6.0-beta.1`. Keeping them separate lets a stable release sort
+/// after every prerelease for that release without exposing an internal build
+/// number in the update UI.
 public struct AppcastItem: Equatable, Sendable {
-    public let version: String
+    public let buildVersion: String
+    public let displayVersion: String
+    public let channel: String?
     public let pubDate: Date
     public let minimumSystemVersion: String
     public let releaseNotesMarkdown: String
@@ -16,7 +21,9 @@ public struct AppcastItem: Equatable, Sendable {
     public let edSignature: String
 
     public init(
-        version: String,
+        buildVersion: String,
+        displayVersion: String,
+        channel: String?,
         pubDate: Date,
         minimumSystemVersion: String,
         releaseNotesMarkdown: String,
@@ -24,7 +31,9 @@ public struct AppcastItem: Equatable, Sendable {
         contentLength: Int,
         edSignature: String
     ) {
-        self.version = version
+        self.buildVersion = buildVersion
+        self.displayVersion = displayVersion
+        self.channel = channel
         self.pubDate = pubDate
         self.minimumSystemVersion = minimumSystemVersion
         self.releaseNotesMarkdown = releaseNotesMarkdown

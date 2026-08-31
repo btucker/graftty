@@ -131,13 +131,26 @@ Before opening a PR, run `/code-review xhigh --fix` to review the changed code f
 
 ## Cutting a release
 
-Releases are tag-driven — no source changes needed to bump the version.
+Releases are tag-driven. No source changes are needed to bump the version.
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-`.github/workflows/release.yml` takes it from there: builds the bundle (picking up `GRAFTTY_VERSION` from the tag), signs with the Developer ID Application identity, notarizes via `xcrun notarytool`, staples the ticket, zips with `ditto`, attaches the zip to a GitHub release, and pushes a `version`+`sha256` bump to the `btucker/homebrew-graftty` cask tap. Secret bootstrap + cert renewal notes live in `docs/release/README.md`.
+Use a SemVer suffix such as `vX.Y.Z-beta.1` for a prerelease. The release
+workflow publishes it to Sparkle's `prerelease` channel, marks the GitHub
+release as a prerelease, and skips the Homebrew cask update. Users subscribe
+in **Settings → General → Receive pre-release updates**. Publish every
+release in increasing SemVer order, including across stable and prerelease
+channels, because internal build versions follow publication order.
+
+`.github/workflows/release.yml` builds the bundle, using the tag for
+`GRAFTTY_VERSION` and the GitHub run number plus run attempt for
+`GRAFTTY_BUILD_VERSION`. It signs with the Developer ID Application identity,
+notarizes with `xcrun notarytool`, staples the ticket, zips with `ditto`, and
+attaches the zip to a GitHub release. For a stable tag, it also pushes a
+`version` and `sha256` bump to the `btucker/homebrew-graftty` cask tap. Secret
+setup and certificate renewal notes live in `docs/release/README.md`.
 
 The release workflow does not run tests — it only runs `swift build`. A flaky `ci.yml` failure on the head commit does not block a release, but confirm the failure is unrelated to the shipped changes before tagging.

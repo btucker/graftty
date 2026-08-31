@@ -1073,6 +1073,7 @@ struct GrafttyApp: App {
         Settings {
             TabView {
                 SettingsView(
+                    updaterController: updaterController,
                     onRestartZMX: { restartZMXWithConfirmation() },
                     editorPreference: terminalManager.editorPreference
                 )

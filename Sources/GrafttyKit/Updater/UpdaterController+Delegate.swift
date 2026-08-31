@@ -54,3 +54,9 @@ extension UpdaterController: @MainActor SPUStandardUserDriverDelegate {
         }
     }
 }
+
+extension UpdaterController: @MainActor SPUUpdaterDelegate {
+    public func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        allowedUpdateChannels
+    }
+}
