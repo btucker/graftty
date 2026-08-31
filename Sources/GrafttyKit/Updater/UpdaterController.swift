@@ -16,6 +16,8 @@ import Sparkle
 ///   as user-initiated and the standard driver shows its dialog.
 /// - In test mode (`forTesting()`), the Sparkle machinery is not
 ///   instantiated. Tests drive state via the internal `notify…` hooks.
+///
+/// @spec UPDATE-3.3: When the user changes "Receive pre-release updates" in General Settings, the application shall persist the subscription, allow Sparkle's `prerelease` channel in addition to its always-available default channel while enabled, and clear pending update UI and remove only the prerelease channel when disabled.
 @MainActor
 public final class UpdaterController: NSObject, ObservableObject {
 
@@ -68,6 +70,9 @@ public final class UpdaterController: NSObject, ObservableObject {
             guard newValue != storedPrereleaseUpdatesEnabled else { return }
             storedPrereleaseUpdatesEnabled = newValue
             userDefaults.set(newValue, forKey: Self.prereleaseUpdatesDefaultsKey)
+            if !newValue {
+                notifyPendingUpdateCleared()
+            }
             standardController?.updater.resetUpdateCycleAfterShortDelay()
         }
     }

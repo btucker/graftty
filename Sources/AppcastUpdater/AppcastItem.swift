@@ -2,6 +2,8 @@ import Foundation
 
 /// One release entry for the Sparkle appcast feed.
 ///
+/// @spec UPDATE-3.2: When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
+///
 /// `buildVersion` is the monotonically increasing, machine-readable version
 /// Sparkle compares. `displayVersion` is the release name shown to the user,
 /// such as `0.6.0-beta.1`. Keeping them separate lets a stable release sort

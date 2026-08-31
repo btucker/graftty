@@ -34,11 +34,38 @@ struct ReleaseMetadataScriptTests {
         #expect(rerun["build_version"] == "100.41.01")
     }
 
+    @Test func rejectsVersionsThatAreNotSemVer() throws {
+        for version in ["0.6.0rc1", "0.6.0_preview1", "next", "0.6.0-beta.01"] {
+            let result = try runMetadata(version: version, runNumber: "44", runAttempt: "1")
+            #expect(result.status != 0, "Expected \(version) to be rejected")
+        }
+    }
+
     private func metadata(
         version: String,
         runNumber: String,
         runAttempt: String = "1"
     ) throws -> [String: String] {
+        let result = try runMetadata(
+            version: version,
+            runNumber: runNumber,
+            runAttempt: runAttempt
+        )
+        try #require(result.status == 0, Comment(rawValue: result.error))
+
+        var metadata: [String: String] = [:]
+        for line in result.output.split(separator: "\n") {
+            let separator = try #require(line.firstIndex(of: "="))
+            metadata[String(line[..<separator])] = String(line[line.index(after: separator)...])
+        }
+        return metadata
+    }
+
+    private func runMetadata(
+        version: String,
+        runNumber: String,
+        runAttempt: String
+    ) throws -> (status: Int32, output: String, error: String) {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
@@ -57,14 +84,7 @@ struct ReleaseMetadataScriptTests {
             data: stderr.fileHandleForReading.readDataToEndOfFile(),
             encoding: .utf8
         ) ?? ""
-        try #require(process.terminationStatus == 0, Comment(rawValue: error))
-
-        var result: [String: String] = [:]
-        for line in output.split(separator: "\n") {
-            let separator = try #require(line.firstIndex(of: "="))
-            result[String(line[..<separator])] = String(line[line.index(after: separator)...])
-        }
-        return result
+        return (process.terminationStatus, output, error)
     }
 
     private static var scriptURL: URL {

@@ -141,7 +141,9 @@ git push origin vX.Y.Z
 Use a SemVer suffix such as `vX.Y.Z-beta.1` for a prerelease. The release
 workflow publishes it to Sparkle's `prerelease` channel, marks the GitHub
 release as a prerelease, and skips the Homebrew cask update. Users subscribe
-in **Settings → General → Receive pre-release updates**.
+in **Settings → General → Receive pre-release updates**. Publish every
+release in increasing SemVer order, including across stable and prerelease
+channels, because internal build versions follow publication order.
 
 `.github/workflows/release.yml` builds the bundle, using the tag for
 `GRAFTTY_VERSION` and the GitHub run number plus run attempt for

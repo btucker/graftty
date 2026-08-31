@@ -964,7 +964,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.1** The build script (`scripts/bundle.sh`) shall produce a self-contained `Graftty.app` bundle in `.build/` containing the SwiftUI application binary at `Contents/MacOS/Graftty`, the CLI helper at `Contents/Helpers/graftty`, and the bundled `zmx` binary at `Contents/Helpers/zmx`.
 
-**DIST-1.2** While the `GRAFTTY_VERSION` environment variable is set, the build script shall write that value into both `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`.
+**DIST-1.2** While the `GRAFTTY_VERSION` and `GRAFTTY_BUILD_VERSION` environment variables are set, the build script shall write the release version into `CFBundleShortVersionString` and the numeric build version into `CFBundleVersion` in `Info.plist`.
 
 **DIST-1.3** If the `GRAFTTY_VERSION` environment variable is not set, then the build script shall use `0.0.0-dev` as the default version.
 
@@ -974,11 +974,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### DIST-2.x — Release Automation
 
-**DIST-2.1** When a git tag matching `v*` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
+**DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
 
-**DIST-2.2** If the pushed tag does not start with `v`, then the release workflow shall fail before building.
+**DIST-2.2** If a pushed release tag does not contain valid SemVer after its leading `v`, then the release workflow shall fail before building.
 
-**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step rather than failing.
+**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step for stable versions rather than failing.
 
 **DIST-2.4** The release zip shall be produced with `ditto -c -k --keepParent` (not `zip`) so that codesign-relevant extended attributes survive — `zip` strips them and installs fail with opaque "damaged" errors after reboot.
 
@@ -1210,7 +1210,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **UPDATE-3.2** When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
 
-**UPDATE-3.3** When the user enables "Receive pre-release updates" in General Settings, the application shall persist the subscription and allow Sparkle's `prerelease` channel in addition to its always-available default channel; disabling the setting shall remove only the prerelease channel.
+**UPDATE-3.3** When the user changes "Receive pre-release updates" in General Settings, the application shall persist the subscription, allow Sparkle's `prerelease` channel in addition to its always-available default channel while enabled, and clear pending update UI and remove only the prerelease channel when disabled.
 
 **UPDATE-3.4** When the release workflow processes a version tag, the application shall assign suffixed versions to the `prerelease` appcast channel and stable versions to the default channel, then derive a numeric build version that increases with both the GitHub run number and each run attempt.
 

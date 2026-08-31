@@ -11,9 +11,20 @@ version="$1"
 run_number="$2"
 run_attempt="$3"
 
-if [[ -z "$version" || ! "$version" =~ ^[A-Za-z0-9._+-]+$ ]]; then
-  echo "version must match [A-Za-z0-9._+-]+" >&2
+semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+if [[ ! "$version" =~ $semver_pattern ]]; then
+  echo "version must be valid SemVer without a leading v" >&2
   exit 2
+fi
+prerelease_identifiers="${BASH_REMATCH[5]:-}"
+if [[ -n "$prerelease_identifiers" ]]; then
+  IFS='.' read -r -a prerelease_parts <<< "$prerelease_identifiers"
+  for identifier in "${prerelease_parts[@]}"; do
+    if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" == 0[0-9]* ]]; then
+      echo "numeric prerelease identifiers must not contain leading zeroes" >&2
+      exit 2
+    fi
+  done
 fi
 if [[ ! "$run_number" =~ ^[1-9][0-9]*$ ]]; then
   echo "GitHub run number must be a positive integer" >&2
@@ -41,8 +52,7 @@ build_version=$(printf '%d.%02d.%02d' "$major" "$minor" "$patch")
 
 # SemVer build metadata follows '+', but only a suffix before '+' denotes a
 # prerelease. This keeps a tag like 0.6.0+notarized.1 on the stable channel.
-version_without_build_metadata="${version%%+*}"
-if [[ "$version_without_build_metadata" == *-* ]]; then
+if [[ -n "$prerelease_identifiers" ]]; then
   prerelease=true
   channel=prerelease
 else

@@ -159,7 +159,13 @@ The workflow derives `CFBundleVersion` and `sparkle:version` from
 `GITHUB_RUN_NUMBER` and `GITHUB_RUN_ATTEMPT`. A rerun gets a new internal
 version, so its appcast signature matches the replacement zip. The workflow
 uses the tag value, such as `0.6.0-beta.1`, for `CFBundleShortVersionString`
-and `sparkle:shortVersionString`. Do not reuse a tag for a different release.
+and `sparkle:shortVersionString`, and rejects tags that are not valid SemVer.
+
+Publish releases in increasing SemVer order, even across stable and
+prerelease channels. Internal build versions follow publication order, so a
+lower maintenance version published after a higher prerelease could otherwise
+look like an update to prerelease subscribers. Do not reuse a tag for a
+different release.
 
 ## Signing + notarization secrets
 

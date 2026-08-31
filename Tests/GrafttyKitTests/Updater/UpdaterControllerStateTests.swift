@@ -32,7 +32,7 @@ struct UpdaterControllerStateTests {
     }
 
     @Test("""
-    @spec UPDATE-3.3: When the user enables "Receive pre-release updates" in General Settings, the application shall persist the subscription and allow Sparkle's `prerelease` channel in addition to its always-available default channel; disabling the setting shall remove only the prerelease channel.
+    @spec UPDATE-3.3: When the user changes "Receive pre-release updates" in General Settings, the application shall persist the subscription, allow Sparkle's `prerelease` channel in addition to its always-available default channel while enabled, and clear pending update UI and remove only the prerelease channel when disabled.
     """)
     func prereleaseSubscriptionPersistsAndControlsAllowedChannels() throws {
         let suiteName = "UpdaterControllerStateTests.\(UUID().uuidString)"
@@ -48,7 +48,9 @@ struct UpdaterControllerStateTests {
 
         let reloaded = UpdaterController.forTesting(userDefaults: defaults)
         #expect(reloaded.prereleaseUpdatesEnabled)
+        reloaded.notifyPendingUpdateDiscovered(version: "0.6.0-beta.1")
         reloaded.prereleaseUpdatesEnabled = false
         #expect(reloaded.allowedUpdateChannels.isEmpty)
+        #expect(reloaded.availableVersion == nil)
     }
 }
