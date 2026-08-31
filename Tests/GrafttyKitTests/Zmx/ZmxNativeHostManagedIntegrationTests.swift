@@ -154,9 +154,7 @@ struct ZmxNativeHostManagedIntegrationTests {
                 launcher.kill(sessionName: session)
             }
             try Self.waitForAttachReady(first)
-            try first.write("stty -echo\n")
-            Thread.sleep(forTimeInterval: 0.2)
-            _ = first.readAvailable()
+            try Self.disableEcho(in: first)
 
             try first.write("export ZMX_HOST_MARKER=\(state)\nprintf '\(output)\\n'\n")
             let live = Self.readUntil(marker: output, from: first, deadline: 5.0)
@@ -212,6 +210,14 @@ struct ZmxNativeHostManagedIntegrationTests {
                 deadline: 5.0
             )
             #expect(base.contains("__SNAPSHOT_BASE_READY__"))
+            #expect(
+                Self.waitForDaemonLog(
+                    launcher: launcher,
+                    containing: "serialize terminal snapshot bytes=",
+                    timeout: 3.0
+                ),
+                "the first regular attach did not negotiate a snapshot"
+            )
             first.terminate()
             firstRunning = false
             try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
@@ -236,6 +242,67 @@ struct ZmxNativeHostManagedIntegrationTests {
                 deadline: 5.0
             )
             #expect(live.contains("__SNAPSHOT_LIVE_READY__"))
+        }
+    }
+
+    @Test("""
+    @spec ZMX-9.6: When a bundled `zmx` daemon retains a 10,000-row session and a client reattaches, the daemon shall replay each retained row exactly once and preserve both the oldest and newest rows.
+    """, .timeLimit(.minutes(1)))
+    func largeScrollbackReattachPreservesRowsWithoutDuplication() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let first = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
+
+            try Self.waitForAttachReady(first)
+            try Self.disableEcho(in: first)
+            try first.write(
+                #"/usr/bin/awk 'BEGIN { for (i = 1; i <= 10000; i++) printf "__H_%05d__\n", i; print "__HISTORY_DONE__" }' && printf '__HISTORY_%s__\n' STABLE"#
+                    + "\n"
+            )
+            let initial = Self.readUntil(
+                marker: "__HISTORY_STABLE__",
+                from: first,
+                deadline: 15.0
+            )
+            #expect(initial.contains("__HISTORY_STABLE__"))
+            first.terminate()
+            firstRunning = false
+            try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
+
+            let second = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer { second.terminate() }
+
+            var replay = Self.readUntil(
+                marker: "__HISTORY_STABLE__",
+                from: second,
+                deadline: 10.0
+            )
+            try second.write("printf '__REPLAY_DRAINED_%s__\\n' READY\n")
+            replay += Self.readUntil(
+                marker: "__REPLAY_DRAINED_READY__",
+                from: second,
+                deadline: 5.0
+            )
+            Thread.sleep(forTimeInterval: 0.25)
+            replay += second.readAvailable()
+
+            let rowCount = replay.components(separatedBy: "__H_").count - 1
+            let stableCount = replay.components(separatedBy: "__HISTORY_STABLE__").count - 1
+            #expect(rowCount == 10_000, "reattach replayed \(rowCount) history rows")
+            #expect(replay.contains("__H_00001__"))
+            #expect(replay.contains("__H_10000__"))
+            #expect(stableCount == 1, "stable marker replayed \(stableCount) times")
         }
     }
 
@@ -441,6 +508,40 @@ struct ZmxNativeHostManagedIntegrationTests {
             code: 4,
             userInfo: [NSLocalizedDescriptionKey: "session \(name) still listed after \(timeout)s; sessions: \(sessions)"]
         )
+    }
+
+    static func waitForDaemonLog(
+        launcher: ZmxLauncher,
+        containing marker: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let logsDirectory = launcher.zmxDir.appendingPathComponent("logs", isDirectory: true)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: logsDirectory,
+                includingPropertiesForKeys: nil
+            )) ?? []
+            for file in files {
+                if let contents = try? String(contentsOf: file, encoding: .utf8),
+                   contents.contains(marker) {
+                    return true
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return false
+    }
+
+    static func disableEcho(in attach: PtyAttach) throws {
+        try attach.write("stty -echo; printf '__ECHO_%s__\\n' DISABLED\n")
+        let output = readUntil(
+            marker: "__ECHO_DISABLED__",
+            from: attach,
+            deadline: 5.0
+        )
+        #expect(output.contains("__ECHO_DISABLED__"))
+        _ = attach.readAvailable()
     }
 
     static func waitForHistory(

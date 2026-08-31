@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import fcntl
 import os
 import re
@@ -11,6 +12,7 @@ import selectors
 import shlex
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -26,6 +28,144 @@ def terminate_on_signal(signum: int, _frame: object) -> None:
 
 def window_size(rows: int, cols: int, xpixel: int, ypixel: int) -> bytes:
     return struct.pack("HHHH", rows, cols, xpixel, ypixel)
+
+
+def daemon_log_text(directory: Path) -> str:
+    return "\n".join(
+        path.read_text(errors="replace")
+        for path in (directory / "logs").glob("*.log")
+    )
+
+
+def wait_for_log_count(
+    directory: Path,
+    marker: str,
+    expected_count: int,
+    timeout: float = 3.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if daemon_log_text(directory).count(marker) >= expected_count:
+            return
+        time.sleep(0.02)
+    raise AssertionError(
+        f"daemon log never reached {expected_count} occurrences of {marker!r}"
+    )
+
+
+def terminate_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+
+
+def read_process_until(
+    process: subprocess.Popen[bytes], marker: str, timeout: float
+) -> str:
+    if process.stdout is None:
+        raise AssertionError("process stdout is unavailable")
+    marker_bytes = marker.encode()
+    output = bytearray()
+    fd = process.stdout.fileno()
+    os.set_blocking(fd, False)
+    selector = selectors.DefaultSelector()
+    selector.register(fd, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    try:
+        while marker_bytes not in output and time.monotonic() < deadline:
+            for _, _ in selector.select(timeout=0.05):
+                while True:
+                    try:
+                        chunk = os.read(fd, 65536)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+            if process.poll() is not None:
+                break
+    finally:
+        selector.close()
+
+    decoded = output.decode(errors="replace")
+    if marker not in decoded:
+        raise AssertionError(
+            f"process pid {process.pid} never emitted {marker!r}; output={decoded!r}"
+        )
+    return decoded
+
+
+IPC_HEADER = struct.Struct("<Q")
+
+
+def send_ipc(sock: socket.socket, tag: int, payload: bytes) -> None:
+    header = tag | (len(payload) << 8)
+    sock.sendall(IPC_HEADER.pack(header) + payload)
+
+
+def read_ipc_output_until(
+    sock: socket.socket, marker: str, timeout: float = 5.0
+) -> str:
+    marker_bytes = marker.encode()
+    messages = read_ipc_frames_until(
+        sock,
+        lambda frames: marker_bytes
+        in b"".join(payload for tag, payload in frames if tag == 1),
+        f"output marker {marker!r}",
+        timeout,
+    )
+    output = b"".join(payload for tag, payload in messages if tag == 1)
+    decoded = output.decode(errors="replace")
+    return decoded
+
+
+def read_ipc_frames_until(
+    sock: socket.socket,
+    predicate: Callable[[list[tuple[int, bytes]]], bool],
+    description: str,
+    timeout: float = 5.0,
+) -> list[tuple[int, bytes]]:
+    framed = bytearray()
+    messages: list[tuple[int, bytes]] = []
+    sock.setblocking(False)
+    selector = selectors.DefaultSelector()
+    selector.register(sock, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    try:
+        while not predicate(messages):
+            if time.monotonic() >= deadline:
+                break
+            for _, _ in selector.select(timeout=0.05):
+                try:
+                    chunk = sock.recv(65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    break
+                framed.extend(chunk)
+                while len(framed) >= IPC_HEADER.size:
+                    (header,) = IPC_HEADER.unpack_from(framed)
+                    tag = header & 0xFF
+                    payload_len = (header >> 8) & 0xFFFF_FFFF
+                    message_len = IPC_HEADER.size + payload_len
+                    if len(framed) < message_len:
+                        break
+                    payload = bytes(framed[IPC_HEADER.size:message_len])
+                    del framed[:message_len]
+                    messages.append((tag, payload))
+    finally:
+        selector.close()
+
+    if not predicate(messages):
+        raise AssertionError(
+            f"raw IPC client never received {description}; "
+            f"tags={[tag for tag, _ in messages]!r}"
+        )
+    return messages
 
 
 class Attach:
@@ -378,10 +518,7 @@ def old_daemon_new_client(
         if expect_cross_version_pixels:
             assert_winsize(second, 37, 111, 1234, 777, "OLD_WINSIZE")
 
-        logs = "\n".join(
-            path.read_text(errors="replace")
-            for path in (directory / "logs").glob("*.log")
-        )
+        logs = daemon_log_text(directory)
         if "unknown IPC tag=24" in logs:
             raise AssertionError("new client sent PixelSize before an old daemon advertised support")
     finally:
@@ -471,6 +608,38 @@ def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
         time.sleep(0.2)
 
         assert_winsize(attach, 31, 101, 1515, 929, "PIXELS")
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            attach,
+        )
+
+
+def new_daemon_snapshots_first_regular_attach(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot-first-regular"
+    attach: Attach | None = None
+    try:
+        attach = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(attach)
+        if "serialize terminal snapshot bytes=" not in daemon_log_text(directory):
+            raise AssertionError("first regular attach did not receive a snapshot")
     finally:
         cleanup_case(
             directory,
@@ -625,9 +794,172 @@ def new_daemon_snapshots_first_attach(legacy: Path, candidate: Path) -> None:
         )
 
 
-def new_daemon_preserves_stream_continuation(legacy: Path, candidate: Path) -> None:
+def new_daemon_preserves_tail_output(
+    legacy: Path,
+    candidate: Path,
+    tail_binary: Path,
+    label: str,
+) -> None:
     directory, env = make_scope()
-    session = "compat-snapshot-continuation"
+    session = f"compat-tail-{label}"
+    attach: Attach | None = None
+    tail_process: subprocess.Popen[bytes] | None = None
+    try:
+        attach = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(attach)
+        connected_before = daemon_log_text(directory).count("client connected fd=")
+        tail_process = subprocess.Popen(
+            [str(tail_binary), "tail", session],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        wait_for_log_count(
+            directory,
+            "client connected fd=",
+            connected_before + 1,
+        )
+        attach.write(f"printf '__TAIL_{label}_%s__\\n' READY\n")
+        read_process_until(tail_process, f"__TAIL_{label}_READY__", timeout=3.0)
+    finally:
+        if tail_process is not None:
+            terminate_process(tail_process)
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            attach,
+        )
+
+
+def new_daemon_keeps_silent_tail_inference_reversible(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-reversible-tail-classification"
+    first: Attach | None = None
+    delayed_client: socket.socket | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+
+        delayed_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        delayed_client.connect(str(directory / session))
+        time.sleep(1.1)
+        first.write("printf '__DELAYED_ATTACH_%s__\\n' READY\n")
+        first.wait_for("__DELAYED_ATTACH_READY__", timeout=3.0)
+
+        pre_init = read_ipc_frames_until(
+            delayed_client,
+            lambda frames: any(tag == 1 for tag, _ in frames),
+            "Output",
+        )
+        if pre_init[0][0] != 23:
+            raise AssertionError(
+                "new daemon did not advertise snapshot support before "
+                f"silent-tail output; tags={[tag for tag, _ in pre_init]!r}"
+            )
+
+        send_ipc(delayed_client, 23, struct.pack("<Q", 0b111))
+        send_ipc(delayed_client, 7, struct.pack("<HH", 24, 80))
+        post_init = read_ipc_frames_until(
+            delayed_client,
+            lambda frames: any(tag == 22 for tag, _ in frames),
+            "Snapshot",
+        )
+        snapshot_payload = next(payload for tag, payload in post_init if tag == 22)
+        if not snapshot_payload.startswith(b"GHOSTSNP"):
+            raise AssertionError("delayed attach did not receive a valid snapshot")
+    finally:
+        if delayed_client is not None:
+            delayed_client.close()
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+        )
+
+
+def new_daemon_bounds_unclassified_output(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-bounded-unclassified-output"
+    first: Attach | None = None
+    stalled_client: socket.socket | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+
+        stalled_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stalled_client.connect(str(directory / session))
+        stalled_client.sendall(b"\0")
+        code = "import os;os.write(1,b'x'*(1024*1024+4096))"
+        first.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+        first.drain_for(3.0)
+        wait_for_log_count(
+            directory,
+            "deferred PTY output exceeded",
+            1,
+            timeout=3.0,
+        )
+        wait_for_session(candidate, env, session, timeout=3.0)
+    finally:
+        if stalled_client is not None:
+            stalled_client.close()
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+        )
+
+
+def new_daemon_preserves_stream_continuation(
+    legacy: Path,
+    candidate: Path,
+    replay_binary: Path,
+    label: str,
+) -> None:
+    directory, env = make_scope()
+    session = f"compat-snapshot-continuation-{label}"
     first: Attach | None = None
     second: Attach | None = None
     try:
@@ -654,7 +986,7 @@ def new_daemon_preserves_stream_continuation(legacy: Path, candidate: Path) -> N
         first = None
 
         second = Attach(
-            candidate,
+            replay_binary,
             env,
             session,
             rows=24,
@@ -677,6 +1009,119 @@ def new_daemon_preserves_stream_continuation(legacy: Path, candidate: Path) -> N
             legacy,
             first,
             second,
+        )
+
+
+def snapshot_export_failure_keeps_daemon_alive(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot-export-failure"
+    first: Attach | None = None
+    snapshot: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        code = (
+            "import os;"
+            "os.write(1,b'\\x1b]0;'+b'x'*(1024*1024+4096))"
+        )
+        first.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+        first.drain_for(2.0)
+        if len(first.output) <= 1024 * 1024:
+            raise AssertionError("test did not exceed the continuation tracking cap")
+        first.terminate_client()
+        first = None
+
+        snapshot = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+            snapshot=True,
+            separate_output=True,
+        )
+        try:
+            return_code = snapshot.process.wait(timeout=3.0)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError("failed raw snapshot client did not exit") from error
+        if return_code == 0:
+            raise AssertionError("failed raw snapshot negotiation exited successfully")
+        wait_for_session(candidate, env, session, timeout=3.0)
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            snapshot,
+        )
+
+
+def new_daemon_accepts_upstream_resize_shape(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-upstream-resize"
+    first: Attach | None = None
+    raw_client: socket.socket | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.terminate_client()
+        first = None
+
+        raw_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw_client.connect(str(directory / session))
+        send_ipc(raw_client, 7, window_size(33, 103, 1200, 700))  # Init
+        send_ipc(raw_client, 2, window_size(41, 119, 1309, 799))  # Resize
+        code = (
+            "import fcntl,struct,termios;"
+            "r,c,x,y=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,"
+            "struct.pack('HHHH',0,0,0,0)));"
+            "print('__UPSTREAM_RESIZE__:%d:%d:%d:%d' % (r,c,x,y))"
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n"
+        send_ipc(raw_client, 0, command.encode())  # Input
+        read_ipc_output_until(
+            raw_client,
+            "__UPSTREAM_RESIZE__:41:119:1309:799",
+        )
+    finally:
+        if raw_client is not None:
+            raw_client.close()
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
         )
 
 
@@ -770,14 +1215,34 @@ def main() -> None:
     print("  ✓ new daemon → old client")
     new_client_new_daemon_pixels(legacy, candidate)
     print("  ✓ negotiated pixel-size resize")
+    new_daemon_snapshots_first_regular_attach(legacy, candidate)
+    print("  ✓ first regular attach negotiates a snapshot")
     new_daemon_streams_snapshot(legacy, candidate)
     print("  ✓ negotiated binary snapshot stream")
     new_daemon_orders_snapshot_before_active_output(legacy, candidate)
     print("  ✓ snapshot precedes active live output")
     new_daemon_snapshots_first_attach(legacy, candidate)
     print("  ✓ first attach starts with a snapshot envelope")
-    new_daemon_preserves_stream_continuation(legacy, candidate)
+    new_daemon_preserves_tail_output(legacy, candidate, candidate, "current")
+    print("  ✓ current Tail preserves classification-window output")
+    new_daemon_preserves_tail_output(legacy, candidate, legacy, "legacy")
+    print("  ✓ legacy Tail preserves classification-window output")
+    new_daemon_keeps_silent_tail_inference_reversible(legacy, candidate)
+    print("  ✓ silent Tail inference remains reversible for delayed attach")
+    new_daemon_bounds_unclassified_output(legacy, candidate)
+    print("  ✓ unclassified output buffering is bounded")
+    new_daemon_preserves_stream_continuation(
+        legacy, candidate, candidate, "snapshot"
+    )
     print("  ✓ snapshot preserves split stream continuation")
+    new_daemon_preserves_stream_continuation(
+        legacy, candidate, legacy, "legacy"
+    )
+    print("  ✓ legacy replay preserves split stream continuation")
+    snapshot_export_failure_keeps_daemon_alive(legacy, candidate)
+    print("  ✓ snapshot export failure leaves daemon alive")
+    new_daemon_accepts_upstream_resize_shape(legacy, candidate)
+    print("  ✓ upstream 8-byte resize remains compatible")
     new_daemon_preserves_large_scrollback(legacy, candidate)
     print("  ✓ complete, non-duplicated large-history replay")
 

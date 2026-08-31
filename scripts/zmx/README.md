@@ -12,16 +12,21 @@ that exact source revision and carries these downstream changes:
   binary `Snapshot` only to those clients and serializes VT output for older
   clients. An attach client does not receive live PTY broadcasts until its
   initial replay is queued, so bytes already represented by the snapshot are
-  not sent twice. Raw snapshot mode receives an initial snapshot even for a
-  newly created session, suppresses the human-readable creation diagnostic,
-  and keeps forwarding subsequent live bytes;
+  not sent twice. The daemon advertises snapshot support as soon as it accepts
+  a socket, so a delayed attach can ignore output emitted while it temporarily
+  resembles a legacy Tail client. Output for a Tail client is buffered during
+  classification and replayed once the client subscribes; the buffer is
+  capped at 1 MiB and released after classification. Raw snapshot mode
+  receives an initial snapshot even for a newly created session, suppresses
+  the human-readable creation diagnostic, and keeps forwarding subsequent
+  live bytes. A failed raw snapshot export rejects only that client and leaves
+  the durable session running;
 - track unfinished UTF-8 and VT parser state across the snapshot cut. Snapshot
   export is atomic, and regular clients replay the decoded continuation after
   restoring terminal state so a sequence split across PTY reads remains valid;
-- validate the `GHOSTSNP` envelope because the previous Graftty protocol used
-  tag 22 for `Capabilities`. Snapshot mode puts stdout into raw mode
-  independently from stdin so a PTY output line discipline cannot rewrite
-  binary bytes;
+- validate the `GHOSTSNP` envelope carried by upstream's tag 22 `Snapshot`
+  frame. Snapshot mode puts stdout into raw mode independently from stdin so
+  a PTY output line discipline cannot rewrite binary bytes;
 - skip the experimental outer-terminal probe and client seed snapshot. The
   probe can consume keystrokes entered immediately after attach, while a
   no-probe seed contains default colors rather than Graftty's actual surface
@@ -31,7 +36,8 @@ that exact source revision and carries these downstream changes:
   10 KB default byte budget and discards most of a 10,000-line fixture;
 - preserve zmx's legacy 4-byte `Resize` message while negotiating a separate
   pixel-size extension. The new protocol also bridges the directional tag
-  18/19 shapes used by Graftty 0.6 so N-1 pixel-only resizes keep working;
+  18/19 shapes used by Graftty 0.6 so N-1 pixel-only resizes keep working, and
+  continues to accept the pinned upstream snapshot client's 8-byte resize;
 - treat a client that has not yet sent `PixelSize` as carrying *unknown*
   pixel dimensions: its Init/Resize winsize writes preserve the session PTY's
   current pixel fields instead of substituting zeros (ZMX-9.4). Substituted
