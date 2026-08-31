@@ -6,15 +6,24 @@ import Testing
 struct WorktreeManagementEnvelopeTests {
     @Test("""
     @spec REMOTE-13.3: When a paired Mac or GrafttyMobile client manages a \
-    remote worktree, the application shall round-trip host presentation, \
-    repository, create, pull, open, delete, and acknowledgement requests \
-    over the authenticated worktree-management channel using opaque resource \
+    remote worktree or downstream Mac connection, the application shall \
+    round-trip host presentation, repository, connection status, reconnect, \
+    create, pull, open, delete, and acknowledgement requests over the \
+    authenticated worktree-management channel using opaque resource \
     identifiers.
     """)
     func everyRequestRoundTrips() throws {
+        let fingerprint = try RemoteIdentityFingerprint(
+            rawBytes: Data(repeating: 0x42, count: 32)
+        )
         let requests: [WorktreeManagementRequest] = [
             .hostPresentation,
             .listRepositories,
+            .listRemoteMacConnections,
+            .connectRemoteMac(
+                deviceID: RemoteDeviceID(value: "studio"),
+                fingerprint: fingerprint
+            ),
             .create(
                 repositoryID: "repo-token",
                 worktreeName: "feature",
@@ -49,6 +58,9 @@ struct WorktreeManagementEnvelopeTests {
 
     @Test("repository metadata and every response round-trip")
     func everyResponseRoundTrips() throws {
+        let fingerprint = try RemoteIdentityFingerprint(
+            rawBytes: Data(repeating: 0x42, count: 32)
+        )
         let origin = WorktreeOrigin(
             deviceID: RemoteDeviceID(value: "studio"),
             deviceLabel: "Studio",
@@ -86,6 +98,15 @@ struct WorktreeManagementEnvelopeTests {
                 )
             ),
             .repositories([repository]),
+            .remoteMacConnections([
+                RemoteMacConnectionSummary(
+                    deviceID: RemoteDeviceID(value: "studio"),
+                    fingerprint: fingerprint,
+                    label: "Studio Mac",
+                    lastKnownHost: "studio.local",
+                    state: .offline
+                ),
+            ]),
             .created(worktreeID: "worktree-token", paneID: "pane-token"),
             .deleted(dismissed: true),
             .ok,
