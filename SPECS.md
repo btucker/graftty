@@ -958,6 +958,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.4** When a `zmx attach` client attaches to an existing session whose winsize (cells and pixels) matches the outer PTY's, the daemon shall deliver no SIGWINCH to the session's foreground process: until that client sends a PixelSize message, the daemon's winsize writes shall preserve the session PTY's current pixel dimensions rather than substitute the client's unset zeros, so an unchanged-size re-attach is a kernel no-op and the shell does not repaint its prompt over the replayed screen.
 
+**ZMX-9.5** When a snapshot-capable bundled `zmx` client attaches to a current daemon, the daemon shall send a `GHOSTSNP` binary snapshot before subsequent live PTY output. If stdout is a PTY, then the client shall disable output processing so the line discipline cannot rewrite snapshot bytes.
+
+**ZMX-9.6** When a bundled `zmx` daemon retains a 10,000-row session and a client reattaches, the daemon shall replay each retained row exactly once and preserve both the oldest and newest rows.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle
@@ -1519,6 +1523,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.18** When a hardware press does not match an enabled application command or a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
 
 **IOS-6.19** While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, unmodified Tab, and Ctrl+A through Ctrl+Z, using logical UIKit characters ahead of suspect HID usage. It shall forward the exact terminal text or ASCII control byte for each correction. An app-level shortcut shall win an exact chord collision. Shift-Return and every other unmatched hardware key shall return to `UITerminalView`, and an ineligible pane shall expose no transport corrections.
+
+**IOS-6.20** When GrafttyMobile mounts a terminal from a Mac host presentation, the application shall reduce the Mac font size to 80 percent before mounting the terminal, including the Ghostty default when the presentation contains no font-size.
+
+**IOS-6.21** When the user pinch-zooms an owner terminal, the application shall persist the resulting font size by host and worktree path, use it as the live base through ownership changes, and restore it for every terminal in that worktree when the worktree is reopened.
+
+**IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
 
 ### IOS-7.x — Lifecycle
 

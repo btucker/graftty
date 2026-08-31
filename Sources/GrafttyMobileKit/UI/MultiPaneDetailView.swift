@@ -74,6 +74,7 @@ struct MultiPaneDetailView: View {
             return AnyView(
                 MultiPaneLeafView(
                     host: host,
+                    worktreePath: worktree.path,
                     sessionName: sessionName,
                     title: title.isEmpty ? sessionName : title,
                     coordinator: coordinator,
@@ -229,6 +230,7 @@ private struct MultiPaneSplitNode: View {
 
 private struct MultiPaneLeafView: View {
     let host: Host
+    let worktreePath: String
     let sessionName: String
     let title: String
     let coordinator: RemoteConnectionCoordinator
@@ -249,6 +251,7 @@ private struct MultiPaneLeafView: View {
         SingleSessionView(
             step: SessionStep(
                 host: host,
+                worktreePath: worktreePath,
                 sessionName: sessionName,
                 title: title
             ),

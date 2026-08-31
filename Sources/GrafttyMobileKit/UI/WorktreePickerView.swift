@@ -12,6 +12,7 @@ public struct WorktreePickerView: View {
     public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -27,6 +28,22 @@ public struct WorktreePickerView: View {
         self.coordinator = coordinator
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
+        self.onSelectPaneWithWorktree = nil
+    }
+
+    init(
+        host: Host,
+        theme: GhosttyThemeColors? = nil,
+        coordinator: RemoteConnectionCoordinator,
+        onSelect: @escaping (WorktreePanes) -> Void,
+        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void
+    ) {
+        self.host = host
+        self.theme = theme
+        self.coordinator = coordinator
+        self.onSelect = onSelect
+        self.onSelectPane = { _ in }
+        self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
     }
 
     public var body: some View {
@@ -48,7 +65,13 @@ public struct WorktreePickerView: View {
                 host: host
             ),
             onSelect: onSelect,
-            onSelectPane: onSelectPane
+            onSelectPaneWithWorktree: { worktree, leaf in
+                if let onSelectPaneWithWorktree {
+                    onSelectPaneWithWorktree(worktree, leaf)
+                } else {
+                    onSelectPane(leaf)
+                }
+            }
         )
         // Set on this iPhone-compact wrapper rather than inside
         // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the

@@ -109,6 +109,7 @@ public struct RootView: View {
                             case let .session(sessionName, title):
                                 navigationPath.append(SessionStep(
                                     host: host,
+                                    worktreePath: wt.path,
                                     sessionName: sessionName,
                                     title: title
                                 ))
@@ -116,11 +117,12 @@ public struct RootView: View {
                                 navigationPath.append(WorktreeStep(host: host, worktree: wt))
                             }
                         },
-                        onSelectPane: { leaf in
+                        onSelectPaneWithWorktree: { worktree, leaf in
                             if case let .session(sessionName, title) =
                                 MobileNavigationDecision.decide(paneRow: leaf) {
                                 navigationPath.append(SessionStep(
                                     host: host,
+                                    worktreePath: worktree.path,
                                     sessionName: sessionName,
                                     title: title
                                 ))
@@ -136,6 +138,7 @@ public struct RootView: View {
                     ) { sessionName in
                         navigationPath.append(SessionStep(
                             host: step.host,
+                            worktreePath: step.worktree.path,
                             sessionName: sessionName,
                             title: step.worktree.layout?.title(for: sessionName) ?? sessionName
                         ))
@@ -188,8 +191,43 @@ struct WorktreeStep: Hashable {
 /// Third-level nav: picked a pane, now show its terminal fullscreen.
 struct SessionStep: Hashable {
     let host: Host
+    let worktreePath: String?
     let sessionName: String
     let title: String
+
+    init(
+        host: Host,
+        worktreePath: String? = nil,
+        sessionName: String,
+        title: String
+    ) {
+        self.host = host
+        self.worktreePath = worktreePath
+        self.sessionName = sessionName
+        self.title = title
+    }
+}
+
+/// Shared floating terminal control used by the fullscreen back button and
+/// the show-keyboard button. Keeping the plain style here prevents SwiftUI's
+/// default accent tint from turning either glyph blue.
+struct TerminalFloatingGlyphButton: View {
+    let systemName: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.title2)
+                .foregroundStyle(.primary)
+                .padding(10)
+                .background(.ultraThinMaterial, in: Circle())
+                .shadow(radius: 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
 }
 
 /// Holds a weak reference to the live `TerminalInputContainerView` so
@@ -284,6 +322,7 @@ struct SingleSessionView: View {
     /// `NavigationStack`; this callback gives their reconnect/ended actions a
     /// real route back to the worktree list.
     let onBackToWorktrees: (() -> Void)?
+    private let fontSizeStore: TerminalFontSizeStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -326,6 +365,10 @@ struct SingleSessionView: View {
     /// Cached so the follower/ownerless auto-fit path (IOS-5.6) can re-apply
     /// the base config or a font-size override without re-fetching.
     @State private var baseConfigText: String?
+    /// Latest owner-selected size. Pinch actions already update the live
+    /// Ghostty surface; this state keeps later follower fitting and owner
+    /// restoration anchored to that same size without replaying the action.
+    @State private var preferredFontSize: Float?
     /// Last font-size override applied via TerminalWidthLayout.decide while
     /// not owner, so we can detect transitions (e.g. base ↔ override) and
     /// avoid pointlessly rebuilding the controller config on every layout
@@ -419,6 +462,32 @@ struct SingleSessionView: View {
         !wasOwner && isOwner
     }
 
+    static func configByApplyingFontPreference(
+        _ preferredFontSize: Float?,
+        to baseConfig: String
+    ) -> String {
+        guard let preferredFontSize else { return baseConfig }
+        let clamped = TerminalFontSizeAdjustment.apply(
+            steps: 0,
+            to: preferredFontSize
+        )
+        if let configured = GhosttyConfigFetcher.lastFontSize(in: baseConfig),
+           abs(configured - Double(clamped)) < 0.0001 {
+            return baseConfig
+        }
+        return MobileTerminalControllerFactory.appendingFontSizeOverride(
+            to: baseConfig,
+            fontSize: clamped,
+            comment: "GrafttyMobile live worktree font size"
+        )
+    }
+
+    private var effectiveBaseConfigText: String? {
+        baseConfigText.map {
+            Self.configByApplyingFontPreference(preferredFontSize, to: $0)
+        }
+    }
+
     /// Terminal theme background, parsed from the Mac-resolved ghostty config.
     /// Painted behind the whole session so the control-bar row and the strip
     /// revealed during keyboard transitions match the terminal's background
@@ -466,7 +535,8 @@ struct SingleSessionView: View {
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
-        onBackToWorktrees: (() -> Void)? = nil
+        onBackToWorktrees: (() -> Void)? = nil,
+        fontSizeStore: TerminalFontSizeStore = .shared
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -481,6 +551,7 @@ struct SingleSessionView: View {
         self.isEmbeddedPane = isEmbeddedPane
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
+        self.fontSizeStore = fontSizeStore
     }
 
     var body: some View {
@@ -616,7 +687,7 @@ struct SingleSessionView: View {
                 // updateConfigSource) means `baseConfigTemplate` captures
                 // the Mac config, so scene-phase / trait-collection
                 // color-scheme recomputes preserve the Mac theme.
-                let text = await coordinator?
+                let macConfig = await coordinator?
                     .presentation(for: step.host)?
                     .ghosttyConfig
                 // `.task(id:)` cancellation is cooperative. A presentation
@@ -630,9 +701,23 @@ struct SingleSessionView: View {
                       )
                 else { return }
                 if controller == nil {
-                    preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
+                    let savedFontSize = step.worktreePath.flatMap {
+                        fontSizeStore.fontSize(
+                            hostID: step.host.id,
+                            worktreePath: $0
+                        )
+                    }
+                    let text = GhosttyConfigFetcher.terminalConfig(
+                        macConfig: macConfig,
+                        savedFontSize: savedFontSize
+                    )
+                    preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(
+                        for: macConfig
+                    )
                     controller = MobileTerminalControllerFactory.make(configText: text)
                     baseConfigText = text
+                    preferredFontSize = GhosttyConfigFetcher.lastFontSize(in: text)
+                        .map(Float.init)
                 }
             }
             .onDisappear {
@@ -806,11 +891,11 @@ struct SingleSessionView: View {
     /// in-app affordance for going back (edge-swipe is still available
     /// but undiscoverable).
     private var backButton: some View {
-        Button(action: popToParent) {
-            keyboardGlyph("chevron.left")
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Back")
+        TerminalFloatingGlyphButton(
+            systemName: "chevron.left",
+            accessibilityLabel: "Back",
+            action: popToParent
+        )
     }
 
     private func popToParent() {
@@ -901,13 +986,13 @@ struct SingleSessionView: View {
     @ViewBuilder
     private var keyboardButton: some View {
         if !keyboardAllowed {
-            Button {
+            TerminalFloatingGlyphButton(
+                systemName: "keyboard",
+                accessibilityLabel: "Show keyboard"
+            ) {
                 keyboardAllowed = true
                 focusRequestCount += 1
-            } label: {
-                keyboardGlyph("keyboard")
             }
-            .accessibilityLabel("Show keyboard")
         }
     }
 
@@ -1081,6 +1166,10 @@ struct SingleSessionView: View {
                 client?.wakeRenderer()
                 onPaneInteraction?()
             },
+            configuredFontSize: effectiveBaseConfigText.flatMap {
+                GhosttyConfigFetcher.lastFontSize(in: $0).map(Float.init)
+            },
+            onFontSizeChange: fontSizeChangeHandler(isOwner: client.isOwner),
             preferredInterfaceStyle: preferredStyle,
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
             // the application shall read `UIPasteboard.general.string` and, when
@@ -1109,7 +1198,7 @@ struct SingleSessionView: View {
                 containerSize: containerSize,
                 authoritativeCols: client.authoritativeGrid?.cols,
                 isOwner: client.isOwner,
-                baseConfig: baseConfigText
+                baseConfig: effectiveBaseConfigText
             )) {
                 reconcileFontOverride(
                     client: client,
@@ -1147,6 +1236,21 @@ struct SingleSessionView: View {
             }
     }
 
+    private func fontSizeChangeHandler(
+        isOwner: Bool
+    ) -> ((Float) -> Void)? {
+        guard isOwner, let worktreePath = step.worktreePath else { return nil }
+        let hostID = step.host.id
+        return { [fontSizeStore] fontSize in
+            preferredFontSize = fontSize
+            fontSizeStore.setFontSize(
+                fontSize,
+                hostID: hostID,
+                worktreePath: worktreePath
+            )
+        }
+    }
+
     /// @spec IOS-6.10
     /// Owner promotion restores the base config font: while a follower,
     /// the auto-fit override shrinks the font to match the authoritative
@@ -1160,7 +1264,7 @@ struct SingleSessionView: View {
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
-        guard let baseConfig = baseConfigText else { return }
+        guard let baseConfig = effectiveBaseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)
                 ?? GhosttyConfigFetcher.defaultIOSFontSize
@@ -1198,15 +1302,6 @@ struct SingleSessionView: View {
             controller.updateConfigSource(.generated(overridden))
             liveFontOverride = pointSize
         }
-    }
-
-    private func keyboardGlyph(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.title2)
-            .foregroundStyle(.primary)
-            .padding(10)
-            .background(.ultraThinMaterial, in: Circle())
-            .shadow(radius: 1)
     }
 
     /// Wraps a control-bar action so that pressing any key while a

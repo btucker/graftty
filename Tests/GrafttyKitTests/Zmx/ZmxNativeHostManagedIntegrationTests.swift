@@ -27,7 +27,7 @@ struct ZmxNativeHostManagedIntegrationTests {
                     Darwin.read(masterFd, raw.baseAddress!, raw.count)
                 }
                 if count <= 0 { break }
-                output += String(bytes: bytes.prefix(count), encoding: .utf8) ?? ""
+                output += String(decoding: bytes.prefix(count), as: UTF8.self)
             }
             return output
         }
@@ -154,9 +154,7 @@ struct ZmxNativeHostManagedIntegrationTests {
                 launcher.kill(sessionName: session)
             }
             try Self.waitForAttachReady(first)
-            try first.write("stty -echo\n")
-            Thread.sleep(forTimeInterval: 0.2)
-            _ = first.readAvailable()
+            try Self.disableEcho(in: first)
 
             try first.write("export ZMX_HOST_MARKER=\(state)\nprintf '\(output)\\n'\n")
             let live = Self.readUntil(marker: output, from: first, deadline: 5.0)
@@ -185,6 +183,152 @@ struct ZmxNativeHostManagedIntegrationTests {
                 stateCheck.contains("STATE_CHECK:\(state)"),
                 "reattach did not preserve shell state; got: \(stateCheck)"
             )
+        }
+    }
+
+    @Test("""
+    @spec ZMX-9.5: When a snapshot-capable bundled `zmx` client attaches to a current daemon, the daemon shall send a `GHOSTSNP` binary snapshot before subsequent live PTY output. If stdout is a PTY, then the client shall disable output processing so the line discipline cannot rewrite snapshot bytes.
+    """, .timeLimit(.minutes(1)))
+    func reattachNegotiatesRawSnapshotTransport() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let first = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
+
+            try Self.waitForAttachReady(first)
+            try first.write("printf '__SNAPSHOT_BASE_%s__\\n' READY\n")
+            let base = Self.readUntil(
+                marker: "__SNAPSHOT_BASE_READY__",
+                from: first,
+                deadline: 5.0
+            )
+            #expect(base.contains("__SNAPSHOT_BASE_READY__"))
+            #expect(
+                Self.waitForDaemonLog(
+                    launcher: launcher,
+                    containing: "serialize terminal snapshot bytes=",
+                    timeout: 3.0
+                ),
+                "the first regular attach did not negotiate a snapshot"
+            )
+            first.terminate()
+            firstRunning = false
+            try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
+
+            let snapshot = try Self.spawnSnapshotAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer { snapshot.terminate() }
+
+            let output = Self.readUntil(marker: "GHOSTSNP", from: snapshot, deadline: 5.0)
+            #expect(output.contains("GHOSTSNP"), "snapshot attach did not emit an envelope")
+
+            var attributes = termios()
+            #expect(tcgetattr(snapshot.masterFd, &attributes) == 0)
+            #expect(attributes.c_oflag & tcflag_t(OPOST) == 0)
+
+            try snapshot.write("printf '__SNAPSHOT_LIVE_%s__\\n' READY\n")
+            let live = Self.readUntil(
+                marker: "__SNAPSHOT_LIVE_READY__",
+                from: snapshot,
+                deadline: 5.0
+            )
+            #expect(live.contains("__SNAPSHOT_LIVE_READY__"))
+        }
+    }
+
+    @Test("""
+    @spec ZMX-9.6: When a bundled `zmx` daemon retains a 10,000-row session and a client reattaches, the daemon shall replay each retained row exactly once and preserve both the oldest and newest rows.
+    """, .timeLimit(.minutes(1)))
+    func largeScrollbackReattachPreservesRowsWithoutDuplication() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let first = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
+
+            try Self.waitForAttachReady(first)
+            try Self.disableEcho(in: first)
+            try first.write(
+                #"/usr/bin/awk 'BEGIN { for (i = 1; i <= 10000; i++) printf "__H_%05d__\n", i; print "__HISTORY_DONE__" }' && printf '__HISTORY_%s__\n' STABLE"#
+                    + "\n"
+            )
+            let initial = Self.readUntil(
+                marker: "__HISTORY_STABLE__",
+                from: first,
+                deadline: 15.0
+            )
+            #expect(initial.contains("__HISTORY_STABLE__"))
+            first.terminate()
+            firstRunning = false
+            try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
+
+            let second = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer { second.terminate() }
+
+            var replay = Self.readUntil(
+                marker: "__HISTORY_STABLE__",
+                from: second,
+                deadline: 10.0
+            )
+            try second.write("printf '__REPLAY_DRAINED_%s__\\n' READY\n")
+            replay += Self.readUntil(
+                marker: "__REPLAY_DRAINED_READY__",
+                from: second,
+                deadline: 5.0
+            )
+            Thread.sleep(forTimeInterval: 0.25)
+            replay += second.readAvailable()
+
+            let rowCount = replay.components(separatedBy: "__H_").count - 1
+            let stableCount = replay.components(separatedBy: "__HISTORY_STABLE__").count - 1
+            #expect(rowCount == 10_000, "reattach replayed \(rowCount) history rows")
+            #expect(replay.contains("__H_00001__"))
+            #expect(replay.contains("__H_10000__"))
+            #expect(stableCount == 1, "stable marker replayed \(stableCount) times")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func firstSnapshotAttachStartsWithEnvelope() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let snapshot = try Self.spawnSnapshotAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer {
+                snapshot.terminate()
+                launcher.kill(sessionName: session)
+            }
+
+            let output = Self.readUntil(marker: "GHOSTSNP", from: snapshot, deadline: 5.0)
+            #expect(output.hasPrefix("GHOSTSNP"), "snapshot stream had a text prefix: \(output)")
+
+            try snapshot.write("printf '__FIRST_SNAPSHOT_LIVE_%s__\\n' READY\n")
+            let live = Self.readUntil(
+                marker: "__FIRST_SNAPSHOT_LIVE_READY__",
+                from: snapshot,
+                deadline: 5.0
+            )
+            #expect(live.contains("__FIRST_SNAPSHOT_LIVE_READY__"))
         }
     }
 
@@ -295,6 +439,27 @@ struct ZmxNativeHostManagedIntegrationTests {
         return PtyAttach(pid: spawned.pid, masterFd: spawned.masterFD)
     }
 
+    static func spawnSnapshotAttach(
+        launcher: ZmxLauncher,
+        sessionName: String,
+        baseEnv: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> PtyAttach {
+        var env = launcher.subprocessEnv(from: baseEnv)
+        env["SHELL"] = "/bin/sh"
+        env["TERM"] = env["TERM"] ?? "xterm-256color"
+        env["PATH"] = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+
+        let spawned = try PtyProcess.spawn(
+            argv: [launcher.executable.path, "attach", "--snapshot", sessionName],
+            env: env,
+            initialSize: (cols: 80, rows: 24)
+        )
+
+        let flags = fcntl(spawned.masterFD, F_GETFL)
+        _ = fcntl(spawned.masterFD, F_SETFL, flags | O_NONBLOCK)
+        return PtyAttach(pid: spawned.pid, masterFd: spawned.masterFD)
+    }
+
     static func waitForAttachReady(_ attach: PtyAttach) throws {
         let output = readUntil(marker: "\u{001B}[2J", from: attach, deadline: 5.0)
         if !output.contains("\u{001B}[2J") {
@@ -343,6 +508,40 @@ struct ZmxNativeHostManagedIntegrationTests {
             code: 4,
             userInfo: [NSLocalizedDescriptionKey: "session \(name) still listed after \(timeout)s; sessions: \(sessions)"]
         )
+    }
+
+    static func waitForDaemonLog(
+        launcher: ZmxLauncher,
+        containing marker: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let logsDirectory = launcher.zmxDir.appendingPathComponent("logs", isDirectory: true)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: logsDirectory,
+                includingPropertiesForKeys: nil
+            )) ?? []
+            for file in files {
+                if let contents = try? String(contentsOf: file, encoding: .utf8),
+                   contents.contains(marker) {
+                    return true
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return false
+    }
+
+    static func disableEcho(in attach: PtyAttach) throws {
+        try attach.write("stty -echo; printf '__ECHO_%s__\\n' DISABLED\n")
+        let output = readUntil(
+            marker: "__ECHO_DISABLED__",
+            from: attach,
+            deadline: 5.0
+        )
+        #expect(output.contains("__ECHO_DISABLED__"))
+        _ = attach.readAvailable()
     }
 
     static func waitForHistory(

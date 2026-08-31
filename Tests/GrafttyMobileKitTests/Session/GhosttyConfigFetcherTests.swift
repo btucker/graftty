@@ -47,9 +47,21 @@ struct GhosttyConfigFetcherInterfaceStyleTests {
 @Suite("GhosttyConfigFetcher — scaledForIOS / lastFontSize")
 struct GhosttyConfigFetcherFontTests {
 
-    @Test func scaledForIOSAppendsFontSize() {
-        let result = GhosttyConfigFetcher.scaledForIOS("font-size = 14\n")
+    @Test("""
+@spec IOS-6.20: When GrafttyMobile mounts a terminal from a Mac host presentation, the application shall reduce the Mac font size to 80 percent before mounting the terminal, including the Ghostty default when the presentation contains no font-size.
+""")
+    func terminalConfigScalesMacFontBeforeMounting() {
+        let result = GhosttyConfigFetcher.terminalConfig(
+            macConfig: "font-size = 14\n",
+            savedFontSize: nil
+        )
         #expect(result.contains("font-size = 11.2"))
+
+        let defaulted = GhosttyConfigFetcher.terminalConfig(
+            macConfig: nil,
+            savedFontSize: nil
+        )
+        #expect(defaulted.contains("font-size = 10.4"))
     }
 
     @Test func lastFontSizeNilWhenAbsent() {

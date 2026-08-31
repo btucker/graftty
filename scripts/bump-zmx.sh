@@ -181,7 +181,8 @@ if git -C "$REPO" show \
         echo "→ testing committed N-1 compatibility"
         python3 "$COMPAT_TEST" \
             --legacy "$PREVIOUS_BINARY" \
-            --candidate "$CANDIDATE"
+            --candidate "$CANDIDATE" \
+            --expect-cross-version-pixels
     fi
 fi
 
@@ -198,7 +199,7 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# zmx %s — built from https://github.com/neurosnap/zmx commit %s\n' \
         "$VERSION" "$COMMIT"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
-    printf '# Graftty patch SHA256 %s — SIGWINCH unblock + version-tolerant pixel sizing.\n' \
+    printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw.\n' \
         "$patch_sha"
     printf '%s\n' "${checksums[@]}"
 } > "$INSTALL_STAGE/CHECKSUMS"

@@ -72,6 +72,13 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// on the surface must still promote the render pace back to `.full`.
     /// Call sites with a `SessionClient` wire this to `client.wakeRenderer()`.
     public let onUserInteraction: (() -> Void)?
+    /// Effective config font used as the starting point for libghostty's
+    /// built-in one-point pinch steps.
+    public let configuredFontSize: Float?
+    /// Present only while this pane owns the display. Follower auto-fit is a
+    /// temporary rendering choice and must never become the saved worktree
+    /// preference.
+    public let onFontSizeChange: ((Float) -> Void)?
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
     /// config specifies an explicit single theme so that libghostty's
@@ -98,6 +105,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
+        configuredFontSize: Float? = nil,
+        onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onPasteRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil
@@ -110,6 +119,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
+        self.configuredFontSize = configuredFontSize
+        self.onFontSizeChange = onFontSizeChange
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onPasteRequested = onPasteRequested
         self.captureContainer = captureContainer
@@ -144,6 +155,10 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
+        view.configureFontSizeObservation(
+            initialFontSize: configuredFontSize,
+            onChange: onFontSizeChange
+        )
         view.onPasteRequested = onPasteRequested
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
@@ -158,6 +173,10 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
+        view.configureFontSizeObservation(
+            initialFontSize: configuredFontSize,
+            onChange: onFontSizeChange
+        )
         view.onPasteRequested = onPasteRequested
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -275,6 +294,26 @@ public final class TerminalInputContainerView: UIView,
     /// without host output, so a finger on the surface must count as
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
+    private var configuredFontSize: Float?
+    private var observedFontSize: Float?
+    private var observedPinchScale: CGFloat = 1
+    private var isObservingFontSize = false
+    private var onObservedFontSizeChange: ((Float) -> Void)?
+
+    public func configureFontSizeObservation(
+        initialFontSize: Float?,
+        onChange: ((Float) -> Void)?
+    ) {
+        let shouldObserve = initialFontSize != nil && onChange != nil
+        if configuredFontSize != initialFontSize
+            || isObservingFontSize != shouldObserve {
+            configuredFontSize = initialFontSize
+            observedFontSize = initialFontSize
+            observedPinchScale = 1
+        }
+        isObservingFontSize = shouldObserve
+        onObservedFontSizeChange = onChange
+    }
 
     public var stickyControlActivation: StickyControlActivation {
         #if !targetEnvironment(macCatalyst)
@@ -448,6 +487,12 @@ public final class TerminalInputContainerView: UIView,
         #endif
         terminalView.showsInputAccessory = false
         addSubview(terminalView)
+        #if !targetEnvironment(macCatalyst)
+        terminalView.gestureRecognizers?
+            .compactMap { $0 as? UIPinchGestureRecognizer }
+            .first?
+            .addTarget(self, action: #selector(observeTerminalPinch(_:)))
+        #endif
         NSLayoutConstraint.activate([
             terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -465,6 +510,58 @@ public final class TerminalInputContainerView: UIView,
         addInteraction(selectionMenu)
         addGestureRecognizer(selectionPanRecognizer)
         addGestureRecognizer(anyTouchObserver)
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    /// Observes libghostty's own pinch recognizer without replacing it. The
+    /// step calculation mirrors libghostty-spm so the persisted value follows
+    /// the font actions that its recognizer sends to the live surface.
+    @objc private func observeTerminalPinch(_ gesture: UIPinchGestureRecognizer) {
+        guard isObservingFontSize, observedFontSize != nil else { return }
+
+        switch gesture.state {
+        case .began:
+            observedPinchScale = gesture.scale
+        case .changed:
+            let delta = gesture.scale - observedPinchScale
+            let steps = Int(delta / 0.1)
+            guard steps != 0 else { return }
+            observedPinchScale += CGFloat(steps) * 0.1
+            applyObservedFontSizeSteps(steps)
+        case .ended, .cancelled, .failed:
+            observedPinchScale = 1
+        default:
+            break
+        }
+    }
+    #endif
+
+    private func applyObservedFontSizeSteps(_ steps: Int) {
+        guard isObservingFontSize, let observedFontSize else { return }
+        let adjusted = TerminalFontSizeAdjustment.apply(
+            steps: steps,
+            to: observedFontSize
+        )
+        guard adjusted != observedFontSize else { return }
+        // Advance the configured baseline before publishing. SwiftUI echoes
+        // the preference through `updateUIView`; treating that echo as an
+        // external reconfiguration would reset the cumulative pinch scale
+        // while libghostty's recognizer is still in the same gesture.
+        configuredFontSize = adjusted
+        self.observedFontSize = adjusted
+        onObservedFontSizeChange?(adjusted)
+    }
+
+    @discardableResult
+    func applyObservedFontSizeStepsForTesting(
+        _ steps: Int,
+        pinchScale: CGFloat? = nil
+    ) -> (configuredFontSize: Float?, pinchScale: CGFloat) {
+        if let pinchScale {
+            observedPinchScale = pinchScale
+        }
+        applyObservedFontSizeSteps(steps)
+        return (configuredFontSize, observedPinchScale)
     }
 
     private func configureTerminalPanRecognizersForIndirectScrolling() {

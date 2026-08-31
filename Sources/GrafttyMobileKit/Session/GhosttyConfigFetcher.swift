@@ -101,6 +101,25 @@ public enum GhosttyConfigFetcher {
         )
     }
 
+    /// Builds the config used by a live mobile terminal. Host presentations
+    /// contain the Mac's unscaled config, so every call first applies the iOS
+    /// baseline. A saved worktree size then wins as the final Ghostty override.
+    static func terminalConfig(
+        macConfig: String?,
+        savedFontSize: Float?
+    ) -> String {
+        let scaled = scaledForIOS(macConfig ?? "")
+        guard let savedFontSize, savedFontSize.isFinite else { return scaled }
+        return MobileTerminalControllerFactory.appendingFontSizeOverride(
+            to: scaled,
+            fontSize: TerminalFontSizeAdjustment.apply(
+                steps: 0,
+                to: savedFontSize
+            ),
+            comment: "GrafttyMobile saved worktree font size"
+        )
+    }
+
     /// Parse the last `font-size = N` line out of a Ghostty config file.
     /// Tolerates whitespace, comments, and unrelated keys. Returns nil if
     /// no such line exists.
