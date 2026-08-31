@@ -72,6 +72,7 @@ public struct WorktreeListContent: View {
     public let remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     public let onListChanged: ([WorktreePanes]) -> Void
     public let externalRefreshToken: Int
 
@@ -99,6 +100,36 @@ public struct WorktreeListContent: View {
         self.remoteSnapshotProvider = remoteSnapshotProvider
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
+        self.onSelectPaneWithWorktree = nil
+        self.onListChanged = onListChanged
+        self.externalRefreshToken = externalRefreshToken
+    }
+
+    init(
+        host: Host,
+        theme: GhosttyThemeColors? = nil,
+        selectedWorktreePath: String? = nil,
+        focusedPaneId: String? = nil,
+        includeRemoteWorktrees: Bool = false,
+        isReadyToLoad: Bool = true,
+        remoteConnectionProvider: RemoteConnectionProvider? = nil,
+        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider? = nil,
+        onSelect: @escaping (WorktreePanes) -> Void,
+        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
+        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
+        externalRefreshToken: Int = 0
+    ) {
+        self.host = host
+        self.theme = theme
+        self.selectedWorktreePath = selectedWorktreePath
+        self.focusedPaneId = focusedPaneId
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.isReadyToLoad = isReadyToLoad
+        self.remoteConnectionProvider = remoteConnectionProvider
+        self.remoteSnapshotProvider = remoteSnapshotProvider
+        self.onSelect = onSelect
+        self.onSelectPane = { _ in }
+        self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
         self.onListChanged = onListChanged
         self.externalRefreshToken = externalRefreshToken
     }
@@ -170,7 +201,11 @@ public struct WorktreeListContent: View {
                                         },
                                         onSelectPane: { leaf in
                                             selectionIntentGeneration &+= 1
-                                            onSelectPane(leaf)
+                                            if let onSelectPaneWithWorktree {
+                                                onSelectPaneWithWorktree(wt, leaf)
+                                            } else {
+                                                onSelectPane(leaf)
+                                            }
                                         }
                                     )
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {

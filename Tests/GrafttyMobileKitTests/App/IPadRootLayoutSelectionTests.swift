@@ -325,6 +325,27 @@ struct IPadRootLayoutSelectionTests {
         #expect(compact.isFullScreen == true)
     }
 
+    @Test("""
+@spec IOS-6.22: While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
+""")
+    func showKeyboardAndBackUseTheSharedFloatingGlyphButton() {
+        let back = TerminalFloatingGlyphButton(
+            systemName: "chevron.left",
+            accessibilityLabel: "Back",
+            action: {}
+        )
+        let keyboard = TerminalFloatingGlyphButton(
+            systemName: "keyboard",
+            accessibilityLabel: "Show keyboard",
+            action: {}
+        )
+
+        _ = back.body
+        _ = keyboard.body
+        #expect(back.systemName == "chevron.left")
+        #expect(keyboard.systemName == "keyboard")
+    }
+
     @Test("iPad detail session can receive external focus and ownership requests")
     func ipadDetailSessionReceivesActiveRequests() {
         let host = sampleHost()

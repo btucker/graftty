@@ -1524,6 +1524,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.19** While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, unmodified Tab, and Ctrl+A through Ctrl+Z, using logical UIKit characters ahead of suspect HID usage. It shall forward the exact terminal text or ASCII control byte for each correction. An app-level shortcut shall win an exact chord collision. Shift-Return and every other unmatched hardware key shall return to `UITerminalView`, and an ineligible pane shall expose no transport corrections.
 
+**IOS-6.20** When GrafttyMobile mounts a terminal from a Mac host presentation, the application shall reduce the Mac font size to 80 percent before mounting the terminal, including the Ghostty default when the presentation contains no font-size.
+
+**IOS-6.21** When the user pinch-zooms an owner terminal, the application shall persist the resulting font size by host and worktree path, use it as the live base through ownership changes, and restore it for every terminal in that worktree when the worktree is reopened.
+
+**IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
