@@ -27,7 +27,7 @@ struct ZmxNativeHostManagedIntegrationTests {
                     Darwin.read(masterFd, raw.baseAddress!, raw.count)
                 }
                 if count <= 0 { break }
-                output += String(bytes: bytes.prefix(count), encoding: .utf8) ?? ""
+                output += String(decoding: bytes.prefix(count), as: UTF8.self)
             }
             return output
         }
@@ -188,6 +188,83 @@ struct ZmxNativeHostManagedIntegrationTests {
         }
     }
 
+    @Test("""
+    @spec ZMX-9.5: When a snapshot-capable bundled `zmx` client attaches to a current daemon, the daemon shall send a `GHOSTSNP` binary snapshot before subsequent live PTY output. If stdout is a PTY, then the client shall disable output processing so the line discipline cannot rewrite snapshot bytes.
+    """, .timeLimit(.minutes(1)))
+    func reattachNegotiatesRawSnapshotTransport() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let first = try Self.spawnHostManagedAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
+
+            try Self.waitForAttachReady(first)
+            try first.write("printf '__SNAPSHOT_BASE_%s__\\n' READY\n")
+            let base = Self.readUntil(
+                marker: "__SNAPSHOT_BASE_READY__",
+                from: first,
+                deadline: 5.0
+            )
+            #expect(base.contains("__SNAPSHOT_BASE_READY__"))
+            first.terminate()
+            firstRunning = false
+            try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
+
+            let snapshot = try Self.spawnSnapshotAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer { snapshot.terminate() }
+
+            let output = Self.readUntil(marker: "GHOSTSNP", from: snapshot, deadline: 5.0)
+            #expect(output.contains("GHOSTSNP"), "snapshot attach did not emit an envelope")
+
+            var attributes = termios()
+            #expect(tcgetattr(snapshot.masterFd, &attributes) == 0)
+            #expect(attributes.c_oflag & tcflag_t(OPOST) == 0)
+
+            try snapshot.write("printf '__SNAPSHOT_LIVE_%s__\\n' READY\n")
+            let live = Self.readUntil(
+                marker: "__SNAPSHOT_LIVE_READY__",
+                from: snapshot,
+                deadline: 5.0
+            )
+            #expect(live.contains("__SNAPSHOT_LIVE_READY__"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func firstSnapshotAttachStartsWithEnvelope() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let snapshot = try Self.spawnSnapshotAttach(
+                launcher: launcher,
+                sessionName: session
+            )
+            defer {
+                snapshot.terminate()
+                launcher.kill(sessionName: session)
+            }
+
+            let output = Self.readUntil(marker: "GHOSTSNP", from: snapshot, deadline: 5.0)
+            #expect(output.hasPrefix("GHOSTSNP"), "snapshot stream had a text prefix: \(output)")
+
+            try snapshot.write("printf '__FIRST_SNAPSHOT_LIVE_%s__\\n' READY\n")
+            let live = Self.readUntil(
+                marker: "__FIRST_SNAPSHOT_LIVE_READY__",
+                from: snapshot,
+                deadline: 5.0
+            )
+            #expect(live.contains("__FIRST_SNAPSHOT_LIVE_READY__"))
+        }
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func explicitKillRemovesDaemon() throws {
         try Self.withScopedZmxDir { launcher in
@@ -292,6 +369,27 @@ struct ZmxNativeHostManagedIntegrationTests {
         let flags = fcntl(spawned.masterFD, F_GETFL)
         _ = fcntl(spawned.masterFD, F_SETFL, flags | O_NONBLOCK)
 
+        return PtyAttach(pid: spawned.pid, masterFd: spawned.masterFD)
+    }
+
+    static func spawnSnapshotAttach(
+        launcher: ZmxLauncher,
+        sessionName: String,
+        baseEnv: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> PtyAttach {
+        var env = launcher.subprocessEnv(from: baseEnv)
+        env["SHELL"] = "/bin/sh"
+        env["TERM"] = env["TERM"] ?? "xterm-256color"
+        env["PATH"] = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+
+        let spawned = try PtyProcess.spawn(
+            argv: [launcher.executable.path, "attach", "--snapshot", sessionName],
+            env: env,
+            initialSize: (cols: 80, rows: 24)
+        )
+
+        let flags = fcntl(spawned.masterFD, F_GETFL)
+        _ = fcntl(spawned.masterFD, F_SETFL, flags | O_NONBLOCK)
         return PtyAttach(pid: spawned.pid, masterFd: spawned.masterFD)
     }
 

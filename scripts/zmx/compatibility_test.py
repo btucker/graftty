@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import re
 import selectors
 import shlex
 import shutil
@@ -38,35 +39,50 @@ class Attach:
         cols: int,
         xpixel: int,
         ypixel: int,
+        snapshot: bool = False,
+        separate_output: bool = False,
     ) -> None:
-        master, slave = os.openpty()
-        fcntl.ioctl(master, termios.TIOCSWINSZ, window_size(rows, cols, xpixel, ypixel))
-        os.set_blocking(master, False)
+        input_master, input_slave = os.openpty()
+        output_master, output_slave = (
+            os.openpty() if separate_output else (input_master, input_slave)
+        )
+        for master in {input_master, output_master}:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, window_size(rows, cols, xpixel, ypixel))
+            os.set_blocking(master, False)
 
         def child_setup() -> None:
             os.setsid()
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
         try:
+            attach_args = [str(binary), "attach"]
+            if snapshot:
+                attach_args.append("--snapshot")
+            attach_args.extend((session, "/bin/sh"))
             self.process = subprocess.Popen(
-                [str(binary), "attach", session, "/bin/sh"],
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
+                attach_args,
+                stdin=input_slave,
+                stdout=output_slave,
+                stderr=output_slave,
                 env=env,
                 close_fds=True,
                 preexec_fn=child_setup,
             )
         except BaseException:
-            os.close(master)
+            os.close(input_master)
+            if output_master != input_master:
+                os.close(output_master)
             raise
         finally:
-            os.close(slave)
-        self.master = master
+            os.close(input_slave)
+            if output_slave != input_slave:
+                os.close(output_slave)
+        self.input_master = input_master
+        self.master = output_master
         self.output = bytearray()
 
     def write(self, command: str) -> None:
-        os.write(self.master, command.encode())
+        os.write(self.input_master, command.encode())
 
     def resize(
         self,
@@ -77,10 +93,16 @@ class Attach:
         ypixel: int,
     ) -> None:
         fcntl.ioctl(
-            self.master,
+            self.input_master,
             termios.TIOCSWINSZ,
             window_size(rows, cols, xpixel, ypixel),
         )
+        if self.master != self.input_master:
+            fcntl.ioctl(
+                self.master,
+                termios.TIOCSWINSZ,
+                window_size(rows, cols, xpixel, ypixel),
+            )
 
     def wait_for(self, marker: str, timeout: float = 8.0) -> str:
         marker_bytes = marker.encode()
@@ -119,6 +141,25 @@ class Attach:
         self._drain()
         self.output.clear()
 
+    def drain_for(self, duration: float) -> str:
+        deadline = time.monotonic() + duration
+        selector = selectors.DefaultSelector()
+        selector.register(self.master, selectors.EVENT_READ)
+        try:
+            while time.monotonic() < deadline:
+                for _, _ in selector.select(timeout=0.05):
+                    self._drain()
+        finally:
+            selector.close()
+        return self.output.decode(errors="replace")
+
+    def assert_raw_output(self) -> None:
+        output_flags = termios.tcgetattr(self.master)[1]
+        if output_flags & termios.OPOST:
+            raise AssertionError(
+                "snapshot attach left PTY output processing enabled; binary bytes may be rewritten"
+            )
+
     def terminate_client(self) -> None:
         if self.process.poll() is None:
             self.process.terminate()
@@ -128,6 +169,8 @@ class Attach:
                 self.process.kill()
                 self.process.wait(timeout=2)
         os.close(self.master)
+        if self.input_master != self.master:
+            os.close(self.input_master)
 
 
 def zmx_env(directory: Path) -> dict[str, str]:
@@ -272,7 +315,30 @@ def assert_grid(attach: Attach, rows: int, cols: int, marker: str) -> None:
         raise AssertionError(f"wrong grid after cross-version resize: {output!r}")
 
 
-def old_daemon_new_client(legacy: Path, candidate: Path) -> None:
+def assert_winsize(
+    attach: Attach,
+    rows: int,
+    cols: int,
+    xpixel: int,
+    ypixel: int,
+    marker: str,
+) -> None:
+    code = (
+        "import fcntl,struct,termios;"
+        "r,c,x,y=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,"
+        "struct.pack('HHHH',0,0,0,0)));"
+        f"print('{marker}:%d:%d:%d:%d' % (r,c,x,y))"
+    )
+    attach.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+    expected = f"{marker}:{rows}:{cols}:{xpixel}:{ypixel}"
+    output = attach.wait_for(expected)
+    if expected not in output:
+        raise AssertionError(f"wrong winsize after cross-version resize: {output!r}")
+
+
+def old_daemon_new_client(
+    legacy: Path, candidate: Path, expect_cross_version_pixels: bool
+) -> None:
     directory, env = make_scope()
     session = "compat-old-daemon"
     first: Attach | None = None
@@ -309,13 +375,15 @@ def old_daemon_new_client(legacy: Path, candidate: Path) -> None:
         second.resize(rows=37, cols=111, xpixel=1234, ypixel=777)
         time.sleep(0.2)
         assert_grid(second, 37, 111, "OLD_GRID")
+        if expect_cross_version_pixels:
+            assert_winsize(second, 37, 111, 1234, 777, "OLD_WINSIZE")
 
         logs = "\n".join(
             path.read_text(errors="replace")
             for path in (directory / "logs").glob("*.log")
         )
-        if "unknown IPC tag=18" in logs or "unknown IPC tag=19" in logs:
-            raise AssertionError("new client sent negotiated extension tags to an old daemon")
+        if "unknown IPC tag=24" in logs:
+            raise AssertionError("new client sent PixelSize before an old daemon advertised support")
     finally:
         cleanup_case(
             directory,
@@ -329,7 +397,9 @@ def old_daemon_new_client(legacy: Path, candidate: Path) -> None:
         )
 
 
-def new_daemon_old_client(legacy: Path, candidate: Path) -> None:
+def new_daemon_old_client(
+    legacy: Path, candidate: Path, expect_cross_version_pixels: bool
+) -> None:
     directory, env = make_scope()
     session = "compat-new-daemon"
     first: Attach | None = None
@@ -366,6 +436,8 @@ def new_daemon_old_client(legacy: Path, candidate: Path) -> None:
         second.resize(rows=39, cols=112, xpixel=1240, ypixel=780)
         time.sleep(0.2)
         assert_grid(second, 39, 112, "NEW_GRID")
+        if expect_cross_version_pixels:
+            assert_winsize(second, 39, 112, 1240, 780, "NEW_WINSIZE")
     finally:
         cleanup_case(
             directory,
@@ -398,14 +470,7 @@ def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
         attach.resize(rows=31, cols=101, xpixel=1515, ypixel=929)
         time.sleep(0.2)
 
-        code = (
-            "import fcntl,struct,termios;"
-            "r,c,x,y=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,"
-            "struct.pack('HHHH',0,0,0,0)));"
-            "print(f'PIXELS:{r}:{c}:{x}:{y}')"
-        )
-        attach.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
-        attach.wait_for("PIXELS:31:101:1515:929")
+        assert_winsize(attach, 31, 101, 1515, 929, "PIXELS")
     finally:
         cleanup_case(
             directory,
@@ -418,6 +483,271 @@ def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
         )
 
 
+def new_daemon_streams_snapshot(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.write("printf '__SNAPSHOT_%s__\\n' READY\n")
+        first.wait_for("__SNAPSHOT_READY__")
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+            snapshot=True,
+            separate_output=True,
+        )
+        second.wait_for("GHOSTSNP")
+        second.assert_raw_output()
+        second.write("printf '__SNAPSHOT_LIVE_%s__\\n' READY\n")
+        second.wait_for("__SNAPSHOT_LIVE_READY__")
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
+
+
+def new_daemon_orders_snapshot_before_active_output(
+    legacy: Path, candidate: Path
+) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot-race"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.write(
+            "i=0; while :; do printf '__RACE_%s__\\n' \"$i\"; "
+            "i=$((i + 1)); sleep 0.01; done\n"
+        )
+        first.wait_for("__RACE_1__")
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+            snapshot=True,
+            separate_output=True,
+        )
+        second.wait_for("GHOSTSNP")
+        if not bytes(second.output).startswith(b"GHOSTSNP"):
+            raise AssertionError("live PTY output preceded the snapshot envelope")
+        second.write("\x03")
+        time.sleep(0.1)
+        second.write("printf '__RACE_LIVE_%s__\\n' READY\n")
+        second.wait_for("__RACE_LIVE_READY__")
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
+
+
+def new_daemon_snapshots_first_attach(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot-first"
+    attach: Attach | None = None
+    try:
+        attach = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+            snapshot=True,
+            separate_output=True,
+        )
+        wait_for_session(candidate, env, session)
+        attach.wait_for("GHOSTSNP")
+        if not bytes(attach.output).startswith(b"GHOSTSNP"):
+            raise AssertionError("snapshot stream was prefixed by non-snapshot output")
+        attach.write("printf '__FIRST_LIVE_%s__\\n' READY\n")
+        attach.wait_for("__FIRST_LIVE_READY__")
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            attach,
+        )
+
+
+def new_daemon_preserves_stream_continuation(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-snapshot-continuation"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        code = (
+            "import os,time;"
+            "os.write(1,b'__CONT_START__\\n\\xe2');"
+            "time.sleep(2);"
+            "os.write(1,b'\\x82\\xac__CONT_READY__\\n')"
+        )
+        first.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+        first.wait_for("__CONT_START__")
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        output = second.wait_for("__CONT_READY__", timeout=5.0)
+        if "€__CONT_READY__" not in output:
+            raise AssertionError(
+                f"snapshot lost split UTF-8 continuation state: {output!r}"
+            )
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
+
+
+def new_daemon_preserves_large_scrollback(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-large-scrollback"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.write(
+            "/usr/bin/awk 'BEGIN { "
+            'for (i = 1; i <= 10000; i++) printf "__H_%05d__\\n", i; '
+            'print "__HISTORY_DONE__"'
+            " }' "
+            "&& printf '__HISTORY_%s__\\n' STABLE\n"
+        )
+        first.wait_for("__HISTORY_STABLE__", timeout=15.0)
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            candidate,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        replay = second.wait_for("__HISTORY_STABLE__", timeout=8.0)
+        second.write("printf '__REPLAY_DRAINED_%s__\\n' READY\n")
+        second.wait_for("__REPLAY_DRAINED_READY__", timeout=8.0)
+        replay = second.drain_for(0.25)
+        history_rows = re.findall(r"__H_\d{5}__", replay)
+
+        if len(history_rows) != 10000:
+            raise AssertionError(
+                "large-history reattach did not preserve every generated row: "
+                f"received {len(history_rows)} rows"
+            )
+        if "__H_00001__" not in replay or "__H_10000__" not in replay:
+            raise AssertionError("large-history replay dropped the oldest or newest row")
+        if replay.count("__HISTORY_STABLE__") != 1:
+            raise AssertionError(
+                "large-history reattach duplicated the stable screen marker: "
+                f"count={replay.count('__HISTORY_STABLE__')}"
+            )
+    finally:
+        cleanup_case(
+            directory,
+            env,
+            session,
+            candidate,
+            candidate,
+            legacy,
+            first,
+            second,
+        )
+
+
 def main() -> None:
     # Convert cancellation into a Python exception so each compatibility
     # case unwinds through its `finally` cleanup instead of abandoning a
@@ -427,18 +757,29 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--legacy", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
+    parser.add_argument("--expect-cross-version-pixels", action="store_true")
     args = parser.parse_args()
     legacy = args.legacy.resolve()
     candidate = args.candidate.resolve()
     if not os.access(legacy, os.X_OK) or not os.access(candidate, os.X_OK):
         parser.error("legacy and candidate must both be executable")
 
-    old_daemon_new_client(legacy, candidate)
+    old_daemon_new_client(legacy, candidate, args.expect_cross_version_pixels)
     print("  ✓ old daemon → new client")
-    new_daemon_old_client(legacy, candidate)
+    new_daemon_old_client(legacy, candidate, args.expect_cross_version_pixels)
     print("  ✓ new daemon → old client")
     new_client_new_daemon_pixels(legacy, candidate)
     print("  ✓ negotiated pixel-size resize")
+    new_daemon_streams_snapshot(legacy, candidate)
+    print("  ✓ negotiated binary snapshot stream")
+    new_daemon_orders_snapshot_before_active_output(legacy, candidate)
+    print("  ✓ snapshot precedes active live output")
+    new_daemon_snapshots_first_attach(legacy, candidate)
+    print("  ✓ first attach starts with a snapshot envelope")
+    new_daemon_preserves_stream_continuation(legacy, candidate)
+    print("  ✓ snapshot preserves split stream continuation")
+    new_daemon_preserves_large_scrollback(legacy, candidate)
+    print("  ✓ complete, non-duplicated large-history replay")
 
 
 if __name__ == "__main__":

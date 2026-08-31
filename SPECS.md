@@ -958,6 +958,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.4** When a `zmx attach` client attaches to an existing session whose winsize (cells and pixels) matches the outer PTY's, the daemon shall deliver no SIGWINCH to the session's foreground process: until that client sends a PixelSize message, the daemon's winsize writes shall preserve the session PTY's current pixel dimensions rather than substitute the client's unset zeros, so an unchanged-size re-attach is a kernel no-op and the shell does not repaint its prompt over the replayed screen.
 
+**ZMX-9.5** When a snapshot-capable bundled `zmx` client attaches to a current daemon, the daemon shall send a `GHOSTSNP` binary snapshot before subsequent live PTY output. If stdout is a PTY, then the client shall disable output processing so the line discipline cannot rewrite snapshot bytes.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle
