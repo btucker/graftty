@@ -825,12 +825,17 @@ public struct AgentHookInstaller: Sendable {
                     ],
                 ]
             } else {
-                hooks[event.camelCaseKey] = hookEntries(command: "\(cmd) team hook claude \(event.rawValue)")
+                hooks[event.camelCaseKey] = hookEntries(
+                    command: "\(cmd) team hook claude \(event.rawValue)",
+                    matcher: event == .preToolUse
+                        ? "AskUserQuestion|ExitPlanMode|request_user_input|exit_plan_mode"
+                        : nil
+                )
             }
         }
         let payload: [String: Any] = ["hooks": hooks]
-        // Note: .sortedKeys produces alphabetical event order (PostToolUse, SessionStart, Stop).
-        // JSON object key order has no semantic effect; sorting just keeps the wrapper output stable.
+        // JSON object key order has no semantic effect. Sorting keeps the
+        // generated wrapper stable across launches and test runs.
         let data = (try? JSONSerialization.data(
             withJSONObject: payload,
             options: [.sortedKeys, .withoutEscapingSlashes]
@@ -861,17 +866,22 @@ public struct AgentHookInstaller: Sendable {
         """
     }
 
-    private static func hookEntries(command: String) -> [[String: Any]] {
-        [
-            [
-                "hooks": [
-                    [
-                        "type": "command",
-                        "command": command,
-                    ],
+    private static func hookEntries(
+        command: String,
+        matcher: String? = nil
+    ) -> [[String: Any]] {
+        var group: [String: Any] = [
+            "hooks": [
+                [
+                    "type": "command",
+                    "command": command,
                 ],
             ],
         ]
+        if let matcher {
+            group["matcher"] = matcher
+        }
+        return [group]
     }
 
     private func writeIfChanged(

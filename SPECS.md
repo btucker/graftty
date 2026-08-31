@@ -2244,13 +2244,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-3.x
 
-**AGENT-3.1** When an agent-stop event carries a `paneSessionName` resolving to a live pane, the application shall attach the "needs input" attention to that pane rather than the worktree.
+**AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
 
-**AGENT-3.2** If an agent-stop event has no pane session (the agent is not in a Graftty pane), then the application shall fall back to worktree-scoped "needs input" attention.
+**AGENT-3.2** If an explicit provider attention event has no pane session resolving to a live Graftty pane, then the application shall attach needs-input attention at worktree scope.
 
 **AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
 
-**AGENT-3.4** When a pane's agent transitions to busy, the application shall clear that pane's agent-stop "needs input" attention (leaving user notify pings and command-finished markers), so busy and needs-input are mutually exclusive.
+**AGENT-3.4** When a provider reports SessionStart, PostToolUse, or Stop after an explicit attention request, the application shall clear provider-owned attention at that hook's pane or worktree target while preserving user notifications and command-finished markers.
+
+**AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall not create needs-input attention or post a waiting-for-you notification.
+
+**AGENT-3.6** When a provider hook explicitly reports a permission request, user question, or plan-review prompt, the application shall create the corresponding needs-input attention for that agent.
+
+**AGENT-3.7** While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated or overlapping provider signals shall not replace that attention or post another desktop notification.
 
 ### AGENT-4.x
 
@@ -2333,6 +2339,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.26** When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
 
 **AGENT-6.27** When Graftty delivers an inbox row, the application shall use a `<graftty-peer-message>` envelope only for agent-authored rows, a `<graftty-forge-message provider="<provider>">` envelope for forge-originated system rows, and a `<graftty-system-message>` envelope for other system rows; every envelope shall preserve urgent priority and neutralize body text that could forge a sibling Graftty message envelope.
+
+**AGENT-6.28** When Graftty installs Codex or Claude provider hooks, the application shall subscribe to explicit permission requests and blocking question or plan-review tool starts without treating Stop as a needs-input signal.
 
 ## CLI — CLI
 

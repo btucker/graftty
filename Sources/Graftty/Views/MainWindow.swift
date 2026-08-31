@@ -390,10 +390,6 @@ struct MainWindow: View {
         .onDisappear {
             destroyAllRemoteSurfaces()
         }
-        // AGENT-3.4 resume rule runs at the model layer via
-        // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
-        // applies to the iPad/web snapshot and the window-closed case too —
-        // not just while this view is on screen.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
             applyAppVisibility(isVisible: false)
         }

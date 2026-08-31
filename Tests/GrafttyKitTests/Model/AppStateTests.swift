@@ -19,7 +19,7 @@ struct AppStateTests {
         #expect(state.selectedWorktreePath == nil)
     }
 
-    @Test func clearAgentStopAttentionForBusyPanesAppliesAcrossWorktrees() {
+    @Test func clearAgentStopAttentionTargetsProviderPane() {
         let slotA = PaneSlotID(id: UUID()); let sA = PaneSessionID(id: UUID())
         let slotB = PaneSlotID(id: UUID()); let sB = PaneSessionID(id: UUID())
         func wt(_ path: String, _ slot: PaneSlotID, _ session: PaneSessionID) -> WorktreeEntry {
@@ -33,11 +33,13 @@ struct AppStateTests {
             path: "/r", displayName: "r",
             worktrees: [wt("/r/a", slotA, sA), wt("/r/b", slotB, sB)])])
 
-        state.clearAgentStopAttentionForBusyPanes(
-            liveness: [ZmxLauncher.sessionName(for: sA): .busy])
+        state.clearAgentStopAttention(
+            worktreePath: "/r/a",
+            paneSessionName: ZmxLauncher.sessionName(for: sA)
+        )
 
-        #expect(state.repos[0].worktrees[0].paneAttention[slotA] == nil)   // busy → cleared
-        #expect(state.repos[0].worktrees[1].paneAttention[slotB] != nil)   // idle → kept
+        #expect(state.repos[0].worktrees[0].paneAttention[slotA] == nil)
+        #expect(state.repos[0].worktrees[1].paneAttention[slotB] != nil)
     }
 
     @Test func addRepo() {

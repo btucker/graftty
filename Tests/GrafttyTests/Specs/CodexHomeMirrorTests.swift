@@ -38,7 +38,7 @@ struct CodexHomeMirrorTests {
         #expect(configTarget == nil)
     }
 
-    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks and remove stale Graftty delivery hooks; while legacy wrapper hooks are enabled it shall add Graftty's SessionStart hook, and while provider plugins are enabled it shall leave that hook to the plugin.")
+    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks and remove stale Graftty delivery hooks; while legacy wrapper hooks are enabled it shall add Graftty's SessionStart and explicit attention hooks, and while provider plugins are enabled it shall leave those hooks to the plugin.")
     func hooksUnionMerge() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -106,8 +106,8 @@ struct CodexHomeMirrorTests {
         #expect(commands == ["/path/to/user-script.sh"])
     }
 
-    @Test("Codex mirror installs only the SessionStart graftty hook and removes stale graftty delivery hooks.")
-    func grafttyHooksAreSessionStartOnly() throws {
+    @Test("Codex mirror installs SessionStart and explicit attention hooks while removing stale delivery hooks.")
+    func grafttyHooksExcludeDeliveryEvents() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
@@ -131,11 +131,15 @@ struct CodexHomeMirrorTests {
         let merged = try JSONSerialization.jsonObject(with: mergedData) as! [String: Any]
         let hooks = merged["hooks"] as! [String: Any]
         let sessionStartCommands = commands(in: hooks["SessionStart"] as! [[String: Any]])
+        let preToolUseCommands = commands(in: hooks["PreToolUse"] as! [[String: Any]])
         let postToolUseCommands = commands(in: hooks["PostToolUse"] as! [[String: Any]])
+        let permissionRequestCommands = commands(in: hooks["PermissionRequest"] as! [[String: Any]])
         let stopCommands = commands(in: hooks["Stop"] as! [[String: Any]])
 
         #expect(sessionStartCommands == ["/usr/local/bin/graftty team hook codex session-start"])
+        #expect(preToolUseCommands == ["/usr/local/bin/graftty team hook codex pre-tool-use"])
         #expect(postToolUseCommands == ["/path/to/user-post-tool-use.sh"])
+        #expect(permissionRequestCommands == ["/usr/local/bin/graftty team hook codex permission-request"])
         #expect(stopCommands.isEmpty)
     }
 

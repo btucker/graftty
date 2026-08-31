@@ -11,6 +11,27 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude permission-request --skill-managed"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode|request_user_input|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${GRAFTTY_DISABLE_AGENT_HOOKS:-}\" = \"1\" ] || graftty team hook claude pre-tool-use --skill-managed"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [

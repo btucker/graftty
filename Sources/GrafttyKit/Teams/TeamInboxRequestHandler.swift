@@ -602,6 +602,10 @@ public final class TeamInboxRequestHandler {
                 previouslyDeliveredThroughID: unread.readPosition
             )
             return output
+        case .preToolUse, .permissionRequest:
+            // These hooks exist only to carry normalized attention signals.
+            // They must not consume inbox rows or inject provider context.
+            return "{}"
         case .stop:
             // Stop renderer is a no-op (`{}`) for both runtimes —
             // neither runtime's Stop schema accepts

@@ -5,6 +5,33 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
+    @spec AGENT-6.28: When Graftty installs Codex or Claude provider hooks, the application shall subscribe to explicit permission requests and blocking question or plan-review tool starts without treating Stop as a needs-input signal.
+    """)
+    func providerHooksCaptureExplicitAttentionSignals() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-agent-plugin-attention-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let data = try Data(contentsOf: destination
+                .appendingPathComponent(provider)
+                .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
+            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try #require(root["hooks"] as? [String: Any])
+
+            #expect(hooks["PermissionRequest"] != nil)
+            #expect(hooks["PreToolUse"] != nil)
+            let stop = try #require(hooks["Stop"] as? [[String: Any]])
+            let stopCommands = stop.flatMap { group in
+                (group["hooks"] as? [[String: Any]])?.compactMap { $0["command"] as? String } ?? []
+            }
+            #expect(stopCommands.allSatisfy { !$0.contains("needs-input") })
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
     """)
     func preparesBothProviderMarketplacesAndCommands() throws {
@@ -52,7 +79,7 @@ struct AgentPluginInstallerTests {
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty-team/hooks/hooks.json"))
-            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == 3)
+            #expect(hooks.components(separatedBy: "GRAFTTY_DISABLE_AGENT_HOOKS").count - 1 == 5)
             #expect(hooks.contains("/Applications/Graftty.app/Contents/Helpers/graftty team hook"))
         }
         let claudeManifest = try String(contentsOf: destination

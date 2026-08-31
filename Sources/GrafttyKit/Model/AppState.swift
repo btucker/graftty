@@ -131,28 +131,26 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
-    /// Fans the AGENT-3.4 resume rule out across every worktree on a
-    /// liveness update (the per-worktree rule lives on `WorktreeEntry`):
-    /// each pane whose session is now busy has its agent-stop "needs
-    /// input" overlay cleared (busy and needs-input are mutually
-    /// exclusive). No-op when nothing is busy.
-    public mutating func clearAgentStopAttentionForBusyPanes(liveness: [String: AgentLiveness]) {
-        let busy = Set(liveness.compactMap { $0.value == .busy ? $0.key : nil })
-        guard !busy.isEmpty else { return }
-        // Cheap early-out before any mutation: this runs on every liveness
-        // change, which is frequent during active work. Only touch the model
-        // when a pane-scoped agent-stop pill actually exists to clear (the
-        // common steady state has none), so the @State write-back and its
-        // re-render diff are skipped.
-        let hasPaneAgentStop = repos.contains { repo in
-            repo.worktrees.contains { wt in
-                wt.paneAttention.values.contains { $0.source == .agentStop }
-            }
-        }
-        guard hasPaneAgentStop else { return }
+    /// Applies AGENT-3.4 to the pane identified by a provider hook, falling
+    /// back to worktree-scoped attention when no live pane resolves.
+    public mutating func clearAgentStopAttention(
+        worktreePath: String,
+        paneSessionName: String?
+    ) {
         for repoIdx in repos.indices {
-            for wtIdx in repos[repoIdx].worktrees.indices {
-                repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(forBusySessionNames: busy)
+            for wtIdx in repos[repoIdx].worktrees.indices
+                where repos[repoIdx].worktrees[wtIdx].path == worktreePath {
+                let target = AgentStopAttentionTarget.resolve(
+                    worktree: repos[repoIdx].worktrees[wtIdx],
+                    paneSessionName: paneSessionName
+                )
+                switch target {
+                case .pane(let slot):
+                    repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(pane: slot)
+                case .worktree:
+                    repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(pane: nil)
+                }
+                return
             }
         }
     }
