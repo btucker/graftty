@@ -29,6 +29,7 @@ fi
 
 CONFIGURATION="${CONFIGURATION:-debug}"
 GRAFTTY_VERSION="${GRAFTTY_VERSION:-0.0.0-dev}"
+GRAFTTY_BUILD_VERSION="${GRAFTTY_BUILD_VERSION:-$GRAFTTY_VERSION}"
 SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-}"
 # CODESIGN_IDENTITY="-" → ad-hoc (default; works for local dev without an
@@ -38,6 +39,10 @@ SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 if [[ ! "$GRAFTTY_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
   echo "GRAFTTY_VERSION must match [A-Za-z0-9._+-]+ (got '$GRAFTTY_VERSION')" >&2
+  exit 1
+fi
+if [[ "$CONFIGURATION" == "release" && ! "$GRAFTTY_BUILD_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  echo "GRAFTTY_BUILD_VERSION must be a numeric x, x.y, or x.y.z version (got '$GRAFTTY_BUILD_VERSION')" >&2
   exit 1
 fi
 if [[ "$SPARKLE_PUBLIC_ED_KEY" == "__SPARKLE_PUBLIC_ED_KEY__" ]]; then
@@ -64,6 +69,7 @@ if [[ "$CONFIGURATION" == "release" && -z "$SPARKLE_FEED_URL" ]]; then
 fi
 
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
+echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
 echo "→ swift build --configuration $CONFIGURATION"
 swift build --configuration "$CONFIGURATION"
 
@@ -132,7 +138,7 @@ if [[ -n "$SPARKLE_FEED_URL" ]]; then
 fi
 
 echo "→ write Info.plist"
-# NOTE: heredoc is unquoted so $GRAFTTY_VERSION expands.
+# NOTE: heredoc is unquoted so the Graftty version variables expand.
 # Any other $ or backticks added below will also expand — keep
 # this body to literal XML plus the substitutions above.
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -159,7 +165,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$GRAFTTY_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>$GRAFTTY_VERSION</string>
+    <string>$GRAFTTY_BUILD_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>

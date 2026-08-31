@@ -77,6 +77,107 @@ struct RemoteMacsModelTests {
         #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .offline)
     }
 
+    @Test("""
+    @spec REMOTE-13.24: While GrafttyMobile views a paired Mac, the \
+    application shall show each saved downstream Mac's connection state and \
+    allow an unavailable downstream Mac to reconnect from the mobile list.
+    """)
+    func savedRemoteConnectionCanBeListedAndReconnected() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let closeGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(closeGate: closeGate),
+            RemoteMacsModelTestConnection(),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+
+        let offline = await model.remoteMacConnectionSummaries()
+        #expect(offline == [
+            RemoteMacConnectionSummary(
+                deviceID: remote.id,
+                fingerprint: remote.fingerprint,
+                label: remote.label,
+                lastKnownHost: remote.lastKnownBaseURL?.host,
+                state: .offline
+            ),
+        ])
+
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+        let firstConnection = try await model.connect(to: remote)
+        try model.publishDiscoveryCandidate(try candidate())
+        #expect(await model.remoteMacConnectionSummaries().map(\.state) == [
+            .connected,
+        ])
+
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+        await closeGate.waitUntilStarted()
+        #expect(connections.issuedCount == 1)
+        await closeGate.release()
+        let replacementConnection = try await model.connect(to: remote)
+        #expect(replacementConnection.id != firstConnection.id)
+        #expect(connections.issuedCount == 2)
+    }
+
+    @Test("disconnect during reconnect teardown prevents a replacement dial")
+    func disconnectDuringReconnectTeardownPreventsRedial() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let closeGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(closeGate: closeGate),
+            RemoteMacsModelTestConnection(),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        _ = try await model.connect(to: remote)
+
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+        await closeGate.waitUntilStarted()
+        model.disconnect(identity: RemoteMacIdentity(remote))
+        await closeGate.release()
+        await Task.yield()
+
+        #expect(connections.issuedCount == 1)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .offline)
+    }
+
     @Test("discovery candidate for a saved remote marks it discovered and refreshes address")
     func discoveryCandidateRefreshesSavedRemote() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -577,6 +678,8 @@ struct RemoteMacsModelTests {
         #expect(model.connectionState(for: identity) == .needsPairing)
 
         try model.publishDiscoveryCandidate(candidate())
+        #expect(model.connectionState(for: identity) == .needsPairing)
+        _ = await model.remoteMacConnectionSummaries()
         #expect(model.connectionState(for: identity) == .needsPairing)
     }
 
@@ -1107,7 +1210,28 @@ private actor RemoteMacsModelConnectGate {
     }
 }
 
+@MainActor
+private final class RemoteMacsModelConnectionSequence {
+    private var connections: [any RemoteMacHostConnection]
+    private(set) var issuedCount = 0
+
+    init(_ connections: [any RemoteMacHostConnection]) {
+        self.connections = connections
+    }
+
+    func next() -> any RemoteMacHostConnection {
+        issuedCount += 1
+        return connections.removeFirst()
+    }
+}
+
 private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
+    let closeGate: RemoteMacsModelConnectGate?
+
+    init(closeGate: RemoteMacsModelConnectGate? = nil) {
+        self.closeGate = closeGate
+    }
+
     func createOfferSDP() async throws -> String {
         "v=0\n"
     }
@@ -1129,7 +1253,9 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
         RemoteMacsModelTestWebSocketClient()
     }
 
-    func close() async {}
+    func close() async {
+        await closeGate?.wait()
+    }
 }
 
 private struct RemoteMacsModelRecordingConnection: RemoteMacHostConnection {

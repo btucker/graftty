@@ -5,6 +5,7 @@ public enum AppcastUpdater {
     public enum Error: Swift.Error {
         case malformedXML(String)
         case malformedSignature(String)
+        case malformedChannel(String)
     }
 
     /// Sparkle's `sign_update` tool prints a full XML attribute fragment to
@@ -32,14 +33,15 @@ public enum AppcastUpdater {
 
     /// Prepend a new `<item>` for `item` to the given feed XML, or seed a
     /// fresh feed if `existingXML` is nil / empty. Idempotent on version —
-    /// if an item with `<sparkle:version>item.version</sparkle:version>`
+    /// if an item with `<sparkle:version>item.buildVersion</sparkle:version>`
     /// already exists, the input is returned unchanged.
     public static func prepend(item: AppcastItem, to existingXML: String?) throws -> String {
+        try validate(channel: item.channel)
         let doc = try document(from: existingXML)
         guard let channel = try channelElement(in: doc) else {
             throw Error.malformedXML("no <channel> element")
         }
-        if channelContainsVersion(channel, version: item.version) {
+        if channelContainsVersion(channel, version: item.buildVersion) {
             return try format(doc)
         }
         let newItem = makeItemElement(item)
@@ -53,6 +55,21 @@ public enum AppcastUpdater {
             ?? 0
         channel.insertChild(newItem, at: firstItemIndex)
         return try format(doc)
+    }
+
+    public static func validate(channel: String?) throws {
+        guard let channel else { return }
+        guard !channel.isEmpty else {
+            throw Error.malformedChannel("empty")
+        }
+        let allowed = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
+        )
+        if let bad = channel.unicodeScalars.first(where: { !allowed.contains($0) }) {
+            throw Error.malformedChannel(
+                "contains invalid character \(String(reflecting: Character(bad)))"
+            )
+        }
     }
 
     private static func document(from existingXML: String?) throws -> XMLDocument {
@@ -101,9 +118,15 @@ public enum AppcastUpdater {
 
     private static func makeItemElement(_ item: AppcastItem) -> XMLElement {
         let el = XMLElement(name: "item")
-        el.addChild(XMLElement(name: "title", stringValue: "Version \(item.version)"))
-        el.addChild(XMLElement(name: "sparkle:version", stringValue: item.version))
-        el.addChild(XMLElement(name: "sparkle:shortVersionString", stringValue: item.version))
+        el.addChild(XMLElement(name: "title", stringValue: "Version \(item.displayVersion)"))
+        if let channel = item.channel {
+            el.addChild(XMLElement(name: "sparkle:channel", stringValue: channel))
+        }
+        el.addChild(XMLElement(name: "sparkle:version", stringValue: item.buildVersion))
+        el.addChild(XMLElement(
+            name: "sparkle:shortVersionString",
+            stringValue: item.displayVersion
+        ))
         el.addChild(XMLElement(name: "pubDate", stringValue: rfc822(item.pubDate)))
         el.addChild(XMLElement(
             name: "sparkle:minimumSystemVersion",

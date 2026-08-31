@@ -18,6 +18,9 @@ public struct WorktreeListContent: View {
     @State private var selectionIntentGeneration: UInt64 = 0
     @State private var loadedHostID: UUID?
     @State private var presentedHostID: UUID?
+    @State private var remoteMacConnections: [RemoteMacConnectionSummary] = []
+    @State private var reconnectingRemoteMacIDs:
+        Set<RemoteMacConnectionSummary.ID> = []
 
     private struct PendingDelete: Identifiable, Equatable {
         let id = UUID()
@@ -116,13 +119,19 @@ public struct WorktreeListContent: View {
                 )
                 .id(host.id)
             case .error(let msg):
-                ContentUnavailableView {
-                    Label("Couldn't load worktrees", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(msg)
-                } actions: {
-                    Button("Retry") { Task { await load() } }
-                        .buttonStyle(.borderedProminent)
+                if remoteMacConnections.isEmpty {
+                    worktreeLoadError(msg)
+                } else {
+                    List {
+                        remoteMacConnectionsSection
+                        Section {
+                            worktreeLoadError(msg)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
+                    }
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
                 }
             case .loaded(let worktrees):
                 VStack(spacing: 0) {
@@ -141,6 +150,7 @@ public struct WorktreeListContent: View {
                         .background(.thinMaterial)
                     }
                     List {
+                        remoteMacConnectionsSection
                         ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                             Section {
                                 ForEach(group.worktrees, id: \.path) { wt in
@@ -307,6 +317,8 @@ public struct WorktreeListContent: View {
             selectionIntentGeneration &+= 1
             pendingDelete = nil
             pendingForceDelete = nil
+            remoteMacConnections = []
+            reconnectingRemoteMacIDs = []
         }
         .task(id: RemotePollingKey(
             hostID: host.id,
@@ -337,7 +349,62 @@ public struct WorktreeListContent: View {
                 }
             }
         }
+        .task(id: RemoteMacConnectionPollingKey(
+            hostID: host.id,
+            enabled: includeRemoteWorktrees,
+            isReady: isReadyToLoad
+        )) {
+            guard includeRemoteWorktrees, isReadyToLoad else {
+                remoteMacConnections = []
+                reconnectingRemoteMacIDs = []
+                return
+            }
+            let requestHostID = host.id
+            while !Task.isCancelled {
+                guard let delay = await refreshRemoteMacConnections(
+                    requestHostID: requestHostID
+                ) else { return }
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+            }
+        }
         .onDisappear { errorToastTask?.cancel() }
+    }
+
+    @ViewBuilder
+    private var remoteMacConnectionsSection: some View {
+        if !remoteMacConnections.isEmpty {
+            Section("Remote Macs") {
+                ForEach(remoteMacConnections) { remoteMac in
+                    RemoteMacConnectionRow(
+                        remoteMac: remoteMac,
+                        isReconnecting: reconnectingRemoteMacIDs.contains(
+                            remoteMac.id
+                        ),
+                        onReconnect: {
+                            reconnect(remoteMac)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private func worktreeLoadError(_ message: String) -> some View {
+        ContentUnavailableView {
+            Label(
+                "Couldn't load worktrees",
+                systemImage: "exclamationmark.triangle"
+            )
+        } description: {
+            Text(message)
+        } actions: {
+            Button("Retry") { Task { await load() } }
+                .buttonStyle(.borderedProminent)
+        }
     }
 
     private func load() async {
@@ -408,6 +475,91 @@ public struct WorktreeListContent: View {
             refreshError = message
         }
         state = Self.loadState(afterFailure: message, current: state)
+    }
+
+    private func refreshRemoteMacConnections(requestHostID: UUID) async
+        -> Duration? {
+        guard let provider = remoteConnectionProvider else { return nil }
+        let response: WorktreeManagementResponse
+        do {
+            response = try await RelayedWorktreeManagementClient.send(
+                .listRemoteMacConnections,
+                using: provider
+            )
+        } catch {
+            return .seconds(5)
+        }
+        guard Self.shouldApplyLoadResult(
+            requestHostID: requestHostID,
+            presentedHostID: presentedHostID,
+            isCancelled: Task.isCancelled
+        ) else {
+            return nil
+        }
+        switch response {
+        case .remoteMacConnections(let connections):
+            remoteMacConnections = connections
+            return .seconds(5)
+        case let .error(code, _, _, _) where code == "malformed-request":
+            return .seconds(60)
+        default:
+            return .seconds(5)
+        }
+    }
+
+    private func reconnect(_ remoteMac: RemoteMacConnectionSummary) {
+        guard !reconnectingRemoteMacIDs.contains(remoteMac.id) else { return }
+        let requestHostID = host.id
+        let provider: RemoteConnectionProvider? = remoteConnectionProvider
+        reconnectingRemoteMacIDs.insert(remoteMac.id)
+        Task {
+            defer {
+                if requestHostID == presentedHostID {
+                    reconnectingRemoteMacIDs.remove(remoteMac.id)
+                }
+            }
+            do {
+                let response = try await RelayedWorktreeManagementClient.send(
+                    .connectRemoteMac(
+                        deviceID: remoteMac.deviceID,
+                        fingerprint: remoteMac.fingerprint
+                    ),
+                    using: provider
+                )
+                guard Self.shouldApplyLoadResult(
+                    requestHostID: requestHostID,
+                    presentedHostID: presentedHostID,
+                    isCancelled: Task.isCancelled
+                ) else {
+                    return
+                }
+                switch response {
+                case .ok:
+                    _ = await refreshRemoteMacConnections(
+                        requestHostID: requestHostID
+                    )
+                    await refresh()
+                case let .error(_, message, _, _):
+                    showErrorToast(message)
+                    _ = await refreshRemoteMacConnections(
+                        requestHostID: requestHostID
+                    )
+                default:
+                    showErrorToast(
+                        "The connected Mac returned an unexpected response."
+                    )
+                }
+            } catch {
+                guard Self.shouldApplyLoadResult(
+                    requestHostID: requestHostID,
+                    presentedHostID: presentedHostID,
+                    isCancelled: Task.isCancelled
+                ) else {
+                    return
+                }
+                showErrorToast("Couldn't ask the connected Mac to reconnect.")
+            }
+        }
     }
 
     static func loadState(
@@ -758,9 +910,103 @@ private struct RemotePollingKey: Hashable {
     let isReady: Bool
 }
 
+private struct RemoteMacConnectionPollingKey: Hashable {
+    let hostID: UUID
+    let enabled: Bool
+    let isReady: Bool
+}
+
 private struct WorktreeListLoadKey: Hashable {
     let hostID: UUID
     let isReady: Bool
+}
+
+struct RemoteMacConnectionRow: View {
+    let remoteMac: RemoteMacConnectionSummary
+    let isReconnecting: Bool
+    let onReconnect: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: remoteMac.state.mobileSystemImage)
+                .foregroundStyle(iconColor)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(remoteMac.label)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if isReconnecting || remoteMac.state == .connecting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Connecting to \(remoteMac.label)")
+            } else if remoteMac.state.mobileCanReconnect {
+                Button(remoteMac.state.mobileReconnectLabel) {
+                    onReconnect()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel(
+                    "\(remoteMac.state.mobileReconnectLabel) to \(remoteMac.label)"
+                )
+            }
+        }
+    }
+
+    private var subtitle: String {
+        [remoteMac.lastKnownHost, remoteMac.state.mobileStatusText]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    private var iconColor: Color {
+        switch remoteMac.state {
+        case .connected, .discovered:
+            .green
+        case .connecting:
+            .accentColor
+        case .failed, .needsPairing:
+            .orange
+        case .offline:
+            .secondary
+        }
+    }
+}
+
+extension RemoteMacConnectionSummary.State {
+    var mobileSystemImage: String {
+        switch self {
+        case .offline: "laptopcomputer"
+        case .discovered: "wifi"
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .connected: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle"
+        case .needsPairing: "key"
+        }
+    }
+
+    var mobileStatusText: String {
+        switch self {
+        case .offline: "Offline"
+        case .discovered: "Available"
+        case .connecting: "Connecting..."
+        case .connected: "Connected"
+        case .failed: "Connection failed"
+        case .needsPairing: "Pair again on the connected Mac"
+        }
+    }
+
+    var mobileCanReconnect: Bool {
+        self != .connecting && self != .needsPairing
+    }
+
+    var mobileReconnectLabel: String {
+        self == .discovered ? "Connect" : "Reconnect"
+    }
 }
 
 private struct WorktreeBlock: View {

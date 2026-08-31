@@ -968,7 +968,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.1** The build script (`scripts/bundle.sh`) shall produce a self-contained `Graftty.app` bundle in `.build/` containing the SwiftUI application binary at `Contents/MacOS/Graftty`, the CLI helper at `Contents/Helpers/graftty`, and the bundled `zmx` binary at `Contents/Helpers/zmx`.
 
-**DIST-1.2** While the `GRAFTTY_VERSION` environment variable is set, the build script shall write that value into both `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`.
+**DIST-1.2** While the `GRAFTTY_VERSION` and `GRAFTTY_BUILD_VERSION` environment variables are set, the build script shall write the release version into `CFBundleShortVersionString` and the numeric build version into `CFBundleVersion` in `Info.plist`.
 
 **DIST-1.3** If the `GRAFTTY_VERSION` environment variable is not set, then the build script shall use `0.0.0-dev` as the default version.
 
@@ -978,11 +978,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### DIST-2.x — Release Automation
 
-**DIST-2.1** When a git tag matching `v*` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
+**DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
 
-**DIST-2.2** If the pushed tag does not start with `v`, then the release workflow shall fail before building.
+**DIST-2.2** If a pushed release tag does not contain valid SemVer after its leading `v`, then the release workflow shall fail before building.
 
-**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step rather than failing.
+**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step for stable versions rather than failing.
 
 **DIST-2.4** The release zip shall be produced with `ditto -c -k --keepParent` (not `zip`) so that codesign-relevant extended attributes survive — `zip` strips them and installs fail with opaque "damaged" errors after reboot.
 
@@ -1207,6 +1207,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **UPDATE-2.4** The `appcast-updater` tool shall reject `--ed-signature`
 
 **UPDATE-2.5** The release workflow shall render the GitHub release
+
+### UPDATE-3.x
+
+**UPDATE-3.1** When the release workflow publishes a prerelease, the application shall add that update to the shared appcast with a `sparkle:channel` value of `prerelease`; stable items shall remain on Sparkle's default channel by omitting the element.
+
+**UPDATE-3.2** When the release workflow publishes any update, the application shall write its monotonically increasing build version to `sparkle:version` and its human-readable tag version to `sparkle:shortVersionString`.
+
+**UPDATE-3.3** When the user changes "Receive pre-release updates" in General Settings, the application shall persist the subscription, allow Sparkle's `prerelease` channel in addition to its always-available default channel while enabled, and clear pending update UI and remove only the prerelease channel when disabled.
+
+**UPDATE-3.4** When the release workflow processes a version tag, the application shall assign suffixed versions to the `prerelease` appcast channel and stable versions to the default channel, then derive a numeric build version that increases with both the GitHub run number and each run attempt.
 
 ## KBD — Keyboard Shortcuts
 
@@ -1478,13 +1488,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-6.x — Input
 
-**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard. The v1 bar shall expose, at minimum: Esc, Tab, Ctrl-C, Ctrl-D, ↑, ↓, ←, →, submit Return, insert literal LF, and Hide Keyboard. These controls shall send explicit PTY bytes through `SessionClient` rather than relying on UIKit text entry: Esc=`0x1B`, Tab=`0x09`, Ctrl-C=`0x03`, Ctrl-D=`0x04`, arrows=`ESC [ A/B/D/C`, submit Return=`0x0D`, and literal LF=`0x0A`.
+**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl state.
 
-**IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the narrow logical-key transport correction in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
+**IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the listed transport corrections in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 
-**IOS-6.3** When the outbound keystroke pipe (`SessionClient.box.onBytes`) receives a payload consisting of exactly one LF byte (`0x0A`), the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. This reconciles iOS's soft-keyboard Return — which UIKit delivers as LF via `UIKeyInput.insertText("\n")` — with the CR convention that physical terminals send on Return and that TUIs (Claude Code, readline, etc.) interpret as "submit." Without this translation, tapping Return on the iOS keyboard inserts a literal newline into the TUI's input buffer instead of submitting the current line, and there is no way to produce a submit keystroke from the soft keyboard. The rule is narrowed to a *standalone* single-byte LF so that multi-byte payloads with embedded newlines (pastes from the clipboard, programmatic text insertion) pass through unchanged and preserve their own line structure.
+**IOS-6.3** When committed software-keyboard input supplies a newline, the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. Bytes emitted by libghostty's terminal session shall otherwise pass through unchanged, including Ctrl+J's LF byte (`0x0A`).
 
-**IOS-6.4** When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
+**IOS-6.4** When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session via `SessionClient.insertNewline()`. This is the explicit way to insert a multi-line boundary into a TUI prompt after software Return has been reserved for submission.
 
 **IOS-6.6** While an owner terminal pane is focused on iOS, committed software-keyboard text and delete shall flow through `UITerminalView`'s supported `TerminalSoftwareInputDelegate` and be forwarded exactly once to `SessionClient.sendSoftwareKeyboardText(_:)` and `deleteBackward()`. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and delete shall send DEL (`0x7F`), without using Ghostty's paste-text path.
 
@@ -1510,9 +1520,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.17** While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers on the sole `UITerminalView` touch surface, with no GrafttyMobile keyboard or selection overlay blocking them.
 
-**IOS-6.18** When a hardware press does not match an enabled application command or the Return/quote/Escape/Tab correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+**IOS-6.18** When a hardware press does not match an enabled application command or a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
 
-**IOS-6.19** While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept only enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, and unmodified Tab, using logical UIKit characters ahead of suspect HID usage and forwarding exactly one CR (`0x0D`), apostrophe, double quote, Escape (`0x1B`), or Tab (`0x09`) for those transport corrections. An app-level shortcut shall win an exact chord collision. Shift-Return and every unmatched hardware key shall return to `UITerminalView` so Ghostty keybindings and IME behavior are unchanged, and an ineligible pane shall expose no transport-correction commands.
+**IOS-6.19** While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, unmodified Tab, and Ctrl+A through Ctrl+Z, using logical UIKit characters ahead of suspect HID usage. It shall forward the exact terminal text or ASCII control byte for each correction. An app-level shortcut shall win an exact chord collision. Shift-Return and every other unmatched hardware key shall return to `UITerminalView`, and an ineligible pane shall expose no transport corrections.
 
 ### IOS-7.x — Lifecycle
 
@@ -1570,7 +1580,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-11.x
 
-**IOS-11.1** When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
+**IOS-11.1** While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
 
 **IOS-11.2** When the user taps **Select** in the long-press menu, the application shall ask libghostty to word-select the cell under the long-press point by synthesizing a LEFT mouse-down/up pair plus a second click within libghostty's double-click window, and shall enter selection mode for that pane.
 
@@ -1586,7 +1596,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.8** When the user taps **Paste** in the long-press menu, the application shall read `UIPasteboard.general.string` and, when non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or absent clipboard string shall be a silent no-op.
 
-**IOS-11.9** `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. The single-byte LF→CR translation of `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
+**IOS-11.9** `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. Committed software Return normalization from `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
 
 **IOS-11.10** Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
 
@@ -1744,7 +1754,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
 
-**IPAD-9.9** The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish app-level Ghostty shortcuts as priority `UIKeyCommand`s for system arbitration and discoverability, and shall install itself as `UITerminalView`'s hardware-input delegate so the actual first responder dispatches the same enabled command candidates before Ghostty consumes raw presses. It shall also expose only the narrow Return/quote/Escape/Tab corrections required by `IOS-6.19`, synchronously request a UIKit menu-system rebuild whenever effective command metadata changes, and prefer an app-level shortcut on an exact correction-chord collision. Every unmatched terminal hardware key shall remain owned by `UITerminalView`.
+**IPAD-9.9** The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish app-level Ghostty shortcuts as priority `UIKeyCommand`s for system arbitration and discoverability, and shall install itself as `UITerminalView`'s hardware-input delegate so the actual first responder dispatches the same enabled command candidates before Ghostty consumes raw presses. It shall publish priority correction commands only for Return, quote, Escape, and Tab, handle Ctrl-letter corrections through the delegate without adding 26 discoverability commands, synchronously request a UIKit menu-system rebuild whenever effective command metadata changes, and prefer an app-level shortcut on an exact chord collision. Every other unmatched terminal hardware key shall remain owned by `UITerminalView`.
 
 **IPAD-9.10** Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
 
@@ -2158,7 +2168,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.2** When GrafttyMobile connects to a Mac that has a live direct Remote Mac connection, the application shall expose that Remote Mac's repositories and worktrees as depth-one rows whose repository aliases match across listing and creation routes.
 
-**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree, the application shall round-trip host presentation, repository, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
+**REMOTE-13.3** When a paired Mac or GrafttyMobile client manages a remote worktree or downstream Mac connection, the application shall round-trip host presentation, repository, connection status, reconnect, create, pull, open, delete, and acknowledgement requests over the authenticated worktree-management channel using opaque resource identifiers.
 
 **REMOTE-13.4** When a user selects a Remote Mac worktree, the application shall project the entire remote split tree with the original axes and ratios, rather than opening only the selected pane.
 
@@ -2199,6 +2209,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.22** A successful remote split shall return the exact created pane session through direct and relayed pane-control responses so rapid split focus never depends on coalesced snapshot leaf order.
 
 **REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
+
+**REMOTE-13.24** While GrafttyMobile views a paired Mac, the application shall show each saved downstream Mac's connection state and allow an unavailable downstream Mac to reconnect from the mobile list.
 
 ## URL — Worktree URL Handler
 

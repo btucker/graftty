@@ -6,7 +6,9 @@ import AppcastUpdater
 //
 //   appcast-updater \
 //     --feed <path/to/appcast.xml> \
-//     --version <X.Y.Z> \
+//     --version <numeric-build-version> \
+//     --short-version <human-readable-version> \
+//     [--channel prerelease] \
 //     --download-url <URL> \
 //     --length <BYTES> \
 //     --ed-signature <BASE64> \
@@ -24,6 +26,8 @@ func fail(_ msg: String) -> Never {
 struct Args {
     var feed: String?
     var version: String?
+    var shortVersion: String?
+    var channel: String?
     var downloadURL: String?
     var length: Int?
     var edSignature: String?
@@ -41,6 +45,8 @@ func parse(_ argv: [String]) -> Args {
         switch k {
         case "--feed": a.feed = v
         case "--version": a.version = v
+        case "--short-version": a.shortVersion = v
+        case "--channel": a.channel = v
         case "--download-url": a.downloadURL = v
         case "--length":
             guard let n = Int(v) else { fail("--length must be an integer") }
@@ -73,10 +79,11 @@ func readReleaseNotes(_ path: String?) -> String {
 let args = parse(CommandLine.arguments)
 guard let feed = args.feed,
       let version = args.version,
+      let shortVersion = args.shortVersion,
       let url = args.downloadURL,
       let length = args.length,
       let signature = args.edSignature else {
-    fail("required: --feed --version --download-url --length --ed-signature")
+    fail("required: --feed --version --short-version --download-url --length --ed-signature")
 }
 
 do {
@@ -85,6 +92,14 @@ do {
     fail("--ed-signature: \(why)")
 } catch {
     fail("--ed-signature: \(error)")
+}
+
+do {
+    try AppcastUpdater.validate(channel: args.channel)
+} catch AppcastUpdater.Error.malformedChannel(let why) {
+    fail("--channel: \(why)")
+} catch {
+    fail("--channel: \(error)")
 }
 
 // Distinguish "feed doesn't exist yet" (seed a fresh one) from "feed
@@ -102,7 +117,9 @@ if FileManager.default.fileExists(atPath: feed) {
     existing = nil
 }
 let item = AppcastItem(
-    version: version,
+    buildVersion: version,
+    displayVersion: shortVersion,
+    channel: args.channel,
     pubDate: Date(),
     minimumSystemVersion: args.minimumSystemVersion,
     releaseNotesMarkdown: readReleaseNotes(args.releaseNotesPath),

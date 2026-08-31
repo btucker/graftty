@@ -30,6 +30,11 @@ final class RemoteMacConnectionRegistry {
         let task: Task<Entry, Error>
     }
 
+    private struct DisconnectWork {
+        let entry: Entry?
+        let attempt: InFlightAttempt?
+    }
+
     struct Entry: Identifiable, Equatable, Sendable {
         let id: UUID
         let identity: RemoteMacIdentity
@@ -264,12 +269,12 @@ final class RemoteMacConnectionRegistry {
     }
 
     func disconnect(identity: RemoteMacIdentity) {
-        if let entry = entries.removeValue(forKey: identity) {
-            Task { await close(entry) }
-        }
-        if let attempt = inFlight.removeValue(forKey: identity) {
-            attempt.task.cancel()
-        }
+        let work = takeDisconnectWork(identity: identity)
+        Task { await finishDisconnect(work) }
+    }
+
+    func disconnectAndWait(identity: RemoteMacIdentity) async {
+        await finishDisconnect(takeDisconnectWork(identity: identity))
     }
 
     func disconnectAll() {
@@ -491,6 +496,24 @@ final class RemoteMacConnectionRegistry {
         await entry.connection.setOnStateChange(nil)
         await entry.paneEnvironment.close()
         await entry.connection.close()
+    }
+
+    private func takeDisconnectWork(
+        identity: RemoteMacIdentity
+    ) -> DisconnectWork {
+        let entry = entries.removeValue(forKey: identity)
+        let attempt = inFlight.removeValue(forKey: identity)
+        attempt?.task.cancel()
+        return DisconnectWork(entry: entry, attempt: attempt)
+    }
+
+    private func finishDisconnect(_ work: DisconnectWork) async {
+        if let attempt = work.attempt {
+            _ = try? await attempt.task.value
+        }
+        if let entry = work.entry {
+            await close(entry)
+        }
     }
 
     private static func defaultClientDeviceID() -> RemoteDeviceID {

@@ -110,15 +110,17 @@ final class RemoteMacsModel: ObservableObject {
                     from: candidate,
                     existing: remoteMac
                 )
-                do {
-                    try store.add(refreshed)
-                } catch {
-                    NSLog(
-                        "[Graftty] failed to reconcile discovered remote Mac after load: %@",
-                        String(describing: error)
-                    )
+                if refreshed != remoteMac {
+                    do {
+                        try store.add(refreshed)
+                    } catch {
+                        NSLog(
+                            "[Graftty] failed to reconcile discovered remote Mac after load: %@",
+                            String(describing: error)
+                        )
+                    }
                 }
-                connectionStates[identity] = .discovered
+                markDiscoveredIfIdle(identity)
             } else {
                 connectionStates[identity] = connectionStates[identity] ?? .offline
             }
@@ -130,17 +132,98 @@ final class RemoteMacsModel: ObservableObject {
         connectionStates[identity] ?? .offline
     }
 
+    func remoteMacConnectionSummaries() async
+        -> [RemoteMacConnectionSummary] {
+        await loadSavedRemotes()
+        return savedRemoteMacs.map { remoteMac in
+            let state = connectionState(for: RemoteMacIdentity(remoteMac))
+            return RemoteMacConnectionSummary(
+                deviceID: remoteMac.id,
+                fingerprint: remoteMac.fingerprint,
+                label: remoteMac.label,
+                lastKnownHost: remoteMac.lastKnownBaseURL?.host,
+                state: RemoteMacConnectionSummary.State(state)
+            )
+        }
+    }
+
+    func reconnectRemoteMac(
+        deviceID: RemoteDeviceID,
+        fingerprint: RemoteIdentityFingerprint
+    ) async -> WorktreeManagementResponse {
+        await loadSavedRemotes()
+        guard let remoteMac = savedRemoteMacs.first(where: {
+            $0.id == deviceID && $0.fingerprint == fingerprint
+        }) else {
+            return .error(
+                code: "not-found",
+                message: "This Remote Mac is no longer saved on the connected Mac.",
+                forceAllowed: false,
+                shortStatus: nil
+            )
+        }
+
+        let identity = RemoteMacIdentity(remoteMac)
+        switch connectionState(for: identity) {
+        case .connecting:
+            return .ok
+        case .needsPairing:
+            return .error(
+                code: "pairing-required",
+                message: "Pair \(remoteMac.label) again on the connected Mac.",
+                forceAllowed: false,
+                shortStatus: nil
+            )
+        case .offline, .discovered, .connected, .failed:
+            prepareForExplicitReconnect(identity: identity)
+        }
+
+        let attempt = connectionTask(
+            to: remoteMac,
+            disconnectExistingFirst: true
+        )
+        Task {
+            do {
+                _ = try await attempt.value
+            } catch is CancellationError {
+                return
+            } catch {
+                NSLog(
+                    "[Graftty] mobile-requested reconnect to %@ failed: %@",
+                    remoteMac.label,
+                    String(describing: error)
+                )
+            }
+        }
+        return .ok
+    }
+
     @discardableResult
     func connect(to remoteMac: RemoteMac) async throws -> RemoteMacConnectionRegistry.Entry {
+        try await connectionTask(to: remoteMac).value
+    }
+
+    private func connectionTask(
+        to remoteMac: RemoteMac,
+        disconnectExistingFirst: Bool = false
+    ) -> Task<RemoteMacConnectionRegistry.Entry, Error> {
         let identity = RemoteMacIdentity(remoteMac)
         if let pending = connectAttempts[identity] {
-            return try await pending.task.value
+            return pending.task
         }
         let attemptID = UUID()
         connectAttemptIDs[identity] = attemptID
         connectionStates[identity] = .connecting
+        let registry = connectionRegistry
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
+            if disconnectExistingFirst {
+                await registry.disconnectAndWait(identity: identity)
+                try Task.checkCancellation()
+                guard self.connectAttemptIDs[identity] == attemptID else {
+                    throw CancellationError()
+                }
+            }
             return try await self.performConnect(
                 to: remoteMac,
                 identity: identity,
@@ -148,7 +231,15 @@ final class RemoteMacsModel: ObservableObject {
             )
         }
         connectAttempts[identity] = ConnectAttempt(id: attemptID, task: task)
-        return try await task.value
+        return task
+    }
+
+    private func prepareForExplicitReconnect(identity: RemoteMacIdentity) {
+        invalidatePaneControlQueue(for: identity)
+        worktreePanesByRemote[identity] = nil
+        repositoriesByRemote[identity] = nil
+        resetNotificationSnapshot(for: identity)
+        refreshRelayRoutes()
     }
 
     private func performConnect(
@@ -536,7 +627,8 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
-        case .hostPresentation:
+        case .hostPresentation, .listRemoteMacConnections,
+             .connectRemoteMac:
             return nil
 
         case .listRepositories:
@@ -905,6 +997,10 @@ final class RemoteMacsModel: ObservableObject {
         let refreshed = GrafttyBonjourBrowser.remoteMac(from: candidate, existing: existing)
         try store.add(refreshed)
         savedRemoteMacs = store.remoteMacs
+        markDiscoveredIfIdle(identity)
+    }
+
+    private func markDiscoveredIfIdle(_ identity: RemoteMacIdentity) {
         // Rediscovery (Bonjour TTL refresh) must not downgrade a live
         // connection back to `.discovered`; only note reachability when the
         // remote is otherwise idle.
@@ -974,6 +1070,19 @@ final class RemoteMacsModel: ObservableObject {
         discoveryCandidates.removeAll()
         for identity in removedIdentities where connectionState(for: identity) == .discovered {
             connectionStates[identity] = .offline
+        }
+    }
+}
+
+private extension RemoteMacConnectionSummary.State {
+    init(_ state: RemoteMacConnectionState) {
+        switch state {
+        case .offline: self = .offline
+        case .discovered: self = .discovered
+        case .connecting: self = .connecting
+        case .connected: self = .connected
+        case .failed: self = .failed
+        case .needsPairing: self = .needsPairing
         }
     }
 }

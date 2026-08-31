@@ -1073,6 +1073,7 @@ struct GrafttyApp: App {
         Settings {
             TabView {
                 SettingsView(
+                    updaterController: updaterController,
                     onRestartZMX: { restartZMXWithConfirmation() },
                     editorPreference: terminalManager.editorPreference
                 )
@@ -2515,6 +2516,18 @@ struct GrafttyApp: App {
                     let remote = await services.remoteMacsModel
                         .promotedRepositoriesForRelay()
                     return .repositories(local + remote)
+
+                case .listRemoteMacConnections:
+                    return .remoteMacConnections(
+                        await services.remoteMacsModel
+                            .remoteMacConnectionSummaries()
+                    )
+
+                case let .connectRemoteMac(deviceID, fingerprint):
+                    return await services.remoteMacsModel.reconnectRemoteMac(
+                        deviceID: deviceID,
+                        fingerprint: fingerprint
+                    )
 
                 case let .create(
                     repositoryID,
@@ -5651,7 +5664,8 @@ struct GrafttyApp: App {
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .hostPresentation, .listRepositories:
+        case .hostPresentation, .listRepositories,
+             .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID):
