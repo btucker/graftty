@@ -232,6 +232,28 @@ struct SessionClientTests {
         #expect(client.renderPace == .full)
     }
 
+    @Test("""
+@spec IOS-7.6: When a mobile terminal channel is replaced after its mounted terminal has received output, the application shall cancel unfinished VT parsing and reset the retained terminal before applying the replacement zmx attach's first replay bytes, so the replay replaces the existing screen and scrollback instead of appending a duplicate copy.
+""")
+    func replacementTransportReplayResetsRetainedTerminalExactlyOnce() {
+        var replay = RetainedTerminalReplay()
+        let initialReplay = Data("first replay".utf8)
+        let liveTail = Data(" live tail".utf8)
+        let replacementReplay = Data("replacement replay".utf8)
+
+        replay.transportDidOpen()
+        #expect(replay.prepare(initialReplay) == initialReplay)
+        #expect(replay.prepare(liveTail) == liveTail)
+
+        replay.transportDidOpen()
+        #expect(replay.prepare(Data()).isEmpty)
+        #expect(
+            replay.prepare(replacementReplay)
+                == RetainedTerminalReplay.resetSequence + replacementReplay
+        )
+        #expect(replay.prepare(liveTail) == liveTail)
+    }
+
     @Test("a cancelled pre-background dial cannot attach after resume")
     func staleDialIsRejectedAfterResume() async throws {
         let first = FakeWS()
