@@ -7,6 +7,40 @@ import GrafttyRemoteClient
 import Observation
 import UIKit
 
+/// @spec IOS-7.6
+/// When a mobile terminal channel is replaced after its mounted terminal has received output, the application shall cancel unfinished VT parsing and reset the retained terminal before applying the replacement zmx attach's first replay bytes, so the replay replaces the existing screen and scrollback instead of appending a duplicate copy.
+struct RetainedTerminalReplay {
+    /// CAN returns Ghostty's VT parser to its ground state even when the old
+    /// transport ended inside an OSC, DCS, or partial CSI. RIS then invokes
+    /// Ghostty's full reset, which returns to the primary screen and clears the
+    /// screen, scrollback, modes, cursor state, title, and working directory.
+    /// `prepare(_:)` prefixes both control sequences to the replay in one
+    /// receive call, so the in-memory terminal's serial output queue cannot
+    /// interleave them.
+    static let resetSequence = Data([0x18, 0x1B, 0x63])
+
+    private var terminalHasOutput = false
+    private var resetBeforeNextPayload = false
+
+    mutating func transportDidOpen() {
+        resetBeforeNextPayload = terminalHasOutput
+    }
+
+    mutating func prepare(_ payload: Data) -> Data {
+        guard !payload.isEmpty else { return payload }
+
+        let needsReset = resetBeforeNextPayload
+        terminalHasOutput = true
+        resetBeforeNextPayload = false
+        guard needsReset else { return payload }
+
+        var replacement = Data(capacity: Self.resetSequence.count + payload.count)
+        replacement.append(Self.resetSequence)
+        replacement.append(payload)
+        return replacement
+    }
+}
+
 /// Owns one WebSocket + one libghostty InMemoryTerminalSession. Wires
 /// terminal-input → takeover/queued binary WS out; binary WS in → terminal.receive;
 /// server-announced ownership/grid → `authoritativeGrid` (observable, for sizing);
@@ -90,6 +124,12 @@ public final class SessionClient {
     /// background-to-foreground resume.
     @ObservationIgnored
     private var transportGeneration: UInt64 = 0
+    /// A new zmx attach always begins with a complete VT replay. Track transport
+    /// replacement separately from `transportGeneration`: automatic backoff
+    /// reconnects reuse the same generation, while suspend/resume starts a new
+    /// one. Both must replace the retained terminal's prior state.
+    @ObservationIgnored
+    private var terminalReplay = RetainedTerminalReplay()
     /// Last (cols, rows) libghostty reported for the iOS-side view.
     /// Sent with hello/takeover and, while owner, owner resize.
     /// `@ObservationIgnored` — hot-path bookkeeping written on every
@@ -377,7 +417,7 @@ public final class SessionClient {
                         self.recordActivity()
                         switch frame {
                         case .binary(let data):
-                            self.session.receive(data)
+                            self.session.receive(self.terminalReplay.prepare(data))
                         case .text(let text):
                             self.handleTextFrame(text)
                         }
@@ -456,6 +496,7 @@ public final class SessionClient {
                 self.legacyEngaged = false
                 self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
+                self.terminalReplay.transportDidOpen()
                 self.setWS(client)
                 await self.sendHelloIfSupported(on: client)
                 guard self.isCurrentTransport(generation) else {

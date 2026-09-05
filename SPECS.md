@@ -1542,6 +1542,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.5** When the host reports that a live terminal process reached EOF, the iPad application shall mark that pane ended and shall not reconnect its terminal channel. Clean process exit is distinct from the retryable authenticated-channel failures in `IOS-7.4`; reattaching after EOF can recreate the zmx session before the host removes the pane from its authoritative split tree.
 
+**IOS-7.6** When a mobile terminal channel is replaced after its mounted terminal has received output, the application shall cancel unfinished VT parsing and reset the retained terminal before applying the replacement zmx attach's first replay bytes, so the replay replaces the existing screen and scrollback instead of appending a duplicate copy.
+
 ### IOS-8.x — Non-goals (recorded for future specs)
 
 **IOS-8.1** The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
