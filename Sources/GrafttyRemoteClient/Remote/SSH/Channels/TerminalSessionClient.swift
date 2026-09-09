@@ -52,7 +52,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private let sessionName: String
     private let lock = NIOLock()
     private var childChannel: Channel?
-    private var receiveBuffer: [WebSocketFrame] = []
+    private var receiveBuffer = TerminalReceiveBuffer()
     private var pendingReceivers: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var didFailReceive: (any Error)?
     private var closed = false
@@ -143,8 +143,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WebSocketFrame, Error>) in
             lock.withLock {
-                if !receiveBuffer.isEmpty {
-                    let next = receiveBuffer.removeFirst()
+                if let next = receiveBuffer.popFirst() {
                     cont.resume(returning: next)
                     return
                 }
@@ -284,11 +283,11 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     private func deliverInbound(_ frame: WebSocketFrame) {
         lock.withLock {
-            if let next = pendingReceivers.first {
+            receiveBuffer.append(frame)
+            while let next = pendingReceivers.first,
+                  let output = receiveBuffer.popFirst() {
                 pendingReceivers.removeFirst()
-                next.resume(returning: frame)
-            } else {
-                receiveBuffer.append(frame)
+                next.resume(returning: output)
             }
         }
     }
