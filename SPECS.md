@@ -2100,6 +2100,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.8** Production native connections shall reject the protocol-v1 signaling route and shall use the paired identity keys on both LAN and Tailscale.
 
+**REMOTE-2.9** When preparing a LAN wake packet, the application shall encode six FF bytes followed by sixteen repetitions of a valid unicast hardware address and reject malformed, zero, or multicast addresses.
+
+**REMOTE-2.10** If a host supplies wake addresses, then the client shall use them only after verifying a signature binding those addresses to the paired host identity.
+
+**REMOTE-2.11** When a Mac client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
+
+**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the Mac client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
+
+**REMOTE-2.13** When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.
+
+**REMOTE-2.14** When a paired host supplies verified wake addresses, the client shall retain them across launches, while existing saved hosts without wake metadata shall continue to decode.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

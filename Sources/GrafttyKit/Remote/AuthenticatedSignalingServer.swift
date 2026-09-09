@@ -34,6 +34,7 @@ public actor AuthenticatedSignalingServer {
     private let peerStore: TrustedPeerStore
     private let hostDeviceID: RemoteDeviceID
     private let routesProvider: @Sendable () -> [RemoteConnectionRoute]
+    private let wakeTargetsProvider: @Sendable () -> [WakeOnLANTarget]
     private let now: @Sendable () -> Date
     private let challengeLifetime: TimeInterval
     private let acceptedOfferLifetime: TimeInterval
@@ -47,6 +48,7 @@ public actor AuthenticatedSignalingServer {
         peerStore: TrustedPeerStore,
         hostDeviceID: RemoteDeviceID,
         routesProvider: @escaping @Sendable () -> [RemoteConnectionRoute],
+        wakeTargetsProvider: @escaping @Sendable () -> [WakeOnLANTarget] = { HostWakeOnLAN.targets() },
         now: @escaping @Sendable () -> Date = { Date() },
         challengeLifetime: TimeInterval = 15,
         acceptedOfferLifetime: TimeInterval = 60,
@@ -56,6 +58,7 @@ public actor AuthenticatedSignalingServer {
         self.peerStore = peerStore
         self.hostDeviceID = hostDeviceID
         self.routesProvider = routesProvider
+        self.wakeTargetsProvider = wakeTargetsProvider
         self.now = now
         self.challengeLifetime = challengeLifetime
         self.acceptedOfferLifetime = acceptedOfferLifetime
@@ -186,11 +189,16 @@ public actor AuthenticatedSignalingServer {
         }
         do {
             let signingKey = try identityStore.loadOrGenerateAndPersist()
+            let targets = wakeTargetsProvider()
+            let wakeOnLAN = targets.isEmpty ? nil : try WakeOnLANAdvertisement(
+                hostDeviceID: hostDeviceID, targets: targets, signingKey: signingKey
+            )
             let answer = try AuthenticatedSignalingAnswer(
                 offer: verified.offer,
                 sdp: sdp,
                 routes: Self.canonicalRoutes(routesProvider()),
-                signingKey: signingKey
+                signingKey: signingKey,
+                wakeOnLAN: wakeOnLAN
             )
             record.answer = answer
             record.retentionDeadline = now().addingTimeInterval(acceptedOfferLifetime)
