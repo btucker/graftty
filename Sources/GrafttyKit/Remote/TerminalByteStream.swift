@@ -1,10 +1,11 @@
 import Foundation
+import GrafttyProtocol
 
 /// Duplex byte stream for a single terminal session. The Mac-side
 /// SSH `terminal` channel (`TerminalSessionHandler`) attaches one of
 /// these per session via an injected `Factory` callback. Production
 /// wires `Factory` to `zmx attach`; tests pass a fake.
-public protocol TerminalByteStream: Sendable {
+public protocol TerminalIO: Sendable {
     /// True only when this stream's process can read this Mac's clipboard.
     /// Relays to another machine must not replace the intermediary clipboard.
     var usesHostClipboard: Bool { get }
@@ -13,13 +14,9 @@ public protocol TerminalByteStream: Sendable {
     /// client).
     func send(_ bytes: Data) async throws
 
-    /// Stream of bytes from the underlying PTY (terminal output).
-    /// Terminates when the PTY closes.
-    var inboundBytes: AsyncStream<Data> { get }
-
     /// Stop the stream and release any underlying resources (e.g.
     /// terminate the zmx attach process). Conformers **must** finish
-    /// the `inboundBytes` `AsyncStream` continuation before returning —
+    /// their output stream's continuation before returning —
     /// callers rely on this to exit their `for await` loop and reclaim
     /// the outbound forwarding task. A conformer that releases
     /// resources without calling `continuation.finish()` synchronously
@@ -33,10 +30,24 @@ public protocol TerminalByteStream: Sendable {
     func resize(cols: Int, rows: Int) async
 }
 
-public extension TerminalByteStream {
+public extension TerminalIO {
     var usesHostClipboard: Bool { false }
     func resize(cols: Int, rows: Int) async {}
 }
+
+public protocol TerminalByteStream: TerminalIO {
+    /// Stream of bytes from the underlying PTY. Ends when the attachment closes.
+    var inboundBytes: AsyncStream<Data> { get }
+}
+
+public protocol PagedTerminalStream: TerminalIO {
+    /// Checkpoints, pages and live bytes in their original attachment order.
+    var events: AsyncStream<PagedTerminalEvent> { get }
+    func requestHistory(_ request: PagedTerminalHistoryRequest) async throws
+    func requestCheckpoint() async throws
+}
+
+public typealias PagedTerminalStreamFactory = @Sendable (String) async throws -> any PagedTerminalStream
 
 /// Factory the channel handler uses to obtain a stream for a given
 /// session name.

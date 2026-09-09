@@ -165,6 +165,7 @@ struct TerminalSelectionControllerTests {
         #expect(selected.contains("second line"))
 
         controller.cancel()
+        #expect(surface.readSelection() == nil, "Cancel must clear the native highlight")
         session.receive("\r\n" + (0..<80).map { "history \($0)" }.joined(separator: "\r\n"))
         for _ in 0..<100 where session.readViewportText()?.contains("history 79") != true {
             try await Task.sleep(for: .milliseconds(10))

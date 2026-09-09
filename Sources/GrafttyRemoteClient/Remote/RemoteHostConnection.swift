@@ -383,12 +383,23 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// Open a new SSH terminal session over the established connection.
     /// Throws `ConnectionError.notConnected` if the SSH handshake has not
     /// completed yet (i.e. `applyAnswer` has not returned successfully).
-    public func openTerminalSession(sessionName: String) async throws -> TerminalSessionClient {
+    public func openTerminalSession(sessionName: String, preferPaged: Bool = false) async throws -> TerminalSessionClient {
         guard
             let transport = sshTransport,
             let box = sshHandlerBox
         else {
             throw ConnectionError.notConnected
+        }
+        if preferPaged {
+            let paged = TerminalSessionClient(
+                parentChannel: transport.channel, parentHandler: box.handler, sessionName: sessionName
+            )
+            do {
+                try await paged.connect(paged: true)
+                return paged
+            } catch TerminalSessionClient.ClientError.pagingUnsupported {
+                paged.close()
+            }
         }
         let client = TerminalSessionClient(
             parentChannel: transport.channel,

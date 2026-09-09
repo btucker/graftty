@@ -290,6 +290,39 @@ final class GhosttyApp {
             return box.handler(target, action)
         }
 
+        #if GRAFTTY_PAGED_HISTORY
+        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, listOnly in
+            guard let userdata, let state, let mimes,
+                  UnsafeBufferPointer(start: mimes, count: count).contains(where: {
+                      $0.map { String(cString: $0) == "text/plain" } ?? false
+                  }) else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
+            let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
+            let terminalID = box.terminalID
+            let manager = box.terminalManager
+            DispatchQueue.main.async {
+                guard let handle = manager?.handle(for: terminalID) else { return }
+                handle.reclaimDisplayControlForPasteIfNeeded()
+                let text = pasteboardForClipboard(clipboardEnum).string(forType: .string) ?? ""
+                "text/plain".withCString { mime in
+                    text.withCString { data in
+                        var content = ghostty_clipboard_content_s(mime: mime, data: data, len: text.utf8.count)
+                        withUnsafePointer(to: &content) { contents in
+                            let types: [UnsafePointer<CChar>?] = [mime]
+                            types.withUnsafeBufferPointer { available in
+                                var completion = ghostty_clipboard_complete_s(
+                                    contents: listOnly ? nil : contents, contents_len: listOnly ? 0 : 1,
+                                    available: available.baseAddress, available_len: available.count,
+                                    confirmed: false, remember: false
+                                )
+                                ghostty_surface_complete_clipboard_request(handle.surface, &completion, state)
+                            }
+                        }
+                    }
+                }
+            }
+            return GHOSTTY_CLIPBOARD_READ_STARTED
+        }
+        #else
         rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state -> Bool in
             // Surface requested a clipboard read (e.g., Cmd+V). The first
             // `userdata` here is the *surface's* userdata box — the same
@@ -318,6 +351,7 @@ final class GhosttyApp {
             }
             return true
         }
+        #endif
         rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in
             // OSC 52 clipboard-read confirmation. Security-sensitive — no-op
             // until we build a proper confirmation prompt. Terminals that
@@ -337,7 +371,13 @@ final class GhosttyApp {
                 // clipboard formats libghostty exposes today; decoding as
                 // UTF-8 covers every real-world copy path.
                 if let dataPtr = entry.data {
+                    #if GRAFTTY_PAGED_HISTORY
+                    guard let mime = entry.mime, String(cString: mime) == "text/plain" else { continue }
+                    let bytes = UnsafeRawPointer(dataPtr).assumingMemoryBound(to: UInt8.self)
+                    plainText = String(decoding: UnsafeBufferPointer(start: bytes, count: entry.len), as: UTF8.self)
+                    #else
                     plainText = String(cString: dataPtr)
+                    #endif
                     break
                 }
             }

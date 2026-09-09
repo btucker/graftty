@@ -5,6 +5,7 @@ import Testing
 import UIKit
 @testable import GrafttyMobileKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 @Suite
 @MainActor
@@ -65,6 +66,8 @@ struct SessionClientTests {
     }
 
     final class DelayedReceiveWS: WebSocketClient, @unchecked Sendable {
+        let supportsPagedHistory: Bool
+        init(paged: Bool = false) { supportsPagedHistory = paged }
         private let lock = NSLock()
         private var _sent: [WebSocketFrame] = []
         private var receiveContinuation: CheckedContinuation<WebSocketFrame, any Error>?
@@ -253,6 +256,104 @@ struct SessionClientTests {
                 == RetainedTerminalReplay.resetSequence + replacementReplay
         )
         #expect(replay.prepare(liveTail) == liveTail)
+    }
+
+    @Test("A legacy attachment replaces a previously imported paged snapshot")
+    func legacyReplayAfterPagedSnapshotResets() {
+        var replay = RetainedTerminalReplay()
+        replay.transportDidOpen()
+        replay.snapshotDidInstall()
+        replay.transportDidOpen()
+        let payload = Data("legacy replay".utf8)
+        #expect(replay.prepare(payload) == RetainedTerminalReplay.resetSequence + payload)
+        #expect(replay.prepare(payload) == payload)
+    }
+
+    final class PagingRenderer: PagedTerminalRenderer {
+        var installed: [UInt64] = []
+        var generations: [UInt64] = []
+        var nearTop = false
+        var pages = 0
+        var holdResize = false
+        var resizeContinuation: CheckedContinuation<Void, Never>?
+        var resized: [SessionClient.GridSize] = []
+        func resize(cols: UInt16, rows: UInt16) async throws {
+            if holdResize { await withCheckedContinuation { resizeContinuation = $0 } }
+            resized.append(.init(cols: cols, rows: rows))
+        }
+        func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+            installed.append(checkpoint.id)
+            generations.append(generation)
+        }
+        func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {
+            pages += 1
+            return .applied
+        }
+        func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+    }
+
+    @Test("@spec IOS-7.7: When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.")
+    func pagedScreenLiveInputAndReconnect() async throws {
+        let first = DelayedReceiveWS(paged: true)
+        let second = DelayedReceiveWS(paged: true)
+        let sequence = WebSocketSequence([first, second])
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() }, pagedRenderer: renderer)
+        let retainedSession = client.session
+        client.start()
+        defer {
+            client.stop()
+            first.fail(CancellationError())
+            second.fail(CancellationError())
+        }
+        try await waitUntil("initial paged receive") { first.receiveCalls == 1 }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 120, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)
+        first.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("installed current screen") { renderer.installed == [1] && first.receiveCalls == 2 }
+        #expect(client.paging?.status == .available)
+        #expect(first.sent.compactMap { frame -> PagedTerminalEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? PagedTerminalEnvelope.parse(text)
+        }.isEmpty)
+        renderer.nearTop = true
+        await client.paging?.loadIfNeeded()
+        #expect(client.paging?.status == .loading)
+
+        renderer.holdResize = true
+        first.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 100, rows: 30)).encoded()))
+        try await waitUntil("ordered resize to reach the renderer") { renderer.resizeContinuation != nil }
+        #expect(first.receiveCalls == 2)
+        renderer.resizeContinuation?.resume()
+        try await waitUntil("resize applied before reading subsequent output") { first.receiveCalls == 3 }
+        #expect(client.snapshotCanvasGrid == .init(cols: 100, rows: 30))
+        #expect(renderer.resized == [.init(cols: 100, rows: 30)])
+        first.deliver(.binary(Data("live output while history withheld".utf8)))
+        try await waitUntil("live output consumed without a history reply") { first.receiveCalls == 4 }
+        let hello = try #require(first.sent.compactMap { frame -> WebControlEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? WebControlEnvelope.parse(Data(text.utf8))
+        }.first)
+        guard case .hello(let clientID, _, _, _, _, _) = hello else {
+            Issue.record("Expected hello"); return
+        }
+        let ownership = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 120, rows: 24)
+        client.handleTextFrame(WebControlEnvelope.ownership(ownership).encoded())
+        client.session.sendInput(Data("input".utf8))
+        try await waitUntil("input forwarded while history remains pending") {
+            first.sent.contains(.binary(Data("input".utf8)))
+        }
+        #expect(renderer.pages == 0)
+        #expect(client.paging?.status == .loading)
+        client.suspend()
+        renderer.nearTop = false
+        client.resume()
+        try await waitUntil("replacement paged receive") { second.receiveCalls == 1 }
+        second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("replacement checkpoint") { renderer.installed == [1, 1] }
+        #expect(client.session === retainedSession)
+        #expect(renderer.generations[1] > renderer.generations[0])
+        #expect(client.paging?.status == .available)
     }
 
     @Test("a cancelled pre-background dial cannot attach after resume")

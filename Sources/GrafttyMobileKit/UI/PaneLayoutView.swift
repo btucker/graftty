@@ -138,7 +138,7 @@ private struct PaneTile: View {
                     .background(.ultraThinMaterial)
             }
             .task(id: SizingKey(width: width, cols: client.authoritativeGrid?.cols, baseConfig: baseConfig)) {
-                resizeController(tileWidth: width, authoritativeCols: client.authoritativeGrid?.cols)
+                resizeController(tileWidth: width, authoritativeCols: client.snapshotCanvasGrid == nil ? client.authoritativeGrid?.cols : nil)
             }
         }
     }
@@ -158,6 +158,7 @@ private struct PaneTile: View {
             TerminalPaneView(
                 session: client.session,
                 controller: controller,
+                authoritativeGrid: client.snapshotCanvasGrid,
                 renderPace: client.renderPace,
                 onUserInteraction: { [weak client] in client?.wakeRenderer() },
                 preferredInterfaceStyle: preferredInterfaceStyle

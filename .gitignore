@@ -19,3 +19,6 @@ __pycache__/
 # iOS CI build/dependency cache dirs (see .github/workflows/ci.yml)
 .derivedData/
 .spm/
+
+# Reproducible local Ghostty renderer package.
+.dependencies/

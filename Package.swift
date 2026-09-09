@@ -1,6 +1,24 @@
 // swift-tools-version: 5.10
 
 import PackageDescription
+import Foundation
+
+// Allows the snapshot-enabled renderer to be built and tested from its
+// reproducible local package before publishing the binary dependency.
+let localGhosttyPath: String? = {
+    if let path = ProcessInfo.processInfo.environment["GRAFTTY_GHOSTTY_PACKAGE_PATH"] {
+        return path.isEmpty ? nil : path
+    }
+    let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .appendingPathComponent(".dependencies/libghostty-spm").path
+    return FileManager.default.fileExists(atPath: path + "/Package.swift") ? path : nil
+}()
+let ghosttyDependency: Package.Dependency = {
+    if let path = localGhosttyPath {
+        return .package(name: "libghostty-spm", path: path)
+    }
+    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "52a84d611b1442dbeffa972b37022346a8a32ec6")
+}()
 
 // CI runs `swift build` / `swift test` which default to the debug
 // configuration; matching that here means warnings fail the local
@@ -9,7 +27,7 @@ import PackageDescription
 // warnings don't block shipping.
 let strictWarnings: [SwiftSetting] = [
     .unsafeFlags(["-warnings-as-errors"], .when(configuration: .debug)),
-]
+] + (localGhosttyPath == nil ? [] : [.define("GRAFTTY_PAGED_HISTORY")])
 
 let package = Package(
     name: "Graftty",
@@ -32,7 +50,7 @@ let package = Package(
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/btucker/libghostty-spm.git", branch: "expose-selection-api"),
+        ghosttyDependency,
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),

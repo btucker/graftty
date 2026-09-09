@@ -26,6 +26,11 @@ struct RetainedTerminalReplay {
         resetBeforeNextPayload = terminalHasOutput
     }
 
+    mutating func snapshotDidInstall() {
+        terminalHasOutput = true
+        resetBeforeNextPayload = false
+    }
+
     mutating func prepare(_ payload: Data) -> Data {
         guard !payload.isEmpty else { return payload }
 
@@ -64,6 +69,18 @@ public final class SessionClient {
 
     public let sessionName: String
     public let session: InMemoryTerminalSession
+    public private(set) var paging: PagedTerminalCoordinator?
+    private var historyPollTask: Task<Void, Never>?
+    private var installingCheckpointGrid: GridSize?
+    private var snapshotGrid: GridSize?
+    private var usesPagedHistory = false
+    private var hasPagedCheckpoint = false
+
+    /// A follower renders the daemon's logical grid on a fitted canvas.
+    /// Owners return to the physical viewport after importing the checkpoint.
+    public var snapshotCanvasGrid: GridSize? {
+        installingCheckpointGrid ?? (isOwner ? nil : snapshotGrid)
+    }
 
     /// Legacy server grid fallback. Ownership snapshots are authoritative
     /// once received; `.grid` remains a soft fallback while connecting to
@@ -73,6 +90,7 @@ public final class SessionClient {
     public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
 
     public var authoritativeGrid: GridSize? {
+        if let installingCheckpointGrid { return installingCheckpointGrid }
         if let grid = ownershipSnapshot?.grid {
             return GridSize(cols: grid.cols, rows: grid.rows)
         }
@@ -299,7 +317,8 @@ public final class SessionClient {
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
         role: Role = .fullscreen,
-        reclaimControlOnOwnerlessConnect: Bool = false
+        reclaimControlOnOwnerlessConnect: Bool = false,
+        pagedRenderer: (any PagedTerminalRenderer)? = nil
     ) {
         self.sessionName = sessionName
         self.webSocketFactory = webSocketFactory
@@ -343,6 +362,17 @@ public final class SessionClient {
                 self?.handleViewport(viewport)
             }
         }
+        paging = PagedTerminalCoordinator(
+            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session) { [weak self] cols, rows in
+                self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
+            },
+            send: { [weak self] request in
+                guard let self, self.usesPagedHistory, let ws = self.currentWS() else {
+                    throw URLError(.notConnectedToInternet)
+                }
+                try await ws.send(.text(PagedTerminalEnvelope(request: request).encoded()))
+            }
+        )
     }
 
     @MainActor
@@ -350,7 +380,6 @@ public final class SessionClient {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
-        lastIOSViewport = (cols, rows)
         // Skip zero values (pre-lifecycle ticks) and same-value writes —
         // `onResize` fires per layout frame during keyboard/rotation
         // animations, and an unchanged `cellWidthPoints` write would
@@ -359,6 +388,8 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
+        guard snapshotCanvasGrid == nil else { return }
+        lastIOSViewport = (cols, rows)
         switch ownershipTransportMode {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
@@ -392,6 +423,7 @@ public final class SessionClient {
     }
 
     private func startTransport() {
+        stopHistoryPaging()
         resetImagePaste()
         transportGeneration &+= 1
         let generation = transportGeneration
@@ -435,9 +467,28 @@ public final class SessionClient {
                         self.recordActivity()
                         switch frame {
                         case .binary(let data):
-                            self.session.receive(self.terminalReplay.prepare(data))
+                            guard !self.usesPagedHistory || self.hasPagedCheckpoint else {
+                                throw URLError(.badServerResponse)
+                            }
+                            if !self.usesPagedHistory { self.snapshotGrid = nil }
+                            self.session.receive(self.usesPagedHistory ? data : self.terminalReplay.prepare(data))
                         case .text(let text):
-                            self.handleTextFrame(text)
+                            if self.usesPagedHistory,
+                               let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
+                                try await self.paging?.handle(event)
+                                guard self.isCurrentTransport(generation) else { return }
+                                if case .checkpoint(let checkpoint) = event {
+                                    self.hasPagedCheckpoint = true
+                                    self.terminalReplay.snapshotDidInstall()
+                                    self.snapshotGrid = GridSize(cols: checkpoint.cols, rows: checkpoint.rows)
+                                }
+                                if case .grid(let cols, let rows) = event {
+                                    self.snapshotGrid = GridSize(cols: cols, rows: rows)
+                                }
+                                self.installingCheckpointGrid = nil
+                            } else {
+                                self.handleTextFrame(text)
+                            }
                         }
                     }
                 } catch is CancellationError {
@@ -448,6 +499,7 @@ public final class SessionClient {
                     // stale process EOF must not end the resumed client.
                     guard self.isCurrentTransport(generation) else { return }
                     self.resetImagePaste()
+                    self.stopHistoryPaging()
                     if Self.isTerminalSessionEnded(error) {
                         // Process EOF is final for this pane. Retrying an SSH
                         // `zmx attach` here can recreate the exited session
@@ -517,7 +569,10 @@ public final class SessionClient {
                 self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.terminalReplay.transportDidOpen()
+                self.usesPagedHistory = client.supportsPagedHistory
+                self.hasPagedCheckpoint = false
                 self.setWS(client)
+                if self.usesPagedHistory { self.startHistoryPaging() }
                 await self.sendHelloIfSupported(on: client)
                 guard self.isCurrentTransport(generation) else {
                     client.close()
@@ -881,6 +936,7 @@ public final class SessionClient {
     public func suspend() {
         guard !stopped else { return }
         stopped = true
+        stopHistoryPaging()
         resetImagePaste()
         transportGeneration &+= 1
         receiveTask?.cancel()
@@ -895,6 +951,27 @@ public final class SessionClient {
         setWS(nil)
         ownershipTransportMode = .pending
         ownershipSnapshot = nil
+    }
+
+    private func startHistoryPaging() {
+        historyPollTask?.cancel()
+        historyPollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                guard let self, !self.stopped else { return }
+                // Preview tiles never prefetch a terminal's old history.
+                if self.role != .preview { await self.paging?.loadIfNeeded() }
+            }
+        }
+    }
+
+    private func stopHistoryPaging() {
+        historyPollTask?.cancel()
+        historyPollTask = nil
+        paging?.disconnect()
+        usesPagedHistory = false
+        hasPagedCheckpoint = false
+        installingCheckpointGrid = nil
     }
 
     public func resume(

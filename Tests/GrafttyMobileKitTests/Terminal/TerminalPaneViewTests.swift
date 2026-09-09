@@ -232,7 +232,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
+@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll gesture on `UITerminalView` shall remain functional, and the terminal shall remain the container's sole rendering subview and touch target. While no authoritative checkpoint grid is set, the terminal shall fill the container and its pinch-to-zoom gesture shall remain functional.
 """)
     func terminalViewIsSoleFullSizeSubviewAndTouchTarget() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

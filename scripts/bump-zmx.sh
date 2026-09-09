@@ -22,6 +22,7 @@ done
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PIN_FILE="$REPO/scripts/zmx/UPSTREAM_COMMIT"
 PATCH_FILE="$REPO/scripts/zmx/graftty.patch"
+PAGING_PATCH_FILE="$REPO/scripts/zmx/paging.patch"
 COMPAT_TEST="$REPO/scripts/zmx/compatibility_test.py"
 COMPAT_UNIT_TEST="$REPO/scripts/test_zmx_compatibility.py"
 ZIG_VERSION_FILE="$REPO/scripts/zmx/ZIG_VERSION"
@@ -79,6 +80,8 @@ git -C "$SOURCE" checkout --quiet "$COMMIT"
 echo "→ applying Graftty patch"
 git -C "$SOURCE" apply --check "$PATCH_FILE"
 git -C "$SOURCE" apply "$PATCH_FILE"
+git -C "$SOURCE" apply --check "$PAGING_PATCH_FILE"
+git -C "$SOURCE" apply "$PAGING_PATCH_FILE"
 
 UPSTREAM_VERSION="$(
     sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",$/\1/p' "$SOURCE/build.zig.zon"
@@ -87,7 +90,7 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty2"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty3"
 
 echo "→ testing patched zmx"
 (
@@ -189,6 +192,7 @@ fi
 universal_sha="$(shasum -a 256 "$CANDIDATE" | awk '{print $1}')"
 checksums+=("${universal_sha}  zmx (universal)")
 patch_sha="$(shasum -a 256 "$PATCH_FILE" | awk '{print $1}')"
+paging_patch_sha="$(shasum -a 256 "$PAGING_PATCH_FILE" | awk '{print $1}')"
 
 mkdir -p "$VENDORED_DIR"
 INSTALL_STAGE="$(mktemp -d "$VENDORED_DIR/.zmx-install.XXXXXX")"
@@ -201,6 +205,8 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
     printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw.\n' \
         "$patch_sha"
+    printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages.\n' \
+        "$paging_patch_sha"
     printf '%s\n' "${checksums[@]}"
 } > "$INSTALL_STAGE/CHECKSUMS"
 staged_sha="$(shasum -a 256 "$INSTALL_STAGE/zmx" | awk '{print $1}')"

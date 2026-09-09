@@ -1,0 +1,29 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -2037,1 +2037,25 @@
++    // TEST ONLY: apply exclusively to an isolated probe build. This forces
++    // the state between publishing pixel geometry and consuming an I/O resize.
++    export fn graftty_probe_selection_resize(surface: *Surface) void {
++        const core = &surface.core_surface;
++        const saved_size = core.size;
++        const saved_pos = surface.cursor_pos;
++        defer {
++            core.size = saved_size;
++            surface.cursor_pos = saved_pos;
++        }
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        const cols = core.io.terminal.cols;
++        core.renderer_state.mutex.unlock(global.io());
++        core.size.screen.width += core.size.cell.width * (@as(u32, cols) + 4);
++        surface.cursor_pos = .{
++            .x = @floatFromInt(core.size.padding.left + core.size.cell.width * (@as(u32, cols) + 1)),
++            .y = @floatFromInt(core.size.padding.top + core.size.cell.height / 2),
++        };
++        // Actual callbacks must ignore this out-of-terminal viewport position.
++        core.cursorPosCallback(surface.cursor_pos, .{}) catch unreachable;
++        _ = core.mouseButtonCallback(.press, .left, .{}) catch unreachable;
++        _ = core.mouseButtonCallback(.release, .left, .{}) catch unreachable;
++    }
++
+     export fn ghostty_surface_grid_matches(surface: *Surface, cols: u16, rows: u16) bool {

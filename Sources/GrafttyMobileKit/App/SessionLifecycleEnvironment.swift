@@ -76,7 +76,9 @@ extension SessionClient {
             sessionName: sessionName,
             webSocketFactory: {
                 if let remoteHost = await remoteConnectionProvider?() {
-                    return try await remoteHost.openTerminalSession(sessionName: sessionName)
+                    return try await remoteHost.openTerminalSession(
+                        sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported
+                    )
                 }
                 if sessionName.hasPrefix("relay-pane-") {
                     throw RemoteSessionTransportError

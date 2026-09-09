@@ -880,6 +880,22 @@ struct GrafttyApp: App {
                     try engine.start()
                     return engine
                 },
+                pagedFactory: { [registry = appServices.remoteAttachmentRegistry, terminalManager] sessionName in
+                    // Relayed panes use the intermediary's existing byte transport.
+                    guard !sessionName.hasPrefix("relay-pane-") else {
+                        throw PagedZmxAttachEngine.Error.unsupported
+                    }
+                    let path = await MainActor.run {
+                        terminalManager.worktreePath(forSessionName: sessionName)
+                    }
+                    let engine = PagedZmxAttachEngine(config: .init(
+                        zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                        workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    ))
+                    engine.attachmentRegistry = registry
+                    try await engine.start()
+                    return engine
+                },
                 // R5 Task 11: init-time placeholder closures. The host
                 // agent is constructed in `init()` (before SwiftUI `@State`
                 // is accessible), then `startup()` calls

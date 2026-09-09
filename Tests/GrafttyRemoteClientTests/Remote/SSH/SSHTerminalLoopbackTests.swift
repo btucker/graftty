@@ -41,6 +41,62 @@ struct SSHTerminalLoopbackTests {
         #expect(received == Data("hi\n".utf8))
     }
 
+    @Test(.timeLimit(.minutes(3)))
+    func rejectedPagingSubsystemAllowsLegacyAttachOnSameSSHConnection() async throws {
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                try childChannel.pipeline.syncOperations.addHandler(
+                    TerminalSessionHandler(streamFactory: { _ in EchoStream() })
+                )
+            }
+        }
+        let pagedClient = TerminalSessionClient(
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
+            sessionName: "fallback"
+        )
+        let legacyClient = TerminalSessionClient(
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
+            sessionName: "fallback"
+        )
+        let deadlineTask = Task { [pagedClient, legacyClient] in
+            try? await Task.sleep(for: .seconds(20))
+            pagedClient.close()
+            legacyClient.close()
+        }
+        defer {
+            deadlineTask.cancel()
+            pagedClient.close()
+            legacyClient.close()
+        }
+
+        do {
+            do {
+                try await pagedClient.connect(paged: true)
+                Issue.record("expected the legacy server to reject the paging subsystem")
+            } catch TerminalSessionClient.ClientError.pagingUnsupported {
+                // The rejected child must leave the authenticated parent usable.
+            }
+            #expect(!pagedClient.usesPagedHistory)
+            pagedClient.close()
+
+            try await legacyClient.connect()
+            #expect(!legacyClient.usesPagedHistory)
+            let bytes = Data("\u{1B}[32mlegacy VT\u{1B}[0m\r\n".utf8)
+            try await legacyClient.send(.binary(bytes))
+            let frame = try await legacyClient.receive()
+            #expect(frame == .binary(bytes))
+        } catch {
+            await connection.close()
+            throw error
+        }
+        await connection.close()
+    }
+
     /// streamFactory throws -> client `receive()` throws on the next
     /// call (channel closes via exit-status: 1 + close on the server).
     @Test(.timeLimit(.minutes(3)))
@@ -1330,6 +1386,14 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
+        case let subsystem as SSHChannelRequestEvent.SubsystemRequest:
+            // Model an older host's dispatcher: unknown subsystems reject
+            // only this child channel, preserving the authenticated parent.
+            if subsystem.wantReply {
+                context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+            }
+            context.close(promise: nil)
+
         case let envEvent as SSHChannelRequestEvent.EnvironmentRequest:
             if envEvent.name == "GRAFTTY_SESSION" {
                 envSessionName = envEvent.value

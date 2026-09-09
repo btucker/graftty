@@ -634,6 +634,14 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .top) {
+                if let client, let paging = client.paging, isPaneFocused,
+                   client.connectionState == .live, client.imagePasteProgress == nil {
+                    PagedHistoryBanner(paging: paging)
+                        .padding(.top, 64)
+                        .padding(.horizontal, 16)
+                }
+            }
+            .overlay(alignment: .top) {
                 if let client, isPaneFocused {
                     if let progress = client.imagePasteProgress {
                         VStack(spacing: 6) {
@@ -1173,6 +1181,7 @@ struct SingleSessionView: View {
         let pane = TerminalPaneView(
             session: client.session,
             controller: controller,
+            authoritativeGrid: client.snapshotCanvasGrid,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
                 + externalPendingFocusRequests,
@@ -1287,6 +1296,7 @@ struct SingleSessionView: View {
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
+        guard client.snapshotCanvasGrid == nil else { return }
         guard let baseConfig = effectiveBaseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)

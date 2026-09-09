@@ -1,0 +1,671 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1194,6 +1194,21 @@
+ GHOSTTY_API bool ghostty_surface_process_exited(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_write_buffer(ghostty_surface_t, const uint8_t*, uintptr_t);
+ GHOSTTY_API void ghostty_surface_process_exit(ghostty_surface_t, uint32_t, uint64_t);
++
++// Host-managed snapshot attachment. Install on the main thread, with live
++// writes/page imports/destruction serialized by the host. Calls borrow bytes
++// only for their duration. READY must end exactly at its marker (512 KiB max);
++// PAGE is exactly one independent record (256 KiB max). No HISTORY manifest.
++// READY replaces retained terminal contents only on success; generations must
++// be nonzero and strictly increase. The mounted grid must match the snapshot.
++GHOSTTY_API bool ghostty_surface_snapshot_ready(ghostty_surface_t, uint64_t generation, const uint8_t*, size_t);
++// PAGE results: -1 invalid/failure, 1 applied, 2 resize/screen recovery needed,
++// 3 local retention limit, 4 stale generation. Rejected pages add no rows.
++GHOSTTY_API int ghostty_surface_snapshot_page(ghostty_surface_t, uint64_t generation, uint16_t screen_key, const uint8_t*, size_t, size_t* applied_rows);
++// screen_key is 0 primary, 1 alternate. Demand is false for an inactive screen.
++GHOSTTY_API bool ghostty_surface_snapshot_near_top(ghostty_surface_t, uint64_t generation, uint16_t screen_key, uint32_t threshold_rows);
++GHOSTTY_API bool ghostty_surface_grid_matches(ghostty_surface_t, uint16_t columns, uint16_t rows);
++
+ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -451,9 +451,9 @@
+     userdata: ?*anyopaque = null,
+     termio_backend: TermioBackend = .exec,
+     host_io: HostIO = .{},
+-    // Experiment only: main-thread, one-shot import into a fresh host surface.
+-    // The complete trusted fixture is retained here, not a network reader.
+-    probe_snapshot: ?*ProbeSnapshot = null,
++    // The host serializes attachment installation, page imports, live output,
++    // and destruction. The renderer mutex protects terminal state from its threads.
++    snapshot_attachment: ?SnapshotAttachment = null,
+     core_surface: CoreSurface,
+     content_scale: apprt.ContentScale,
+     size: apprt.SurfaceSize,
+@@ -475,25 +475,14 @@
+         receive_resize: ?termio.HostManaged.Config.Resize = null,
+     };
+ 
+-    const ProbeSnapshot = struct {
+-        bytes: []u8,
+-        source: std.Io.Reader,
+-        decoder: terminal.snapshot.Decoder,
+-        failed: bool = false,
+-
+-        fn create(alloc: Allocator, bytes: []const u8) !*ProbeSnapshot {
+-            const self = try alloc.create(ProbeSnapshot);
+-            errdefer alloc.destroy(self);
+-            const owned = try alloc.dupe(u8, bytes);
+-            self.* = .{ .bytes = owned, .source = .fixed(owned), .decoder = undefined };
+-            self.decoder = .init(&self.source);
+-            return self;
+-        }
+-
+-        fn destroy(self: *ProbeSnapshot, alloc: Allocator) void {
+-            alloc.free(self.bytes);
+-            alloc.destroy(self);
+-        }
++    const SnapshotAttachment = struct {
++        generation: u64,
++        cols: u16,
++        reflow_generation: u64,
++        screens: std.EnumMap(terminal.ScreenSet.Key, usize),
++        boundaries: std.EnumMap(terminal.ScreenSet.Key, Boundary),
++
++        const Boundary = struct { pin: terminal.Pin, serial: u64 };
+     };
+ 
+     /// Surface initialization options.
+@@ -701,7 +690,6 @@
+ 
+         // Clean up our core surface so that all the rendering and IO stop.
+         self.core_surface.deinit();
+-        if (self.probe_snapshot) |snapshot| snapshot.destroy(self.app.core_app.alloc);
+     }
+ 
+     /// Initialize the inspector instance. A surface can only have one
+@@ -1940,38 +1928,59 @@
+         surface.core_surface.io.processOutput(ptr[0..len]);
+     }
+ 
+-    // Experimental symbols, intentionally absent from the public header.
+-    // Caller must use a fresh surface, call on the main thread, and serialize
+-    // writes, page imports, and teardown. This is not a production wire API.
+-    export fn graftty_probe_surface_snapshot_ready(
++    /// Install an envelope-through-READY prefix on the main thread. Decode into
++    /// detached state before locking; commit only after every check has passed.
++    export fn ghostty_surface_snapshot_ready(
+         surface: *Surface,
++        generation: u64,
+         ptr: [*]const u8,
+         len: usize,
+     ) bool {
+-        if (surface.termio_backend != .host_managed or surface.probe_snapshot != null)
+-            return false;
+-        if (len == 0 or len > 8 * 1024 * 1024) return false;
++        if (surface.termio_backend != .host_managed or generation == 0) return false;
++        if (surface.snapshot_attachment) |previous| if (generation <= previous.generation) return false;
++        const bounded = terminal.snapshot.attachment;
++        if (len == 0 or len > bounded.max_ready_bytes) return false;
++        bounded.validateReady(ptr[0..len]) catch return false;
+         const core = &surface.core_surface;
+-        if (core.search != null or core.inspector != null) return false;
+-        const alloc = surface.app.core_app.alloc;
+-        const snapshot = Surface.ProbeSnapshot.create(alloc, ptr[0..len]) catch return false;
+-        var decoded = snapshot.decoder.ready(alloc, global.io(), .{
+-            .max_continuation_bytes = 1024 * 1024,
+-        }) catch {
+-            snapshot.destroy(alloc);
+-            return false;
+-        };
++        // Inspector owns references to its terminal; callers close it first.
++        if (core.inspector != null) return false;
++        const alloc = core.io.alloc;
++        var source: std.Io.Reader = .fixed(ptr[0..len]);
++        var decoder: terminal.snapshot.Decoder = .init(&source);
++        var decoded = decoder.ready(alloc, global.io(), .{
++            .max_continuation_bytes = bounded.max_continuation_bytes,
++        }) catch return false;
+         defer decoded.deinit(alloc);
+-
++        if (source.seek != len) return false;
++
++        // A search worker can hold pins to the old terminal. Join without the
++        // renderer mutex, which that worker also acquires. No old pins survive.
++        if (core.search) |*search| {
++            search.deinit();
++            core.search = null;
++        }
+         core.renderer_state.mutex.lockUncancelable(global.io());
+         defer core.renderer_state.mutex.unlock(global.io());
+         const io = &core.io;
+         if (io.terminal.cols != decoded.terminal.?.cols or
+-            io.terminal.rows != decoded.terminal.?.rows)
+-        {
+-            snapshot.destroy(alloc);
+-            return false;
+-        }
++            io.terminal.rows != decoded.terminal.?.rows) return false;
++
++        const restored = &decoded.terminal.?;
++        const limits = io.terminal.screens.get(.primary).?.pages.limits;
++        restored.setScrollbackMaxBytes(limits.bytes.explicit);
++        restored.setScrollbackMaxLines(limits.lines.explicit);
++        // Snapshot dynamic colors remain terminal state; their default values
++        // come from the local theme, including the local 256-color palette.
++        restored.colors.palette.changeDefault(io.config.palette);
++        restored.colors.foreground.default = io.config.foreground.toTerminalRGB();
++        restored.colors.background.default = io.config.background.toTerminalRGB();
++        restored.colors.cursor.default = cursor: {
++            const color = io.config.cursor_color orelse break :cursor null;
++            break :cursor color.toTerminalRGB() orelse break :cursor null;
++        };
++        restored.setKittyGraphicsSizeLimit(alloc, io.config.image_storage_limit);
++        restored.setKittyGraphicsLoadingLimits(.allWithTempDir(global.tmpDirPath()));
++
+         const old_handler = &io.terminal_stream.handler;
+         const handler: @import("../termio/stream_handler.zig").StreamHandler = .{
+             .alloc = io.alloc,
+@@ -1988,15 +1997,14 @@
+             .clipboard_write_limit = old_handler.clipboard_write_limit,
+         };
+         core.mouse.selection_gesture.reset(&io.terminal);
++        core.mouse.link_point = null;
++        core.mouse.over_link = false;
+         io.terminal_stream.deinit();
+         io.terminal.deinit(io.alloc);
+         io.terminal = decoded.toOwned();
+         io.terminal.width_px = io.terminal.cols * io.size.cell.width;
+         io.terminal.height_px = io.terminal.rows * io.size.cell.height;
+         io.terminal_stream = .init(.{ .allocator = io.alloc, .handler = handler });
+-        // Snapshot decode restores mode bits without StreamHandler.setMode's
+-        // I/O-thread side effects. Restore those before any continuation or
+-        // new input can depend on them.
+         io.mailbox.send(.{ .linefeed_mode = io.terminal.modes.get(.linefeed) }, core.renderer_state.mutex);
+         if (io.terminal.modes.get(.synchronized_output))
+             io.mailbox.send(.{ .start_synchronized_output = {} }, core.renderer_state.mutex);
+@@ -2004,47 +2012,99 @@
+             .ground => {},
+             .bytes => |bytes| io.terminal_stream.nextSlice(bytes),
+         }
++        var screens: std.EnumMap(terminal.ScreenSet.Key, usize) = .init(.{});
++        var boundaries: std.EnumMap(terminal.ScreenSet.Key, Surface.SnapshotAttachment.Boundary) = .init(.{});
++        var it = io.terminal.screens.all.iterator();
++        while (it.next()) |entry| {
++            screens.put(entry.key, io.terminal.screens.generation(entry.key));
++            const pin = entry.value.*.pages.getTopLeft(.screen);
++            boundaries.put(entry.key, .{ .pin = pin, .serial = pin.node.serial });
++        }
++        surface.snapshot_attachment = .{
++            .generation = generation,
++            .cols = io.terminal.cols,
++            .reflow_generation = io.terminal.history_reflow_generation,
++            .screens = screens,
++            .boundaries = boundaries,
++        };
+         io.terminal.flags.dirty.clear = true;
+-        surface.probe_snapshot = snapshot;
++        io.terminal.flags.dirty.palette = true;
+         io.mailbox.notify();
+         io.terminal_stream.handler.queueRender() catch {};
+         return true;
+     }
+ 
+-    export fn graftty_probe_surface_grid_matches(surface: *Surface, cols: u16, rows: u16) bool {
++    export fn ghostty_surface_grid_matches(surface: *Surface, cols: u16, rows: u16) bool {
+         const core = &surface.core_surface;
+         core.renderer_state.mutex.lockUncancelable(global.io());
+         defer core.renderer_state.mutex.unlock(global.io());
+         return core.io.terminal.cols == cols and core.io.terminal.rows == rows;
+     }
+ 
+-    export fn graftty_probe_surface_snapshot_offset(surface: *Surface) usize {
++    /// One complete independent PAGE; it neither reads a HISTORY manifest nor
++    /// holds network state. Rejected imports leave the loaded content intact.
++    export fn ghostty_surface_snapshot_page(
++        surface: *Surface,
++        generation: u64,
++        screen_key: u16,
++        ptr: [*]const u8,
++        len: usize,
++        rows: *usize,
++    ) c_int {
++        rows.* = 0;
+         const core = &surface.core_surface;
+         core.renderer_state.mutex.lockUncancelable(global.io());
+         defer core.renderer_state.mutex.unlock(global.io());
+-        const snapshot = surface.probe_snapshot orelse return 0;
+-        return snapshot.source.seek;
+-    }
+-
+-    // -1: failed, 0: complete, 1: consumed page, 2: recovery required.
+-    export fn graftty_probe_surface_snapshot_next(surface: *Surface, rows: *usize) c_int {
+-        rows.* = 0;
+-        const snapshot = surface.probe_snapshot orelse return -1;
+-        if (snapshot.failed) return -1;
++        const attachment = surface.snapshot_attachment orelse return 4;
++        if (generation != attachment.generation) return 4;
++        const key: terminal.ScreenSet.Key = switch (screen_key) {
++            0 => .primary,
++            1 => .alternate,
++            else => return -1,
++        };
++        const t = &core.io.terminal;
++        if (t.cols != attachment.cols or t.history_reflow_generation != attachment.reflow_generation)
++            return 2;
++        const original_screen = attachment.screens.get(key) orelse return 2;
++        if (t.screens.generation(key) != original_screen) return 2;
++        const screen = t.screens.get(key) orelse return 2;
++        // Live resets, history erasure, and retention pruning can remove the
++        // adjoining rows even when width and screen generation are unchanged.
++        // Compare only the live first node; never dereference an old pointer.
++        const boundary = attachment.boundaries.get(key) orelse return 2;
++        const first = screen.pages.pages.first orelse return 2;
++        if (first != boundary.pin.node or first.serial != boundary.serial) return 2;
++        if (screen.no_scrollback) return 3;
++        const bounded = terminal.snapshot.attachment;
++        if (len == 0 or len > bounded.max_page_bytes) return -1;
++        bounded.validatePage(ptr[0..len], attachment.cols) catch return -1;
++        var reader: std.Io.Reader = .fixed(ptr[0..len]);
++        rows.* = terminal.snapshot.history.decodePage(&reader, core.io.alloc, screen) catch |err| switch (err) {
++            error.MaxSizeExceeded, error.MaxLinesExceeded => return 3,
++            else => return -1,
++        };
++        const new_boundary = screen.pages.getTopLeft(.screen);
++        surface.snapshot_attachment.?.boundaries.put(key, .{ .pin = new_boundary, .serial = new_boundary.node.serial });
++        t.flags.dirty.clear = true;
++        core.io.terminal_stream.handler.queueRender() catch {};
++        return 1;
++    }
++
++    export fn ghostty_surface_snapshot_near_top(
++        surface: *Surface,
++        generation: u64,
++        screen_key: u16,
++        threshold_rows: u32,
++    ) bool {
+         const core = &surface.core_surface;
+         core.renderer_state.mutex.lockUncancelable(global.io());
+         defer core.renderer_state.mutex.unlock(global.io());
+-        // 2 is a recoverable history condition, not a decoded zero-row page.
+-        // The decoder leaves the pending record and live terminal untouched.
+-        const progress = snapshot.decoder.nextAtOriginalWidth(core.io.alloc, &core.io.terminal) catch |err| {
+-            if (err == error.HistoryRequiresRecovery) return 2;
+-            snapshot.failed = true;
+-            return -1;
+-        } orelse return 0;
+-        rows.* = progress.rows;
+-        core.io.terminal.flags.dirty.clear = true;
+-        core.io.terminal_stream.handler.queueRender() catch {};
+-        return 1;
++        const attachment = surface.snapshot_attachment orelse return false;
++        if (generation != attachment.generation) return false;
++        const t = &core.io.terminal;
++        if (@intFromEnum(t.screens.active_key) != screen_key) return false;
++        const pages = &t.screens.active.pages;
++        return pages.scrollbar().offset <= threshold_rows;
+     }
+ 
+     export fn ghostty_surface_process_exit(
+diff --git a/src/terminal/snapshot/main.zig b/src/terminal/snapshot/main.zig
+--- a/src/terminal/snapshot/main.zig
++++ b/src/terminal/snapshot/main.zig
+@@ -152,6 +152,7 @@
+ //! }
+ //! ```
+ 
++pub const attachment = @import("attachment.zig");
+ pub const checkpoint = @import("checkpoint.zig");
+ pub const continuation = @import("continuation.zig");
+ pub const envelope = @import("envelope.zig");
+diff --git a/src/terminal/snapshot/attachment.zig b/src/terminal/snapshot/attachment.zig
+new file mode 100644
+--- /dev/null
++++ b/src/terminal/snapshot/attachment.zig
+@@ -0,0 +1,153 @@
++//! Bounded native-surface attachment records. No reader or snapshot bytes survive a call.
++const std = @import("std");
++const codec = @import("snapshot.zig");
++const record = @import("record.zig");
++const envelope = @import("envelope.zig");
++const page = @import("page.zig");
++const screen_record = @import("screen.zig");
++const io = @import("io.zig");
++const terminal_record = @import("terminal.zig");
++const Terminal = @import("../Terminal.zig");
++const Page = @import("../page.zig").Page;
++
++pub const max_ready_bytes = 512 * 1024;
++pub const max_page_bytes = 256 * 1024;
++pub const max_continuation_bytes = 256 * 1024;
++
++/// Framing/allocation preflight deliberately runs before the allocating decoder.
++/// The decoder remains responsible for checksums and semantic validation.
++pub fn validateReady(bytes: []const u8) !void {
++    if (bytes.len == 0 or bytes.len > max_ready_bytes) return error.InvalidRecord;
++    var reader: std.Io.Reader = .fixed(bytes);
++    envelope.decode(&reader) catch return error.InvalidRecord;
++    var backing: usize = 0;
++    var saw_ready = false;
++    while (reader.seek < bytes.len) {
++        const header = record.Header.decode(&reader) catch return error.InvalidRecord;
++        const payload = reader.take(header.payload_len) catch return error.InvalidRecord;
++        switch (header.tag) {
++            .terminal => {
++                var payload_reader: std.Io.Reader = .fixed(payload);
++                const t = terminal_record.Header.decode(&payload_reader) catch return error.InvalidRecord;
++                if (t.columns == 0 or t.rows == 0 or t.columns > 1000 or t.rows > 1000 or
++                    @as(usize, t.columns) * t.rows > 262144) return error.AllocationLimit;
++                // Strings allocate their advertised lengths in the core codec.
++                // Check those lengths against the actual frame before decode.
++                payload_reader.discardAll((@as(usize, t.columns) + 7) / 8 + 256 * 3) catch return error.InvalidRecord;
++                const mask = payload_reader.take(32) catch return error.InvalidRecord;
++                var overrides: usize = 0;
++                for (mask) |byte| overrides += @popCount(byte);
++                payload_reader.discardAll(overrides * 3) catch return error.InvalidRecord;
++                try skipString(&payload_reader);
++                try skipString(&payload_reader);
++            },
++            .page => {
++                backing += try pageBacking(payload, null);
++                if (backing > 32 * 1024 * 1024) return error.AllocationLimit;
++            },
++            .screen => {
++                var payload_reader: std.Io.Reader = .fixed(payload);
++                const screen_header = screen_record.Header.decode(&payload_reader) catch return error.InvalidRecord;
++                if (screen_header.saved_cursor_present)
++                    _ = screen_record.SavedCursor.decode(&payload_reader) catch return error.InvalidRecord;
++                switch (payload_reader.takeByte() catch return error.InvalidRecord) {
++                    0 => {},
++                    1 => {
++                        payload_reader.discardAll(4) catch return error.InvalidRecord;
++                        try skipString(&payload_reader);
++                    },
++                    2 => {
++                        try skipString(&payload_reader);
++                        try skipString(&payload_reader);
++                    },
++                    else => return error.InvalidRecord,
++                }
++            },
++            .continuation => if (payload.len > max_continuation_bytes) return error.AllocationLimit,
++            .ready => {
++                if (payload.len != 0 or reader.seek != bytes.len) return error.InvalidRecord;
++                saw_ready = true;
++            },
++            else => return error.InvalidRecord,
++        }
++    }
++    if (!saw_ready) return error.InvalidRecord;
++}
++
++pub fn validatePage(bytes: []const u8, cols: u16) !void {
++    if (bytes.len == 0 or bytes.len > max_page_bytes) return error.InvalidRecord;
++    var reader: std.Io.Reader = .fixed(bytes);
++    const header = record.Header.decode(&reader) catch return error.InvalidRecord;
++    if (header.tag != .page) return error.InvalidRecord;
++    const payload = reader.take(header.payload_len) catch return error.InvalidRecord;
++    if (reader.seek != bytes.len) return error.InvalidRecord;
++    _ = try pageBacking(payload, cols);
++}
++
++fn skipString(reader: *std.Io.Reader) !void {
++    const len = io.readInt(reader, u32) catch return error.InvalidRecord;
++    reader.discardAll(len) catch return error.InvalidRecord;
++}
++
++fn pageBacking(payload: []const u8, cols: ?u16) !usize {
++    var reader: std.Io.Reader = .fixed(payload);
++    const header = page.Header.decode(&reader) catch return error.InvalidRecord;
++    if (header.columns == 0 or header.rows == 0) return error.InvalidRecord;
++    if (cols) |expected| if (header.columns != expected) return error.InvalidRecord;
++    // Bound arithmetic before Page.layout, whose offsets assume native capacities.
++    if (@as(usize, header.columns) * header.rows > 262144 or
++        header.grapheme_capacity_bytes > 8 * 1024 * 1024 or
++        header.string_capacity_bytes > 8 * 1024 * 1024) return error.AllocationLimit;
++    const layout = Page.layout(.{
++        .cols = header.columns,
++        .rows = header.rows,
++        .styles = header.style_capacity,
++        .hyperlink_bytes = header.hyperlink_capacity_bytes,
++        .grapheme_bytes = header.grapheme_capacity_bytes,
++        .string_bytes = header.string_capacity_bytes,
++    });
++    if (layout.total_size > 8 * 1024 * 1024) return error.AllocationLimit;
++    return layout.total_size;
++}
++
++test "attachment validates bounded READY and independent PAGE records" {
++    const alloc = std.testing.allocator;
++    var source = try Terminal.init(std.testing.io, alloc, .{ .cols = 80, .rows = 24, .max_scrollback_bytes = null });
++    defer source.deinit(alloc);
++    for (0..1500) |_| try source.printString("history row\r\n");
++    try source.screens.active.startHyperlink("https://example.test/current", "cursor-id");
++    var output: std.Io.Writer.Allocating = .init(alloc);
++    defer output.deinit();
++    try codec.encode(alloc, &output.writer, &source, .{ .continuation = .ground });
++    const bytes = output.written();
++    var reader: std.Io.Reader = .fixed(bytes);
++    var decoder: codec.Decoder = .init(&reader);
++    var restored = try decoder.ready(alloc, std.testing.io, .{ .max_continuation_bytes = 1024 });
++    defer restored.deinit(alloc);
++    const prefix = bytes[0..reader.seek];
++    try validateReady(prefix);
++    const hostile_prefix = try alloc.dupe(u8, prefix);
++    defer alloc.free(hostile_prefix);
++    const pwd_offset = envelope.encoded_len + record.Header.len + terminal_record.Header.len + 10 + 256 * 3 + 32;
++    @memset(hostile_prefix[pwd_offset..][0..4], 0xff);
++    try std.testing.expectError(error.InvalidRecord, validateReady(hostile_prefix));
++    @memcpy(hostile_prefix, prefix);
++    @memset(hostile_prefix[envelope.encoded_len + record.Header.len ..][0..4], 0xff);
++    try std.testing.expectError(error.AllocationLimit, validateReady(hostile_prefix));
++    try std.testing.expectError(error.InvalidRecord, validateReady(bytes));
++    try std.testing.expectError(error.InvalidRecord, validateReady(prefix[0 .. prefix.len - 1]));
++    const manifest = try record.Header.decode(&reader);
++    try reader.discardAll(manifest.payload_len);
++    const start = reader.seek;
++    const next = try record.Header.decode(&reader);
++    try reader.discardAll(next.payload_len);
++    const one_page = bytes[start..reader.seek];
++    try validatePage(one_page, 80);
++    try std.testing.expectError(error.InvalidRecord, validatePage(bytes[start..], 80));
++    try std.testing.expectError(error.InvalidRecord, validatePage(one_page, 40));
++    // Allocation hints are independent of wire size and must be bounded before decode.
++    const hostile = try alloc.dupe(u8, one_page);
++    defer alloc.free(hostile);
++    @memset(hostile[record.Header.len + 12 ..][0..8], 0xff);
++    try std.testing.expectError(error.AllocationLimit, validatePage(hostile, 80));
++}
+diff --git a/src/Surface.zig b/src/Surface.zig
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -3524,7 +3524,7 @@
+         }
+ 
+         // We scroll by the number of rows in the offset and save the remainder
+-        const amount = poff / cell_size;
++        const amount = @trunc(poff / cell_size);
+         assert(@abs(amount) >= 1);
+         self.mouse.pending_scroll_y = poff - (amount * cell_size);
+ 
+@@ -3549,7 +3549,7 @@
+             break :x .{};
+         }
+ 
+-        const amount = poff / cell_size;
++        const amount = @trunc(poff / cell_size);
+         assert(@abs(amount) >= 1);
+         self.mouse.pending_scroll_x = poff - (amount * cell_size);
+         const delta: isize = @intFromFloat(@trunc(amount));
+@@ -3992,11 +3992,9 @@
+                     .y = pt_viewport.y,
+                 },
+             }) orelse {
+-                // Weird... our viewport x/y that we just converted isn't
+-                // found in our pages. This is probably a bug but we don't
+-                // want to crash in releases because its harmless. So, we
+-                // only assert in debug mode.
+-                if (comptime std.debug.runtime_safety) unreachable;
++                // Pixel geometry can advance before the terminal consumes an
++                // asynchronous resize. Ignore clicks outside its current
++                // pages, including in ReleaseSafe builds.
+                 break :click;
+             };
+ 
+@@ -4098,7 +4096,7 @@
+                     .y = pt_viewport.y,
+                 },
+             }) orelse {
+-                if (comptime std.debug.runtime_safety) unreachable;
++                // A resize can leave pixel and terminal grids temporarily different.
+                 break :sel;
+             };
+ 
+@@ -4218,8 +4216,7 @@
+                 .y = pos_vp.y,
+             },
+         }) orelse {
+-            // See mouseButtonCallback for explanation
+-            if (comptime std.debug.runtime_safety) unreachable;
++            // See mouseButtonCallback for the pending resize case.
+             return false;
+         };
+ 
+@@ -4696,7 +4693,7 @@
+                 .y = pos_vp.y,
+             },
+         }) orelse {
+-            if (comptime std.debug.runtime_safety) unreachable;
++            // Ignore drag positions outside the current terminal during resize.
+             return;
+         };
+ 
+@@ -5500,6 +5497,14 @@
+             .show_on_screen_keyboard,
+             {},
+         ),
++
++        .clear_selection => {
++            self.renderer_state.mutex.lockUncancelable(global.io());
++            defer self.renderer_state.mutex.unlock(global.io());
++            self.mouse.selection_gesture.reset(&self.io.terminal);
++            try self.setSelection(null);
++            try self.queueRender();
++        },
+ 
+         .select_all => {
+             self.renderer_state.mutex.lockUncancelable(global.io());
+diff --git a/src/input/Binding.zig b/src/input/Binding.zig
+--- a/src/input/Binding.zig
++++ b/src/input/Binding.zig
+@@ -437,6 +437,9 @@
+ 
+     /// Select all text on the screen.
+     select_all,
++
++    /// Clear the selection without changing terminal contents.
++    clear_selection,
+ 
+     /// Scroll to the top of the screen.
+     scroll_to_top,
+@@ -1408,6 +1411,7 @@
+             .set_window_title,
+             .clear_screen,
+             .select_all,
++            .clear_selection,
+             .scroll_to_top,
+             .scroll_to_bottom,
+             .scroll_to_selection,
+diff --git a/src/input/command.zig b/src/input/command.zig
+--- a/src/input/command.zig
++++ b/src/input/command.zig
+@@ -243,6 +243,8 @@
+             .title = i18n.N_("Clear Screen"),
+             .description = i18n.N_("Clear the screen and scrollback."),
+         }},
++
++        .clear_selection => &.{},
+ 
+         .select_all => comptime &.{.{
+             .action = .select_all,
+diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
+--- a/src/renderer/Metal.zig
++++ b/src/renderer/Metal.zig
+@@ -55,6 +55,9 @@
+ /// the "shared" storage mode, instead we have to use the "managed" mode.
+ default_storage_mode: mtl.MTLResourceOptions.StorageMode,
+ 
++/// The default storage mode to use for MTLTexture resources.
++default_texture_storage_mode: mtl.MTLResourceOptions.StorageMode,
++
+ /// The maximum 2D texture width and height supported by the device.
+ max_texture_size: u32,
+ 
+@@ -81,10 +84,24 @@
+         .ios => .shared,
+         else => if (device.getProperty(bool, "hasUnifiedMemory")) .shared else .managed,
+     };
++    // LIBGHOSTTY_SPM_TEXTURE_STORAGE_PATCH
++    // MTLStorageModeShared is valid for textures on Apple GPUs, while Intel
++    // and AMD macOS GPUs require managed textures even when hasUnifiedMemory is
++    // true. Keep buffer storage unchanged, but choose texture storage from the
++    // Metal GPU family as Apple recommends for CPU-updated textures.
++    const default_texture_storage_mode: mtl.MTLResourceOptions.StorageMode = switch (comptime builtin.os.tag) {
++        .ios => .shared,
++        .macos => if (device.msgSend(
++            bool,
++            objc.sel("supportsFamily:"),
++            .{mtl.MTLGPUFamily.apple1},
++        )) .shared else .managed,
++        else => default_storage_mode,
++    };
+     const max_texture_size = queryMaxTextureSize(device);
+     log.debug(
+-        "device properties default_storage_mode={} max_texture_size={}",
+-        .{ default_storage_mode, max_texture_size },
++        "device properties default_storage_mode={} default_texture_storage_mode={} max_texture_size={}",
++        .{ default_storage_mode, default_texture_storage_mode, max_texture_size },
+     );
+ 
+     const ViewInfo = struct {
+@@ -151,6 +168,7 @@
+         .queue = queue,
+         .blending = opts.config.blending,
+         .default_storage_mode = default_storage_mode,
++        .default_texture_storage_mode = default_texture_storage_mode,
+         .max_texture_size = max_texture_size,
+     };
+ }
+@@ -249,7 +267,7 @@
+             .bgra8unorm_srgb
+         else
+             .bgra8unorm,
+-        .storage_mode = self.default_storage_mode,
++        .storage_mode = self.default_texture_storage_mode,
+         .width = width,
+         .height = height,
+     });
+@@ -308,7 +326,7 @@
+         .resource_options = .{
+             // Indicate that the CPU writes to this resource but never reads it.
+             .cpu_cache_mode = .write_combined,
+-            .storage_mode = self.default_storage_mode,
++            .storage_mode = self.default_texture_storage_mode,
+         },
+         .usage = .{
+             // textureOptions is currently only used for custom shaders,
+@@ -367,7 +385,7 @@
+         .resource_options = .{
+             // Indicate that the CPU writes to this resource but never reads it.
+             .cpu_cache_mode = .write_combined,
+-            .storage_mode = self.default_storage_mode,
++            .storage_mode = self.default_texture_storage_mode,
+         },
+         .usage = .{
+             // We only need to read from this texture from a shader.
+@@ -394,7 +412,7 @@
+             .resource_options = .{
+                 // Indicate that the CPU writes to this resource but never reads it.
+                 .cpu_cache_mode = .write_combined,
+-                .storage_mode = self.default_storage_mode,
++                .storage_mode = self.default_texture_storage_mode,
+             },
+             .usage = .{
+                 // We only need to read from this texture from a shader.
