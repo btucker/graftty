@@ -88,6 +88,34 @@ struct WakeOnLANClientTests {
     }
 
     @Test
+    func staleRouteDoesNotStopWakeRetriesOnUnavailableRoute() async throws {
+        let fixture = try Fixture()
+        let events = Events()
+        let stale = RemoteConnectionRoute(kind: .lan, baseURL: URL(string: "http://stale.invalid:8800")!)
+        let client = SignalingClient(
+            transport: { request, body in
+                if request.url!.host == "stale.invalid" {
+                    if request.url!.path.hasSuffix("challenge") { await events.record("stale") }
+                    return (Data(), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+                }
+                if request.url!.path.hasSuffix("challenge") {
+                    let count = await events.challenge()
+                    if count == 1 { throw URLError(.cannotConnectToHost) }
+                }
+                return try fixture.respond(request, body)
+            },
+            wake: { _ in true },
+            wakeRetryDelay: { await events.record("delay") }
+        )
+        let result = try await fixture.exchange(client, routes: [stale, fixture.route])
+        #expect(result.answer.sdp == "answer")
+        let values = await events.values
+        #expect(values.filter { $0 == "challenge" }.count == 2)
+        #expect(values.filter { $0 == "stale" }.count == 1)
+        #expect(values.filter { $0 == "delay" }.count == 1)
+    }
+
+    @Test
     func cancellationStopsWakeRetries() async throws {
         let fixture = try Fixture()
         let events = Events()
@@ -156,9 +184,9 @@ private struct Fixture: Sendable {
         )
     }
 
-    func exchange(_ client: SignalingClient, advertisement: WakeOnLANAdvertisement? = nil) async throws -> SignalingClient.AuthenticatedExchange {
+    func exchange(_ client: SignalingClient, advertisement: WakeOnLANAdvertisement? = nil, routes: [RemoteConnectionRoute]? = nil) async throws -> SignalingClient.AuthenticatedExchange {
         try await client.authenticatedExchange(
-            routes: [route], hostDeviceID: hostID,
+            routes: routes ?? [route], hostDeviceID: hostID,
             hostPublicKey: RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation),
             clientDeviceID: clientID, clientKey: clientKey, sdp: "offer",
             wakeOnLAN: advertisement ?? self.advertisement

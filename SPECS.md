@@ -2112,6 +2112,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.14** When a paired host supplies verified wake addresses, the client shall retain them across launches, while existing saved hosts without wake metadata shall continue to decode.
 
+**REMOTE-2.15** When a host advertises wake addresses, the application shall include each eligible interface's valid active link-layer and permanent hardware addresses for its IPv4 address without duplicates.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

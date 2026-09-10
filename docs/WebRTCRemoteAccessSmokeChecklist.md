@@ -117,7 +117,8 @@ awake relay on the host's LAN and is not implemented.
       do not need a new pairing ceremony.
 - [ ] Disconnect the client, put the host to sleep, and connect again from the
       same LAN. Confirm that the host wakes and a terminal attaches. Test the
-      intended Ethernet or Wi-Fi interface on physical hardware.
+      intended Ethernet or Wi-Fi interface on physical hardware, including
+      Wi-Fi with Private Wi-Fi Address enabled.
 - [ ] Restart the client and repeat to check that saved wake addresses survive
       a launch.
 - [ ] Disable network waking on the host and repeat. Confirm that the client

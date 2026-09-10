@@ -60,7 +60,7 @@ public struct SignalingClient: Sendable {
 
     private enum ChallengeAttempt: Sendable {
         case success(RemoteConnectionRoute, SignalingChallengeResponse)
-        case unreachable
+        case unreachable(RemoteConnectionRoute)
         case rejected
     }
 
@@ -89,6 +89,7 @@ public struct SignalingClient: Sendable {
             sentWake = await wake(wakeOnLAN.targets)
         }
         var selected: (RemoteConnectionRoute, SignalingChallengeResponse)?
+        var retryRoutes = uniqueRoutes
         for attempt in 0..<(sentWake ? 3 : 1) {
             try Task.checkCancellation()
             if attempt > 0 { try await wakeRetryDelay() }
@@ -100,7 +101,7 @@ public struct SignalingClient: Sendable {
                 signingKey: clientKey
             )
             let result = await firstValidChallenge(
-                routes: uniqueRoutes,
+                routes: retryRoutes,
                 request: probe,
                 hostDeviceID: hostDeviceID,
                 hostPublicKey: hostPublicKey,
@@ -108,7 +109,8 @@ public struct SignalingClient: Sendable {
             )
             try Task.checkCancellation()
             selected = result.candidate
-            if selected != nil || result.rejected { break }
+            retryRoutes = result.retryRoutes
+            if selected != nil || retryRoutes.isEmpty { break }
         }
         guard let (route, challenge) = selected else {
             throw Error.authentication("no route returned a valid host challenge")
@@ -176,7 +178,7 @@ public struct SignalingClient: Sendable {
         hostDeviceID: RemoteDeviceID,
         hostPublicKey: RemoteIdentityPublicKey,
         now: @escaping @Sendable () -> Date
-    ) async -> (candidate: (RemoteConnectionRoute, SignalingChallengeResponse)?, rejected: Bool) {
+    ) async -> (candidate: (RemoteConnectionRoute, SignalingChallengeResponse)?, retryRoutes: [RemoteConnectionRoute]) {
         await withTaskGroup(
             of: ChallengeAttempt.self
         ) { group in
@@ -197,25 +199,25 @@ public struct SignalingClient: Sendable {
                         ) else { return .rejected }
                         return .success(route, response)
                     } catch Error.transport {
-                        return .unreachable
+                        return .unreachable(route)
                     } catch {
                         return .rejected
                     }
                 }
             }
-            var rejected = false
+            var retryRoutes: [RemoteConnectionRoute] = []
             while let candidate = await group.next() {
                 switch candidate {
                 case .success(let route, let response):
                     group.cancelAll()
-                    return ((route, response), false)
+                    return ((route, response), [])
                 case .rejected:
-                    rejected = true
-                case .unreachable:
                     break
+                case .unreachable(let route):
+                    retryRoutes.append(route)
                 }
             }
-            return (nil, rejected)
+            return (nil, retryRoutes)
         }
     }
 
