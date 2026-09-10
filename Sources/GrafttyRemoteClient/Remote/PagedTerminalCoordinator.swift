@@ -39,6 +39,11 @@ public final class PagedTerminalCoordinator {
     private var retryRequest: PagedTerminalHistoryRequest?
     private var timeout: Task<Void, Never>?
 
+#if DEBUG
+    /// Lets tests await timeout completion or cancellation without fixed sleeps.
+    var timeoutTaskForTesting: Task<Void, Never>? { timeout }
+#endif
+
     public init(renderer: any PagedTerminalRenderer, requestTimeout: Duration = .seconds(15),
                 send: @escaping @MainActor (PagedTerminalRequest) async throws -> Void) {
         self.renderer = renderer

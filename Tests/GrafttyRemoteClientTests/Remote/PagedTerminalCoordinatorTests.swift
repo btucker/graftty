@@ -16,7 +16,8 @@ struct PagedTerminalCoordinatorTests {
         try await coordinator.handle(.checkpoint(checkpoint(1)))
         await coordinator.loadIfNeeded()
         guard case .history(let original) = try #require(requests.first) else { return }
-        try await Task.sleep(for: .milliseconds(80))
+        let timeout = try #require(coordinator.timeoutTaskForTesting)
+        await timeout.value
         #expect(coordinator.status == .unavailable)
         await coordinator.retry()
         #expect(requests.last == .history(original))
@@ -31,15 +32,19 @@ struct PagedTerminalCoordinatorTests {
         surface.nearTop = true
         surface.holdImport = true
         var requests: [PagedTerminalRequest] = []
-        let coordinator = PagedTerminalCoordinator(renderer: surface, requestTimeout: .milliseconds(30)) {
+        // Cancellation completes the timeout task immediately, so this test
+        // can use the production timeout without racing page delivery.
+        let coordinator = PagedTerminalCoordinator(renderer: surface) {
             requests.append($0)
         }
         try await coordinator.handle(.checkpoint(checkpoint(1)))
         await coordinator.loadIfNeeded()
         guard case .history(let request) = try #require(requests.first) else { return }
+        let timeout = try #require(coordinator.timeoutTaskForTesting)
         let importTask = Task { try await coordinator.handle(.page(page(request))) }
         while surface.importContinuation == nil { await Task.yield() }
-        try await Task.sleep(for: .milliseconds(80))
+        await timeout.value
+        #expect(timeout.isCancelled)
         #expect(coordinator.status == .loading)
         surface.holdImport = false
         surface.importContinuation?.resume()
