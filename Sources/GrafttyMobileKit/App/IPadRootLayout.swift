@@ -1404,8 +1404,6 @@ private struct IPadDetailColumn: View {
                 onFocusRequestsConsumed: {
                     appState.consumeFocusRequests()
                 },
-                autoTakeControlRequestCount: appState.ownershipRequestCount,
-                autoTakeControlPolicy: appState.autoTakeControlPolicy,
                 ghosttyCommandContext: ghosttyCommandContext,
                 onSelectPane: onSelectPane,
                 onBackToWorktrees: onBackToWorktrees

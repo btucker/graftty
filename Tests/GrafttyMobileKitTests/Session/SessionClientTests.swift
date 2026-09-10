@@ -1433,116 +1433,57 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-6.15: When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+    @spec IOS-6.15: When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
     """)
-    func reconnectingPreviousOwnerAutomaticallyReclaimsOwnerlessSession() async throws {
+    func reconnectDoesNotAutomaticallyReclaimOwnership() async throws {
+        let first = FakeWS()
         let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
+        let sequence = WebSocketSequence([first, ws])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() })
         client.start()
         defer { client.stop() }
-        primeViewport(client, columns: 90, rows: 28)
-        let clientID = try await waitForHelloClientID(ws)
-        ws.clearSent()
-
-        let ownerless = try ownershipSnapshot(
-            ownerClientID: nil,
-            ownerKind: nil,
-            cols: 120,
-            rows: 40,
-            epoch: 3
-        )
-        client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await waitUntil("automatic ownerless-session reclaim") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-
-        let takeover = envelopes(ws).first {
-            if case .takeControl = $0 { return true }
-            return false
-        }
-        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
-    }
-
-    @Test
-    func reconnectingPreviousOwnerDoesNotStealFromAnotherOwner() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
-        client.start()
-        defer { client.stop() }
-        primeViewport(client, columns: 90, rows: 28)
+        try await confirmOwner(client, ws: first)
+        client.suspend()
+        client.resume()
         _ = try await waitForHelloClientID(ws)
         ws.clearSent()
-
-        try confirmFollower(client, cols: 120, rows: 40, epoch: 3)
-        try await expectNever("automatic takeover from another active owner") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-
-        let takeoverCount = envelopes(ws).filter {
-            if case .takeControl = $0 { return true }
-            return false
-        }.count
-        #expect(takeoverCount == 0)
-    }
-
-    @Test
-    func reconnectReclaimWaitsForViewportBeforeTakingControl() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
-        client.start()
-        defer { client.stop() }
-        let clientID = try await waitForHelloClientID(ws)
-        ws.clearSent()
-
         let ownerless = try ownershipSnapshot(
-            ownerClientID: nil,
-            ownerKind: nil,
-            cols: 120,
-            rows: 40,
-            epoch: 3
+            ownerClientID: nil, ownerKind: nil, cols: 120, rows: 40, epoch: 3
         )
         client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await expectNever("automatic takeover before the first viewport") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-        #expect(envelopes(ws).filter {
-            if case .takeControl = $0 { return true }
-            return false
-        }.isEmpty)
-
         primeViewport(client, columns: 90, rows: 28)
-        try await waitUntil("viewport-driven ownerless-session reclaim") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
+        try await expectNever("takeover merely from reconnecting or receiving a viewport") {
+            envelopes(ws).contains { if case .takeControl = $0 { return true }; return false }
+        }
+    }
+
+    @Test("""
+    @spec IPAD-8.5: When an iPad terminal opens as a follower, the application shall preserve the current owner through display updates and terminal-generated replies until user input or an explicit Take Control action requests ownership.
+    """)
+    func terminalRepliesDoNotClaimOwnership() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        _ = try await waitForHelloClientID(ws)
+        try confirmFollower(client)
+        primeViewport(client, columns: 90, rows: 28)
+        client.wakeRenderer()
+        client.sendSoftwareKeyboardText("")
+        // The native write callback also carries automatic DSR/focus replies.
+        client.session.sendInput(Data("\u{1b}[1;1R".utf8))
+        try await expectNever("terminal-generated takeover or input while following") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).contains {
+                if case .takeControl = $0 { return true }; return false
             }
         }
-        let takeover = envelopes(ws).first {
-            if case .takeControl = $0 { return true }
-            return false
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("user input requesting control") {
+            envelopes(ws).contains { if case .takeControl = $0 { return true }; return false }
         }
-        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+        try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 2)
+        try await waitUntil("only the user's input is flushed") { binaryFrames(ws).contains(Data("a".utf8)) }
+        #expect(!binaryFrames(ws).contains(Data("\u{1b}[1;1R".utf8)))
     }
 
     @Test

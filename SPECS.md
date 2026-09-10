@@ -1554,7 +1554,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.14** The owner shall install committed-software-input handlers on the sole `UITerminalView` responder. A non-owner shall disable terminal keyboard eligibility without blocking Ghostty gestures.
 
-**IOS-6.15** When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+**IOS-6.15** When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
 
 **IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the sole `UITerminalView` responder. This covers takeovers initiated by Paste or Take Control, where the terminal was not eligible before ownership was confirmed.
 
@@ -1796,13 +1796,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.4** When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
 
-**IPAD-8.5** While processing an iPad auto-ownership request, the application shall keep the request pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
+**IPAD-8.5** When an iPad terminal opens as a follower, the application shall preserve the current owner through display updates and terminal-generated replies until user input or an explicit Take Control action requests ownership.
 
 **IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
 
 **IPAD-8.7** iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
-
-**IPAD-8.8** The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
 
 **IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
 

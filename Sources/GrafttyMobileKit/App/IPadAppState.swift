@@ -49,7 +49,6 @@ public final class IPadAppState {
     /// recreated detail view sees zero pending requests instead of
     /// replaying honored ones (IPAD-8.9).
     public private(set) var consumedFocusRequestCount: Int = 0
-    public private(set) var ownershipRequestCount: Int = 0
 
     public var pendingFocusRequests: Int {
         max(0, focusRequestCount - consumedFocusRequestCount)
@@ -58,15 +57,6 @@ public final class IPadAppState {
     public func consumeFocusRequests() {
         consumedFocusRequestCount = focusRequestCount
     }
-
-    /// @spec IPAD-8.8
-    /// The auto-ownership fulfillment latch shall live in app-scoped state
-    /// with the same lifetime as `ownershipRequestCount`, so detail-view
-    /// recreation (e.g. the focused-pane fallback after the host closes a
-    /// pane) cannot replay an already-fulfilled ownership request and seize
-    /// display control without a new user action.
-    @ObservationIgnored
-    let autoTakeControlPolicy = SingleSessionView.AutoTakeControlPolicy()
 
     /// Sidebar/detail visibility for the iPad NavigationSplitView.
     /// In-memory only — a fresh launch always lands on both columns
@@ -115,7 +105,6 @@ public final class IPadAppState {
 
     public func requestActiveTerminal() {
         focusRequestCount &+= 1
-        ownershipRequestCount &+= 1
     }
 
     private enum Keys {

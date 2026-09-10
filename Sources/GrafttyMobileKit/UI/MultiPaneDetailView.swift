@@ -16,8 +16,6 @@ struct MultiPaneDetailView: View {
     let focusedPaneId: String?
     let pendingFocusRequests: Int
     let onFocusRequestsConsumed: () -> Void
-    let autoTakeControlRequestCount: Int
-    let autoTakeControlPolicy: SingleSessionView.AutoTakeControlPolicy
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
@@ -83,10 +81,6 @@ struct MultiPaneDetailView: View {
                     isUnfocused: isUnfocused,
                     pendingFocusRequests: isFocused ? pendingFocusRequests : 0,
                     onFocusRequestsConsumed: onFocusRequestsConsumed,
-                    autoTakeControlRequestCount: isFocused
-                        ? autoTakeControlRequestCount
-                        : 0,
-                    autoTakeControlPolicy: autoTakeControlPolicy,
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelect: {
                         guard focusedPaneId != sessionName else { return }
@@ -239,8 +233,6 @@ private struct MultiPaneLeafView: View {
     let isUnfocused: Bool
     let pendingFocusRequests: Int
     let onFocusRequestsConsumed: () -> Void
-    let autoTakeControlRequestCount: Int
-    let autoTakeControlPolicy: SingleSessionView.AutoTakeControlPolicy
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelect: () -> Void
     let onBackToWorktrees: () -> Void
@@ -260,8 +252,6 @@ private struct MultiPaneLeafView: View {
             coordinator: coordinator,
             externalPendingFocusRequests: pendingFocusRequests,
             onExternalFocusRequestsConsumed: onFocusRequestsConsumed,
-            autoTakeControlRequestCount: autoTakeControlRequestCount,
-            autoTakeControlPolicy: autoTakeControlPolicy,
             ghosttyCommandContext: ghosttyCommandContext,
             isPaneFocused: isFocused,
             isEmbeddedPane: true,

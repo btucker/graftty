@@ -179,8 +179,6 @@ public final class SessionClient {
     private var legacyEngaged = false
     @ObservationIgnored
     private var pendingInput = PendingInput()
-    @ObservationIgnored
-    private var reclaimControlOnOwnerlessConnect: Bool
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -317,7 +315,6 @@ public final class SessionClient {
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
         role: Role = .fullscreen,
-        reclaimControlOnOwnerlessConnect: Bool = false,
         pagedRenderer: (any PagedTerminalRenderer)? = nil
     ) {
         self.sessionName = sessionName
@@ -325,7 +322,6 @@ public final class SessionClient {
         self.clock = clock
         self.backoffSchedule = backoffSchedule
         self.role = role
-        self.reclaimControlOnOwnerlessConnect = reclaimControlOnOwnerlessConnect
         self.lastActivityAt = clock.now
 
         final class Box {
@@ -346,6 +342,10 @@ public final class SessionClient {
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // Native writes include automatic terminal replies and focus
+                // reports. Only an owner may forward them; explicit user input
+                // uses the methods below to request control before writing.
+                guard self.isOwner else { return }
                 if data == Data([0x16]) {
                     self.sendControlByte(0x16)
                 } else {
@@ -396,9 +396,7 @@ public final class SessionClient {
             sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
-        case .webControl:
-            reclaimOwnerlessControlIfReady()
-        case .pending, .legacy:
+        case .webControl, .pending, .legacy:
             break
         }
     }
@@ -974,18 +972,13 @@ public final class SessionClient {
         installingCheckpointGrid = nil
     }
 
-    public func resume(
-        reclaimControlOnOwnerlessConnect: Bool = false
-    ) {
+    public func resume() {
         // Process EOF is terminal, not a transport interruption. In
         // particular, retained preview clients must not reattach an exited
         // zmx session merely because a background/foreground cycle calls
         // suspendAll()/resumeAll().
         guard stopped, connectionState != .ended else { return }
         stopped = false
-        if reclaimControlOnOwnerlessConnect {
-            self.reclaimControlOnOwnerlessConnect = true
-        }
         startTransport()
     }
 
@@ -1185,24 +1178,10 @@ public final class SessionClient {
                 }
             } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
                 clearPendingInput()
-            } else if role == .fullscreen, reclaimControlOnOwnerlessConnect, snapshot.isOwnerless {
-                reclaimOwnerlessControlIfReady()
-            } else if reclaimControlOnOwnerlessConnect, !snapshot.isOwnerless {
-                reclaimControlOnOwnerlessConnect = false
             }
         case .hello, .takeControl, .ownerResize:
             break
         }
-    }
-
-    private func reclaimOwnerlessControlIfReady() {
-        guard role == .fullscreen,
-              reclaimControlOnOwnerlessConnect,
-              ownershipSnapshot?.isOwnerless == true,
-              lastIOSViewport != nil
-        else { return }
-        reclaimControlOnOwnerlessConnect = false
-        requestTakeControl()
     }
 }
 #endif

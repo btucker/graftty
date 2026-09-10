@@ -59,9 +59,5 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
 }
 
 #if canImport(UIKit)
-extension SessionClient: PanePreviewClienting {
-    public func resume() {
-        resume(reclaimControlOnOwnerlessConnect: false)
-    }
-}
+extension SessionClient: PanePreviewClienting {}
 #endif
