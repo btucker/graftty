@@ -1,8 +1,39 @@
 # Ghostty paging experiment results
 
-These results cover the terminal core and isolated AppKit and UIKit surfaces.
-See [the reproduction instructions](README.md) to run the experiment. Neither
-Graftty app has paging enabled.
+The September 5 results below cover the terminal core and isolated surfaces.
+See [the reproduction instructions](README.md) to run those probes.
+
+## Mobile integration, September 9, 2026
+
+GrafttyMobile can now negotiate screen-first attachment over SSH when built with
+the [local paging renderer package](BUILD.md). Builds using the published renderer
+and hosts with older running zmx daemons retain the legacy attachment path.
+
+- A real zmx daemon with 100,000 numbered history rows returned a 4,226-byte
+  checkpoint in about 0.1 ms. Live output arrived while history was withheld;
+  the first requested page was 6,022 bytes. This timing measures host capture,
+  not end-to-end mobile opening.
+- AppKit and UIKit production probes passed ten scenarios covering complete
+  row order, selection and viewport anchors, retained-surface replacement,
+  parser modes, resize/reset recovery, invalid pages, and retention limits.
+- A mounted mobile terminal restored the current screen, including row 99,999,
+  into a container with different dimensions. It imported a page after rotation
+  without changing the authoritative terminal grid. The test took about 0.63 s,
+  including native renderer initialization and verification.
+- The mobile session tests cover checkpoint installation on opening and reopening,
+  live input/output with a page withheld, and retained terminal identity.
+- Final validation passed 406 mobile tests, 17 SSH/coordinator tests, 132 wrapper
+  tests, and 104 daemon tests. Both supported daemon upgrade-compatibility suites
+  passed. The full SwiftPM run reported six timing issues in unchanged suites;
+  those suites and the paging tests passed serially (31 XCTest and 38 Swift tests).
+- A deterministic native test forced pixel dimensions ahead of terminal rows.
+  The previous input assertion aborted; the fix preserved the existing selection.
+  The isolated test helper is excluded from production archives.
+
+Older pages load when the viewport approaches the oldest loaded content. Only
+one page is outstanding. An expired checkpoint preserves the loaded content and
+offers an explicit return to the live screen to recover older history. The Mac
+application does not yet consume this paging coordinator.
 
 ## What the probe verifies
 

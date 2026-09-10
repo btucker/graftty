@@ -68,7 +68,6 @@ extension SessionClient {
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
         allowLegacyWebSocketFallback: Bool =
             legacyWebSocketFallbackEnabledByDefault,
-        reclaimControlOnOwnerlessConnect: Bool = false,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
@@ -76,7 +75,9 @@ extension SessionClient {
             sessionName: sessionName,
             webSocketFactory: {
                 if let remoteHost = await remoteConnectionProvider?() {
-                    return try await remoteHost.openTerminalSession(sessionName: sessionName)
+                    return try await remoteHost.openTerminalSession(
+                        sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported
+                    )
                 }
                 if sessionName.hasPrefix("relay-pane-") {
                     throw RemoteSessionTransportError
@@ -91,8 +92,7 @@ extension SessionClient {
             },
             clock: clock,
             backoffSchedule: backoffSchedule,
-            role: role,
-            reclaimControlOnOwnerlessConnect: reclaimControlOnOwnerlessConnect
+            role: role
         )
     }
 

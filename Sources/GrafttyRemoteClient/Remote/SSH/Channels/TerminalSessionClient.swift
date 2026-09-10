@@ -40,6 +40,7 @@ import NIOSSH
 public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case notConnected
+        case pagingUnsupported
         case channelClosed
         /// The remote PTY process reached EOF and deliberately closed the
         /// SSH child channel. This is not a retryable transport failure.
@@ -52,12 +53,14 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private let sessionName: String
     private let lock = NIOLock()
     private var childChannel: Channel?
-    private var receiveBuffer: [WebSocketFrame] = []
+    private var receiveBuffer = TerminalReceiveBuffer()
     private var pendingReceivers: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var didFailReceive: (any Error)?
     private var closed = false
 
     public var supportsWebControlTextFrames: Bool { true }
+    public private(set) var usesPagedHistory = false
+    public var supportsPagedHistory: Bool { usesPagedHistory }
 
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String) {
         self.parentChannel = parentChannel
@@ -69,7 +72,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// Resolves only after the server acknowledges the shell request
     /// (ChannelSuccessEvent), ensuring the server-side stream is attached
     /// before the caller sends any terminal bytes.
-    public func connect() async throws {
+    public func connect(paged: Bool = false) async throws {
         let child: Channel
         do {
             child = try await openChildChannel(
@@ -80,6 +83,14 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             }
         } catch {
             throw ClientError.openFailed(error)
+        }
+
+        if paged {
+            do { try await requestPagedSubsystem(on: child) }
+            catch {
+                child.close(promise: nil)
+                throw error
+            }
         }
 
         // env and pty don't need replies — server always accepts them and
@@ -109,9 +120,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         } catch {
             // Close the orphaned child channel and re-throw.
             child.close(promise: nil)
+            if paged, case ClientError.openFailed(let cause) = error, cause is ShellRejectedError {
+                throw ClientError.pagingUnsupported
+            }
             throw error
         }
 
+        usesPagedHistory = paged
         lock.withLock { childChannel = child }
 
         // Watch for child-channel close so receivers waiting in
@@ -119,6 +134,25 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         child.closeFuture.whenComplete { [weak self] _ in
             self?.handleChildClose()
         }
+    }
+
+    private func requestPagedSubsystem(on child: Channel) async throws {
+        let waiter = SSHSubsystemReplyWaiter()
+        let relay = PagedSubsystemReplyRelay(waiter: waiter)
+        try await child.pipeline.addHandler(relay)
+        try await waiter.wait(
+            scheduleTimeout: { callback in
+                let scheduled = child.eventLoop.scheduleTask(in: .seconds(10), callback)
+                return { scheduled.cancel() }
+            },
+            timeoutError: ClientError.channelClosed,
+            onAbort: { child.close(promise: nil) },
+            start: {
+                child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(
+                    subsystem: SSHChannelTypeNames.terminalPaged, wantReply: true
+                )).whenFailure { waiter.finish(.failure($0)) }
+            }
+        )
     }
 
     public func send(_ frame: WebSocketFrame) async throws {
@@ -143,8 +177,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WebSocketFrame, Error>) in
             lock.withLock {
-                if !receiveBuffer.isEmpty {
-                    let next = receiveBuffer.removeFirst()
+                if let next = receiveBuffer.popFirst() {
                     cont.resume(returning: next)
                     return
                 }
@@ -284,11 +317,11 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     private func deliverInbound(_ frame: WebSocketFrame) {
         lock.withLock {
-            if let next = pendingReceivers.first {
+            receiveBuffer.append(frame)
+            while let next = pendingReceivers.first,
+                  let output = receiveBuffer.popFirst() {
                 pendingReceivers.removeFirst()
-                next.resume(returning: frame)
-            } else {
-                receiveBuffer.append(frame)
+                next.resume(returning: output)
             }
         }
     }

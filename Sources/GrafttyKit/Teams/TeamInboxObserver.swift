@@ -30,6 +30,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
 
     private let inbox: TeamInbox
     private let teamID: String
+    private let readMessages: () throws -> [TeamInboxMessage]?
     private let queue: DispatchQueue
     /// Backstop poll cadence. kqueue `NOTE_WRITE` events can be dropped under
     /// system load, and the observer's queue can be starved past any fixed
@@ -44,7 +45,6 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// The injectable closer lets tests verify that reattachment never closes
     /// the same descriptor twice.
     private let closeDescriptor: @Sendable (Int32) -> Int32
-    private let readMessages: (TeamInbox, String) throws -> [TeamInboxMessage]
 
     // Mutated only on `queue`.
     private var fileSource: DispatchSourceFileSystemObject?
@@ -55,8 +55,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// Size signature of the file at the last emit, or `.absent` when the file
     /// did not exist. The poll re-emits only when this changes, so a healthy
     /// vnode-driven run produces no redundant emits.
-    /// `nil` until the initial snapshot, distinct from a file deleted later.
-    private var lastSignature: FileSignature?
+    private var lastSignature: FileSignature = .absent
 
     private enum FileSignature: Equatable {
         case absent
@@ -73,17 +72,16 @@ public final class TeamInboxObserver: @unchecked Sendable {
         pollInterval: DispatchTimeInterval,
         installEventSources: Bool = true,
         closeDescriptor: @escaping @Sendable (Int32) -> Int32 = { close($0) },
-        readMessages: @escaping (TeamInbox, String) throws -> [TeamInboxMessage] = {
-            try $0.messages(teamID: $1)
-        }
+        readMessages: (() throws -> [TeamInboxMessage]?)? = nil
     ) {
-        self.inbox = TeamInbox(rootDirectory: rootDirectory)
+        let inbox = TeamInbox(rootDirectory: rootDirectory)
+        self.inbox = inbox
+        self.readMessages = readMessages ?? { try inbox.messagesIfFileExists(teamID: teamID) }
         self.teamID = teamID
         self.queue = DispatchQueue(label: "com.btucker.graftty.TeamInboxObserver", qos: .utility)
         self.pollInterval = pollInterval
         self.installEventSources = installEventSources
         self.closeDescriptor = closeDescriptor
-        self.readMessages = readMessages
     }
 
     /// Starts watching the inbox file. The callback is invoked on the
@@ -99,7 +97,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
             guard let self else { return }
             self.attach(callback: callback)
             // Initial emit reflects the current on-disk state.
-            self.maybeEmit(callback: callback, force: true)
+            self.maybeEmit(callback: callback, force: true, initial: true)
         }
         return Cancellable { [weak self] in self?.tearDown() }
     }
@@ -215,8 +213,8 @@ public final class TeamInboxObserver: @unchecked Sendable {
     }
 
 #if DEBUG
-    /// Runs a refresh on the observer queue without timers or vnode delivery.
-    func refreshForTesting(force: Bool = false, callback: @escaping ([TeamInboxMessage]) -> Void) async {
+    /// Runs one observation on the same queue without timers or vnode delivery.
+    func pollForTesting(force: Bool = false, callback: @escaping ([TeamInboxMessage]) -> Void) async {
         await withCheckedContinuation { continuation in
             queue.async {
                 self.maybeEmit(callback: callback, force: force)
@@ -240,19 +238,30 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// Emit when `force` (a vnode/initial event, preserving per-event
     /// semantics) or when the file's signature changed since the last emit
     /// (the polling backstop). Runs only on `queue`.
-    private func maybeEmit(callback: @escaping ([TeamInboxMessage]) -> Void, force: Bool) {
+    private func maybeEmit(
+        callback: @escaping ([TeamInboxMessage]) -> Void,
+        force: Bool,
+        initial: Bool = false
+    ) {
         let signature = currentSignature()
-        let previous = lastSignature
-        lastSignature = signature
-        guard force || signature != previous else { return }
-        // Only the initial snapshot may report an absent inbox as empty.
-        // Later deletion events, including delayed directory events, must
-        // preserve the consumer's watermark until the file is recreated.
-        if case .absent = signature {
-            if previous == nil { callback([]) }
+        guard force || signature != lastSignature else { return }
+        if case .absent = signature, !initial {
+            lastSignature = .absent
             return
         }
-        emit(callback: callback)
+        do {
+            // The file can disappear after stat(). Preserve absence in the
+            // read result instead of turning it into an empty message batch.
+            guard let messages = try readMessages() else {
+                lastSignature = .absent
+                if initial { callback([]) }
+                return
+            }
+            lastSignature = signature
+            callback(messages)
+        } catch {
+            Self.logger.error("inbox read failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Size-based change signature. `messages.jsonl` is append-only (writes go
@@ -269,21 +278,6 @@ public final class TeamInboxObserver: @unchecked Sendable {
         return .present(size: Int64(info.st_size))
     }
 
-    private func emit(callback: @escaping ([TeamInboxMessage]) -> Void) {
-        do {
-            let messages = try readMessages(inbox, teamID)
-            // The file can disappear after the signature check. `messages`
-            // returns [] for a missing file, which must not reset consumers.
-            if messages.isEmpty, case .absent = currentSignature() {
-                lastSignature = .absent
-                return
-            }
-            callback(messages)
-        } catch {
-            Self.logger.error("inbox read failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     private func tearDown() {
         queue.async { [weak self] in
             guard let self else { return }
@@ -295,7 +289,6 @@ public final class TeamInboxObserver: @unchecked Sendable {
             self.dirSource?.cancel()
             self.dirSource = nil
             self.dirFD = -1
-            self.lastSignature = nil
         }
     }
 

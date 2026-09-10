@@ -1,10 +1,10 @@
 # Ghostty paging experiment
 
-This experiment tests the terminal core and native surfaces needed by the shared
+This directory contains the renderer patches and probes for the shared
 [Mac and mobile paging design](../../docs/superpowers/specs/2026-09-05-shared-paged-terminal-history.md).
-It does not enable paging in either app or change the shipped Ghostty binary.
-The TERM-12 requirements remain pending. See [the results](RESULTS.md) for
-verified behavior, the anchor fix, and remaining integration limits.
+Use the [local package build guide](BUILD.md) to build the dependency used by
+GrafttyMobile. The instructions below reproduce the original core and surface
+experiments. See [the results](RESULTS.md) for the measured behavior and limits.
 
 ## Reproduce the core test
 

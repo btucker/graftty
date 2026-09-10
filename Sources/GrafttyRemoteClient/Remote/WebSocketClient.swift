@@ -8,6 +8,7 @@ public enum WebSocketFrame: Equatable {
 
 public protocol WebSocketClient: AnyObject {
     var supportsWebControlTextFrames: Bool { get }
+    var supportsPagedHistory: Bool { get }
     func send(_ frame: WebSocketFrame) async throws
     /// Receives the next frame. Errors surface as thrown errors.
     func receive() async throws -> WebSocketFrame
@@ -31,6 +32,7 @@ public protocol WebSocketClient: AnyObject {
 
 public extension WebSocketClient {
     var supportsWebControlTextFrames: Bool { false }
+    var supportsPagedHistory: Bool { false }
     func resize(cols: Int, rows: Int) async {}
     func sendHello(
         clientID: DisplayClientID,

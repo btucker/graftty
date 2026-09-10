@@ -281,8 +281,13 @@ public final class TeamInbox {
     }
 
     public func messages(teamID: String) throws -> [TeamInboxMessage] {
+        try messagesIfFileExists(teamID: teamID) ?? []
+    }
+
+    /// Keeps absence distinct from an existing empty inbox for file observers.
+    func messagesIfFileExists(teamID: String) throws -> [TeamInboxMessage]? {
         let url = messagesURL(teamID: teamID)
-        guard let data = try dataIfFileExists(at: url) else { return [] }
+        guard let data = try dataIfFileExists(at: url) else { return nil }
         let text = String(decoding: data, as: UTF8.self)
         return text.split(separator: "\n").compactMap { line in
             guard let data = String(line).data(using: .utf8) else { return nil }

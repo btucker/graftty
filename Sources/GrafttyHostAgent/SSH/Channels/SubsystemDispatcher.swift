@@ -31,6 +31,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     public typealias OutboundOut = SSHChannelData
 
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let pagedFactory: PagedTerminalStreamFactory?
     private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private let paneControlMutator: PaneControlChannelHandler.Mutator
@@ -56,6 +57,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
 
     public init(
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
@@ -67,6 +69,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios }
     ) {
         self.streamFactory = streamFactory
+        self.pagedFactory = pagedFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
         self.paneControlMutator = paneControlMutator
@@ -145,6 +148,25 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         context: ChannelHandlerContext
     ) {
         switch request.subsystem {
+        case SSHChannelTypeNames.terminalPaged:
+            guard let pagedFactory else {
+                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+                context.close(promise: nil)
+                return
+            }
+            dispatched = true
+            do {
+                try context.pipeline.syncOperations.addHandler(TerminalSessionHandler(
+                    streamFactory: streamFactory, pagedFactory: pagedFactory,
+                    ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
+                    deviceID: deviceIDProvider() ?? RemoteDeviceID.generate(), defaultKind: displayKindProvider()
+                ), position: .after(self))
+                if request.wantReply { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
+                context.pipeline.syncOperations.removeHandler(context: context, promise: nil)
+            } catch {
+                context.close(promise: nil)
+            }
+
         case SSHChannelTypeNames.panesState:
             dispatched = true
             installSubsystem(

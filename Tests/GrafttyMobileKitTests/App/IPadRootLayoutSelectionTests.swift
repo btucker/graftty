@@ -191,7 +191,6 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedWorktreePath == "/repo/feat")
         #expect(appState.focusedPaneId == "session-b")
         #expect(appState.focusRequestCount == 1)
-        #expect(appState.ownershipRequestCount == 1)
     }
 
     @Test("worktree row selection updates active pane and requests terminal activation")
@@ -215,7 +214,6 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedWorktreePath == "/repo/feat")
         #expect(appState.focusedPaneId == "session-a")
         #expect(appState.focusRequestCount == 1)
-        #expect(appState.ownershipRequestCount == 1)
     }
 
     @Test("""
@@ -346,7 +344,7 @@ struct IPadRootLayoutSelectionTests {
         #expect(keyboard.systemName == "keyboard")
     }
 
-    @Test("iPad detail session can receive external focus and ownership requests")
+    @Test("iPad detail session can receive external keyboard focus requests")
     func ipadDetailSessionReceivesActiveRequests() {
         let host = sampleHost()
         let step = SessionStep(host: host, sessionName: "s", title: "s")
@@ -355,12 +353,10 @@ struct IPadRootLayoutSelectionTests {
             navigationPath: .constant(NavigationPath()),
             isFullScreen: false,
             coordinator: nil,
-            externalPendingFocusRequests: 3,
-            autoTakeControlRequestCount: 4
+            externalPendingFocusRequests: 3
         )
 
         #expect(view.externalPendingFocusRequests == 3)
-        #expect(view.autoTakeControlRequestCount == 4)
     }
 
     @Test("""
@@ -1324,46 +1320,6 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
             isKeyboardVisible: true,
             keyboardAllowed: false,
             isPaneFocused: true
-        ))
-    }
-
-    /// @spec IPAD-8.5: While processing an iPad auto-ownership request, the
-    /// application shall keep the request pending until the live session becomes
-    /// takeable, but an already-owned pane shall fulfill the request as a no-op
-    /// so stale selection requests cannot steal ownership back later.
-    func testAutoOwnershipRetriesWhenSessionBecomesTakeable() {
-        let policy = SingleSessionView.AutoTakeControlPolicy()
-        XCTAssertFalse(policy.shouldTakeControl(
-            requestCount: 1,
-            isOwner: false,
-            canTakeControl: false
-        ))
-        XCTAssertTrue(policy.shouldTakeControl(
-            requestCount: 1,
-            isOwner: false,
-            canTakeControl: true
-        ))
-        XCTAssertFalse(policy.shouldTakeControl(
-            requestCount: 1,
-            isOwner: false,
-            canTakeControl: true
-        ))
-        XCTAssertTrue(policy.shouldTakeControl(
-            requestCount: 2,
-            isOwner: false,
-            canTakeControl: true
-        ))
-
-        let alreadyOwnerPolicy = SingleSessionView.AutoTakeControlPolicy()
-        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
-            requestCount: 1,
-            isOwner: true,
-            canTakeControl: false
-        ))
-        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
-            requestCount: 1,
-            isOwner: false,
-            canTakeControl: true
         ))
     }
 

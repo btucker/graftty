@@ -344,6 +344,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.10** When a paged attachment closes or a checkpoint is replaced, the application shall cancel its pending history requests and release its checkpoint resources; while attachments remain open, the host shall bound retained checkpoint resources across clients.
 
+**TERM-12.11** When a mobile client requests paged attachment, the application shall negotiate support before accepting a bounded current-screen checkpoint and keep live output separate from requested history.
+
+**TERM-12.12** When a client negotiates paged terminal attachment, the host shall send the current-screen checkpoint before an ownership hello, preserve live VT byte ordering, and send older history only in response to a bounded history request.
+
+**TERM-12.13** While a mobile terminal displays a paged checkpoint, the application shall preserve its authoritative columns and rows in a canvas fitted to the pane width, allow vertical scrolling through overflow and history, and map touch and selection coordinates through that canvas.
+
+**TERM-12.14** While an authoritative canvas is active, the application shall disable native font pinch through selection transitions and restore its prior state when the canvas is released.
+
+**TERM-12.15** When zmx requests a paged client's size after transferring leadership, the application shall resend its latest explicitly requested grid without resizing a passive attachment.
+
+**TERM-12.16** If a paged terminal socket write fails after sending part of an IPC frame, then the application shall close that attachment before sending another frame.
+
+**TERM-12.17** When the renderer requests clipboard types only, the application shall report available text types without reading clipboard contents or taking display control.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1494,7 +1508,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
-**IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
+**IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a paged follower canvas.
 
 **IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
 
@@ -1532,7 +1546,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.7** While a terminal pane is rendered in the iOS app, `UITerminalView` shall remain the sole terminal keyboard responder and its supported `showsInputAccessory` property shall be false, so the GhosttyKit accessory is absent without Objective-C runtime swizzling. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 
-**IOS-6.8** While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
+**IOS-6.8** While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 
 **IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
@@ -1546,7 +1560,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.14** The owner shall install committed-software-input handlers on the sole `UITerminalView` responder. A non-owner shall disable terminal keyboard eligibility without blocking Ghostty gestures.
 
-**IOS-6.15** When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+**IOS-6.15** When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
 
 **IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the sole `UITerminalView` responder. This covers takeovers initiated by Paste or Take Control, where the terminal was not eligible before ownership was confirmed.
 
@@ -1575,6 +1589,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-7.5** When the host reports that a live terminal process reached EOF, the iPad application shall mark that pane ended and shall not reconnect its terminal channel. Clean process exit is distinct from the retryable authenticated-channel failures in `IOS-7.4`; reattaching after EOF can recreate the zmx session before the host removes the pane from its authoritative split tree.
 
 **IOS-7.6** When a mobile terminal channel is replaced after its mounted terminal has received output, the application shall cancel unfinished VT parsing and reset the retained terminal before applying the replacement zmx attach's first replay bytes, so the replay replaces the existing screen and scrollback instead of appending a duplicate copy.
+
+**IOS-7.7** When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -1626,7 +1642,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.3** When the user taps **Select All** in the long-press menu, the application shall invoke libghostty's `select_all` binding action via `surface.performAction("select_all")` and shall enter selection mode for that pane with the visible viewport highlighted.
 
-**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
 
 **IOS-11.5** When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
 
@@ -1786,13 +1802,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.4** When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
 
-**IPAD-8.5** While processing an iPad auto-ownership request, the application shall keep the request pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
+**IPAD-8.5** When an iPad terminal opens as a follower, the application shall preserve the current owner through display updates and terminal-generated replies until user input or an explicit Take Control action requests ownership.
 
 **IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
 
 **IPAD-8.7** iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
-
-**IPAD-8.8** The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
 
 **IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
 
@@ -2189,6 +2203,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
 
 **REMOTE-9.8** If an SSH terminal's PTY input consumer stalls until the bounded write queue is full, the host shall close that terminal channel rather than retain input without limit or silently drop terminal bytes.
+
+**REMOTE-9.9** When SSH terminal output accumulates before a receiver drains it, the application shall combine consecutive binary frames into batches of at most 256 KiB, preserve every byte and control-frame ordering, and deliver available output without waiting for more frames.
 
 ### REMOTE-10.x
 

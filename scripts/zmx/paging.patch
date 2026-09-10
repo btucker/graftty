@@ -1,0 +1,823 @@
+diff --git a/src/ipc.zig b/src/ipc.zig
+--- a/src/ipc.zig
++++ b/src/ipc.zig
+@@ -30,6 +30,13 @@
+     Capabilities = 23,
+     PixelSize = 24,
+     Tail = 25,
++    PagedAttach = 26,
++    PagedReady = 27,
++    PagedHistory = 28,
++    PagedPage = 29,
++    PagedUnavailable = 30,
++    PagedGrid = 31,
++    PagedEnded = 32,
+     // Non-exhaustive: this enum comes off the wire via bytesToValue and
+     // @enumFromInt, so out-of-range values are representable
+     // rather than UB. Switches must handle `_` (unknown tag).
+@@ -72,6 +79,11 @@
+     pub const pixel_size: u64 = 1 << 0;
+     pub const snapshot: u64 = 1 << 1;
+     pub const raw_snapshot_stream: u64 = 1 << 2;
++    pub const paged_snapshot: u64 = 1 << 3;
++
++    pub fn supportsPaging(self: Capabilities) bool {
++        return self.bits & paged_snapshot != 0;
++    }
+ 
+     pub fn supportsPixelSize(self: Capabilities) bool {
+         return self.bits & pixel_size != 0;
+@@ -444,3 +456,37 @@
+     const last_field_end = @offsetOf(Info, "task_exit_code") + @sizeOf(u8);
+     for (bytes[last_field_end..]) |b| try std.testing.expectEqual(@as(u8, 0), b);
+ }
++
++// Paged frames use fixed little-endian fields. Existing tags stay unchanged.
++pub const PAGED_CODEC = "ghostty-8af6897c-paging-1";
++pub const PAGED_READY_LIMIT = 512 * 1024;
++pub const PAGED_PAGE_LIMIT = 256 * 1024;
++pub const PagedReady = extern struct {
++    incarnation: u64,
++    checkpoint: u64,
++    cols: u16,
++    rows: u16,
++    history_flags: u8,
++    reserved: [3]u8 = @splat(0),
++};
++pub const PagedHistory = extern struct {
++    incarnation: u64,
++    checkpoint: u64,
++    request: u64,
++    ordinal: u64,
++    screen: u16,
++    reserved: [6]u8 = @splat(0),
++};
++pub const PagedPage = extern struct {
++    request: PagedHistory,
++    complete: u8,
++    reserved: [7]u8 = @splat(0),
++};
++
++test "paged wire extends frozen IPC with bounded explicit frames" {
++    try std.testing.expectEqual(@as(usize, 24), @sizeOf(PagedReady));
++    try std.testing.expectEqual(@as(usize, 40), @sizeOf(PagedHistory));
++    try std.testing.expectEqual(@as(usize, 48), @sizeOf(PagedPage));
++    try std.testing.expectEqual(@as(u8, 26), @intFromEnum(Tag.PagedAttach));
++    try std.testing.expect(!(Capabilities{}).supportsPaging());
++}
+diff --git a/src/loop.zig b/src/loop.zig
+--- a/src/loop.zig
++++ b/src/loop.zig
+@@ -1,3 +1,4 @@
++const paging = @import("paging.zig");
+ const std = @import("std");
+ const ghostty_vt = @import("ghostty-vt");
+ const ipc = @import("ipc.zig");
+@@ -383,6 +384,8 @@
+         .max_scrollback_lines = daemon.cfg.max_scrollback_lines,
+     });
+     defer term.deinit(gpa);
++    // Checkpoints borrow terminal pins and must die before terminal teardown.
++    defer for (daemon.clients.items) |client| client.clearCheckpoint();
+     var vt_stream = ghostty_vt.TerminalStream.init(.{
+         .allocator = gpa,
+         .handler = term.vtHandler(),
+@@ -397,6 +400,7 @@
+     var marker_carry_len: usize = 0;
+ 
+     var had_terminal_client = daemon.hasTerminalClient();
++    var pty_eof = false;
+ 
+     daemon_loop: while (daemon.running) {
+         // If the program asked for focus reports (DECSET 1004), send focus-out
+@@ -492,7 +496,7 @@
+             // which has no corresponding kernel-imposed per-write limit.
+             client.write_buf = try std.ArrayList(u8).initCapacity(client.alloc, 65536);
+             const server_capabilities = ipc.Capabilities{
+-                .bits = ipc.Capabilities.pixel_size | ipc.Capabilities.snapshot,
++                .bits = ipc.Capabilities.pixel_size | ipc.Capabilities.snapshot | ipc.Capabilities.paged_snapshot,
+             };
+             try ipc.appendMessage(
+                 gpa,
+@@ -545,6 +549,7 @@
+                     // write buffers are flushed via the normal POLLOUT path.
+                     // On the next iteration, daemon.running will be false.
+                     daemon.running = false;
++                    pty_eof = true;
+                 } else {
+                     // Feed PTY output to terminal emulator for state tracking
+                     vt_stream.nextSlice(buf[0..n]);
+@@ -661,10 +666,12 @@
+ 
+                 while (client.read_buf.next()) |msg| {
+                     switch (msg.header.tag) {
+-                        .Tail, .Init, .Capabilities, .Run => {},
++                        .Tail, .Init, .Capabilities, .Run, .PagedAttach, .PagedHistory => {},
+                         else => client.ignoreDeferredPtyOutput(gpa),
+                     }
+                     switch (msg.header.tag) {
++                        .PagedAttach => try daemon.handlePagedAttach(gpa, client, &term, &vt_stream, msg.payload),
++                        .PagedHistory => try daemon.handlePagedHistory(gpa, client, msg.payload),
+                         .Input => try daemon.handleInput(gpa, client, msg.payload),
+                         .Send => daemon.handleSend(gpa, msg.payload),
+                         .Output => try daemon.handleOutput(gpa, msg.payload, &term, &vt_stream),
+@@ -704,7 +711,7 @@
+                         .Tail => try client.startReceivingPtyOutput(gpa, true),
+                         .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
+                         .Run => try daemon.handleRun(gpa, io, client, msg.payload),
+-                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot => {},
++                        .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot, .PagedReady, .PagedPage, .PagedUnavailable, .PagedGrid, .PagedEnded => {},
+                         .Write => try daemon.handleWrite(gpa, client, msg.payload),
+                         _ => std.log.warn(
+                             "ignoring unknown IPC tag={d}",
+@@ -716,7 +723,7 @@
+ 
+             if (revents & lib_posix.POLL.OUT != 0) {
+                 // Flush pending output buffers
+-                const n = lib_posix.write(client.socket_fd, client.write_buf.items) catch |err| blk: {
++                const n: usize = lib_posix.write(client.socket_fd, client.write_buf.items) catch |err| blk: {
+                     if (err == error.WouldBlock) break :blk 0;
+                     // Error on write, close client
+                     const last = daemon.closeClient(gpa, client, i, false);
+@@ -739,6 +746,7 @@
+             }
+         }
+     }
++    if (pty_eof) try daemon.finishPagedPTYExit(gpa, io);
+ }
+ 
+ const ClientResult = struct {
+@@ -775,7 +783,16 @@
+     write_buf: std.ArrayList(u8),
+     env_str: ?[]u8 = null,
+ 
++    checkpoint: ?paging.Checkpoint = null,
++    checkpoint_id: u64 = 0,
++
++    fn clearCheckpoint(self: *Client) void {
++        if (self.checkpoint) |*checkpoint| checkpoint.deinit();
++        self.checkpoint = null;
++    }
++
+     pub fn deinit(self: *Client, gpa: std.mem.Allocator) void {
++        self.clearCheckpoint();
+         lib_posix.close(self.socket_fd);
+         self.read_buf.deinit();
+         self.write_buf.deinit(self.alloc);
+@@ -899,6 +916,10 @@
+     task_ended_at: ?u64 = null, // timestamp when task exited
+     pty_fd: i32 = -1, // set by daemonLoop so handleRun can probe the foreground process
+     shell: []const u8 = "/bin/sh",
++    incarnation: u64 = 0,
++    next_checkpoint_id: u64 = 0,
++    mutation_epoch: u64 = 0,
++    pty_reaped: bool = false,
+ 
+     /// Create a Daemon. Caller is responsible for freeing all variables passed
+     /// into the init fn.
+@@ -908,6 +929,7 @@
+             .session_name = sesh_name,
+             .socket_path = socket_path,
+             .created_at = @intCast(std.Io.Timestamp.now(io, .real).toSeconds()),
++            .incarnation = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .real).nanoseconds))),
+         };
+     }
+ 
+@@ -1135,10 +1157,10 @@
+             dir.deleteFile(new_io, sesh_name) catch |err| {
+                 std.log.warn("failed to delete socket file err={s}", .{@errorName(err)});
+             };
+-            self.handleKill(gpa, new_io);
++            if (self.pty_reaped) self.shutdown(gpa) else self.handleKill(gpa, new_io);
+             self.deinit(gpa);
+             lib_posix.close(pty_info.master_fd);
+-            _ = lib_posix.waitpid(self.pid, 0);
++            if (!self.pty_reaped) _ = lib_posix.waitpid(self.pid, 0);
+         }
+ 
+         try daemonLoop(self, gpa, new_io, server_sock_fd, pty_info.master_fd);
+@@ -1386,7 +1408,9 @@
+                 .cols = cols,
+                 .rows = rows,
+             };
++            if (term.cols != cols or term.rows != rows) self.mutation_epoch +%= 1;
+             try term.resize(gpa, opts);
++            try self.broadcastPagedGrid(gpa, term);
+ 
+             // Mark that we've had a client init, so subsequent clients get terminal state
+             self.has_had_client = true;
+@@ -1397,6 +1421,162 @@
+             );
+         }
+         try client.startReceivingPtyOutput(gpa, false);
++    }
++
++    fn queuePagedExit(self: *Daemon, gpa: std.mem.Allocator, status: i32) !void {
++        for (self.clients.items) |client| {
++            if (!client.is_terminal or !client.capabilities.supportsPaging()) continue;
++            try ipc.appendMessage(gpa, &client.write_buf, .PagedEnded, std.mem.asBytes(&status));
++            client.has_pending_output = true;
++        }
++    }
++
++    // Socket EOF can also mean a detached client or a failed transport. Only
++    // a reaped child proves the terminal process exited. Flush its explicit
++    // status after earlier output, without waiting forever for stalled peers.
++    fn finishPagedPTYExit(self: *Daemon, gpa: std.mem.Allocator, io: std.Io) !void {
++        const has_paged = for (self.clients.items) |client| {
++            if (client.is_terminal and client.capabilities.supportsPaging()) break true;
++        } else false;
++        if (!has_paged) return;
++        const reap_deadline = std.Io.Timestamp.now(io, .awake).toMilliseconds() + 500;
++        var exit_status: ?i32 = null;
++        while (std.Io.Timestamp.now(io, .awake).toMilliseconds() < reap_deadline) {
++            var raw_status: c_int = 0;
++            const reaped = std.c.waitpid(self.pid, &raw_status, @intCast(std.c.W.NOHANG));
++            if (reaped == self.pid) {
++                const status: u32 = @bitCast(raw_status);
++                self.pty_reaped = true;
++                exit_status = if (std.c.W.IFEXITED(status))
++                    std.c.W.EXITSTATUS(status)
++                else if (std.c.W.IFSIGNALED(status))
++                    128 + @as(i32, @intCast(@intFromEnum(std.c.W.TERMSIG(status))))
++                else
++                    1;
++                break;
++            }
++            std.Io.sleep(io, std.Io.Duration.fromMilliseconds(10), .awake) catch return;
++        }
++        const status = exit_status orelse return;
++        try self.queuePagedExit(gpa, status);
++        const flush_deadline = std.Io.Timestamp.now(io, .awake).toMilliseconds() + 1000;
++        while (std.Io.Timestamp.now(io, .awake).toMilliseconds() < flush_deadline) {
++            var pending = false;
++            for (self.clients.items) |client| {
++                if (!client.capabilities.supportsPaging() or client.write_buf.items.len == 0) continue;
++                var fds = [_]lib_posix.pollfd{.{ .fd = client.socket_fd, .events = lib_posix.POLL.OUT, .revents = 0 }};
++                _ = try lib_posix.poll(&fds, 0);
++                if (fds[0].revents & lib_posix.POLL.OUT != 0) {
++                    const n: usize = lib_posix.write(client.socket_fd, client.write_buf.items) catch |err| blk: {
++                        if (err == error.WouldBlock) break :blk 0;
++                        client.write_buf.clearRetainingCapacity();
++                        break :blk 0;
++                    };
++                    if (n > 0) try client.write_buf.replaceRange(gpa, 0, n, &.{});
++                }
++                pending = pending or client.write_buf.items.len > 0;
++            }
++            if (!pending) break;
++            std.Io.sleep(io, std.Io.Duration.fromMilliseconds(10), .awake) catch return;
++        }
++    }
++
++    fn broadcastPagedGrid(self: *Daemon, gpa: std.mem.Allocator, term: *const ghostty_vt.Terminal) !void {
++        const size: ipc.Resize = .{ .cols = term.cols, .rows = term.rows };
++        for (self.clients.items) |client| {
++            if (client.checkpoint == null) continue;
++            try ipc.appendMessage(gpa, &client.write_buf, .PagedGrid, std.mem.asBytes(&size));
++            client.has_pending_output = true;
++        }
++    }
++
++    pub fn handlePagedAttach(self: *Daemon, gpa: std.mem.Allocator, client: *Client, term: *ghostty_vt.Terminal, vt_stream: *ghostty_vt.TerminalStream, payload: []const u8) !void {
++        if (!client.capabilities.supportsPaging() or !std.mem.eql(u8, payload, ipc.PAGED_CODEC)) return;
++        client.discardDeferredPtyOutput(gpa, .snapshot_pending);
++        client.clearCheckpoint();
++        var continuation_buf: std.Io.Writer.Allocating = .init(gpa);
++        defer continuation_buf.deinit();
++        if (!vt_stream.ground()) vt_stream.writeContinuation(&continuation_buf.writer) catch {
++            try ipc.appendMessage(gpa, &client.write_buf, .PagedReady, "");
++            client.has_pending_output = true;
++            return;
++        };
++        const continuation: snapshot.Continuation = if (continuation_buf.written().len == 0)
++            .ground
++        else
++            .{ .bytes = continuation_buf.written() };
++        var checkpoint = paging.Checkpoint.capture(gpa, term, continuation, self.mutation_epoch) catch {
++            try ipc.appendMessage(gpa, &client.write_buf, .PagedReady, "");
++            client.has_pending_output = true;
++            return;
++        };
++        var checkpoint_owned = true;
++        errdefer if (checkpoint_owned) checkpoint.deinit();
++        if (checkpoint.ready.len > ipc.PAGED_READY_LIMIT) {
++            checkpoint.deinit();
++            checkpoint_owned = false;
++            try ipc.appendMessage(gpa, &client.write_buf, .PagedReady, "");
++            client.has_pending_output = true;
++            return;
++        }
++        self.next_checkpoint_id +%= 1;
++        const header: ipc.PagedReady = .{
++            .incarnation = self.incarnation,
++            .checkpoint = self.next_checkpoint_id,
++            .cols = term.cols,
++            .rows = term.rows,
++            .history_flags = @as(u8, if (checkpoint.historyRows(.primary) > 0) 1 else 0) |
++                @as(u8, if (checkpoint.historyRows(.alternate) > 0) 2 else 0),
++        };
++        var payload_buf: std.ArrayList(u8) = .empty;
++        defer payload_buf.deinit(gpa);
++        try payload_buf.appendSlice(gpa, std.mem.asBytes(&header));
++        try payload_buf.appendSlice(gpa, checkpoint.ready);
++        try ipc.appendMessage(gpa, &client.write_buf, .PagedReady, payload_buf.items);
++        client.checkpoint = checkpoint;
++        checkpoint_owned = false;
++        client.checkpoint_id = self.next_checkpoint_id;
++        client.is_terminal = true;
++        self.has_had_client = true;
++        client.has_pending_output = true;
++        // No resize or leader takeover on attach. Future input/resize uses the
++        // same ownership path as regular zmx clients.
++        try client.startReceivingPtyOutput(gpa, false);
++    }
++
++    pub fn handlePagedHistory(self: *Daemon, gpa: std.mem.Allocator, client: *Client, payload: []const u8) !void {
++        if (payload.len != @sizeOf(ipc.PagedHistory)) return;
++        const request = std.mem.bytesToValue(ipc.PagedHistory, payload);
++        var failure: u8 = 0; // expired, incompatible, limit, unavailable
++        if (request.incarnation == self.incarnation and request.checkpoint == client.checkpoint_id and
++            request.screen <= 1 and std.mem.allEqual(u8, &request.reserved, 0))
++        {
++            if (client.checkpoint) |*checkpoint| {
++                const key: paging.Screen = if (request.screen == 0) .primary else .alternate;
++                const response = checkpoint.next(key, request.ordinal, ipc.PAGED_PAGE_LIMIT, self.mutation_epoch) catch |err| blk: {
++                    failure = if (err == error.PageExceedsBudget) 2 else if (err == error.OutOfOrder) 3 else 0;
++                    break :blk null;
++                };
++                if (response) |reply| {
++                    const header: ipc.PagedPage = .{ .request = request, .complete = switch (reply) {
++                        .done => 1,
++                        .page => |page| if (page.remaining_rows == 0) 1 else 0,
++                    } };
++                    var result: std.ArrayList(u8) = .empty;
++                    defer result.deinit(gpa);
++                    try result.appendSlice(gpa, std.mem.asBytes(&header));
++                    if (reply == .page) try result.appendSlice(gpa, reply.page.bytes);
++                    try ipc.appendMessage(gpa, &client.write_buf, .PagedPage, result.items);
++                    client.has_pending_output = true;
++                    return;
++                }
++            }
++        }
++        var result: [@sizeOf(ipc.PagedHistory) + 1]u8 = undefined;
++        @memcpy(result[0..@sizeOf(ipc.PagedHistory)], payload);
++        result[result.len - 1] = failure;
++        try ipc.appendMessage(gpa, &client.write_buf, .PagedUnavailable, &result);
++        client.has_pending_output = true;
+     }
+ 
+     pub fn handleCapabilities(
+@@ -1407,7 +1587,7 @@
+     ) void {
+         if (payload.len != @sizeOf(ipc.Capabilities)) return;
+         client.capabilities = std.mem.bytesToValue(ipc.Capabilities, payload);
+-        if (client.capabilities.supportsSnapshot()) {
++        if (client.capabilities.supportsSnapshot() or client.capabilities.supportsPaging()) {
+             client.discardDeferredPtyOutput(gpa, .snapshot_pending);
+         }
+     }
+@@ -1469,7 +1649,9 @@
+ 
+         const ws = clientWinsize(client, pty_fd, rows, cols);
+         _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
++        if (term.cols != cols or term.rows != rows) self.mutation_epoch +%= 1;
+         try resizeTerm(gpa, term, cols, rows);
++        try self.broadcastPagedGrid(gpa, term);
+         std.log.debug(
+             "resize rows={d} cols={d} xpixel={d} ypixel={d}",
+             .{ rows, cols, ws.ws_xpixel, ws.ws_ypixel },
+@@ -1937,3 +2119,84 @@
+     const pay3 = client_req.write_buf.items[@sizeOf(ipc.Header)..];
+     try std.testing.expectEqualStrings("DISPLAY=:99\n", pay3);
+ }
++
++test "paged attachment returns bounded current grid before live output and requested history" {
++    const alloc = std.testing.allocator;
++    var term = try ghostty_vt.Terminal.init(std.testing.io, alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback_bytes = null,
++        .max_scrollback_lines = null,
++    });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    for (0..100_000) |_| stream.nextSlice("history\r\n");
++    const fds = try lib_posix.pipe2(.{});
++    defer lib_posix.close(fds[1]);
++    var client: Client = .{
++        .alloc = alloc,
++        .socket_fd = fds[0],
++        .read_buf = try ipc.SocketBuffer.init(alloc),
++        .write_buf = .empty,
++        .capabilities = .{ .bits = ipc.Capabilities.paged_snapshot },
++    };
++    defer client.deinit(alloc);
++    var daemon = testDaemon();
++    daemon.incarnation = 123;
++    daemon.leader_client_fd = 456;
++    try daemon.clients.append(alloc, &client);
++    defer daemon.clients.deinit(alloc);
++    const capabilities: ipc.Capabilities = .{ .bits = ipc.Capabilities.paged_snapshot };
++    daemon.handleCapabilities(alloc, &client, std.mem.asBytes(&capabilities));
++    try client.queuePtyOutput(alloc, "represented-by-checkpoint");
++    try std.testing.expectEqual(PtyOutputState.snapshot_pending, client.pty_output_state);
++    try std.testing.expectEqual(@as(usize, 0), client.write_buf.items.len);
++    try daemon.handlePagedAttach(alloc, &client, &term, &stream, ipc.PAGED_CODEC);
++    try std.testing.expectEqual(@as(?i32, 456), daemon.leader_client_fd);
++    try std.testing.expectEqual(@as(u16, 80), term.cols);
++    try std.testing.expectEqual(@as(u16, 24), term.rows);
++    var header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.PagedReady, header.tag);
++    try std.testing.expect(header.len < ipc.PAGED_READY_LIMIT);
++    try std.testing.expectEqual(@as(usize, @sizeOf(ipc.Header)) + header.len, client.write_buf.items.len);
++    const ready = std.mem.bytesToValue(ipc.PagedReady, client.write_buf.items[@sizeOf(ipc.Header)..][0..@sizeOf(ipc.PagedReady)]);
++    try std.testing.expectEqual(@as(u8, 1), ready.history_flags);
++    client.write_buf.clearRetainingCapacity();
++
++    // Withhold all history requests. Only new VT bytes enter the queue.
++    try client.queuePtyOutput(alloc, "live-before-page");
++    header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.Output, header.tag);
++    try std.testing.expectEqualStrings("live-before-page", client.write_buf.items[@sizeOf(ipc.Header)..]);
++    client.write_buf.clearRetainingCapacity();
++
++    const request: ipc.PagedHistory = .{
++        .incarnation = ready.incarnation,
++        .checkpoint = ready.checkpoint,
++        .request = 1,
++        .ordinal = 0,
++        .screen = 0,
++    };
++    try daemon.handlePagedHistory(alloc, &client, std.mem.asBytes(&request));
++    header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.PagedPage, header.tag);
++    try std.testing.expect(header.len <= ipc.PAGED_PAGE_LIMIT + @sizeOf(ipc.PagedPage));
++    try std.testing.expectEqual(@as(usize, @sizeOf(ipc.Header)) + header.len, client.write_buf.items.len);
++    client.write_buf.clearRetainingCapacity();
++
++    daemon.mutation_epoch += 1;
++    try daemon.handlePagedHistory(alloc, &client, std.mem.asBytes(&request));
++    header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.PagedUnavailable, header.tag);
++    try std.testing.expectEqual(@as(u8, 0), client.write_buf.items[client.write_buf.items.len - 1]);
++    client.write_buf.clearRetainingCapacity();
++    try client.queuePtyOutput(alloc, "live-after-expiration");
++    header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.Output, header.tag);
++    client.write_buf.clearRetainingCapacity();
++    try daemon.queuePagedExit(alloc, 7);
++    header = std.mem.bytesToValue(ipc.Header, client.write_buf.items[0..@sizeOf(ipc.Header)]);
++    try std.testing.expectEqual(ipc.Tag.PagedEnded, header.tag);
++    try std.testing.expectEqual(@as(i32, 7), std.mem.bytesToValue(i32, client.write_buf.items[@sizeOf(ipc.Header)..]));
++}
+diff --git a/src/paging.zig b/src/paging.zig
+new file mode 100644
+--- /dev/null
++++ b/src/paging.zig
+@@ -0,0 +1,333 @@
++//! Demand snapshot export. The owner serializes capture/next with terminal
++//! mutations. Checkpoints borrow terminal pages through tracked pins and must
++//! be released before the terminal is destroyed or moved.
++const std = @import("std");
++const vt = @import("ghostty-vt");
++const snap = vt.snapshot;
++const Allocator = std.mem.Allocator;
++pub const Screen = vt.ScreenSet.Key;
++const Pin = vt.PageList.Pin;
++
++pub const Checkpoint = struct {
++    alloc: Allocator,
++    terminal: *vt.Terminal,
++    /// Caller-owned mutation counter. Increment before any resize, history
++    /// rewrite, or reset whose semantics should expire retained checkpoints.
++    mutation_epoch: u64,
++    ready: []const u8,
++    screens: std.EnumMap(Screen, Cursor),
++
++    const Cursor = struct {
++        generation: usize,
++        serial_limit: u64,
++        list_epoch: u64,
++        pin: ?*Pin,
++        serial: u64,
++        remaining_rows: u64,
++        position: u64 = 0,
++        cached: ?Page = null,
++    };
++
++    pub const Page = struct {
++        /// Caller must copy before another request for this screen or deinit.
++        bytes: []const u8,
++        position: u64,
++        rows: usize,
++        remaining_rows: u64,
++    };
++
++    pub const Reply = union(enum) { page: Page, done };
++
++    /// Encode only active screen backing pages and parser continuation. The
++    /// history row counters are cached by PageList. No historical list walk,
++    /// clone, compression, or history encoding occurs during capture.
++    pub fn capture(
++        alloc: Allocator,
++        terminal: *vt.Terminal,
++        continuation: snap.Continuation,
++        mutation_epoch: u64,
++    ) !Checkpoint {
++        var result: Checkpoint = .{
++            .alloc = alloc,
++            .terminal = terminal,
++            .mutation_epoch = mutation_epoch,
++            .ready = &.{},
++            .screens = .init(.{}),
++        };
++        errdefer result.deinit();
++        var it = terminal.screens.all.iterator();
++        while (it.next()) |entry| {
++            const screen = terminal.screens.get(entry.key).?;
++            const first = screen.pages.getTopLeft(.active).node;
++            var resident_rows: u64 = 0;
++            var node: ?@TypeOf(first) = first;
++            while (node) |current| : (node = current.next)
++                resident_rows += current.rows();
++            const previous = first.prev;
++            result.screens.put(entry.key, .{
++                .generation = terminal.screens.generation(entry.key),
++                .serial_limit = screen.pages.page_serial,
++                .list_epoch = screen.pages.page_serial_epoch,
++                .pin = if (previous) |p| try screen.pages.trackPin(.{ .node = p }) else null,
++                .serial = if (previous) |p| p.serial else 0,
++                .remaining_rows = screen.pages.total_rows - resident_rows,
++            });
++        }
++
++        var output: std.Io.Writer.Allocating = .init(alloc);
++        defer output.deinit();
++        var writer: snap.record.Writer = .init(alloc, &output.writer);
++        defer writer.deinit();
++        try snap.continuation.validate(continuation);
++        try snap.envelope.encode(writer.writer());
++        try snap.terminal.encode(terminal, &writer);
++        it = terminal.screens.all.iterator();
++        while (it.next()) |entry|
++            try snap.screen.encode(terminal.screens.get(entry.key).?, entry.key, &writer);
++        try snap.continuation.encode(continuation, &writer);
++        try snap.checkpoint.encode(.ready, &writer);
++        result.ready = try alloc.dupe(u8, output.written());
++        return result;
++    }
++
++    pub fn historyRows(self: *const Checkpoint, key: Screen) u64 {
++        return if (self.screens.get(key)) |cursor| cursor.remaining_rows else 0;
++    }
++
++    pub fn deinit(self: *Checkpoint) void {
++        var it = self.screens.iterator();
++        while (it.next()) |entry| {
++            if (entry.value.cached) |cached| self.alloc.free(cached.bytes);
++            // Screen removal destroys its pins. Check identity first, before
++            // touching either the borrowed pin or the replacement screen.
++            if (self.terminal.screens.generation(entry.key) != entry.value.generation) continue;
++            if (self.terminal.screens.get(entry.key)) |screen| {
++                if (entry.value.pin) |pin| screen.pages.untrackPin(pin);
++            }
++        }
++        self.alloc.free(self.ready);
++        self.* = undefined;
++    }
++
++    /// Fetch the next complete page, newest first. Retrying the most recently
++    /// returned position returns identical bytes without advancing. One encoded
++    /// page per screen remains cached until the next successful request.
++    pub fn next(
++        self: *Checkpoint,
++        key: Screen,
++        position: u64,
++        byte_budget: usize,
++        mutation_epoch: u64,
++    ) !Reply {
++        const cursor = self.screens.getPtr(key) orelse return error.UnknownScreen;
++        if (mutation_epoch != self.mutation_epoch or
++            self.terminal.screens.generation(key) != cursor.generation)
++            return error.CheckpointExpired;
++        const screen = self.terminal.screens.get(key) orelse return error.CheckpointExpired;
++        if (screen.pages.page_serial_epoch != cursor.list_epoch) return error.CheckpointExpired;
++        if (cursor.pin) |pin| {
++            if (pin.garbage or pin.node.serial != cursor.serial) return error.CheckpointExpired;
++        }
++
++        if (cursor.cached) |cached| {
++            if (position == cached.position) {
++                if (cached.bytes.len > byte_budget) return error.PageExceedsBudget;
++                return .{ .page = cached };
++            }
++        }
++        if (position != cursor.position) return error.OutOfOrder;
++        if (cursor.remaining_rows == 0) return .done;
++
++        const pin = cursor.pin orelse return error.CheckpointExpired;
++        if (pin.garbage or pin.y != 0 or pin.x != 0 or
++            pin.node.serial != cursor.serial or pin.node.serial >= cursor.serial_limit)
++            return error.CheckpointExpired;
++        const rows = pin.node.rows();
++        if (rows > cursor.remaining_rows) return error.CheckpointExpired;
++        const previous = pin.node.prev;
++        // Do not return a truncated history as successful completion when
++        // pruning removed the older suffix while this page remained alive.
++        if (previous == null and rows != cursor.remaining_rows)
++            return error.CheckpointExpired;
++        if (previous) |p| {
++            if (p.serial >= cursor.serial_limit) return error.CheckpointExpired;
++        }
++
++        var output: std.Io.Writer.Allocating = .init(self.alloc);
++        defer output.deinit();
++        var writer: snap.record.Writer = .init(self.alloc, &output.writer);
++        defer writer.deinit();
++        var preserved = try pin.node.pagePreservingState(self.alloc);
++        defer preserved.deinit();
++        try snap.page.encode(preserved.page(), &writer);
++        if (output.written().len > byte_budget) return error.PageExceedsBudget;
++        const bytes = try self.alloc.dupe(u8, output.written());
++        const reply: Page = .{
++            .bytes = bytes,
++            .position = position,
++            .rows = rows,
++            .remaining_rows = cursor.remaining_rows - rows,
++        };
++        if (cursor.cached) |cached| self.alloc.free(cached.bytes);
++        cursor.cached = reply;
++        cursor.remaining_rows = reply.remaining_rows;
++        cursor.position += 1;
++        if (previous) |p| {
++            pin.* = .{ .node = p };
++            cursor.serial = p.serial;
++        }
++        // Retain the final source pin until deinit so a cached-page retry
++        // can still detect subsequent clear/prune/reset invalidation.
++        return .{ .page = reply };
++    }
++};
++
++test "paging capture stays bounded and demand pages preserve 100000 rows plus live output" {
++    const alloc = std.testing.allocator;
++    var term = try vt.Terminal.init(std.testing.io, alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback_bytes = null,
++        .max_scrollback_lines = null,
++    });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    for (0..100_000) |i| {
++        var buf: [40]u8 = undefined;
++        stream.nextSlice(try std.fmt.bufPrint(&buf, "line-{d:0>6}\r\n", .{i}));
++    }
++    const pins_before = term.screens.active.pages.countTrackedPins();
++    var checkpoint = try Checkpoint.capture(alloc, &term, .ground, 0);
++    defer checkpoint.deinit();
++    try std.testing.expect(checkpoint.ready.len < 64 * 1024);
++    try std.testing.expectEqual(pins_before + 1, term.screens.active.pages.countTrackedPins());
++
++    var source: std.Io.Reader = .fixed(checkpoint.ready);
++    var decoder = snap.Decoder.init(&source);
++    var decoded = try decoder.ready(alloc, std.testing.io, .{ .max_continuation_bytes = 4096 });
++    defer decoded.deinit(alloc);
++    var restored = decoded.toOwned();
++    defer restored.deinit(alloc);
++    var live = restored.vtStream();
++    defer live.deinit();
++    try std.testing.expect(restored.screens.active.pages.total_rows < 2000);
++
++    // No history is requested while the terminal is already exchanging output.
++    stream.nextSlice("live-before-history\r\n");
++    live.nextSlice("live-before-history\r\n");
++    try std.testing.expectError(error.OutOfOrder, checkpoint.next(.primary, 1, 1024 * 1024, 0));
++    try std.testing.expectError(error.PageExceedsBudget, checkpoint.next(.primary, 0, 1, 0));
++    var position: u64 = 0;
++    while (true) {
++        const reply = try checkpoint.next(.primary, position, 1024 * 1024, 0);
++        switch (reply) {
++            .done => break,
++            .page => |page| {
++                const retry = (try checkpoint.next(.primary, position, 1024 * 1024, 0)).page;
++                try std.testing.expectEqualSlices(u8, page.bytes, retry.bytes);
++                var page_reader: std.Io.Reader = .fixed(page.bytes);
++                try std.testing.expectEqual(page.rows, try snap.history.decodePage(&page_reader, alloc, restored.screens.active));
++                try std.testing.expectEqual(page.bytes.len, page_reader.seek);
++                stream.nextSlice("live-between-pages\r\n");
++                live.nextSlice("live-between-pages\r\n");
++                position += 1;
++            },
++        }
++    }
++    try std.testing.expect(position > 100);
++    try std.testing.expectEqual(pins_before + 1, term.screens.active.pages.countTrackedPins());
++    const original = try term.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++    defer alloc.free(original);
++    const imported = try restored.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++    defer alloc.free(imported);
++    try std.testing.expectEqualStrings(original, imported);
++}
++
++test "paging rejects resize roundtrip clear and explicit epoch changes" {
++    const alloc = std.testing.allocator;
++    for (0..3) |scenario| {
++        var term = try vt.Terminal.init(std.testing.io, alloc, .{
++            .cols = 80,
++            .rows = 24,
++            .max_scrollback_bytes = null,
++            .max_scrollback_lines = null,
++        });
++        defer term.deinit(alloc);
++        var stream = term.vtStream();
++        defer stream.deinit();
++        for (0..2000) |_| stream.nextSlice("row\r\n");
++        var checkpoint = try Checkpoint.capture(alloc, &term, .ground, 0);
++        defer checkpoint.deinit();
++        switch (scenario) {
++            0 => {
++                try term.resize(alloc, .{ .cols = 40, .rows = 24 });
++                try term.resize(alloc, .{ .cols = 80, .rows = 24 });
++            },
++            1 => stream.nextSlice("\x1b[3J"),
++            else => {},
++        }
++        try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.primary, 0, 1024 * 1024, if (scenario == 2) 1 else 0));
++    }
++}
++
++test "paging releases canceled checkpoint pins and validates cached retries after history clear" {
++    const alloc = std.testing.allocator;
++    var term = try vt.Terminal.init(std.testing.io, alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback_bytes = null,
++        .max_scrollback_lines = null,
++    });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    for (0..2000) |_| stream.nextSlice("row\r\n");
++    const before = term.screens.active.pages.countTrackedPins();
++    {
++        var checkpoint = try Checkpoint.capture(alloc, &term, .ground, 0);
++        defer checkpoint.deinit();
++        _ = try checkpoint.next(.primary, 0, 1024 * 1024, 0);
++        try std.testing.expectEqual(before + 1, term.screens.active.pages.countTrackedPins());
++        stream.nextSlice("\x1b[3J");
++        try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.primary, 0, 1024 * 1024, 0));
++    }
++    try std.testing.expectEqual(before, term.screens.active.pages.countTrackedPins());
++
++    // Empty history completes without an allocated pin or PAGE record.
++    var empty = try Checkpoint.capture(alloc, &term, .ground, 0);
++    defer empty.deinit();
++    try std.testing.expectEqual(@as(u64, 0), empty.historyRows(.primary));
++    try std.testing.expect(try empty.next(.primary, 0, 0, 0) == .done);
++    try std.testing.expectEqual(before, term.screens.active.pages.countTrackedPins());
++}
++
++test "paging can capture alternate screen and expire after screen replacement" {
++    const alloc = std.testing.allocator;
++    var term = try vt.Terminal.init(std.testing.io, alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback_bytes = null,
++        .max_scrollback_lines = null,
++    });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    for (0..2000) |_| stream.nextSlice("primary\r\n");
++    stream.nextSlice("\x1b[?1049hALTERNATE");
++    var checkpoint = try Checkpoint.capture(alloc, &term, .ground, 0);
++    defer checkpoint.deinit();
++    var reader: std.Io.Reader = .fixed(checkpoint.ready);
++    var decoder = snap.Decoder.init(&reader);
++    var decoded = try decoder.ready(alloc, std.testing.io, .{ .max_continuation_bytes = 1024 });
++    defer decoded.deinit(alloc);
++    try std.testing.expectEqual(Screen.alternate, decoded.terminal.?.screens.active_key);
++    try std.testing.expect(checkpoint.historyRows(.primary) > 0);
++    try std.testing.expect(try checkpoint.next(.alternate, 0, 0, 0) == .done);
++    _ = try term.switchScreen(.primary);
++    term.screens.remove(alloc, .alternate);
++    _ = try term.switchScreen(.alternate);
++    try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.alternate, 0, 1024 * 1024, 0));
++    // The independent primary page remains fetchable while alternate is active.
++    try std.testing.expect(try checkpoint.next(.primary, 0, 1024 * 1024, 0) == .page);
++}
+diff --git a/src/test.zig b/src/test.zig
+--- a/src/test.zig
++++ b/src/test.zig
+@@ -9,5 +9,6 @@
+     _ = @import("cfg.zig");
+     _ = @import("daemonize.zig");
+     _ = @import("snapshot.zig");
++    _ = @import("paging.zig");
+     _ = @import("probe.zig");
+ }

@@ -21,6 +21,104 @@ import XCTest
 /// of the embedded loop, no race.
 final class TerminalSessionHandlerTests: XCTestCase {
 
+    /// @spec TERM-12.12: When a client negotiates paged terminal attachment, the host shall send the current-screen checkpoint before an ownership hello, preserve live VT byte ordering, and send older history only in response to a bounded history request.
+    func testPagedCheckpointBeforeHelloAndHistoryOnDemand() async throws {
+        let paged = TestPagedStream()
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 2, cols: 80, rows: 24,
+            ready: Data("GHOSTSNP".utf8), hasPrimaryHistory: true, hasAlternateHistory: false)
+        paged.continuation.yield(.checkpoint(checkpoint))
+        paged.continuation.yield(.output(Data("live-without-history".utf8)))
+        let handler = TerminalSessionHandler(
+            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+            deviceID: RemoteDeviceID(value: "paged-test"))
+        let channel = try await Self.channel(handler)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 40, rows: 12)
+        try await sendShellRequest(channel)
+        let first = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertEqual(first.type, .stdErr)
+        if case .byteBuffer(let buffer) = first.data {
+            var decoder = StdErrControlFraming.Decoder()
+            decoder.append(Data(buffer.readableBytesView))
+            let (frames, _) = decoder.drain()
+            XCTAssertEqual(frames.count, 1)
+            XCTAssertEqual(try PagedTerminalEnvelope.parse(String(decoding: frames[0], as: UTF8.self)).event, .checkpoint(checkpoint))
+        } else { XCTFail("Missing checkpoint bytes") }
+        let live = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertEqual(live.type, .channel)
+        if case .byteBuffer(let bytes) = live.data { XCTAssertEqual(String(decoding: bytes.readableBytesView, as: UTF8.self), "live-without-history") }
+        XCTAssertTrue(paged.requests.withLockedValue { $0.isEmpty })
+        let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
+        let encoded = try PagedTerminalEnvelope(request: .history(request)).encoded()
+        let framed = try XCTUnwrap(StdErrControlFraming.encode(encoded))
+        try await channel.writeInbound(SSHChannelData(type: .stdErr, data: .byteBuffer(ByteBuffer(bytes: framed))))
+        try await waitUntil { paged.requests.withLockedValue { $0 == [request] } }
+        // Retrying while the first request is pending must keep live output usable.
+        try await channel.writeInbound(SSHChannelData(type: .stdErr, data: .byteBuffer(ByteBuffer(bytes: framed))))
+        paged.continuation.yield(.output(Data("live-during-retry".utf8)))
+        let retryLive = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertEqual(retryLive.type, .channel)
+        XCTAssertTrue(channel.isActive)
+        XCTAssertEqual(paged.requests.withLockedValue { $0.count }, 1)
+        _ = try? await channel.finish()
+    }
+
+    func testCheckpointRecoveryQueuesOnceBehindPendingHistory() async throws {
+        let paged = TestPagedStream()
+        let capture = OutboundEventCapture()
+        let handler = TerminalSessionHandler(
+            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+            deviceID: RemoteDeviceID(value: "paged-recovery"))
+        let channel = try await Self.channel(capture, handler)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+        let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
+        for control in [PagedTerminalRequest.history(request), .checkpoint, .checkpoint] {
+            let text = try PagedTerminalEnvelope(request: control).encoded()
+            let frame = try XCTUnwrap(StdErrControlFraming.encode(text))
+            try await channel.writeInbound(SSHChannelData(type: .stdErr, data: .byteBuffer(ByteBuffer(bytes: frame))))
+        }
+        try await waitUntil { paged.requests.withLockedValue { $0.count == 1 } }
+        XCTAssertEqual(paged.checkpointRequests.withLockedValue { $0 }, 0)
+        paged.continuation.yield(.unavailable(.init(request: request, reason: .expired)))
+        _ = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        try await waitUntil { paged.checkpointRequests.withLockedValue { $0 == 1 } }
+        XCTAssertTrue(channel.isActive)
+        _ = try? await channel.finish()
+    }
+
+    func testPagedStreamFailureClosesWithoutProcessExitStatus() async throws {
+        try await verifyPagedTermination(explicitExit: false)
+    }
+
+    func testPagedExplicitProcessExitPreservesExitStatus() async throws {
+        try await verifyPagedTermination(explicitExit: true)
+    }
+
+    private func verifyPagedTermination(explicitExit: Bool) async throws {
+        let paged = TestPagedStream()
+        let capture = OutboundEventCapture()
+        let handler = TerminalSessionHandler(
+            streamFactory: { _ in throw FactoryError.notFound }, pagedFactory: { _ in paged },
+            ownershipStore: SessionDisplayOwnershipStore(), ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+            deviceID: RemoteDeviceID(value: "paged-termination"))
+        let channel = try await Self.channel(capture, handler)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+        if explicitExit { paged.continuation.yield(.ended(1)) }
+        paged.continuation.finish()
+        try await waitUntil { !channel.isActive }
+        XCTAssertFalse(capture.sawExitStatus0)
+        XCTAssertEqual(capture.sawExitStatus1, explicitExit)
+        _ = try? await channel.finish()
+    }
+
     // MARK: - env + pty + shell -> attach
 
     func testShellCallsStreamFactoryWithEnvSessionName() async throws {
@@ -1386,5 +1484,23 @@ private final class SizeReportingStream: TerminalByteStream, TerminalSizeReporti
     }
 
     func send(_ bytes: Data) async throws {}
+    func close() async { continuation.finish() }
+}
+
+private final class TestPagedStream: PagedTerminalStream, @unchecked Sendable {
+    let events: AsyncStream<PagedTerminalEvent>
+    let continuation: AsyncStream<PagedTerminalEvent>.Continuation
+    let requests = NIOLockedValueBox<[PagedTerminalHistoryRequest]>([])
+    let checkpointRequests = NIOLockedValueBox(0)
+    var usesHostClipboard: Bool { false }
+    init() {
+        let pair = AsyncStream<PagedTerminalEvent>.makeStream()
+        events = pair.stream
+        continuation = pair.continuation
+    }
+    func requestHistory(_ request: PagedTerminalHistoryRequest) async throws { requests.withLockedValue { $0.append(request) } }
+    func requestCheckpoint() async throws { checkpointRequests.withLockedValue { $0 += 1 } }
+    func send(_ bytes: Data) async throws {}
+    func resize(cols: Int, rows: Int) async {}
     func close() async { continuation.finish() }
 }

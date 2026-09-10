@@ -10,6 +10,19 @@ import XCTest
 
 final class SubsystemDispatcherTests: XCTestCase {
 
+    func testPagedSubsystemWithoutFactoryRejectsBeforeOutput() async throws {
+        let capture = OutboundEventCapture()
+        let channel = NIOAsyncTestingChannel()
+        let dispatcher = makeDispatcher(streamFactory: RecordingStreamFactory().callable)
+        try await channel.pipeline.addHandler(capture).get()
+        try await channel.pipeline.addHandler(dispatcher).get()
+        channel.pipeline.fireUserInboundEventTriggered(SSHChannelRequestEvent.SubsystemRequest(
+            subsystem: SSHChannelTypeNames.terminalPaged, wantReply: true))
+        try await waitFor(channel: channel) { capture.sawFailure }
+        XCTAssertFalse(capture.sawSuccess)
+        _ = try? await channel.finish()
+    }
+
     // MARK: - Env (terminal session) routing
 
     /// Firing an `EnvironmentRequest("GRAFTTY_SESSION", "alpha")` —

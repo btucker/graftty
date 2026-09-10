@@ -5,6 +5,7 @@ import Testing
 import UIKit
 @testable import GrafttyMobileKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 @Suite
 @MainActor
@@ -65,6 +66,8 @@ struct SessionClientTests {
     }
 
     final class DelayedReceiveWS: WebSocketClient, @unchecked Sendable {
+        let supportsPagedHistory: Bool
+        init(paged: Bool = false) { supportsPagedHistory = paged }
         private let lock = NSLock()
         private var _sent: [WebSocketFrame] = []
         private var receiveContinuation: CheckedContinuation<WebSocketFrame, any Error>?
@@ -88,6 +91,12 @@ struct SessionClientTests {
         }
 
         func close() { closed = true }
+
+        func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+            try? await send(.text(WebControlEnvelope.ownerResize(
+                clientID: clientID, epoch: epoch, cols: UInt16(cols), rows: UInt16(rows)
+            ).encoded()))
+        }
 
         func sendHello(
             clientID: DisplayClientID,
@@ -253,6 +262,108 @@ struct SessionClientTests {
                 == RetainedTerminalReplay.resetSequence + replacementReplay
         )
         #expect(replay.prepare(liveTail) == liveTail)
+    }
+
+    @Test("A legacy attachment replaces a previously imported paged snapshot")
+    func legacyReplayAfterPagedSnapshotResets() {
+        var replay = RetainedTerminalReplay()
+        replay.transportDidOpen()
+        replay.snapshotDidInstall()
+        replay.transportDidOpen()
+        let payload = Data("legacy replay".utf8)
+        #expect(replay.prepare(payload) == RetainedTerminalReplay.resetSequence + payload)
+        #expect(replay.prepare(payload) == payload)
+    }
+
+    final class PagingRenderer: PagedTerminalRenderer {
+        var installed: [UInt64] = []
+        var generations: [UInt64] = []
+        var nearTop = false
+        var pages = 0
+        var holdResize = false
+        var resizeContinuation: CheckedContinuation<Void, Never>?
+        var resized: [SessionClient.GridSize] = []
+        func resize(cols: UInt16, rows: UInt16) async throws {
+            if holdResize { await withCheckedContinuation { resizeContinuation = $0 } }
+            resized.append(.init(cols: cols, rows: rows))
+        }
+        func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+            installed.append(checkpoint.id)
+            generations.append(generation)
+        }
+        func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {
+            pages += 1
+            return .applied
+        }
+        func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+    }
+
+    @Test("""
+@spec IOS-7.7: When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
+""")
+    func pagedScreenLiveInputAndReconnect() async throws {
+        let first = DelayedReceiveWS(paged: true)
+        let second = DelayedReceiveWS(paged: true)
+        let sequence = WebSocketSequence([first, second])
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() }, pagedRenderer: renderer)
+        let retainedSession = client.session
+        client.start()
+        defer {
+            client.stop()
+            first.fail(CancellationError())
+            second.fail(CancellationError())
+        }
+        try await waitUntil("initial paged receive") { first.receiveCalls == 1 }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 120, rows: 24,
+            ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)
+        first.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("installed current screen") { renderer.installed == [1] && first.receiveCalls == 2 }
+        #expect(client.paging?.status == .available)
+        #expect(first.sent.compactMap { frame -> PagedTerminalEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? PagedTerminalEnvelope.parse(text)
+        }.isEmpty)
+        renderer.nearTop = true
+        await client.paging?.loadIfNeeded()
+        #expect(client.paging?.status == .loading)
+
+        renderer.holdResize = true
+        first.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 100, rows: 30)).encoded()))
+        try await waitUntil("ordered resize to reach the renderer") { renderer.resizeContinuation != nil }
+        #expect(first.receiveCalls == 2)
+        renderer.resizeContinuation?.resume()
+        try await waitUntil("resize applied before reading subsequent output") { first.receiveCalls == 3 }
+        #expect(client.snapshotCanvasGrid == .init(cols: 100, rows: 30))
+        #expect(renderer.resized == [.init(cols: 100, rows: 30)])
+        first.deliver(.binary(Data("live output while history withheld".utf8)))
+        try await waitUntil("live output consumed without a history reply") { first.receiveCalls == 4 }
+        let hello = try #require(first.sent.compactMap { frame -> WebControlEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? WebControlEnvelope.parse(Data(text.utf8))
+        }.first)
+        guard case .hello(let clientID, _, _, _, _, _) = hello else {
+            Issue.record("Expected hello"); return
+        }
+        let ownership = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 120, rows: 24)
+        client.handleTextFrame(WebControlEnvelope.ownership(ownership).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 100, rows: 30,
+            widthPixels: 1200, heightPixels: 720, cellWidthPixels: 12, cellHeightPixels: 24))
+        client.session.sendInput(Data("input".utf8))
+        try await waitUntil("input forwarded while history remains pending") {
+            first.sent.contains(.binary(Data("input".utf8)))
+        }
+        #expect(renderer.pages == 0)
+        #expect(client.paging?.status == .loading)
+        client.suspend()
+        renderer.nearTop = false
+        client.resume()
+        try await waitUntil("replacement paged receive") { second.receiveCalls == 1 }
+        second.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("replacement checkpoint") { renderer.installed == [1, 1] }
+        #expect(client.session === retainedSession)
+        #expect(renderer.generations[1] > renderer.generations[0])
+        #expect(client.paging?.status == .available)
     }
 
     @Test("a cancelled pre-background dial cannot attach after resume")
@@ -1332,116 +1443,57 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-6.15: When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+    @spec IOS-6.15: When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
     """)
-    func reconnectingPreviousOwnerAutomaticallyReclaimsOwnerlessSession() async throws {
+    func reconnectDoesNotAutomaticallyReclaimOwnership() async throws {
+        let first = FakeWS()
         let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
+        let sequence = WebSocketSequence([first, ws])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() })
         client.start()
         defer { client.stop() }
-        primeViewport(client, columns: 90, rows: 28)
-        let clientID = try await waitForHelloClientID(ws)
-        ws.clearSent()
-
-        let ownerless = try ownershipSnapshot(
-            ownerClientID: nil,
-            ownerKind: nil,
-            cols: 120,
-            rows: 40,
-            epoch: 3
-        )
-        client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await waitUntil("automatic ownerless-session reclaim") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-
-        let takeover = envelopes(ws).first {
-            if case .takeControl = $0 { return true }
-            return false
-        }
-        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
-    }
-
-    @Test
-    func reconnectingPreviousOwnerDoesNotStealFromAnotherOwner() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
-        client.start()
-        defer { client.stop() }
-        primeViewport(client, columns: 90, rows: 28)
+        try await confirmOwner(client, ws: first)
+        client.suspend()
+        client.resume()
         _ = try await waitForHelloClientID(ws)
         ws.clearSent()
-
-        try confirmFollower(client, cols: 120, rows: 40, epoch: 3)
-        try await expectNever("automatic takeover from another active owner") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-
-        let takeoverCount = envelopes(ws).filter {
-            if case .takeControl = $0 { return true }
-            return false
-        }.count
-        #expect(takeoverCount == 0)
-    }
-
-    @Test
-    func reconnectReclaimWaitsForViewportBeforeTakingControl() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(
-            sessionName: "s",
-            webSocketFactory: { ws },
-            reclaimControlOnOwnerlessConnect: true
-        )
-        client.start()
-        defer { client.stop() }
-        let clientID = try await waitForHelloClientID(ws)
-        ws.clearSent()
-
         let ownerless = try ownershipSnapshot(
-            ownerClientID: nil,
-            ownerKind: nil,
-            cols: 120,
-            rows: 40,
-            epoch: 3
+            ownerClientID: nil, ownerKind: nil, cols: 120, rows: 40, epoch: 3
         )
         client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await expectNever("automatic takeover before the first viewport") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
-            }
-        }
-        #expect(envelopes(ws).filter {
-            if case .takeControl = $0 { return true }
-            return false
-        }.isEmpty)
-
         primeViewport(client, columns: 90, rows: 28)
-        try await waitUntil("viewport-driven ownerless-session reclaim") {
-            envelopes(ws).contains {
-                if case .takeControl = $0 { return true }
-                return false
+        try await expectNever("takeover merely from reconnecting or receiving a viewport") {
+            envelopes(ws).contains { if case .takeControl = $0 { return true }; return false }
+        }
+    }
+
+    @Test("""
+    @spec IPAD-8.5: When an iPad terminal opens as a follower, the application shall preserve the current owner through display updates and terminal-generated replies until user input or an explicit Take Control action requests ownership.
+    """)
+    func terminalRepliesDoNotClaimOwnership() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        _ = try await waitForHelloClientID(ws)
+        try confirmFollower(client)
+        primeViewport(client, columns: 90, rows: 28)
+        client.wakeRenderer()
+        client.sendSoftwareKeyboardText("")
+        // The native write callback also carries automatic DSR/focus replies.
+        client.session.sendInput(Data("\u{1b}[1;1R".utf8))
+        try await expectNever("terminal-generated takeover or input while following") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).contains {
+                if case .takeControl = $0 { return true }; return false
             }
         }
-        let takeover = envelopes(ws).first {
-            if case .takeControl = $0 { return true }
-            return false
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("user input requesting control") {
+            envelopes(ws).contains { if case .takeControl = $0 { return true }; return false }
         }
-        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+        try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 2)
+        try await waitUntil("only the user's input is flushed") { binaryFrames(ws).contains(Data("a".utf8)) }
+        #expect(!binaryFrames(ws).contains(Data("\u{1b}[1;1R".utf8)))
     }
 
     @Test
@@ -1585,7 +1637,7 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-4.24: When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
+    @spec IOS-4.24: When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a paged follower canvas.
     """)
     func becomingOwnerPushesCurrentViewport() async throws {
         let ws = FakeWS()
@@ -1626,6 +1678,73 @@ struct SessionClientTests {
             return false
         }
         #expect(ownerResize == .ownerResize(clientID: clientID, epoch: 2, cols: 110, rows: 33))
+    }
+
+    @Test("Paged takeover holds input through repeated ownership frames until the physical viewport is ready", arguments: [false, true])
+    func pagedTakeoverWaitsForPhysicalViewport(loseOwnership: Bool) async throws {
+        let ws = DelayedReceiveWS(paged: true)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: PagingRenderer())
+        primeViewport(client, columns: 80, rows: 40)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("paged connection hello") { ws.receiveCalls == 1 }
+        let hello = try #require(ws.sent.compactMap { frame -> WebControlEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? WebControlEnvelope.parse(Data(text.utf8))
+        }.first)
+        guard case .hello(let clientID, _, _, _, _, _) = hello else {
+            Issue.record("expected hello"); return
+        }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 120, rows: 50,
+            ready: Data([1]), hasPrimaryHistory: false, hasAlternateHistory: false)
+        ws.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("checkpoint installed") { ws.receiveCalls == 2 }
+        let follower = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .web,
+            cols: 120, rows: 50, epoch: 1)
+        client.handleTextFrame(WebControlEnvelope.ownership(follower).encoded())
+        client.sendSoftwareKeyboardText("first")
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 80, rows: 40, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        // A native resize queued while the follower canvas was still mounted
+        // can arrive after ownership flips but before UIKit releases it.
+        primeViewport(client, columns: 120, rows: 50)
+        client.sendSoftwareKeyboardText("second")
+        try await expectNever("input or stale resize before the physical viewport") {
+            ws.sent.contains { frame in
+                if case .binary = frame { return true }
+                if case .text(let text) = frame,
+                   case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+                return false
+            }
+        }
+        if loseOwnership {
+            let lost = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .web,
+                cols: 120, rows: 50, epoch: 3)
+            client.handleTextFrame(WebControlEnvelope.ownership(lost).encoded())
+            client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 140, rows: 25,
+                widthPixels: 1680, heightPixels: 600, cellWidthPixels: 12, cellHeightPixels: 24))
+            try await expectNever("queued input after control was lost") {
+                ws.sent.contains { if case .binary = $0 { return true }; return false }
+            }
+        } else {
+            // Rotation changed the physical pane while the native follower grid stayed fixed.
+            client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 140, rows: 25,
+                widthPixels: 1680, heightPixels: 600, cellWidthPixels: 12, cellHeightPixels: 24))
+            try await waitUntil("queued input after physical owner resize") {
+                ws.sent.contains(.binary(Data("second".utf8)))
+            }
+            let relevant = ws.sent.filter { frame in
+                if case .binary = frame { return true }
+                if case .text(let text) = frame,
+                   case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+                return false
+            }
+            #expect(relevant == [
+                .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 140, rows: 25).encoded()),
+                .binary(Data("first".utf8)), .binary(Data("second".utf8))
+            ])
+        }
     }
 
     @Test

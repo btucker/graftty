@@ -6,19 +6,38 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
-            <title>Version 0.7.0-beta.1</title>
-            <sparkle:channel>prerelease</sparkle:channel>
-            <sparkle:version>100.57.00</sparkle:version>
-            <sparkle:shortVersionString>0.7.0-beta.1</sparkle:shortVersionString>
-            <pubDate>Mon, 31 Aug 2026 22:46:29 +0000</pubDate>
+            <title>Version 0.7.0</title>
+            <sparkle:version>100.58.00</sparkle:version>
+            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+            <pubDate>Tue, 08 Sep 2026 23:12:54 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description><![CDATA[<h2 dir="auto">What's Changed</h2>
 <ul dir="auto">
 <li>appcast: v0.6.0 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5304191744" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/326" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/326/hovercard" href="https://github.com/btucker/graftty/pull/326">#326</a></li>
 <li>Make waiting-for-you alerts signal-driven by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5303309565" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/324" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/324/hovercard" href="https://github.com/btucker/graftty/pull/324">#324</a></li>
 <li>Improve terminal snapshots and GrafttyMobile controls by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5302725906" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/323" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/323/hovercard" href="https://github.com/btucker/graftty/pull/323">#323</a></li>
+<li>appcast: v0.7.0-beta.1 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5305674182" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/327" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/327/hovercard" href="https://github.com/btucker/graftty/pull/327">#327</a></li>
+<li>Fix GrafttyMobile unlock, worktree creation, and terminal interactions by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5368809726" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/329" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/329/hovercard" href="https://github.com/btucker/graftty/pull/329">#329</a></li>
+<li>Support clipboard image paste in Graftty Mobile by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5392369994" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/330" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/330/hovercard" href="https://github.com/btucker/graftty/pull/330">#330</a></li>
+<li>Fix duplicate mobile scrollback after reconnect by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5360621467" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/328" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/328/hovercard" href="https://github.com/btucker/graftty/pull/328">#328</a></li>
 </ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.6.0...v0.7.0-beta.1"><tt>v0.6.0...v0.7.0-beta.1</tt></a></p>]]></description>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.6.0...v0.7.0"><tt>v0.6.0...v0.7.0</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.7.0/Graftty-0.7.0.zip" length="32918426" type="application/octet-stream" sparkle:edSignature="Gd3YowFHxfZgG8Y3QzCYTsbb5/1weQ0D+vhCB9Lc+5W87mjdKx6l+M75uhVXJr3Acm6ETS9SaBwciMZ80Y1pBw=="/>
+        </item>
+        <item>
+            <title>Version 0.7.0-beta.1</title>
+            <sparkle:channel>prerelease</sparkle:channel>
+            <sparkle:version>100.57.00</sparkle:version>
+            <sparkle:shortVersionString>0.7.0-beta.1</sparkle:shortVersionString>
+            <pubDate>Mon, 31 Aug 2026 22:46:29 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.6.0 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5304191744" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/326" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/326/hovercard" href="https://github.com/btucker/graftty/pull/326"&gt;#326&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Make waiting-for-you alerts signal-driven by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5303309565" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/324" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/324/hovercard" href="https://github.com/btucker/graftty/pull/324"&gt;#324&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Improve terminal snapshots and GrafttyMobile controls by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5302725906" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/323" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/323/hovercard" href="https://github.com/btucker/graftty/pull/323"&gt;#323&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.6.0...v0.7.0-beta.1"&gt;&lt;tt&gt;v0.6.0...v0.7.0-beta.1&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.7.0-beta.1/Graftty-0.7.0-beta.1.zip" length="32845915" type="application/octet-stream" sparkle:edSignature="xKJMbs1T76tD7pcAtH6WV6+XVw5yv7f8gxHQxEN4yFOXEClekNtXJQGKFbW0lo1zlt6ZQma1Pc2Cgvm9lP2aDg=="/>
         </item>
         <item>

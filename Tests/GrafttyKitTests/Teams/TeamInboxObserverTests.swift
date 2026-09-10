@@ -139,6 +139,50 @@ struct TeamInboxObserverTests {
         #expect(capture.last()?.count == 1, "delete must not emit an empty batch")
     }
 
+    @Test("Deletion between the size check and read preserves the last batch", arguments: [false, true])
+    func deletionDuringReadDoesNotEmitEmptyBatch(force: Bool) async throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let teamID = "team-delete-during-read"
+        let inbox = TeamInbox(rootDirectory: root)
+        let url = TeamInbox.messagesURLFor(rootDirectory: root, teamID: teamID)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "one"
+        )
+        let original = try Data(contentsOf: url)
+        // The injected reader runs on the observer queue, after stat().
+        var readCount = 0
+        let observer = TeamInboxObserver(
+            rootDirectory: root, teamID: teamID, pollInterval: .seconds(30),
+            installEventSources: false,
+            readMessages: {
+                readCount += 1
+                if readCount == 2 { try FileManager.default.removeItem(at: url) }
+                return try inbox.messagesIfFileExists(teamID: teamID)
+            }
+        )
+        let capture = LockedMessageBatches()
+        await observer.pollForTesting { capture.append($0) }
+        #expect(capture.last()?.count == 1)
+        // A whitespace append changes size without adding a parsed message.
+        var appended = original
+        appended.append(0x0A)
+        try appended.write(to: url)
+        await observer.pollForTesting(force: force) { capture.append($0) }
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(capture.count() == 1)
+        #expect(capture.last()?.count == 1)
+        // Recreate at the size stat() saw before the deletion. Absence must
+        // be recorded even when no further poll occurs before recreation.
+        try appended.write(to: url)
+        await observer.pollForTesting { capture.append($0) }
+        #expect(capture.count() == 2)
+        #expect(capture.last()?.count == 1)
+    }
+
     @Test("Reattaching an inbox file closes each descriptor exactly once")
     func reattachDoesNotDoubleCloseFileDescriptor() async throws {
         let root = try Self.temporaryDirectory()
@@ -186,16 +230,16 @@ struct TeamInboxObserverTests {
         let observer = TeamInboxObserver(
             rootDirectory: root, teamID: teamID, pollInterval: .seconds(30),
             installEventSources: false,
-            readMessages: { inbox, teamID in
+            readMessages: {
                 reads += 1
                 if reads == 2 {
                     try FileManager.default.removeItem(at: TeamInbox.messagesURLFor(rootDirectory: root, teamID: teamID))
                 }
-                return try inbox.messages(teamID: teamID)
+                return try inbox.messagesIfFileExists(teamID: teamID)
             }
         )
         let capture = LockedMessageBatches()
-        await observer.refreshForTesting(force: true) { capture.append($0) }
+        await observer.pollForTesting(force: true) { capture.append($0) }
         #expect(capture.last()?.count == 1)
         try inbox.appendMessage(
             teamID: teamID, teamName: "t", repoPath: "/r",
@@ -203,11 +247,11 @@ struct TeamInboxObserverTests {
             to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
             priority: .normal, body: "pending"
         )
-        await observer.refreshForTesting(force: force) { capture.append($0) }
+        await observer.pollForTesting(force: force) { capture.append($0) }
         #expect(capture.count() == 1)
         #expect(capture.last()?.count == 1)
         // A delayed directory event must not erase the retained snapshot either.
-        await observer.refreshForTesting(force: true) { capture.append($0) }
+        await observer.pollForTesting(force: true) { capture.append($0) }
         #expect(capture.count() == 1)
 
         try inbox.appendMessage(
@@ -216,7 +260,7 @@ struct TeamInboxObserverTests {
             to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
             priority: .normal, body: "two"
         )
-        await observer.refreshForTesting { capture.append($0) }
+        await observer.pollForTesting { capture.append($0) }
         #expect(capture.last()?.first?.body == "two")
     }
 
@@ -224,12 +268,18 @@ struct TeamInboxObserverTests {
     func initiallyAbsentInboxEmitsEmptySnapshot() async throws {
         let root = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let observer = TeamInboxObserver(rootDirectory: root, teamID: "absent")
+        let observer = TeamInboxObserver(
+            rootDirectory: root, teamID: "absent", pollInterval: .seconds(30),
+            installEventSources: false
+        )
         let capture = LockedMessageBatches()
-        await observer.refreshForTesting(force: true) { capture.append($0) }
+        let cancellable = observer.start { capture.append($0) }
+        defer { cancellable.cancel() }
+        // Queue a poll after start to wait for the initial snapshot.
+        await observer.pollForTesting { capture.append($0) }
         #expect(capture.count() == 1)
         #expect(capture.last()?.isEmpty == true)
-        await observer.refreshForTesting(force: true) { capture.append($0) }
+        await observer.pollForTesting(force: true) { capture.append($0) }
         #expect(capture.count() == 1)
     }
 

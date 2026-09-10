@@ -61,6 +61,10 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     public typealias OutboundOut = SSHChannelData
 
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let pagedFactory: PagedTerminalStreamFactory?
+    private var historyPending = false
+    private var checkpointPending = false
+    private var checkpointDeferred = false
     private let ownershipStore: SessionDisplayOwnershipStore
     private let ownershipBroadcaster: DisplayOwnershipBroadcaster
     private let deviceID: RemoteDeviceID
@@ -73,7 +77,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// size as soon as possible, rather than waiting on
     /// `ZmxAttachEngine`'s 250ms size-poll cadence.
     private var ptyGrid: DisplayGrid?
-    private var stream: TerminalByteStream?
+    private var stream: (any TerminalIO)?
     private var coordinator: TerminalAttachCoordinator?
     private var inboundForwardingTask: Task<Void, Never>?
     private var isShuttingDown = false
@@ -120,12 +124,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
     public init(
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        pagedFactory: PagedTerminalStreamFactory? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceID: RemoteDeviceID,
         defaultKind: DisplayClientKind = .ios
     ) {
         self.streamFactory = streamFactory
+        self.pagedFactory = pagedFactory
         self.ownershipStore = ownershipStore
         self.ownershipBroadcaster = ownershipBroadcaster
         self.deviceID = deviceID
@@ -287,6 +293,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
     private func attach(context: ChannelHandlerContext, sessionName: String, wantReply: Bool) {
         let factory = streamFactory
+        let pagedFactory = pagedFactory
         let channel = context.channel
         let loop = context.eventLoop
         // Use the channel's pipeline for outbound events — Channel is
@@ -295,7 +302,9 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
         Task { [weak self] in
             do {
-                let stream = try await factory(sessionName)
+                let stream: any TerminalIO
+                if let pagedFactory { stream = try await pagedFactory(sessionName) }
+                else { stream = try await factory(sessionName) }
                 loop.execute { [weak self] in
                     guard let self else {
                         Task { await stream.close() }
@@ -335,7 +344,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// Creates the FIFO write pipe and its single consumer task — the
     /// only path by which inbound bytes reach `stream.send`, preserving
     /// wire order end-to-end (see `ptyWriteContinuation`).
-    private func startPTYWriter(stream: TerminalByteStream) {
+    private func startPTYWriter(stream: any TerminalIO) {
         var continuation: AsyncStream<Data>.Continuation!
         let pipe = AsyncStream<Data>(
             bufferingPolicy: .bufferingOldest(Self.maxPendingPTYWriteChunks)
@@ -375,7 +384,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// before any inbound bytes/control frames can be dispatched.
     private func installCoordinator(
         sessionName: String,
-        stream: TerminalByteStream,
+        stream: any TerminalIO,
         channel: Channel,
         loop: EventLoop
     ) {
@@ -459,12 +468,17 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         // reaches the client.
         drainControlFrames(channel: channel)
 
-        if let ptyGrid {
+        if pagedFactory == nil, let ptyGrid {
             coordinator.handlePTYSize(cols: ptyGrid.cols, rows: ptyGrid.rows)
         }
     }
 
-    private func startInboundForwarding(stream: TerminalByteStream, channel: Channel, loop: EventLoop) {
+    private func startInboundForwarding(stream: any TerminalIO, channel: Channel, loop: EventLoop) {
+        if let paged = stream as? any PagedTerminalStream {
+            startPagedForwarding(stream: paged, channel: channel, loop: loop)
+            return
+        }
+        guard let stream = stream as? any TerminalByteStream else { channel.close(promise: nil); return }
         let task = Task { [weak self] in
             for await chunk in stream.inboundBytes {
                 let buffer = channel.allocator.buffer(bytes: chunk)
@@ -499,6 +513,76 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             }
         }
         inboundForwardingTask = task
+    }
+
+    private func startPagedForwarding(stream: any PagedTerminalStream, channel: Channel, loop: EventLoop) {
+        inboundForwardingTask = Task { [weak self] in
+            do {
+                for await event in stream.events {
+                    guard !Task.isCancelled else { return }
+                    switch event {
+                    case .output(let bytes):
+                        let data = SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(bytes: bytes)))
+                        try await channel.writeAndFlush(data).get()
+                    case .checkpoint, .page, .unavailable, .grid:
+                        let text = try PagedTerminalEnvelope(event: event).encoded()
+                        guard let framed = StdErrControlFraming.encode(text) else { throw PagedTerminalEnvelope.Error.tooLarge }
+                        // Subsystem negotiation already proves carrier support.
+                        // READY must not wait for an ownership hello.
+                        let data = SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: framed)))
+                        try await loop.submit { [weak self] in
+                            switch event {
+                            case .checkpoint: self?.checkpointPending = false
+                            case .page, .unavailable:
+                                self?.historyPending = false
+                                if self?.checkpointDeferred == true {
+                                    self?.checkpointDeferred = false
+                                    self?.handlePagingRequest(.checkpoint, channel: channel)
+                                }
+                            default: break
+                            }
+                        }.get()
+                        try await channel.writeAndFlush(data).get()
+                        if case .grid(let cols, let rows) = event {
+                            try await loop.submit { [weak self] in
+                                self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
+                            }.get()
+                        }
+                    case .ended(let status):
+                        try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: Int(status))).get()
+                        channel.close(promise: nil)
+                        return
+                    }
+                }
+                // Ending the event stream can mean socket failure or a bounded
+                // queue overflow. Only .ended proves that the process exited.
+            } catch { }
+            channel.close(promise: nil)
+        }
+    }
+
+    private func handlePagingRequest(_ request: PagedTerminalRequest, channel: Channel) {
+        guard let paged = stream as? any PagedTerminalStream else { return }
+        switch request {
+        case .history:
+            guard !historyPending, !checkpointPending else { return }
+            historyPending = true
+        case .checkpoint:
+            guard !checkpointPending else { return }
+            if historyPending {
+                checkpointDeferred = true
+                return
+            }
+            checkpointPending = true
+        }
+        Task {
+            do {
+                switch request {
+                case .history(let history): try await paged.requestHistory(history)
+                case .checkpoint: try await paged.requestCheckpoint()
+                }
+            } catch { channel.close(promise: nil) }
+        }
     }
 
     // MARK: - `.stdErr` control-frame framing (REMOTE-9)
@@ -537,6 +621,12 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private func drainControlFrames(channel: Channel) {
         let (frames, oversized) = stdErrDecoder.drain()
         for payload in frames {
+            if pagedFactory != nil,
+               let paging = try? PagedTerminalEnvelope.parse(String(decoding: payload, as: UTF8.self)),
+               let request = paging.request {
+                handlePagingRequest(request, channel: channel)
+                continue
+            }
             guard let envelope = try? WebControlEnvelope.parse(payload) else {
                 // A structurally-valid `.hello` whose grid exceeds
                 // `WebControlEnvelope.maxGridDimension` fails `parse`
@@ -592,7 +682,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private func poisonStdErr(channel: Channel) {
         stdErrPoisoned = true
         stdErrDecoder.reset()
-        guard receivedHello else { return }
+        guard receivedHello || pagedFactory != nil else { return }
         channel.close(promise: nil)
     }
 
