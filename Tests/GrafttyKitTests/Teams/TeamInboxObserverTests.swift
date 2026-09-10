@@ -170,6 +170,69 @@ struct TeamInboxObserverTests {
         #expect(closeAudit.failedAttempts == 0)
     }
 
+    @Test("Deletion between the signature check and read does not emit an empty batch", arguments: [false, true])
+    func deletionDuringReadPreservesLastBatch(force: Bool) async throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let teamID = "team-delete-during-read"
+        let inbox = TeamInbox(rootDirectory: root)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "one"
+        )
+        var reads = 0
+        let observer = TeamInboxObserver(
+            rootDirectory: root, teamID: teamID, pollInterval: .seconds(30),
+            installEventSources: false,
+            readMessages: { inbox, teamID in
+                reads += 1
+                if reads == 2 {
+                    try FileManager.default.removeItem(at: TeamInbox.messagesURLFor(rootDirectory: root, teamID: teamID))
+                }
+                return try inbox.messages(teamID: teamID)
+            }
+        )
+        let capture = LockedMessageBatches()
+        await observer.refreshForTesting(force: true) { capture.append($0) }
+        #expect(capture.last()?.count == 1)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "pending"
+        )
+        await observer.refreshForTesting(force: force) { capture.append($0) }
+        #expect(capture.count() == 1)
+        #expect(capture.last()?.count == 1)
+        // A delayed directory event must not erase the retained snapshot either.
+        await observer.refreshForTesting(force: true) { capture.append($0) }
+        #expect(capture.count() == 1)
+
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "two"
+        )
+        await observer.refreshForTesting { capture.append($0) }
+        #expect(capture.last()?.first?.body == "two")
+    }
+
+    @Test("An initially absent inbox emits one empty snapshot")
+    func initiallyAbsentInboxEmitsEmptySnapshot() async throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let observer = TeamInboxObserver(rootDirectory: root, teamID: "absent")
+        let capture = LockedMessageBatches()
+        await observer.refreshForTesting(force: true) { capture.append($0) }
+        #expect(capture.count() == 1)
+        #expect(capture.last()?.isEmpty == true)
+        await observer.refreshForTesting(force: true) { capture.append($0) }
+        #expect(capture.count() == 1)
+    }
+
     private func waitForAppend(capture: LockedMessageBatches) async throws {
         // 30s deadline (was 5s): under macos-26 CI parallelism, FSEvents
         // callback delivery for `messages.jsonl` append can take several

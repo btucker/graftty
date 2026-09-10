@@ -44,6 +44,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// The injectable closer lets tests verify that reattachment never closes
     /// the same descriptor twice.
     private let closeDescriptor: @Sendable (Int32) -> Int32
+    private let readMessages: (TeamInbox, String) throws -> [TeamInboxMessage]
 
     // Mutated only on `queue`.
     private var fileSource: DispatchSourceFileSystemObject?
@@ -54,7 +55,8 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// Size signature of the file at the last emit, or `.absent` when the file
     /// did not exist. The poll re-emits only when this changes, so a healthy
     /// vnode-driven run produces no redundant emits.
-    private var lastSignature: FileSignature = .absent
+    /// `nil` until the initial snapshot, distinct from a file deleted later.
+    private var lastSignature: FileSignature?
 
     private enum FileSignature: Equatable {
         case absent
@@ -70,7 +72,10 @@ public final class TeamInboxObserver: @unchecked Sendable {
         teamID: String,
         pollInterval: DispatchTimeInterval,
         installEventSources: Bool = true,
-        closeDescriptor: @escaping @Sendable (Int32) -> Int32 = { close($0) }
+        closeDescriptor: @escaping @Sendable (Int32) -> Int32 = { close($0) },
+        readMessages: @escaping (TeamInbox, String) throws -> [TeamInboxMessage] = {
+            try $0.messages(teamID: $1)
+        }
     ) {
         self.inbox = TeamInbox(rootDirectory: rootDirectory)
         self.teamID = teamID
@@ -78,6 +83,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
         self.pollInterval = pollInterval
         self.installEventSources = installEventSources
         self.closeDescriptor = closeDescriptor
+        self.readMessages = readMessages
     }
 
     /// Starts watching the inbox file. The callback is invoked on the
@@ -209,6 +215,16 @@ public final class TeamInboxObserver: @unchecked Sendable {
     }
 
 #if DEBUG
+    /// Runs a refresh on the observer queue without timers or vnode delivery.
+    func refreshForTesting(force: Bool = false, callback: @escaping ([TeamInboxMessage]) -> Void) async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                self.maybeEmit(callback: callback, force: force)
+                continuation.resume()
+            }
+        }
+    }
+
     /// Deterministically exercises the file-source replacement path without
     /// relying on vnode delivery timing.
     func reattachFileSourceForTesting() async {
@@ -229,14 +245,11 @@ public final class TeamInboxObserver: @unchecked Sendable {
         let previous = lastSignature
         lastSignature = signature
         guard force || signature != previous else { return }
-        // The polling backstop must NOT emit on a present→absent transition
-        // (file deleted out from under us): the vnode `.delete` branch never
-        // emitted on delete, and an empty-list emit here would reset a
-        // delta-tracking consumer's watermark and re-deliver every message as
-        // new on the next append. A later absent→present recreate re-emits
-        // normally (signature changes again). `lastSignature` is still updated
-        // above so the recreate is detected.
-        if !force, case .absent = signature, case .present = previous {
+        // Only the initial snapshot may report an absent inbox as empty.
+        // Later deletion events, including delayed directory events, must
+        // preserve the consumer's watermark until the file is recreated.
+        if case .absent = signature {
+            if previous == nil { callback([]) }
             return
         }
         emit(callback: callback)
@@ -258,7 +271,13 @@ public final class TeamInboxObserver: @unchecked Sendable {
 
     private func emit(callback: @escaping ([TeamInboxMessage]) -> Void) {
         do {
-            let messages = try inbox.messages(teamID: teamID)
+            let messages = try readMessages(inbox, teamID)
+            // The file can disappear after the signature check. `messages`
+            // returns [] for a missing file, which must not reset consumers.
+            if messages.isEmpty, case .absent = currentSignature() {
+                lastSignature = .absent
+                return
+            }
             callback(messages)
         } catch {
             Self.logger.error("inbox read failed: \(error.localizedDescription, privacy: .public)")
@@ -276,6 +295,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
             self.dirSource?.cancel()
             self.dirSource = nil
             self.dirFD = -1
+            self.lastSignature = nil
         }
     }
 
