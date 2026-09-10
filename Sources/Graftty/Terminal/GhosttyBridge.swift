@@ -292,32 +292,19 @@ final class GhosttyApp {
 
         #if GRAFTTY_PAGED_HISTORY
         rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, listOnly in
-            guard let userdata, let state, let mimes,
-                  UnsafeBufferPointer(start: mimes, count: count).contains(where: {
-                      $0.map { String(cString: $0) == "text/plain" } ?? false
-                  }) else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
+            guard let userdata, let state,
+                  GhosttyClipboardRead.accepts(mimes, count: count, listOnly: listOnly)
+            else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
             let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
             let terminalID = box.terminalID
             let manager = box.terminalManager
             DispatchQueue.main.async {
                 guard let handle = manager?.handle(for: terminalID) else { return }
-                handle.reclaimDisplayControlForPasteIfNeeded()
-                let text = pasteboardForClipboard(clipboardEnum).string(forType: .string) ?? ""
-                "text/plain".withCString { mime in
-                    text.withCString { data in
-                        var content = ghostty_clipboard_content_s(mime: mime, data: data, len: text.utf8.count)
-                        withUnsafePointer(to: &content) { contents in
-                            let types: [UnsafePointer<CChar>?] = [mime]
-                            types.withUnsafeBufferPointer { available in
-                                var completion = ghostty_clipboard_complete_s(
-                                    contents: listOnly ? nil : contents, contents_len: listOnly ? 0 : 1,
-                                    available: available.baseAddress, available_len: available.count,
-                                    confirmed: false, remember: false
-                                )
-                                ghostty_surface_complete_clipboard_request(handle.surface, &completion, state)
-                            }
-                        }
-                    }
+                GhosttyClipboardRead.complete(
+                    listOnly: listOnly, pasteboard: pasteboardForClipboard(clipboardEnum),
+                    reclaimControl: { handle.reclaimDisplayControlForPasteIfNeeded() }
+                ) { completion in
+                    ghostty_surface_complete_clipboard_request(handle.surface, completion, state)
                 }
             }
             return GHOSTTY_CLIPBOARD_READ_STARTED
@@ -432,6 +419,44 @@ final class GhosttyApp {
     }
 
 }
+
+#if GRAFTTY_PAGED_HISTORY
+/// Adapts desktop text paste and type-list queries to the length-based clipboard ABI.
+enum GhosttyClipboardRead {
+    static func accepts(_ mimes: UnsafePointer<UnsafePointer<CChar>?>?, count: Int, listOnly: Bool) -> Bool {
+        if listOnly { return true }
+        guard let mimes, count > 0 else { return false }
+        return UnsafeBufferPointer(start: mimes, count: count).contains {
+            $0.map { String(cString: $0) == "text/plain" } ?? false
+        }
+    }
+
+    static func complete(
+        listOnly: Bool, pasteboard: NSPasteboard, reclaimControl: () -> Void,
+        _ body: (UnsafePointer<ghostty_clipboard_complete_s>) -> Void
+    ) {
+        if !listOnly { reclaimControl() }
+        let text = listOnly ? "" : (pasteboard.string(forType: .string) ?? "")
+        let hasText = !listOnly || pasteboard.availableType(from: [.string]) != nil
+        "text/plain".withCString { mime in
+            text.withCString { data in
+                var content = ghostty_clipboard_content_s(mime: mime, data: data, len: text.utf8.count)
+                withUnsafePointer(to: &content) { contents in
+                    let types: [UnsafePointer<CChar>?] = hasText ? [mime] : []
+                    types.withUnsafeBufferPointer { available in
+                        var completion = ghostty_clipboard_complete_s(
+                            contents: listOnly ? nil : contents, contents_len: listOnly ? 0 : 1,
+                            available: available.baseAddress, available_len: available.count,
+                            confirmed: false, remember: false
+                        )
+                        withUnsafePointer(to: &completion, body)
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
 
 /// Pick the NSPasteboard that matches the libghostty clipboard enum.
 /// Declared at file scope so it can be called from the C-ABI runtime

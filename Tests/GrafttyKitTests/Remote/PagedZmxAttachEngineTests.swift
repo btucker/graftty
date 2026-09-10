@@ -84,6 +84,15 @@ private final class FakePagedDaemon: @unchecked Sendable {
         _ = done.wait(timeout: .now() + 4)
         try? FileManager.default.removeItem(at: directory)
     }
+    func waitUntilDone() async -> Bool {
+        await withCheckedContinuation { result in
+            DispatchQueue.global().async { [self] in
+                let completed = done.wait(timeout: .now() + 5) == .success
+                if completed { done.signal() }
+                result.resume(returning: completed)
+            }
+        }
+    }
     static func send(_ fd: Int32, tag: UInt8, payload: Data) throws {
         let bytes = PagedZmxWire.frame(tag: tag, payload: payload)
         try bytes.withUnsafeBytes { try SocketIO.writeAll(fd: fd, bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: bytes.count) }
@@ -104,9 +113,99 @@ private final class FakePagedDaemon: @unchecked Sendable {
         }
         return data
     }
+
+    static func negotiate(_ fd: Int32) throws {
+        try send(fd, tag: 23, payload: Data([8, 0, 0, 0, 0, 0, 0, 0]))
+        #expect(try receive(fd).0 == 23)
+        let (tag, codec) = try receive(fd)
+        #expect(tag == 26)
+        #expect(String(decoding: codec, as: UTF8.self) == PagedTerminalLimits.codec)
+        var ready = Data()
+        ready.appendLE(UInt64(9)); ready.appendLE(UInt64(7))
+        ready.appendLE(UInt16(80)); ready.appendLE(UInt16(24))
+        ready.append(contentsOf: [1, 0, 0, 0]); ready.append(Data("GHOSTSNP".utf8))
+        try send(fd, tag: 27, payload: ready)
+    }
 }
 
 extension PagedZmxAttachEngineTests {
+    @Test("@spec TERM-12.15: When zmx requests a paged client's size after transferring leadership, the application shall resend its latest explicitly requested grid without resizing a passive attachment.")
+    func leadershipResizeRequestUsesLatestRequestedGrid() async throws {
+        let request = PagedTerminalHistoryRequest(incarnation: 9, checkpointID: 7, requestID: 1, ordinal: 0, screen: 0)
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            // A passive attachment has no requested owner grid to send.
+            try FakePagedDaemon.send(fd, tag: 2, payload: Data())
+            try FakePagedDaemon.send(fd, tag: 1, payload: Data("passive".utf8))
+            #expect(try FakePagedDaemon.receive(fd).0 == 28)
+            // zmx ignores these resizes while another client is its leader.
+            #expect(try FakePagedDaemon.receive(fd).1 == Data([30, 0, 100, 0]))
+            #expect(try FakePagedDaemon.receive(fd).1 == Data([40, 0, 120, 0]))
+            #expect(try FakePagedDaemon.receive(fd).0 == 0)
+            try FakePagedDaemon.send(fd, tag: 2, payload: Data())
+            let reply = try FakePagedDaemon.receive(fd)
+            #expect(reply.0 == 2)
+            #expect(reply.1 == Data([40, 0, 120, 0]))
+            try FakePagedDaemon.send(fd, tag: 1, payload: Data("resized".utf8))
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"), zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        var iterator = engine.events.makeAsyncIterator()
+        _ = await iterator.next()
+        #expect(await iterator.next() == .output(Data("passive".utf8)))
+        try await engine.requestHistory(request)
+        engine.resize(cols: UInt16(100), rows: UInt16(30))
+        engine.resize(cols: UInt16(120), rows: UInt16(40))
+        try await engine.send(Data("a".utf8))
+        #expect(await iterator.next() == .output(Data("resized".utf8)))
+        #expect(daemon.error == nil)
+    }
+
+    @Test("@spec TERM-12.16: If a paged terminal socket write fails after sending part of an IPC frame, then the application shall close that attachment before sending another frame.")
+    func partialFrameWriteFailureClosesAttachment() async throws {
+        let sendFinished = DispatchSemaphore(value: 0)
+        let payload = Data(repeating: 0x61, count: 2 * 1024 * 1024)
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            // Hold back reads until SO_SNDTIMEO interrupts the large frame.
+            #expect(sendFinished.wait(timeout: .now() + 15) == .success)
+            var bytesRead = 0
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            while true {
+                let count = Darwin.read(fd, &buffer, buffer.count)
+                if count == 0 { break }
+                guard count > 0 else { throw PagedZmxAttachEngine.Error.socket(errno) }
+                bytesRead += count
+            }
+            #expect(bytesRead > 8)
+            #expect(bytesRead < payload.count + 8)
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"), zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        var iterator = engine.events.makeAsyncIterator()
+        _ = await iterator.next()
+        do {
+            try await engine.send(payload)
+            Issue.record("Expected a partial frame write timeout")
+        } catch SocketIO.WriteError.writeFailed(let code) {
+            #expect(code == EAGAIN || code == EWOULDBLOCK)
+        }
+        sendFinished.signal()
+        // Wait for the peer's drain to prove the engine sent EOF, not just a
+        // receive-stream completion while leaving the framed socket writable.
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+        #expect(await iterator.next() == nil)
+        do {
+            try await engine.send(Data("next".utf8))
+            Issue.record("Closed framed transport accepted another write")
+        } catch PagedZmxAttachEngine.Error.closed { }
+    }
+
     @Test func oldDaemonRejectedBeforePagedAttach() async throws {
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.send(fd, tag: 23, payload: Data([3, 0, 0, 0, 0, 0, 0, 0]))

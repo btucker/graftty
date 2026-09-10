@@ -44,6 +44,46 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
+    @Test("Canvas release confirms an unchanged physical viewport without awaiting a deduplicated resize", arguments: [CGSize.zero, CGSize(width: 0.1, height: 0.1), CGSize(width: 300, height: -100)])
+    func canvasReleaseConfirmsViewportOnlyWithoutResize(sizeChange: CGSize) {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        container.terminalView.contentScaleFactor = 2
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+            cellWidthPixels: 15, cellHeightPixels: 33
+        ))
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
+        container.layoutSubviews()
+        var reported: [InMemoryTerminalViewport] = []
+        container.onPhysicalViewportReady = { reported.append($0) }
+        container.frame.size = CGSize(width: 600 + sizeChange.width, height: 400 + sizeChange.height)
+        container.authoritativeGrid = nil
+        container.layoutSubviews()
+        container.layoutSubviews()
+        let requiresResize = sizeChange.width >= 1
+        #expect(reported.count == (requiresResize ? 0 : 1))
+        if !requiresResize {
+            #expect(reported.first?.columns == 80)
+            #expect(reported.first?.rows == 24)
+        } else {
+            // The delayed native canvas metrics cannot confirm the physical grid.
+            container.terminalDidResize(TerminalGridMetrics(
+                columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+                cellWidthPixels: 15, cellHeightPixels: 33
+            ))
+            #expect(reported.isEmpty)
+            container.terminalDidResize(TerminalGridMetrics(
+                columns: 120, rows: 18, widthPixels: 1800, heightPixels: 600,
+                cellWidthPixels: 15, cellHeightPixels: 33
+            ))
+            #expect(reported.count == 1)
+            #expect(reported.first?.columns == 120)
+            #expect(reported.first?.rows == 18)
+            container.layoutSubviews()
+            #expect(reported.count == 1)
+        }
+    }
+
     @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.")
     func longPressOpensTheCompleteURLUnderThePressedWord() throws {
         let container = TerminalInputContainerView(frame: .zero)

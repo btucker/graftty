@@ -179,6 +179,8 @@ public final class SessionClient {
     private var legacyEngaged = false
     @ObservationIgnored
     private var pendingInput = PendingInput()
+    @ObservationIgnored
+    private var awaitingOwnerViewport = false
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -377,6 +379,15 @@ public final class SessionClient {
 
     @MainActor
     internal func handleViewport(_ viewport: InMemoryTerminalViewport) {
+        updateViewport(viewport, confirmedPhysicalViewport: false)
+    }
+
+    internal func physicalViewportDidBecomeReady(_ viewport: InMemoryTerminalViewport) {
+        guard awaitingOwnerViewport else { return }
+        updateViewport(viewport, confirmedPhysicalViewport: true)
+    }
+
+    private func updateViewport(_ viewport: InMemoryTerminalViewport, confirmedPhysicalViewport: Bool) {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
@@ -388,12 +399,18 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        guard snapshotCanvasGrid == nil else { return }
+        guard snapshotCanvasGrid == nil,
+              !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)
         switch ownershipTransportMode {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
-            sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+            if awaitingOwnerViewport {
+                awaitingOwnerViewport = false
+                flushPendingInputAfterOwnerResize(cols: cols, rows: rows, epoch: epoch)
+            } else {
+                sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+            }
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
         case .webControl, .pending, .legacy:
@@ -660,7 +677,11 @@ public final class SessionClient {
         switch ownershipTransportMode {
         case .webControl where isOwner:
             recordActivity()
-            sendBinary(data)
+            if awaitingOwnerViewport {
+                _ = pendingInput.queue(data)
+            } else {
+                sendBinary(data)
+            }
         case .webControl:
             queueInputAndRequestTakeover(data)
         case .legacy:
@@ -786,12 +807,12 @@ public final class SessionClient {
                 return
             }
             do {
-                // Wait for the normal ownership handshake before uploading.
-                for _ in 0..<100 where !self.isOwner {
+                // Wait for ownership and its physical viewport before uploading.
+                for _ in 0..<100 where !self.isOwner || self.awaitingOwnerViewport {
                     try Task.checkCancellation()
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                guard self.isOwner else { throw URLError(.noPermissionsToReadFile) }
+                guard self.isOwner, !self.awaitingOwnerViewport else { throw URLError(.noPermissionsToReadFile) }
                 let epoch = self.ownershipSnapshot?.epoch
                 self.imagePasteEpoch = epoch
                 @MainActor func send(_ message: ImagePasteMessage) async throws {
@@ -1035,6 +1056,7 @@ public final class SessionClient {
 
     private func clearPendingInput() {
         pendingInput.clear()
+        awaitingOwnerViewport = false
     }
 
     private func flushPendingInput() {
@@ -1163,12 +1185,19 @@ public final class SessionClient {
                 if snapshot.epoch == last.epoch, snapshot.revision < last.revision { break }
             }
             let wasOwner = isOwner
+            let wasUsingSnapshotCanvas = snapshotCanvasGrid != nil
             ownershipSnapshot = snapshot
             if let id = imagePasteID, let epoch = imagePasteEpoch,
                !isOwner || snapshot.epoch != epoch {
                 finishImagePaste(id: id, error: "Image paste was interrupted because pane control changed.")
             }
             if isOwner {
+                if !wasOwner, wasUsingSnapshotCanvas {
+                    // The canvas retains the host's native grid through rotations.
+                    // Wait for its release before using a physical owner viewport.
+                    awaitingOwnerViewport = true
+                }
+                guard !awaitingOwnerViewport else { break }
                 if !wasOwner,
                    ownershipTransportMode == .webControl,
                    let viewport = lastIOSViewport {
@@ -1176,8 +1205,12 @@ public final class SessionClient {
                 } else {
                     flushPendingInput()
                 }
-            } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
-                clearPendingInput()
+            } else {
+                if wasOwner {
+                    clearPendingInput()
+                } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
+                    clearPendingInput()
+                }
             }
         case .hello, .takeControl, .ownerResize:
             break

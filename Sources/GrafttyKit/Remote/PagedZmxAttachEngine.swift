@@ -16,6 +16,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     private var closed = false
     private var registered = false
     private var knownSize: (UInt16, UInt16)?
+    private var requestedSize: (UInt16, UInt16)?
     private var sizeCallback: ((UInt16, UInt16) -> Void)?
     public var attachmentRegistry: RemoteAttachmentRegistry?
     public var inputState: ZmxInputState?
@@ -122,6 +123,11 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
             do {
                 while let self, !self.lock.withLock({ self.closed }) {
                     let frame = try Self.readFrame(fd: fd, deadline: nil)
+                    if frame.tag == 2 {
+                        guard frame.payload.isEmpty else { throw Error.invalidFrame }
+                        try self.replyToSizeRequest()
+                        continue
+                    }
                     if let event = try PagedZmxWire.event(tag: frame.tag, payload: frame.payload) {
                         self.emit(event)
                     }
@@ -140,7 +146,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     public func resize(cols: UInt16, rows: UInt16) {
         guard cols > 0, rows > 0 else { return }
         var payload = Data(); payload.appendLE(rows); payload.appendLE(cols)
-        try? sendFrame(tag: 2, payload: payload)
+        try? sendFrame(tag: 2, payload: payload, requestedSize: (cols, rows))
     }
     public func resize(cols: Int, rows: Int) async {
         resize(cols: UInt16(clamping: cols), rows: UInt16(clamping: rows))
@@ -172,13 +178,49 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         continuation.finish()
     }
 
-    private func sendFrame(tag: UInt8, payload: Data) throws {
+    private func sendFrame(tag: UInt8, payload: Data, requestedSize: (UInt16, UInt16)? = nil) throws {
         let frame = PagedZmxWire.frame(tag: tag, payload: payload)
-        try lock.withLock {
-            guard !closed, descriptor >= 0 else { throw Error.closed }
-            try frame.withUnsafeBytes { bytes in
-                try SocketIO.writeAll(fd: descriptor, bytes: bytes.bindMemory(to: UInt8.self).baseAddress!, count: bytes.count)
+        try withWritableSocket { fd in
+            if let requestedSize { self.requestedSize = requestedSize }
+            try Self.write(frame, to: fd)
+        }
+    }
+
+    private func replyToSizeRequest() throws {
+        try withWritableSocket { fd in
+            // An initial owner resize can be ignored while another zmx client
+            // leads. zmx asks again after the first input transfers leadership.
+            // Read and write under one lock so an older reply cannot overtake
+            // a new owner resize. Passive attachments never invent a size.
+            guard let (cols, rows) = requestedSize else { return }
+            var payload = Data(); payload.appendLE(rows); payload.appendLE(cols)
+            try Self.write(PagedZmxWire.frame(tag: 2, payload: payload), to: fd)
+        }
+    }
+
+    private func withWritableSocket(_ body: (Int32) throws -> Void) throws {
+        do {
+            try lock.withLock {
+                guard !closed, descriptor >= 0 else { throw Error.closed }
+                do { try body(descriptor) }
+                catch {
+                    // A partial frame cannot be retried or followed by another
+                    // header. Poison the descriptor before unlocking so another
+                    // writer cannot append bytes to the incomplete payload.
+                    _ = shutdown(descriptor, SHUT_RDWR)
+                    descriptor = -1
+                    throw error
+                }
             }
+        } catch {
+            closeSync()
+            throw error
+        }
+    }
+
+    private static func write(_ frame: Data, to fd: Int32) throws {
+        try frame.withUnsafeBytes { bytes in
+            try SocketIO.writeAll(fd: fd, bytes: bytes.bindMemory(to: UInt8.self).baseAddress!, count: bytes.count)
         }
     }
 

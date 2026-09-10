@@ -264,9 +264,12 @@ public final class TerminalInputContainerView: UIView,
 
     let terminalView = UITerminalView(frame: .zero)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
+    var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)?
+    private var awaitingPhysicalViewport = false
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
             guard authoritativeGrid != oldValue else { return }
+            awaitingPhysicalViewport = oldValue != nil && authoritativeGrid == nil
             updateTerminalGestureEnablement()
             setNeedsLayout()
         }
@@ -285,12 +288,36 @@ public final class TerminalInputContainerView: UIView,
                   container: bounds.size
               ) else {
             snapshotScrollView.configure(canvas: nil, rowHeight: 0)
+            confirmPhysicalViewportIfReady()
             return
         }
         snapshotScrollView.configure(
             canvas: canvas,
             rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale
         )
+    }
+
+    private func confirmPhysicalViewportIfReady() {
+        // A queued native resize can still describe the follower canvas after
+        // ownership flips. Confirm only the grid laid out at physical size.
+        // Pixel comparison also covers fractional point changes that Ghostty
+        // deduplicates without another resize notification.
+        let scale = terminalView.contentScaleFactor
+        let widthPixels = (bounds.width * scale).rounded(.down)
+        let heightPixels = (bounds.height * scale).rounded(.down)
+        guard awaitingPhysicalViewport, authoritativeGrid == nil,
+              widthPixels > 0, heightPixels > 0,
+              let metrics = terminalGridMetrics,
+              widthPixels == CGFloat(metrics.widthPixels),
+              heightPixels == CGFloat(metrics.heightPixels),
+              (terminalView.bounds.width * scale).rounded(.down) == widthPixels,
+              (terminalView.bounds.height * scale).rounded(.down) == heightPixels else { return }
+        awaitingPhysicalViewport = false
+        onPhysicalViewportReady?(InMemoryTerminalViewport(
+            columns: metrics.columns, rows: metrics.rows,
+            widthPixels: metrics.widthPixels, heightPixels: metrics.heightPixels,
+            cellWidthPixels: metrics.cellWidthPixels, cellHeightPixels: metrics.cellHeightPixels
+        ))
     }
 
     private var isCommittedSoftwareInputEligible = false
@@ -1059,6 +1086,7 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
     public func terminalDidResize(_ size: TerminalGridMetrics) {
         terminalGridMetrics = size
         if authoritativeGrid != nil { setNeedsLayout() }
+        confirmPhysicalViewportIfReady()
     }
 }
 

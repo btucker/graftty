@@ -92,6 +92,12 @@ struct SessionClientTests {
 
         func close() { closed = true }
 
+        func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+            try? await send(.text(WebControlEnvelope.ownerResize(
+                clientID: clientID, epoch: epoch, cols: UInt16(cols), rows: UInt16(rows)
+            ).encoded()))
+        }
+
         func sendHello(
             clientID: DisplayClientID,
             kind: DisplayClientKind,
@@ -292,7 +298,9 @@ struct SessionClientTests {
         func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
     }
 
-    @Test("@spec IOS-7.7: When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.")
+    @Test("""
+@spec IOS-7.7: When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
+""")
     func pagedScreenLiveInputAndReconnect() async throws {
         let first = DelayedReceiveWS(paged: true)
         let second = DelayedReceiveWS(paged: true)
@@ -339,6 +347,8 @@ struct SessionClientTests {
         }
         let ownership = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 120, rows: 24)
         client.handleTextFrame(WebControlEnvelope.ownership(ownership).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 100, rows: 30,
+            widthPixels: 1200, heightPixels: 720, cellWidthPixels: 12, cellHeightPixels: 24))
         client.session.sendInput(Data("input".utf8))
         try await waitUntil("input forwarded while history remains pending") {
             first.sent.contains(.binary(Data("input".utf8)))
@@ -1627,7 +1637,7 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-4.24: When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
+    @spec IOS-4.24: When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a paged follower canvas.
     """)
     func becomingOwnerPushesCurrentViewport() async throws {
         let ws = FakeWS()
@@ -1668,6 +1678,73 @@ struct SessionClientTests {
             return false
         }
         #expect(ownerResize == .ownerResize(clientID: clientID, epoch: 2, cols: 110, rows: 33))
+    }
+
+    @Test("Paged takeover holds input through repeated ownership frames until the physical viewport is ready", arguments: [false, true])
+    func pagedTakeoverWaitsForPhysicalViewport(loseOwnership: Bool) async throws {
+        let ws = DelayedReceiveWS(paged: true)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: PagingRenderer())
+        primeViewport(client, columns: 80, rows: 40)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("paged connection hello") { ws.receiveCalls == 1 }
+        let hello = try #require(ws.sent.compactMap { frame -> WebControlEnvelope? in
+            guard case .text(let text) = frame else { return nil }
+            return try? WebControlEnvelope.parse(Data(text.utf8))
+        }.first)
+        guard case .hello(let clientID, _, _, _, _, _) = hello else {
+            Issue.record("expected hello"); return
+        }
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 1, cols: 120, rows: 50,
+            ready: Data([1]), hasPrimaryHistory: false, hasAlternateHistory: false)
+        ws.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(checkpoint)).encoded()))
+        try await waitUntil("checkpoint installed") { ws.receiveCalls == 2 }
+        let follower = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .web,
+            cols: 120, rows: 50, epoch: 1)
+        client.handleTextFrame(WebControlEnvelope.ownership(follower).encoded())
+        client.sendSoftwareKeyboardText("first")
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 80, rows: 40, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        // A native resize queued while the follower canvas was still mounted
+        // can arrive after ownership flips but before UIKit releases it.
+        primeViewport(client, columns: 120, rows: 50)
+        client.sendSoftwareKeyboardText("second")
+        try await expectNever("input or stale resize before the physical viewport") {
+            ws.sent.contains { frame in
+                if case .binary = frame { return true }
+                if case .text(let text) = frame,
+                   case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+                return false
+            }
+        }
+        if loseOwnership {
+            let lost = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .web,
+                cols: 120, rows: 50, epoch: 3)
+            client.handleTextFrame(WebControlEnvelope.ownership(lost).encoded())
+            client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 140, rows: 25,
+                widthPixels: 1680, heightPixels: 600, cellWidthPixels: 12, cellHeightPixels: 24))
+            try await expectNever("queued input after control was lost") {
+                ws.sent.contains { if case .binary = $0 { return true }; return false }
+            }
+        } else {
+            // Rotation changed the physical pane while the native follower grid stayed fixed.
+            client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(columns: 140, rows: 25,
+                widthPixels: 1680, heightPixels: 600, cellWidthPixels: 12, cellHeightPixels: 24))
+            try await waitUntil("queued input after physical owner resize") {
+                ws.sent.contains(.binary(Data("second".utf8)))
+            }
+            let relevant = ws.sent.filter { frame in
+                if case .binary = frame { return true }
+                if case .text(let text) = frame,
+                   case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+                return false
+            }
+            #expect(relevant == [
+                .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 140, rows: 25).encoded()),
+                .binary(Data("first".utf8)), .binary(Data("second".utf8))
+            ])
+        }
     }
 
     @Test

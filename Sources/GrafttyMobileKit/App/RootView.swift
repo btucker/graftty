@@ -1140,6 +1140,9 @@ struct SingleSessionView: View {
             },
             captureContainer: { [paneContainerBox] view in
                 paneContainerBox.view = view
+                view.onPhysicalViewportReady = { [weak client] viewport in
+                    client?.physicalViewportDidBecomeReady(viewport)
+                }
                 view.setStickyControlActivationChangeHandler { activation in
                     // This callback can fire while UIViewRepresentable is
                     // applying input eligibility. Leave that update cycle
