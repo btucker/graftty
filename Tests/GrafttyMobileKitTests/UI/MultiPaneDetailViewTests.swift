@@ -167,8 +167,6 @@ struct MultiPaneDetailViewTests {
             focusedPaneId: focusedPaneId,
             pendingFocusRequests: 0,
             onFocusRequestsConsumed: {},
-            autoTakeControlRequestCount: 0,
-            autoTakeControlPolicy: .init(),
             ghosttyCommandContext: MobileGhosttyCommandContext(
                 keybindingSet: .loading,
                 perform: { _ in },

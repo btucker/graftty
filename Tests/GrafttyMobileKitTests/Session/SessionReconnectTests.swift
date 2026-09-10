@@ -129,7 +129,7 @@ struct SessionReconnectTests {
         client.forceReconnectNow()
         await quiesce()
         client.suspend()
-        client.resume(reclaimControlOnOwnerlessConnect: false)
+        client.resume()
         await quiesce()
 
         #expect(client.connectionState == .ended)

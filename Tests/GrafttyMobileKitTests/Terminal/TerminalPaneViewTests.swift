@@ -44,6 +44,46 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
+    @Test("Canvas release confirms an unchanged physical viewport without awaiting a deduplicated resize", arguments: [CGSize.zero, CGSize(width: 0.1, height: 0.1), CGSize(width: 300, height: -100)])
+    func canvasReleaseConfirmsViewportOnlyWithoutResize(sizeChange: CGSize) {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        container.terminalView.contentScaleFactor = 2
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+            cellWidthPixels: 15, cellHeightPixels: 33
+        ))
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
+        container.layoutSubviews()
+        var reported: [InMemoryTerminalViewport] = []
+        container.onPhysicalViewportReady = { reported.append($0) }
+        container.frame.size = CGSize(width: 600 + sizeChange.width, height: 400 + sizeChange.height)
+        container.authoritativeGrid = nil
+        container.layoutSubviews()
+        container.layoutSubviews()
+        let requiresResize = sizeChange.width >= 1
+        #expect(reported.count == (requiresResize ? 0 : 1))
+        if !requiresResize {
+            #expect(reported.first?.columns == 80)
+            #expect(reported.first?.rows == 24)
+        } else {
+            // The delayed native canvas metrics cannot confirm the physical grid.
+            container.terminalDidResize(TerminalGridMetrics(
+                columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+                cellWidthPixels: 15, cellHeightPixels: 33
+            ))
+            #expect(reported.isEmpty)
+            container.terminalDidResize(TerminalGridMetrics(
+                columns: 120, rows: 18, widthPixels: 1800, heightPixels: 600,
+                cellWidthPixels: 15, cellHeightPixels: 33
+            ))
+            #expect(reported.count == 1)
+            #expect(reported.first?.columns == 120)
+            #expect(reported.first?.rows == 18)
+            container.layoutSubviews()
+            #expect(reported.count == 1)
+        }
+    }
+
     @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.")
     func longPressOpensTheCompleteURLUnderThePressedWord() throws {
         let container = TerminalInputContainerView(frame: .zero)
@@ -232,7 +272,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
+@spec IOS-6.8: While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 """)
     func terminalViewIsSoleFullSizeSubviewAndTouchTarget() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -240,7 +280,8 @@ struct TerminalPaneViewTests {
 
         let hitView = container.hitTest(CGPoint(x: 160, y: 120), with: nil)
 
-        #expect(container.subviews == [container.terminalView])
+        #expect(container.terminalView.superview === container.snapshotScrollView)
+        #expect(!container.snapshotScrollView.isScrollEnabled)
         #expect(container.terminalView.frame == container.bounds)
         #expect(hitView === container.terminalView)
         #expect(!container.terminalView.canBecomeFirstResponder)
@@ -904,7 +945,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
 """)
     func selectionModeStripsDirectTouchesFromScrollPans() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -1124,7 +1165,8 @@ struct TerminalPaneViewTests {
 
         #expect(container.terminalView.becomeFirstResponder())
         #expect(container.terminalView.isFirstResponder)
-        #expect(container.terminalView.next === container)
+        #expect(container.terminalView.next === container.snapshotScrollView)
+        #expect(container.snapshotScrollView.next === container)
 
         container.committedSoftwareInput = nil
         #expect(!container.terminalView.isFirstResponder)

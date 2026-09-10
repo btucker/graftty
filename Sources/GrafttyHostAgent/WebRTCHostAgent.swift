@@ -28,6 +28,7 @@ public actor WebRTCHostAgent {
     private let hostKey: Curve25519.Signing.PrivateKey
     private let trustedPeerStore: TrustedPeerStore
     public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
+    private let pagedFactory: PagedTerminalStreamFactory?
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
@@ -160,6 +161,7 @@ public actor WebRTCHostAgent {
         trustedPeerStore: TrustedPeerStore,
         activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        pagedFactory: PagedTerminalStreamFactory? = nil,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
@@ -171,6 +173,7 @@ public actor WebRTCHostAgent {
         self.trustedPeerStore = trustedPeerStore
         self.activeRemotePeers = activeRemotePeers
         self.streamFactory = streamFactory
+        self.pagedFactory = pagedFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
         self.paneControlMutator = paneControlMutator
@@ -576,6 +579,7 @@ public actor WebRTCHostAgent {
         let transport = SSHNIOTransport(dataChannel: dc, inbox: inbox)
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
+        let pagedFactory = pagedFactory
         let panesStateSubscribe = self.panesStateSubscribe
         let panesStateV2Subscribe = self.panesStateV2Subscribe
         let paneControlMutator = self.paneControlMutator
@@ -641,6 +645,7 @@ public actor WebRTCHostAgent {
                         return child.eventLoop.makeCompletedFuture {
                             let dispatcher = SubsystemDispatcher(
                                 streamFactory: factory,
+                                pagedFactory: pagedFactory,
                                 panesStateSubscribe: panesStateSubscribe,
                                 panesStateV2Subscribe: panesStateV2Subscribe,
                                 paneControlMutator: paneControlMutator,

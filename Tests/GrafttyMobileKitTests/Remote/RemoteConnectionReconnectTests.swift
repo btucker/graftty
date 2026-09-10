@@ -935,6 +935,14 @@ private final class TerminalEchoSessionHandler: ChannelInboundHandler, @unchecke
     /// `wantReply: false` client-side (see `TerminalSessionClient
     /// .sendEnv`/`.sendPty`), so no ack is needed for those.
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let subsystem = event as? SSHChannelRequestEvent.SubsystemRequest, subsystem.wantReply {
+            // This legacy terminal fixture does not support paged attachment.
+            // Match the real host's explicit rejection so the client can open
+            // a legacy child on the authenticated connection.
+            context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+            context.close(promise: nil)
+            return
+        }
         if let shellEvent = event as? SSHChannelRequestEvent.ShellRequest, shellEvent.wantReply {
             context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
         }

@@ -56,6 +56,9 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public let session: InMemoryTerminalSession
     public let controller: TerminalController
+    /// The grid carried by a paged checkpoint. The native canvas preserves
+    /// both dimensions while its presentation fits the available container.
+    public let authoritativeGrid: SessionClient.GridSize?
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
     /// focus-request counters can mark them consumed.
@@ -99,6 +102,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public init(
         session: InMemoryTerminalSession,
         controller: TerminalController,
+        authoritativeGrid: SessionClient.GridSize? = nil,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
@@ -113,6 +117,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     ) {
         self.session = session
         self.controller = controller
+        self.authoritativeGrid = authoritativeGrid
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
@@ -149,6 +154,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
+        view.authoritativeGrid = authoritativeGrid
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.committedSoftwareInput = committedSoftwareInput
@@ -168,6 +174,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
+        view.authoritativeGrid = authoritativeGrid
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
@@ -256,6 +263,63 @@ public final class TerminalInputContainerView: UIView,
     ]
 
     let terminalView = UITerminalView(frame: .zero)
+    private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
+    var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)?
+    private var awaitingPhysicalViewport = false
+    public var authoritativeGrid: SessionClient.GridSize? {
+        didSet {
+            guard authoritativeGrid != oldValue else { return }
+            awaitingPhysicalViewport = oldValue != nil && authoritativeGrid == nil
+            updateTerminalGestureEnablement()
+            setNeedsLayout()
+        }
+    }
+
+    override public func layoutSubviews() {
+        super.layoutSubviews()
+        snapshotScrollView.frame = bounds
+        guard let grid = authoritativeGrid, let metrics = terminalGridMetrics,
+              let canvas = TerminalSnapshotCanvas.layout(
+                  grid: CGSize(width: Int(grid.cols), height: Int(grid.rows)),
+                  measuredGrid: CGSize(width: Int(metrics.columns), height: Int(metrics.rows)),
+                  measuredPixels: CGSize(width: Int(metrics.widthPixels), height: Int(metrics.heightPixels)),
+                  cellPixels: CGSize(width: Int(metrics.cellWidthPixels), height: Int(metrics.cellHeightPixels)),
+                  displayScale: terminalView.contentScaleFactor,
+                  container: bounds.size
+              ) else {
+            snapshotScrollView.configure(canvas: nil, rowHeight: 0)
+            confirmPhysicalViewportIfReady()
+            return
+        }
+        snapshotScrollView.configure(
+            canvas: canvas,
+            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale
+        )
+    }
+
+    private func confirmPhysicalViewportIfReady() {
+        // A queued native resize can still describe the follower canvas after
+        // ownership flips. Confirm only the grid laid out at physical size.
+        // Pixel comparison also covers fractional point changes that Ghostty
+        // deduplicates without another resize notification.
+        let scale = terminalView.contentScaleFactor
+        let widthPixels = (bounds.width * scale).rounded(.down)
+        let heightPixels = (bounds.height * scale).rounded(.down)
+        guard awaitingPhysicalViewport, authoritativeGrid == nil,
+              widthPixels > 0, heightPixels > 0,
+              let metrics = terminalGridMetrics,
+              widthPixels == CGFloat(metrics.widthPixels),
+              heightPixels == CGFloat(metrics.heightPixels),
+              (terminalView.bounds.width * scale).rounded(.down) == widthPixels,
+              (terminalView.bounds.height * scale).rounded(.down) == heightPixels else { return }
+        awaitingPhysicalViewport = false
+        onPhysicalViewportReady?(InMemoryTerminalViewport(
+            columns: metrics.columns, rows: metrics.rows,
+            widthPixels: metrics.widthPixels, heightPixels: metrics.heightPixels,
+            cellWidthPixels: metrics.cellWidthPixels, cellHeightPixels: metrics.cellHeightPixels
+        ))
+    }
+
     private var isCommittedSoftwareInputEligible = false
     private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
@@ -479,7 +543,8 @@ public final class TerminalInputContainerView: UIView,
         backgroundColor = .clear
         isOpaque = false
 
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        clipsToBounds = true
+        terminalView.translatesAutoresizingMaskIntoConstraints = true
         terminalView.delegate = self
         terminalView.softwareInputDelegate = self
         terminalView.hardwareInputDelegate = self
@@ -491,19 +556,13 @@ public final class TerminalInputContainerView: UIView,
         _ = terminalView.inputAccessoryView
         #endif
         terminalView.showsInputAccessory = false
-        addSubview(terminalView)
+        addSubview(snapshotScrollView)
         #if !targetEnvironment(macCatalyst)
         terminalView.gestureRecognizers?
             .compactMap { $0 as? UIPinchGestureRecognizer }
             .first?
             .addTarget(self, action: #selector(observeTerminalPinch(_:)))
         #endif
-        NSLayoutConstraint.activate([
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
 
         configureTerminalPanRecognizersForIndirectScrolling()
 
@@ -514,6 +573,7 @@ public final class TerminalInputContainerView: UIView,
         addInteraction(longPressMenu)
         addInteraction(selectionMenu)
         addGestureRecognizer(selectionPanRecognizer)
+        snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
         addGestureRecognizer(anyTouchObserver)
     }
 
@@ -605,14 +665,14 @@ public final class TerminalInputContainerView: UIView,
         )
         let config = UIEditMenuConfiguration(
             identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
-            sourcePoint: request.sourcePoint
+            sourcePoint: convert(request.sourcePoint, from: terminalView)
         )
         longPressMenu.presentEditMenu(with: config)
     }
 
     @objc private func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
         guard selectionController.isActive else { return }
-        let point = recognizer.location(in: self)
+        let point = recognizer.location(in: terminalView)
         switch recognizer.state {
         case .began:
             selectionMenu.dismissMenu()
@@ -641,12 +701,35 @@ public final class TerminalInputContainerView: UIView,
     /// selection mode, with their prior values, so exit restores exactly
     /// what libghostty/setup installed.
     private var selectionModeSavedTouchTypes: [(UIPanGestureRecognizer, [NSNumber])] = []
+    private var suppressedTerminalGestures: [ObjectIdentifier: Bool] = [:]
 
-    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+    /// Selection and the checkpoint canvas can both suppress pinch. Restore
+    /// each original state only after both restrictions have been released.
+    private func updateTerminalGestureEnablement() {
+        for recognizer in terminalView.gestureRecognizers ?? [] {
+            let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
+                !$0.allowedScrollTypesMask.isEmpty
+            } ?? false
+            let suppressed = (selectionPanRecognizer.isEnabled && !scrollPan)
+                || (authoritativeGrid != nil && (recognizer is UIPinchGestureRecognizer || scrollPan))
+            let id = ObjectIdentifier(recognizer)
+            if suppressed {
+                if suppressedTerminalGestures[id] == nil {
+                    suppressedTerminalGestures[id] = recognizer.isEnabled
+                }
+                recognizer.isEnabled = false
+            } else if let wasEnabled = suppressedTerminalGestures.removeValue(forKey: id) {
+                recognizer.isEnabled = wasEnabled
+            }
+        }
+    }
+
+    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
     private func enterSelectionMode() {
+        guard !selectionPanRecognizer.isEnabled else { return }
         selectionPanRecognizer.isEnabled = true
         selectionModeSavedTouchTypes = []
-        terminalView.gestureRecognizers?.forEach { recognizer in
+        ((terminalView.gestureRecognizers ?? []) + [snapshotScrollView.panGestureRecognizer]).forEach { recognizer in
             if let pan = recognizer as? UIPanGestureRecognizer,
                !pan.allowedScrollTypesMask.isEmpty {
                 // A non-empty scroll mask only ADDS indirect scroll-event
@@ -658,8 +741,8 @@ public final class TerminalInputContainerView: UIView,
                 pan.allowedTouchTypes = Self.indirectPointerOnlyTouchTypes
                 return
             }
-            recognizer.isEnabled = false
         }
+        updateTerminalGestureEnablement()
     }
 
     private func exitSelectionMode() {
@@ -668,7 +751,7 @@ public final class TerminalInputContainerView: UIView,
             pan.allowedTouchTypes = savedTouchTypes
         }
         selectionModeSavedTouchTypes = []
-        terminalView.gestureRecognizers?.forEach { $0.isEnabled = true }
+        updateTerminalGestureEnablement()
     }
 
     fileprivate func performSelectAtLongPressPoint() {
@@ -680,7 +763,7 @@ public final class TerminalInputContainerView: UIView,
     fileprivate func performSelectAll() {
         selectionController.selectAll()
         enterSelectionMode()
-        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let center = CGPoint(x: terminalView.bounds.midX, y: terminalView.bounds.midY)
         presentSelectionMenu(near: center)
     }
 
@@ -710,7 +793,10 @@ public final class TerminalInputContainerView: UIView,
 
     /// @spec IOS-11.5: When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
     private func presentSelectionMenu(near point: CGPoint) {
-        let config = UIEditMenuConfiguration(identifier: "selection" as AnyHashable, sourcePoint: point)
+        let config = UIEditMenuConfiguration(
+            identifier: "selection" as AnyHashable,
+            sourcePoint: convert(point, from: terminalView)
+        )
         selectionMenu.presentEditMenu(with: config)
     }
 
@@ -974,7 +1060,9 @@ extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegat
 }
 
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
-    public func terminalDidAttachSurface(_ surface: TerminalSurface) {}
+    public func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        setNeedsLayout()
+    }
 
     public func terminalDidDetachSurface() {
         cancelActiveSelectionIfAny()
@@ -988,9 +1076,17 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     }
 }
 
+extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
+    public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
+        snapshotScrollView.updateScrollbar(scrollbar)
+    }
+}
+
 extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
     public func terminalDidResize(_ size: TerminalGridMetrics) {
         terminalGridMetrics = size
+        if authoritativeGrid != nil { setNeedsLayout() }
+        confirmPhysicalViewportIfReady()
     }
 }
 

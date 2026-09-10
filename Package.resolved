@@ -1,12 +1,11 @@
 {
-  "originHash" : "de8c2a64a1fb48f055fddd31cfa470bc02399c59f64af63307430a09097ce949",
+  "originHash" : "ebcd3e1356f3a30c6a703d675091745582663c01adf800d164d7e9c5926cfc12",
   "pins" : [
     {
       "identity" : "libghostty-spm",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/btucker/libghostty-spm.git",
       "state" : {
-        "branch" : "expose-selection-api",
         "revision" : "52a84d611b1442dbeffa972b37022346a8a32ec6"
       }
     },

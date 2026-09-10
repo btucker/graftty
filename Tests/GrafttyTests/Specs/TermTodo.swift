@@ -239,11 +239,6 @@ struct TermTodo {
     func term_12_3() async throws { }
 
     @Test("""
-@spec TERM-12.4: When a history page arrives, the application shall validate its session incarnation, checkpoint, screen, and page position before importing it, reject stale or duplicate pages, and preserve a contiguous history range without mixing content across checkpoints.
-""", .disabled("paged history is not yet implemented"))
-    func term_12_4() async throws { }
-
-    @Test("""
 @spec TERM-12.5: When older history is inserted while the user is reading or selecting text, the application shall preserve the visible content anchor and selection on Mac and mobile; when the user follows live output, history insertion shall preserve that following behavior.
 """, .disabled("paged history is not yet implemented"))
     func term_12_5() async throws { }

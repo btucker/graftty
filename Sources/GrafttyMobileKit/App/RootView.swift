@@ -311,7 +311,6 @@ struct SingleSessionView: View {
     /// Zeroes the external pending count after a successful keyboard focus
     /// (the iPad layout wires this to `appState.consumeFocusRequests()`).
     let onExternalFocusRequestsConsumed: (() -> Void)?
-    let autoTakeControlRequestCount: Int
     let ghosttyCommandContext: MobileGhosttyCommandContext?
     /// Regular-width iPad mounts one real `SingleSessionView` per pane. Only
     /// the selected pane may own UIKit keyboard input and app shortcuts.
@@ -378,16 +377,6 @@ struct SingleSessionView: View {
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
-    /// Injected by the iPad layout as `appState.autoTakeControlPolicy` so the
-    /// fulfillment latch survives view recreation; direct constructions
-    /// (compact path, previews, tests) default to a fresh instance, which is
-    /// inert because their `autoTakeControlRequestCount` is always 0.
-    private let autoTakeControlPolicy: AutoTakeControlPolicy
-    /// Scene-suspension memory only: if this fullscreen pane was the display
-    /// owner before iOS forced the live session down, the next dial may reclaim
-    /// an ownerless session. It deliberately does not apply to navigation-away
-    /// teardown, where the user intentionally left the pane.
-    @State private var reclaimControlOnNextDial = false
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -420,35 +409,6 @@ struct SingleSessionView: View {
         isPaneFocused: Bool
     ) -> Bool {
         isPaneFocused && isKeyboardVisible && !keyboardAllowed
-    }
-
-    /// Reference type on purpose: the fulfillment latch must outlive any one
-    /// `SingleSessionView` identity. The instance is owned by `IPadAppState`
-    /// (the same scope as `ownershipRequestCount`) so a detail-view
-    /// recreation — e.g. the focused-pane fallback after the host closes a
-    /// pane — cannot reset the latch and replay an already-fulfilled
-    /// ownership request (IPAD-8.8).
-    final class AutoTakeControlPolicy {
-        private var fulfilledRequestCount: Int = 0
-
-        init() {}
-
-        func shouldTakeControl(
-            requestCount: Int,
-            isOwner: Bool,
-            canTakeControl: Bool
-        ) -> Bool {
-            guard requestCount > fulfilledRequestCount else { return false }
-            if isOwner {
-                fulfilledRequestCount = requestCount
-                return false
-            }
-            if canTakeControl {
-                fulfilledRequestCount = requestCount
-                return true
-            }
-            return false
-        }
     }
 
     static func shouldFocusKeyboardOnOwnerTransition(
@@ -533,8 +493,6 @@ struct SingleSessionView: View {
         coordinator: RemoteConnectionCoordinator? = nil,
         externalPendingFocusRequests: Int = 0,
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
-        autoTakeControlRequestCount: Int = 0,
-        autoTakeControlPolicy: AutoTakeControlPolicy = AutoTakeControlPolicy(),
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
@@ -548,8 +506,6 @@ struct SingleSessionView: View {
         self.coordinator = coordinator
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
-        self.autoTakeControlRequestCount = autoTakeControlRequestCount
-        self.autoTakeControlPolicy = autoTakeControlPolicy
         self.ghosttyCommandContext = ghosttyCommandContext
         self.isPaneFocused = isPaneFocused
         self.isEmbeddedPane = isEmbeddedPane
@@ -631,6 +587,14 @@ struct SingleSessionView: View {
                         .padding(.top, 64)
                         .padding(.horizontal, 16)
                         .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .top) {
+                if let client, let paging = client.paging, isPaneFocused,
+                   client.connectionState == .live, client.imagePasteProgress == nil {
+                    PagedHistoryBanner(paging: paging)
+                        .padding(.top, 64)
+                        .padding(.horizontal, 16)
                 }
             }
             .overlay(alignment: .top) {
@@ -754,15 +718,6 @@ struct SingleSessionView: View {
                 client?.stop()
                 client = nil
             }
-            .onChange(of: autoTakeControlRequestCount) { _, _ in
-                attemptAutoTakeControl()
-            }
-            .onChange(of: client?.canTakeControl) { _, _ in
-                attemptAutoTakeControl()
-            }
-            .onChange(of: client?.isOwner) { _, _ in
-                attemptAutoTakeControl()
-            }
             .onChange(of: client?.connectionState) { _, state in
                 guard state == .ended else { return }
                 client?.stop()
@@ -771,7 +726,6 @@ struct SingleSessionView: View {
             }
             .onChange(of: isPaneFocused) { _, isFocused in
                 if isFocused {
-                    attemptAutoTakeControl()
                     if client?.isOwner == true, keyboardAllowed {
                         focusRequestCount &+= 1
                     }
@@ -794,9 +748,6 @@ struct SingleSessionView: View {
     private func driveConnection() async {
         guard !Task.isCancelled else { return }
         if LiveSessionReadiness.shouldSuspendTransport(scene: scenePhase) {
-            if client?.isOwner == true {
-                reclaimControlOnNextDial = true
-            }
             client?.suspend()
             if connection != .ended { connection = .suspended }
             // RootView's coordinator access gate tears down the negotiated
@@ -857,12 +808,8 @@ struct SingleSessionView: View {
                 connection = .ended
                 return
             }
-            client.resume(
-                reclaimControlOnOwnerlessConnect: reclaimControlOnNextDial
-            )
+            client.resume()
             connection = .live
-            reclaimControlOnNextDial = false
-            attemptAutoTakeControl()
             return
         }
         let new = SessionClient.live(
@@ -882,8 +829,7 @@ struct SingleSessionView: View {
                 coordinator: coordinator,
                 host: step.host,
                 sessionName: step.sessionName
-            ),
-            reclaimControlOnOwnerlessConnect: reclaimControlOnNextDial
+            )
         )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between channel construction and
@@ -894,8 +840,6 @@ struct SingleSessionView: View {
         new.start()
         client = new
         connection = .live
-        reclaimControlOnNextDial = false
-        attemptAutoTakeControl()
     }
 
     private var loadingPlaceholder: some View {
@@ -1045,17 +989,6 @@ struct SingleSessionView: View {
         .accessibilityLabel("Take Control")
     }
 
-    private func attemptAutoTakeControl() {
-        guard isPaneFocused, let client else { return }
-        if autoTakeControlPolicy.shouldTakeControl(
-            requestCount: autoTakeControlRequestCount,
-            isOwner: client.isOwner,
-            canTakeControl: client.canTakeControl
-        ) {
-            client.takeControl()
-        }
-    }
-
     private var terminalControlBar: some View {
         // Bar is only mounted when `connection == .live`, where
         // `client != nil` — the optional-chaining is purely to satisfy
@@ -1173,6 +1106,7 @@ struct SingleSessionView: View {
         let pane = TerminalPaneView(
             session: client.session,
             controller: controller,
+            authoritativeGrid: client.snapshotCanvasGrid,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
                 + externalPendingFocusRequests,
@@ -1206,6 +1140,9 @@ struct SingleSessionView: View {
             },
             captureContainer: { [paneContainerBox] view in
                 paneContainerBox.view = view
+                view.onPhysicalViewportReady = { [weak client] viewport in
+                    client?.physicalViewportDidBecomeReady(viewport)
+                }
                 view.setStickyControlActivationChangeHandler { activation in
                     // This callback can fire while UIViewRepresentable is
                     // applying input eligibility. Leave that update cycle
@@ -1287,6 +1224,7 @@ struct SingleSessionView: View {
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
+        guard client.snapshotCanvasGrid == nil else { return }
         guard let baseConfig = effectiveBaseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)
