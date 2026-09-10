@@ -232,7 +232,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll gesture on `UITerminalView` shall remain functional, and the terminal shall remain the container's sole rendering subview and touch target. While no authoritative checkpoint grid is set, the terminal shall fill the container and its pinch-to-zoom gesture shall remain functional.
+@spec IOS-6.8: While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 """)
     func terminalViewIsSoleFullSizeSubviewAndTouchTarget() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -240,7 +240,8 @@ struct TerminalPaneViewTests {
 
         let hitView = container.hitTest(CGPoint(x: 160, y: 120), with: nil)
 
-        #expect(container.subviews == [container.terminalView])
+        #expect(container.terminalView.superview === container.snapshotScrollView)
+        #expect(!container.snapshotScrollView.isScrollEnabled)
         #expect(container.terminalView.frame == container.bounds)
         #expect(hitView === container.terminalView)
         #expect(!container.terminalView.canBecomeFirstResponder)
@@ -904,7 +905,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
 """)
     func selectionModeStripsDirectTouchesFromScrollPans() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -1124,7 +1125,8 @@ struct TerminalPaneViewTests {
 
         #expect(container.terminalView.becomeFirstResponder())
         #expect(container.terminalView.isFirstResponder)
-        #expect(container.terminalView.next === container)
+        #expect(container.terminalView.next === container.snapshotScrollView)
+        #expect(container.snapshotScrollView.next === container)
 
         container.committedSoftwareInput = nil
         #expect(!container.terminalView.isFirstResponder)

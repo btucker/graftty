@@ -2,7 +2,7 @@ import CoreGraphics
 import Testing
 @testable import GrafttyMobileKit
 
-@Suite("@spec TERM-12.13: While a mobile terminal displays a paged checkpoint, the application shall preserve its authoritative columns and rows in a fitted canvas independent of the container size and map touch and selection coordinates through that canvas.")
+@Suite("@spec TERM-12.13: While a mobile terminal displays a paged checkpoint, the application shall preserve its authoritative columns and rows in a canvas fitted to the pane width, allow vertical scrolling through overflow and history, and map touch and selection coordinates through that canvas.")
 struct TerminalSnapshotCanvasTests {
     @Test func usesMeasuredCellsAndPreservesPixelRemainders() throws {
         let layout = try #require(TerminalSnapshotCanvas.layout(
@@ -16,7 +16,6 @@ struct TerminalSnapshotCanvasTests {
         #expect(layout.size == CGSize(width: 403.5, height: 243.5))
         #expect(abs(layout.size.width * layout.scale - 320) < 0.001)
         #expect(layout.size.height * layout.scale <= 240)
-        #expect(layout.center == CGPoint(x: 160, y: 120))
     }
 
     @Test func rotationChangesPresentationWithoutChangingTerminalGrid() throws {
@@ -32,8 +31,21 @@ struct TerminalSnapshotCanvasTests {
         let portrait = try #require(layout(CGSize(width: 320, height: 600)))
         let landscape = try #require(layout(CGSize(width: 600, height: 160)))
         #expect(portrait.size == landscape.size)
-        #expect(abs(landscape.size.height * landscape.scale - 160) < 0.001)
-        #expect(landscape.size.width * landscape.scale <= 600)
+        #expect(abs(landscape.size.width * landscape.scale - 600) < 0.001)
+        #expect(landscape.size.height * landscape.scale > 160)
+    }
+
+    @Test func tallHostScreenFillsIPadWidthWithoutChangingItsGrid() throws {
+        let layout = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 116, height: 95),
+            measuredGrid: CGSize(width: 116, height: 95),
+            measuredPixels: CGSize(width: 1167, height: 1907),
+            cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 2, container: CGSize(width: 900, height: 600)
+        ))
+        #expect(layout.size == CGSize(width: 583.5, height: 953.5))
+        #expect(abs(layout.size.width * layout.scale - 900) < 0.001)
+        #expect(layout.size.height * layout.scale > 600)
     }
 
     @Test func waitsForValidNativeCellMetrics() {
@@ -59,10 +71,17 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(pinch.isEnabled)
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         #expect(!pinch.isEnabled)
+        let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
+        #expect(pans.allSatisfy { !$0.isEnabled })
+        let canvasPan = container.snapshotScrollView.panGestureRecognizer
+        let savedTouchTypes = canvasPan.allowedTouchTypes
         container.enterSelectionModeForTesting()
+        #expect(canvasPan.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes)
         container.exitSelectionModeForTesting()
+        #expect(canvasPan.allowedTouchTypes == savedTouchTypes)
         #expect(!pinch.isEnabled)
         container.authoritativeGrid = nil
+        #expect(pans.allSatisfy { $0.isEnabled })
         #expect(pinch.isEnabled)
 
         container.enterSelectionModeForTesting()
@@ -78,6 +97,41 @@ struct MountedTerminalSnapshotCanvasTests {
         container.authoritativeGrid = nil
         container.exitSelectionModeForTesting()
         #expect(!pinch.isEnabled)
+    }
+
+    @Test func verticalOverflowAndHistoryShareOneScrollableViewport() throws {
+        let terminal = UITerminalView(frame: .zero)
+        let scroll = TerminalSnapshotScrollView(terminalView: terminal)
+        scroll.frame = CGRect(x: 0, y: 0, width: 600, height: 160)
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 80, height: 24),
+            measuredGrid: CGSize(width: 80, height: 24),
+            measuredPixels: CGSize(width: 807, height: 487),
+            cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 2, container: scroll.bounds.size
+        ))
+        let rowHeight = 10 * canvas.scale
+        scroll.configure(canvas: canvas, rowHeight: rowHeight)
+        scroll.updateScrollbar(.init(total: 124, offset: 100, len: 24))
+        #expect(abs(terminal.frame.width - 600) < 0.5)
+        #expect(abs(scroll.contentOffset.y - (scroll.contentSize.height - 160)) < 0.5)
+        #expect(abs(scroll.convert(terminal.bounds, from: terminal).maxY - scroll.bounds.maxY) < 0.5)
+
+        scroll.contentOffset = CGPoint(x: 0, y: 3.5 * rowHeight)
+        let visibleOrigin = terminal.frame.minY - scroll.contentOffset.y
+        let offset = scroll.contentOffset.y
+        // Native history import shifts the row number while preserving the text.
+        scroll.updateScrollbar(.init(total: 224, offset: 103, len: 24))
+        #expect(abs(scroll.contentOffset.y - offset - 100 * rowHeight) < 0.5)
+        #expect(abs(terminal.frame.minY - scroll.contentOffset.y - visibleOrigin) < 0.5)
+
+        scroll.contentOffset = .zero
+        #expect(abs(terminal.frame.minY) < 0.5)
+        #expect(terminal.bounds.size == canvas.size)
+        scroll.configure(canvas: nil, rowHeight: 0)
+        #expect(!scroll.isScrollEnabled)
+        #expect(terminal.transform == .identity)
+        #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))
     }
 
     @Test(.enabled(if: MobilePagedTerminalRenderer.isSupported))
@@ -117,7 +171,7 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(container.terminalGridMetrics?.rows == 24)
         #expect(session.readViewportText()?.contains("row-099999") == true)
         #expect(session.readViewportText()?.contains("row-000000") == false)
-        #expect(container.terminalView.frame.width <= container.bounds.width + 0.1)
+        #expect(abs(container.terminalView.frame.width - container.bounds.width) < 0.1)
         #expect(container.terminalView.frame.height <= container.bounds.height + 0.1)
 
         let canvasSize = container.terminalView.bounds.size
@@ -140,6 +194,32 @@ struct MountedTerminalSnapshotCanvasTests {
         let roundTrip = container.terminalView.convert(visiblePoint, from: container)
         #expect(abs(roundTrip.x - terminalPoint.x) < 0.001)
         #expect(abs(roundTrip.y - terminalPoint.y) < 0.001)
+
+        // Every host row remains reachable after width fitting, including the
+        // top of the oldest loaded page and the bottom of the current screen.
+        try await Task.sleep(for: .milliseconds(50))
+        let scroll = container.snapshotScrollView
+        scroll.contentOffset = .zero
+        #expect(session.readViewportText()?.contains("row-099288") == true)
+        let top = container.convert(CGPoint.zero, from: container.terminalView)
+        #expect(abs(top.y) < 0.1)
+        scroll.contentOffset = CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height)
+        #expect(session.readViewportText()?.contains("row-099999") == true)
+        #expect(container.terminalGridMetrics?.columns == 80)
+        #expect(container.terminalGridMetrics?.rows == 24)
+
+        // UIKit rounds offsets to display pixels. Reaching the bottom must
+        // still reveal the final row when the screen is shorter than the pane.
+        container.frame.size = CGSize(width: 703, height: 900)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        scroll.contentOffset = .zero
+        scroll.contentOffset = CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height - 0.4)
+        #expect(session.readViewportText()?.contains("row-099999") == true)
+        let bottomCanvasY = scroll.contentSize.height - scroll.bounds.height
+            + (scroll.bounds.height - container.terminalView.frame.height) / 2
+        #expect(abs(container.terminalView.frame.minY - bottomCanvasY) < 0.5)
+
 
         container.authoritativeGrid = nil
         #expect(pinch.isEnabled)

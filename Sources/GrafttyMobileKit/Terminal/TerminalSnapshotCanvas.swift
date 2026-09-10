@@ -5,7 +5,6 @@ enum TerminalSnapshotCanvas {
     struct Layout: Equatable {
         let size: CGSize
         let scale: CGFloat
-        let center: CGPoint
     }
 
     static func layout(
@@ -27,11 +26,10 @@ enum TerminalSnapshotCanvas {
         )
         guard pixels.width > 0, pixels.height > 0 else { return nil }
         let size = CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
-        let scale = min(container.width / size.width, container.height / size.height)
+        let scale = container.width / size.width
         guard scale.isFinite, scale > 0 else { return nil }
         return Layout(
-            size: size, scale: scale,
-            center: CGPoint(x: container.width / 2, y: container.height / 2)
+            size: size, scale: scale
         )
     }
 }

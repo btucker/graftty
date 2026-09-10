@@ -263,6 +263,7 @@ public final class TerminalInputContainerView: UIView,
     ]
 
     let terminalView = UITerminalView(frame: .zero)
+    private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
             guard authoritativeGrid != oldValue else { return }
@@ -273,6 +274,7 @@ public final class TerminalInputContainerView: UIView,
 
     override public func layoutSubviews() {
         super.layoutSubviews()
+        snapshotScrollView.frame = bounds
         guard let grid = authoritativeGrid, let metrics = terminalGridMetrics,
               let canvas = TerminalSnapshotCanvas.layout(
                   grid: CGSize(width: Int(grid.cols), height: Int(grid.rows)),
@@ -282,17 +284,15 @@ public final class TerminalInputContainerView: UIView,
                   displayScale: terminalView.contentScaleFactor,
                   container: bounds.size
               ) else {
-            terminalView.transform = .identity
-            terminalView.frame = bounds
+            snapshotScrollView.configure(canvas: nil, rowHeight: 0)
             return
         }
-        // The child remains the native pixel canvas. UIKit applies this
-        // transform to drawing and converts its own gesture coordinates back
-        // into that canvas, including libghostty's mouse and scroll handlers.
-        terminalView.bounds = CGRect(origin: .zero, size: canvas.size)
-        terminalView.center = CGPoint(x: bounds.minX + canvas.center.x, y: bounds.minY + canvas.center.y)
-        terminalView.transform = CGAffineTransform(scaleX: canvas.scale, y: canvas.scale)
+        snapshotScrollView.configure(
+            canvas: canvas,
+            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale
+        )
     }
+
     private var isCommittedSoftwareInputEligible = false
     private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
@@ -529,7 +529,7 @@ public final class TerminalInputContainerView: UIView,
         _ = terminalView.inputAccessoryView
         #endif
         terminalView.showsInputAccessory = false
-        addSubview(terminalView)
+        addSubview(snapshotScrollView)
         #if !targetEnvironment(macCatalyst)
         terminalView.gestureRecognizers?
             .compactMap { $0 as? UIPinchGestureRecognizer }
@@ -546,6 +546,7 @@ public final class TerminalInputContainerView: UIView,
         addInteraction(longPressMenu)
         addInteraction(selectionMenu)
         addGestureRecognizer(selectionPanRecognizer)
+        snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
         addGestureRecognizer(anyTouchObserver)
     }
 
@@ -683,7 +684,7 @@ public final class TerminalInputContainerView: UIView,
                 !$0.allowedScrollTypesMask.isEmpty
             } ?? false
             let suppressed = (selectionPanRecognizer.isEnabled && !scrollPan)
-                || (authoritativeGrid != nil && recognizer is UIPinchGestureRecognizer)
+                || (authoritativeGrid != nil && (recognizer is UIPinchGestureRecognizer || scrollPan))
             let id = ObjectIdentifier(recognizer)
             if suppressed {
                 if suppressedTerminalGestures[id] == nil {
@@ -696,12 +697,12 @@ public final class TerminalInputContainerView: UIView,
         }
     }
 
-    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
     private func enterSelectionMode() {
         guard !selectionPanRecognizer.isEnabled else { return }
         selectionPanRecognizer.isEnabled = true
         selectionModeSavedTouchTypes = []
-        terminalView.gestureRecognizers?.forEach { recognizer in
+        ((terminalView.gestureRecognizers ?? []) + [snapshotScrollView.panGestureRecognizer]).forEach { recognizer in
             if let pan = recognizer as? UIPanGestureRecognizer,
                !pan.allowedScrollTypesMask.isEmpty {
                 // A non-empty scroll mask only ADDS indirect scroll-event
@@ -1045,6 +1046,12 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
         completedLongPressMenuDismissalGeneration = nil
         longPressMenu.dismissMenu()
         selectionMenu.dismissMenu()
+    }
+}
+
+extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
+    public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
+        snapshotScrollView.updateScrollbar(scrollbar)
     }
 }
 
