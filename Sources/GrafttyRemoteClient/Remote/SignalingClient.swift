@@ -8,22 +8,36 @@ public struct SignalingClient: Sendable {
     public struct AuthenticatedExchange: Sendable {
         public let answer: AuthenticatedSignalingAnswer
         public let route: RemoteConnectionRoute
+        public let wakeOnLAN: WakeOnLANAdvertisement?
 
         public init(
             answer: AuthenticatedSignalingAnswer,
-            route: RemoteConnectionRoute
+            route: RemoteConnectionRoute,
+            wakeOnLAN: WakeOnLANAdvertisement? = nil
         ) {
             self.answer = answer
             self.route = route
+            self.wakeOnLAN = wakeOnLAN
         }
     }
 
     public typealias Transport = @Sendable (URLRequest, Data) async throws -> (Data, HTTPURLResponse)
+    public typealias Wake = @Sendable ([WakeOnLANTarget]) async -> Bool
 
     private let transport: Transport
+    private let wake: Wake
+    private let wakeRetryDelay: @Sendable () async throws -> Void
 
-    public init(transport: @escaping Transport = SignalingClient.defaultTransport) {
+    public init(
+        transport: @escaping Transport = SignalingClient.defaultTransport,
+        wake: Wake? = nil,
+        wakeRetryDelay: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .seconds(5))
+        }
+    ) {
         self.transport = transport
+        self.wake = wake ?? { await WakeOnLANClient.send($0) }
+        self.wakeRetryDelay = wakeRetryDelay
     }
 
     public enum Error: Swift.Error, Equatable, Sendable {
@@ -44,6 +58,12 @@ public struct SignalingClient: Sendable {
         case failure(Error)
     }
 
+    private enum ChallengeAttempt: Sendable {
+        case success(RemoteConnectionRoute, SignalingChallengeResponse)
+        case unreachable(RemoteConnectionRoute)
+        case rejected
+    }
+
     /// Races key-authenticated reachability probes, then sends one unique
     /// signed SDP offer. If transport fails, the same signed offer is retried
     /// over the remaining routes; the host binds the challenge to that offer
@@ -55,6 +75,7 @@ public struct SignalingClient: Sendable {
         clientDeviceID: RemoteDeviceID,
         clientKey: Curve25519.Signing.PrivateKey,
         sdp: String,
+        wakeOnLAN: WakeOnLANAdvertisement? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) async throws -> AuthenticatedExchange {
         let uniqueRoutes = Self.uniqueHTTPRoutes(routes)
@@ -62,21 +83,36 @@ public struct SignalingClient: Sendable {
             throw Error.transport("paired host has no usable routes")
         }
 
-        let clientNonce = Self.randomNonce()
-        let probe = try SignalingChallengeRequest(
-            clientDeviceID: clientDeviceID,
-            clientNonce: clientNonce,
-            signingKey: clientKey
-        )
-        guard
-            let (route, challenge) = await firstValidChallenge(
-                routes: uniqueRoutes,
+        try Task.checkCancellation()
+        var sentWake = false
+        if let wakeOnLAN, wakeOnLAN.isValid(for: hostDeviceID, using: hostPublicKey) {
+            sentWake = await wake(wakeOnLAN.targets)
+        }
+        var selected: (RemoteConnectionRoute, SignalingChallengeResponse)?
+        var retryRoutes = uniqueRoutes
+        for attempt in 0..<(sentWake ? 3 : 1) {
+            try Task.checkCancellation()
+            if attempt > 0 { try await wakeRetryDelay() }
+            try Task.checkCancellation()
+            // A fresh nonce avoids reusing a challenge that expired during wake.
+            let probe = try SignalingChallengeRequest(
+                clientDeviceID: clientDeviceID,
+                clientNonce: Self.randomNonce(),
+                signingKey: clientKey
+            )
+            let result = await firstValidChallenge(
+                routes: retryRoutes,
                 request: probe,
                 hostDeviceID: hostDeviceID,
                 hostPublicKey: hostPublicKey,
                 now: now
             )
-        else {
+            try Task.checkCancellation()
+            selected = result.candidate
+            retryRoutes = result.retryRoutes
+            if selected != nil || retryRoutes.isEmpty { break }
+        }
+        guard let (route, challenge) = selected else {
             throw Error.authentication("no route returned a valid host challenge")
         }
 
@@ -106,7 +142,10 @@ public struct SignalingClient: Sendable {
                         }
                         return .success(AuthenticatedExchange(
                             answer: answer,
-                            route: offerRoute
+                            route: offerRoute,
+                            wakeOnLAN: answer.wakeOnLAN.flatMap {
+                                $0.isValid(for: hostDeviceID, using: hostPublicKey) ? $0 : nil
+                            }
                         ))
                     } catch let error as Error {
                         return .failure(error)
@@ -139,38 +178,46 @@ public struct SignalingClient: Sendable {
         hostDeviceID: RemoteDeviceID,
         hostPublicKey: RemoteIdentityPublicKey,
         now: @escaping @Sendable () -> Date
-    ) async -> (RemoteConnectionRoute, SignalingChallengeResponse)? {
+    ) async -> (candidate: (RemoteConnectionRoute, SignalingChallengeResponse)?, retryRoutes: [RemoteConnectionRoute]) {
         await withTaskGroup(
-            of: (RemoteConnectionRoute, SignalingChallengeResponse)?.self
+            of: ChallengeAttempt.self
         ) { group in
             for route in routes {
                 group.addTask {
-                    guard
-                        let response: SignalingChallengeResponse = try? await post(
+                    do {
+                        let response: SignalingChallengeResponse = try await post(
                             path: RemoteAccessProtocol.challengePath,
                             baseURL: route.baseURL,
                             body: request
-                        ),
-                        response.isValid(
+                        )
+                        guard response.isValid(
                             expectedHostID: hostDeviceID,
                             expectedClientID: request.clientDeviceID,
                             expectedClientNonce: request.clientNonce,
                             now: now(),
                             using: hostPublicKey
-                        )
-                    else {
-                        return nil
+                        ) else { return .rejected }
+                        return .success(route, response)
+                    } catch Error.transport {
+                        return .unreachable(route)
+                    } catch {
+                        return .rejected
                     }
-                    return (route, response)
                 }
             }
+            var retryRoutes: [RemoteConnectionRoute] = []
             while let candidate = await group.next() {
-                if let candidate {
+                switch candidate {
+                case .success(let route, let response):
                     group.cancelAll()
-                    return candidate
+                    return ((route, response), [])
+                case .rejected:
+                    break
+                case .unreachable(let route):
+                    retryRoutes.append(route)
                 }
             }
-            return nil
+            return (nil, retryRoutes)
         }
     }
 

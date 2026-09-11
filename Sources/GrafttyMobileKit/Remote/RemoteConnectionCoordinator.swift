@@ -648,7 +648,8 @@ public final class RemoteConnectionCoordinator {
                 hostPublicKey: pinnedHost.publicKey,
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
-                sdp: offer.sdp
+                sdp: offer.sdp,
+                wakeOnLAN: pinnedHost.wakeOnLAN
             )
             try await connection.applyAnswer(
                 RTCSessionDescription(
@@ -659,6 +660,7 @@ public final class RemoteConnectionCoordinator {
             var refreshedPin = pinnedHost
             refreshedPin.routes = exchange.answer.routes
             refreshedPin.lastSuccessfulRoute = exchange.route
+            refreshedPin.wakeOnLAN = exchange.wakeOnLAN
             refreshedPin.lastConnectedAt = now()
             do {
                 try pinnedHostStore.update(refreshedPin)

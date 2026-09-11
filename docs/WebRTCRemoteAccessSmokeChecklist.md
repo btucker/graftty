@@ -99,10 +99,36 @@ The mirror proves the *logic*; only real Wi-Fi proves the timing.
       returns, landing back in a live pane (this is the reconnect path W5
       un-latented via the `sshInstallStarted` reset — verify a *second* SSH
       install actually happens on reconnect, not a dead DataChannel).
-- [ ] **Sleeping-host fallback:** with the host asleep past the signaling
-      timeout, the client falls back to `/ws` (or surfaces a clean "host
-      unavailable") within the ~10 s signaling window + cooldown, without
-      spinning.
+- [ ] Leave a host unavailable past the signaling timeout. Confirm that the
+      client reports failure without spinning or trying unauthenticated access.
+
+### Wake a host from the Mac client
+
+This implementation sends wake packets from macOS on the host's local IPv4
+subnet. iOS broadcasting remains disabled until the mobile app has Apple's
+[multicast entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast)
+in its distribution provisioning profiles. Waking over Tailscale requires an
+awake relay on the host's LAN and is not implemented.
+
+- [ ] On the host, enable **Wake for network access** and keep Graftty running.
+      Follow [Apple's power and network requirements](https://support.apple.com/en-gb/guide/mac-help/mh27905/mac).
+- [ ] Connect once from an updated Mac client while the updated host is awake.
+      This saves the host's signed hardware and IPv4 addresses. Existing pairs
+      do not need a new pairing ceremony.
+- [ ] Disconnect the client, put the host to sleep, and connect again from the
+      same LAN. Confirm that the host wakes and a terminal attaches. Test the
+      intended Ethernet or Wi-Fi interface on physical hardware, including
+      Wi-Fi with Private Wi-Fi Address enabled.
+- [ ] Restart the client and repeat to check that saved wake addresses survive
+      a launch.
+- [ ] Disable network waking on the host and repeat. Confirm that the client
+      stops after three signaling attempts. Each attempt can take ten seconds,
+      with five seconds between attempts. A successful UDP send does not prove
+      that the host received the packet or woke.
+- [ ] Cancel during those retries. Confirm that no further connection attempt
+      begins.
+- [ ] Connect from another subnet. Confirm that the client does not broadcast
+      wake packets for that host and still uses ordinary authenticated routing.
 
 ## 6. Second-device fallback to `/ws` (W3/W4 — `HostError.busy`, single-connection non-goal)
 

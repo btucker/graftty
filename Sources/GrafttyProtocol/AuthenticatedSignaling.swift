@@ -258,6 +258,7 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
 }
 
 /// SDP answer and refreshed route list authenticated by the host key.
+/// @spec REMOTE-2.13: When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.
 public struct AuthenticatedSignalingAnswer: Codable, Sendable, Equatable {
     public let version: Int
     public let hostDeviceID: RemoteDeviceID
@@ -266,12 +267,14 @@ public struct AuthenticatedSignalingAnswer: Codable, Sendable, Equatable {
     public let sdp: String
     public let routes: [RemoteConnectionRoute]
     public let signature: Data
+    public let wakeOnLAN: WakeOnLANAdvertisement?
 
     public init(
         offer: AuthenticatedSignalingOffer,
         sdp: String,
         routes: [RemoteConnectionRoute],
-        signingKey: Curve25519.Signing.PrivateKey
+        signingKey: Curve25519.Signing.PrivateKey,
+        wakeOnLAN: WakeOnLANAdvertisement? = nil
     ) throws {
         self.version = RemoteAccessProtocol.version
         self.hostDeviceID = offer.hostDeviceID
@@ -279,6 +282,7 @@ public struct AuthenticatedSignalingAnswer: Codable, Sendable, Equatable {
         self.hostNonce = offer.hostNonce
         self.sdp = sdp
         self.routes = routes
+        self.wakeOnLAN = wakeOnLAN
         self.signature = try signingKey.signature(
             for: Self.transcript(
                 version: version,

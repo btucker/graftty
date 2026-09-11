@@ -8,6 +8,27 @@ import Testing
 @Suite("PinnedHostStore Tests")
 struct PinnedHostStoreTests {
 
+    @Test("@spec REMOTE-2.14: When a paired host supplies verified wake addresses, the client shall retain them across launches, while existing saved hosts without wake metadata shall continue to decode.")
+    func wakeMetadataRoundTripAndLegacyDecoding() throws {
+        let directory = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let key = Curve25519.Signing.PrivateKey()
+        var host = makeHost()
+        host.wakeOnLAN = try WakeOnLANAdvertisement(
+            hostDeviceID: host.id,
+            targets: [WakeOnLANTarget(macAddress: "02:11:22:33:44:55", ipv4Address: "192.168.1.10")],
+            signingKey: key
+        )
+        try PinnedHostStore(directory: directory).add(host)
+        #expect(try PinnedHostStore(directory: directory).get(id: host.id)?.wakeOnLAN == host.wakeOnLAN)
+        let encoded = try JSONEncoder.iso8601().encode(host)
+        var legacyJSON = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacyJSON.removeValue(forKey: "wakeOnLAN")
+        let legacy = try JSONDecoder.iso8601().decode(PinnedHost.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        #expect(legacy.wakeOnLAN == nil)
+        #expect(legacy.id == host.id)
+    }
+
     func makeTempDir() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

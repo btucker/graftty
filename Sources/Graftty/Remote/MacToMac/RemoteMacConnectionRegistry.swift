@@ -359,11 +359,13 @@ final class RemoteMacConnectionRegistry {
                 hostPublicKey: pinnedHost.publicKey,
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
-                sdp: offerSDP
+                sdp: offerSDP,
+                wakeOnLAN: pinnedHost.wakeOnLAN
             )
             var refreshed = pinnedHost
             refreshed.routes = exchange.answer.routes
             refreshed.lastSuccessfulRoute = exchange.route
+            refreshed.wakeOnLAN = exchange.wakeOnLAN
             refreshed.lastConnectedAt = now()
             refreshedPinnedHost = refreshed
             answerSDP = exchange.answer.sdp

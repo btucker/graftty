@@ -21,6 +21,7 @@ struct AuthenticatedSignalingServerTests {
     }
 
     private func makeFixture(
+        wakeTargets: [WakeOnLANTarget] = [],
         now: @escaping @Sendable () -> Date = {
             Date(timeIntervalSince1970: 1_800_000_000)
         }
@@ -66,6 +67,7 @@ struct AuthenticatedSignalingServerTests {
                 peerStore: peerStore,
                 hostDeviceID: hostDeviceID,
                 routesProvider: { routes },
+                wakeTargetsProvider: { wakeTargets },
                 now: now
             ),
             hostDeviceID: hostDeviceID,
@@ -73,6 +75,37 @@ struct AuthenticatedSignalingServerTests {
             hostKey: hostKey,
             clientKey: clientKey
         )
+    }
+
+    @Test("@spec REMOTE-2.13: When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.")
+    func suppliesWakeAddresses() async throws {
+        let targets = [WakeOnLANTarget(macAddress: "02:11:22:33:44:55", ipv4Address: "192.168.1.10")]
+        let fixture = try makeFixture(wakeTargets: targets)
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 42, count: 32), signingKey: fixture.clientKey
+        )
+        let challenge = try #require(await fixture.server.issueChallenge(request).success)
+        let offer = try AuthenticatedSignalingOffer(challenge: challenge, sdp: "offer", signingKey: fixture.clientKey)
+        let disposition = try #require(await fixture.server.authenticateOffer(offer).success)
+        guard case .new(let verified) = disposition else {
+            Issue.record("Expected new offer")
+            return
+        }
+        let answer = try #require(await fixture.server.makeAnswer(sdp: "answer", for: verified).success)
+        let advertisement = try #require(answer.wakeOnLAN)
+        let publicKey = try RemoteIdentityPublicKey(rawRepresentation: fixture.hostKey.publicKey.rawRepresentation)
+        #expect(advertisement.targets == targets)
+        #expect(advertisement.isValid(for: fixture.hostDeviceID, using: publicKey))
+
+        // The original v2 transcript remains valid after dropping the extension.
+        let encoded = try JSONEncoder.iso8601().encode(answer)
+        var legacyJSON = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacyJSON.removeValue(forKey: "wakeOnLAN")
+        let legacy = try JSONDecoder.iso8601().decode(AuthenticatedSignalingAnswer.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        #expect(legacy.wakeOnLAN == nil)
+        #expect(legacy.isValid(for: offer, using: publicKey))
     }
 
     @Test("""

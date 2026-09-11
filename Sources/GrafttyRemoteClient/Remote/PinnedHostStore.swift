@@ -36,6 +36,9 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
     /// The most recently successful route, preferred on the next connection.
     public var lastSuccessfulRoute: RemoteConnectionRoute?
 
+    /// Learned after an authenticated connection; absent in older saved hosts.
+    public var wakeOnLAN: WakeOnLANAdvertisement?
+
     /// SHA-256 fingerprint derived from the host's public key.
     public var fingerprint: RemoteIdentityFingerprint {
         RemoteIdentityFingerprint(of: publicKey)
@@ -50,7 +53,8 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
         lastConnectedAt: Date? = nil,
         pairingURL: URL,
         routes: [RemoteConnectionRoute] = [],
-        lastSuccessfulRoute: RemoteConnectionRoute? = nil
+        lastSuccessfulRoute: RemoteConnectionRoute? = nil,
+        wakeOnLAN: WakeOnLANAdvertisement? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -61,6 +65,7 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
         self.pairingURL = pairingURL
         self.routes = routes
         self.lastSuccessfulRoute = lastSuccessfulRoute
+        self.wakeOnLAN = wakeOnLAN
     }
 }
 
