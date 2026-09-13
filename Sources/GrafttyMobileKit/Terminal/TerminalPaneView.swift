@@ -712,6 +712,7 @@ public final class TerminalInputContainerView: UIView,
     /// Selection and the checkpoint canvas can both suppress pinch. Restore
     /// each original state only after both restrictions have been released.
     private func updateTerminalGestureEnablement() {
+        snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil && !selectionPanRecognizer.isEnabled
         for recognizer in terminalView.gestureRecognizers ?? [] {
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
                 !$0.allowedScrollTypesMask.isEmpty

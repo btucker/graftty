@@ -6,9 +6,54 @@ import UIKit
 /// The content includes loaded history followed by the full authoritative screen.
 /// The live screen keeps its native grid; a separate display fills spare height with history.
 @MainActor
-final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
+final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let terminalView: UITerminalView
     private var canvas: TerminalSnapshotCanvas.Layout?
+    private var followerZoomScale: CGFloat = 1
+    private var baseRowHeight: CGFloat = 0
+    private var pinchStartScale: CGFloat = 1
+    private var presentationScale: CGFloat { (canvas?.scale ?? 1) * followerZoomScale }
+    lazy var followerPinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(pinchFollower(_:)))
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === followerPinchGesture && otherGestureRecognizer === panGestureRecognizer
+    }
+
+    @objc private func pinchFollower(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            pinchStartScale = followerZoomScale
+        case .changed:
+            let location = gesture.location(in: self)
+            setFollowerZoomScale(pinchStartScale * gesture.scale,
+                                 around: CGPoint(x: location.x - bounds.minX, y: location.y - bounds.minY))
+        default:
+            break
+        }
+    }
+
+    /// Zoom the presentation around a point in the visible viewport. The
+    /// terminal bounds and its native font and grid are unchanged.
+    func setFollowerZoomScale(_ scale: CGFloat, around point: CGPoint) {
+        guard let canvas, scale.isFinite else { return }
+        let next = min(4, max(1, scale))
+        guard next != followerZoomScale else { return }
+        let ratio = next / followerZoomScale
+        let anchor = CGPoint(x: contentOffset.x + point.x,
+                             y: contentOffset.y + point.y - terminalView.frame.minY)
+        followerZoomScale = next
+        configure(canvas: canvas, rowHeight: baseRowHeight, columns: columns)
+        adjusting = true
+        contentOffset = CGPoint(
+            x: min(max(0, anchor.x * ratio - point.x), max(0, contentSize.width - bounds.width)),
+            y: min(max(0, terminalView.frame.minY + anchor.y * ratio - point.y),
+                   max(0, contentSize.height - bounds.height))
+        )
+        adjusting = false
+        scrollViewDidScroll(self)
+    }
+
     private var rowHeight: CGFloat = 0
     private var scrollbar: TerminalScrollbar?
     private var nativeRow: UInt64 = 0
@@ -48,7 +93,10 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
         bounces = false
         scrollsToTop = false
         delaysContentTouches = false
-        showsHorizontalScrollIndicator = false
+        showsHorizontalScrollIndicator = true
+        followerPinchGesture.isEnabled = false
+        followerPinchGesture.delegate = self
+        addGestureRecognizer(followerPinchGesture)
         panGestureRecognizer.allowedScrollTypesMask = [.continuous, .discrete]
         isScrollEnabled = false
         addSubview(terminalView)
@@ -66,12 +114,15 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
     var additionalHistoryRowCapacity: UInt32 {
         guard window != nil, includesAdditionalHistory, let canvas else { return 0 }
         return TerminalSnapshotCanvas.additionalHistoryRows(
-            containerHeight: bounds.height, screenHeight: canvas.size.height * canvas.scale,
+            containerHeight: bounds.height, screenHeight: canvas.size.height * presentationScale,
             rowHeight: rowHeight, columns: columns, precedingRows: .max
         )
     }
 
     func configure(canvas: TerminalSnapshotCanvas.Layout?, rowHeight: CGFloat, columns: UInt16 = 0) {
+        if canvas == nil { followerZoomScale = 1 }
+        baseRowHeight = rowHeight
+        let rowHeight = rowHeight * followerZoomScale
         let wasAtBottom = contentOffset.y >= contentSize.height - viewportHeight - 1
         let withinCanvas = self.rowHeight > 0
             ? (contentOffset.y / self.rowHeight - CGFloat(nativeRow)) * rowHeight : 0
@@ -107,28 +158,29 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
             #endif
             return
         }
-        let screenHeight = canvas.size.height * canvas.scale
+        let screenHeight = canvas.size.height * presentationScale
         let overflow = max(0, screenHeight - bounds.height)
         contentSize = CGSize(
-            width: bounds.width,
+            width: max(bounds.width, canvas.size.width * presentationScale),
             height: CGFloat(historyRows) * rowHeight + max(bounds.height, screenHeight)
         )
         let offset = CGFloat(nativeRow) * rowHeight
             + (wasAtBottom && nativeRow == historyRows ? overflow : max(0, withinCanvas))
-        contentOffset = CGPoint(x: 0, y: min(offset, max(0, contentSize.height - bounds.height)))
+        contentOffset = CGPoint(x: min(contentOffset.x, max(0, contentSize.width - bounds.width)),
+                                y: min(offset, max(0, contentSize.height - bounds.height)))
         positionCanvas(canvas)
     }
 
     private func positionCanvas(_ canvas: TerminalSnapshotCanvas.Layout) {
         terminalView.bounds = CGRect(origin: .zero, size: canvas.size)
         terminalView.center = CGPoint(
-            x: bounds.width / 2,
+            x: contentSize.width / 2,
             y: CGFloat(nativeRow) * rowHeight
-                + (includesAdditionalHistory ? max(bounds.height, canvas.size.height * canvas.scale)
-                    - canvas.size.height * canvas.scale / 2
-                    : max(bounds.height, canvas.size.height * canvas.scale) / 2)
+                + (includesAdditionalHistory ? max(bounds.height, canvas.size.height * presentationScale)
+                    - canvas.size.height * presentationScale / 2
+                    : max(bounds.height, canvas.size.height * presentationScale) / 2)
         )
-        terminalView.transform = CGAffineTransform(scaleX: canvas.scale, y: canvas.scale)
+        terminalView.transform = CGAffineTransform(scaleX: presentationScale, y: presentationScale)
         #if GRAFTTY_PAGED_HISTORY
         refreshAdditionalHistory()
         #endif
@@ -168,7 +220,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
             return
         }
         let rows = TerminalSnapshotCanvas.additionalHistoryRows(
-            containerHeight: bounds.height, screenHeight: canvas.size.height * canvas.scale,
+            containerHeight: bounds.height, screenHeight: canvas.size.height * presentationScale,
             rowHeight: rowHeight, columns: columns, precedingRows: nativeRow
         )
         guard rows > 0, let source = terminalView.surface,
@@ -198,12 +250,12 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
         // Native sizing floors pixels. Leave half a pixel below the final row
         // so floating-point roundoff cannot remove a row from this display.
         let pixelScale = terminalView.contentScaleFactor
-        let pixels = (CGFloat(history.rows) * rowHeight / canvas.scale * pixelScale).rounded()
+        let pixels = (CGFloat(history.rows) * rowHeight / presentationScale * pixelScale).rounded()
         let nativeHeight = (pixels + 0.5) / pixelScale
-        let height = nativeHeight * canvas.scale
+        let height = nativeHeight * presentationScale
         view.bounds = CGRect(x: 0, y: 0, width: canvas.size.width, height: nativeHeight)
-        view.center = CGPoint(x: bounds.width / 2, y: terminalView.frame.minY - height / 2)
-        view.transform = CGAffineTransform(scaleX: canvas.scale, y: canvas.scale)
+        view.center = CGPoint(x: contentSize.width / 2, y: terminalView.frame.minY - height / 2)
+        view.transform = CGAffineTransform(scaleX: presentationScale, y: presentationScale)
         let fittedPixels = CGSize(
             width: floor(view.bounds.width * view.contentScaleFactor),
             height: floor(view.bounds.height * view.contentScaleFactor)

@@ -95,17 +95,23 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(pinch.isEnabled)
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         #expect(!pinch.isEnabled)
+        #expect(container.snapshotScrollView.followerPinchGesture.isEnabled)
         let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
         #expect(pans.allSatisfy { !$0.isEnabled })
         let canvasPan = container.snapshotScrollView.panGestureRecognizer
+        let canvasPinch = container.snapshotScrollView.followerPinchGesture
+        #expect(canvasPinch.delegate?.gestureRecognizer?(canvasPinch, shouldRecognizeSimultaneouslyWith: canvasPan) == true)
         let savedTouchTypes = canvasPan.allowedTouchTypes
         container.enterSelectionModeForTesting()
         #expect(canvasPan.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes)
+        #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
         container.exitSelectionModeForTesting()
         #expect(canvasPan.allowedTouchTypes == savedTouchTypes)
+        #expect(container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(!pinch.isEnabled)
         container.authoritativeGrid = nil
         #expect(pans.allSatisfy { $0.isEnabled })
+        #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(pinch.isEnabled)
 
         container.enterSelectionModeForTesting()
@@ -190,6 +196,50 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(!scroll.isScrollEnabled)
         #expect(terminal.transform == .identity)
         #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))
+    }
+
+    @Test("@spec TERM-12.22: While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.", arguments: [390, 834])
+    func followerZoomPreservesNativeGridAndAllowsHorizontalScrolling(width: Int) async throws {
+        let viewportWidth = CGFloat(width)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: viewportWidth, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        container.authoritativeGrid = .init(cols: 200, rows: 50)
+        container.layoutIfNeeded()
+        container.terminalView.fitToSize()
+        try await Task.sleep(for: .milliseconds(50))
+        let original = try #require(container.terminalGridMetrics)
+        let nativeBounds = container.terminalView.bounds
+        let scroll = container.snapshotScrollView
+        scroll.setFollowerZoomScale(2, around: CGPoint(x: viewportWidth / 2, y: 350))
+        #expect(abs(scroll.contentSize.width - viewportWidth * 2) < 1)
+        #expect(abs(container.terminalView.frame.width - viewportWidth * 2) < 1)
+        #expect(container.terminalView.bounds == nativeBounds)
+        scroll.contentOffset.x = 250
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(abs(scroll.contentOffset.x - 250) < 1)
+        #expect(container.terminalGridMetrics?.columns == 200)
+        #expect(container.terminalGridMetrics?.rows == 50)
+        #expect(container.terminalGridMetrics?.cellWidthPixels == original.cellWidthPixels)
+        #expect(container.terminalGridMetrics?.cellHeightPixels == original.cellHeightPixels)
+        scroll.setFollowerZoomScale(0.5, around: .zero)
+        #expect(abs(scroll.contentSize.width - viewportWidth) < 1)
+        #expect(scroll.contentOffset.x == 0)
+        scroll.setFollowerZoomScale(2, around: .zero)
+        container.authoritativeGrid = nil
+        container.layoutIfNeeded()
+        #expect(container.terminalView.transform == .identity)
+        #expect(scroll.contentSize == container.bounds.size)
+        #expect(scroll.contentOffset == .zero)
     }
 
     @Test("@spec TERM-12.21: When a mobile terminal with a runtime font adjustment becomes a follower, the application shall render additional history using its current font metrics.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
