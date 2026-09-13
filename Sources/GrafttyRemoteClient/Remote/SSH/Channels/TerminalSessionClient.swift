@@ -141,10 +141,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         let relay = PagedSubsystemReplyRelay(waiter: waiter)
         try await child.pipeline.addHandler(relay)
         try await waiter.wait(
-            scheduleTimeout: { callback in
-                let scheduled = child.eventLoop.scheduleTask(in: .seconds(10), callback)
-                return { scheduled.cancel() }
-            },
+            timeout: .seconds(10),
             timeoutError: ClientError.channelClosed,
             onAbort: { child.close(promise: nil) },
             start: {

@@ -1,6 +1,10 @@
 import NIOCore
 import NIOSSH
 
+enum SSHChildChannelOpenError: Error, Equatable {
+    case timedOut
+}
+
 /// Opens an SSH child channel on `parentChannel` and returns it once NIOSSH's
 /// `createChannel` promise resolves.
 ///
@@ -28,9 +32,10 @@ func openChildChannel(
     parentChannel: Channel,
     parentHandler: NIOSSHHandler,
     channelType: SSHChannelType = .session,
+    timeout: Duration = .seconds(10),
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
-    let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
+    try Task.checkCancellation()
     // `NIOSSHHandler` isn't `Sendable`, but the only thread-safety
     // requirement `createChannel` has is running on the parent channel's
     // own event loop — the executor hop above is what makes that safe, not
@@ -40,10 +45,30 @@ func openChildChannel(
     // `@unchecked Sendable`) instead of the handler directly; a free
     // function has no `self` to lean on, so this box plays that role.
     let handlerBox = UncheckedSendableBox(value: parentHandler)
-    parentChannel.eventLoop.execute {
-        handlerBox.value.createChannel(promise, channelType: channelType, initializer)
-    }
-    return try await promise.futureResult.get()
+    let waiter = SSHReplyWaiter<Channel>()
+    // Keep NIOSSH's promise separate from the deadline. NIOSSH still owns
+    // its completion if the peer responds after the caller has timed out.
+    return try await waiter.wait(
+        timeout: timeout,
+        timeoutError: SSHChildChannelOpenError.timedOut,
+        onAbort: { parentChannel.close(promise: nil) },
+        start: {
+            parentChannel.eventLoop.execute {
+                let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
+                promise.futureResult.whenComplete { result in
+                    if !waiter.finish(result),
+                       case .success(let child) = result {
+                        child.close(promise: nil)
+                    }
+                }
+                guard parentChannel.isActive else {
+                    promise.fail(ChannelError.ioOnClosedChannel)
+                    return
+                }
+                handlerBox.value.createChannel(promise, channelType: channelType, initializer)
+            }
+        }
+    )
 }
 
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {

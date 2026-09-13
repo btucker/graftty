@@ -198,6 +198,13 @@ public final class SSHNIOTransport: @unchecked Sendable {
         }.wait()
         self.inbox = inbox
 
+        // A local SSH deadline can close the NIO channel before WebRTC
+        // notices the dead path. Propagate that close to the data channel
+        // and connection owner so the coordinator evicts its cached peer.
+        channel.closeFuture.whenComplete { [weak self] _ in
+            self?.performClose()
+        }
+
         // Attach as the inbox's consumer LAST, after the transport is
         // fully wired: the inbox replays every buffered event (open,
         // messages in arrival order, close) synchronously inside
