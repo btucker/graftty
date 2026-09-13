@@ -7,6 +7,31 @@ import Testing
 @Suite("Remote team routing")
 @MainActor
 struct RemoteTeamRouterTests {
+    @Test("@spec TEAM-14.32: When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.")
+    func scopedMembersStayLocal() async throws {
+        let router = RemoteTeamRouter()
+        let local = ResponseMessage.teamList(teamName: "local", members: [])
+        router.register(deviceID: RemoteDeviceID(value: "studio"), connectionID: UUID(), label: "Studio") { _ in
+            try JSONEncoder().encode(RemoteTeamResponse.members([
+                TeamListMember(name: "remote/main", branch: "main", worktreePath: "/remote", isMainWorktree: true, isRunning: true)
+            ]))
+        }
+        for request in [
+            NotificationMessage.teamMembers(callerWorktree: "/local", worktree: nil, repo: "/local"),
+            .teamMembers(callerWorktree: "/local", worktree: "/local", repo: nil)
+        ] {
+            #expect(await router.includingRemoteMembers(in: local, for: request) == local)
+        }
+        for request in [
+            NotificationMessage.teamList(callerWorktree: "/local"),
+            .teamMembers(callerWorktree: "/local", worktree: nil, repo: nil)
+        ] {
+            let response = await router.includingRemoteMembers(in: local, for: request)
+            guard case .teamList(_, let members) = response else { Issue.record("Expected roster"); continue }
+            #expect(members.count == 1)
+        }
+    }
+
     @Test("@spec TEAM-14.10: When a connected Mac publishes team members, the application shall qualify their worktree and agent addresses with that Mac's device identity.")
     func qualifiesRoster() async throws {
         let router = RemoteTeamRouter()

@@ -183,6 +183,45 @@ struct TeamChannelHandlerTests {
         _ = try? await channel.finish()
     }
 
+    @Test("@spec TEAM-14.28: When a host registers a team channel, the application shall defer incoming requests until registration completes while permitting replies to requests originated during registration.")
+    func registrationPrecedesIncomingRequests() async throws {
+        let box = TeamHostTestBox()
+        let channel = NIOAsyncTestingChannel()
+        try await channel.connect(to: .init(unixDomainSocketPath: "/tmp/team-registration-test")).get()
+        try await channel.pipeline.addHandler(TeamChannelHandler(
+            deviceID: .generate(),
+            handler: { _, _ in
+                await box.recordIncomingRequest()
+                return Data("handled".utf8)
+            },
+            onConnect: { _, session in
+                _ = try? await session.send(Data("register".utf8))
+                await box.register(session)
+            },
+            onDisconnect: { _, id in await box.unregister(id) }
+        )).get()
+        do {
+            let registrationRequest = try await readEnvelope(channel)
+            let incoming = TeamRPCEnvelope(kind: .request, requestID: UUID(), payload: Data("send".utf8))
+            try await channel.writeInbound(ByteBuffer(bytes: JSONEncoder().encode(incoming)))
+            for _ in 0..<10 {
+                await channel.testingEventLoop.run()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(await box.incomingRequestCount == 0)
+            let reply = TeamRPCEnvelope(kind: .response, requestID: registrationRequest.requestID, payload: Data())
+            try await channel.writeInbound(ByteBuffer(bytes: JSONEncoder().encode(reply)))
+            let response = try await readEnvelope(channel)
+            #expect(response.requestID == incoming.requestID)
+            #expect(await box.incomingRequestCount == 1)
+            #expect(await box.requestHandledBeforeRegistration == false)
+        } catch {
+            _ = try? await channel.finish()
+            throw error
+        }
+        _ = try await channel.finish()
+    }
+
     private func readEnvelope(_ channel: NIOAsyncTestingChannel) async throws -> TeamRPCEnvelope {
         var bytes: ByteBuffer?
         try await wait(channel) {
@@ -207,10 +246,16 @@ private actor TeamHostTestBox {
     var session: TeamRPCSession?
     var disconnectedID: UUID?
     var clientClosed = false
+    var incomingRequestCount = 0
+    var requestHandledBeforeRegistration = false
     var bothClosed: Bool { disconnectedID != nil && clientClosed }
     func clientDidClose() { clientClosed = true }
     func register(_ session: TeamRPCSession) { self.session = session }
     func unregister(_ id: UUID) { disconnectedID = id; session = nil }
+    func recordIncomingRequest() {
+        incomingRequestCount += 1
+        requestHandledBeforeRegistration = session == nil
+    }
 }
 
 private struct TeamSSHHandlerBox: @unchecked Sendable {

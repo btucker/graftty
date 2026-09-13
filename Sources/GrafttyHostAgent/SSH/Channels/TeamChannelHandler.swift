@@ -25,7 +25,14 @@ public final class TeamChannelHandler: ChannelInboundHandler, @unchecked Sendabl
 
     public func handlerAdded(context: ChannelHandlerContext) {
         let channel = context.channel
-        let session = TeamRPCSession(handler: { [handler, deviceID] in await handler(deviceID, $0) }, writer: { [weak channel] bytes in
+        let registered = context.eventLoop.makePromise(of: Void.self)
+        let session = TeamRPCSession(handler: { [handler, deviceID] bytes in
+            // Gate requests only: onConnect may itself send an RPC, whose
+            // response must still reach the session during registration.
+            try? await registered.futureResult.get()
+            guard !Task.isCancelled else { return Data() }
+            return await handler(deviceID, bytes)
+        }, writer: { [weak channel] bytes in
             guard let channel, channel.isActive else { throw TeamRPCSession.SessionError.channelClosed }
             try await channel.writeAndFlush(channel.allocator.buffer(bytes: bytes)).get()
         }, onClose: { [weak channel] in
@@ -37,6 +44,7 @@ public final class TeamChannelHandler: ChannelInboundHandler, @unchecked Sendabl
         let ready = context.eventLoop.makePromise(of: Void.self)
         context.eventLoop.execute { ready.succeed(()) }
         registration = Task { [onConnect, deviceID] in
+            defer { registered.succeed(()) }
             try? await ready.futureResult.get()
             guard !Task.isCancelled else { return }
             await onConnect(deviceID, session)

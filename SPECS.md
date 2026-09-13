@@ -1926,7 +1926,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-7.x — Team Activity Log Window
 
-**TEAM-7.1** When the user invokes the *Window → Team Activity Log* command, the application shall open the Team Activity Log window for the focused worktree's team — and shall disable the command when the focused selection has no team (single-worktree repo, no selection, or `agentTeamsEnabled` off).
+**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
 
 **TEAM-7.2** Right-clicking a team-enabled worktree row in the sidebar shall include a *Show Team Activity…* item that opens the activity-log window for that team. The routing key derives from the same `(teamID, teamName)` pair the Window menu command uses, so both entry points target the same per-team `WindowGroup` instance.
 
@@ -2051,6 +2051,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-14.26** When a Mac opens an authenticated SSH team subsystem, the application shall exchange concurrent requests in both directions and notify both endpoints when the subsystem closes.
 
 **TEAM-14.27** If a team channel receives a malformed envelope, then the application shall close its transport and remove the registered team session.
+
+**TEAM-14.28** When a host registers a team channel, the application shall defer incoming requests until registration completes while permitting replies to requests originated during registration.
+
+**TEAM-14.29** While canceled or timed-out team requests still have unfinished network writes, the application shall retain their admission slots until those writes finish.
+
+**TEAM-14.30** When a team session closes before a queued request starts, the application shall discard that request without invoking its application handler.
+
+**TEAM-14.31** If opening a team channel stalls before SSH channel confirmation, then the application shall honor cancellation, closure, and a wall-clock deadline, and close any late channel without closing the shared connection.
+
+**TEAM-14.32** When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.
 
 ## INSTR — Agent Instruction Files
 

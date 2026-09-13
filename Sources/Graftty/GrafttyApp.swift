@@ -1602,11 +1602,7 @@ struct GrafttyApp: App {
                         worktreeRemovals: services.cliWorktreeRemovals,
                         remoteBranchStore: services.remoteBranchStore
                     )
-                    if case .teamList(let name, let localMembers) = response {
-                        let remoteMembers = await remoteTeamRouter.members()
-                        return .teamList(teamName: name, members: localMembers + remoteMembers)
-                    }
-                    return response
+                    return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
                 }
             )
         } catch let error as SocketServerError {

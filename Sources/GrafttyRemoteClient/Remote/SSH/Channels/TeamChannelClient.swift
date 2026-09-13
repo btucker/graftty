@@ -15,6 +15,7 @@ public final class TeamChannelClient: @unchecked Sendable {
     private let parentHandler: NIOSSHHandler
     private let handler: TeamRPCSession.Handler
     private let onClose: @Sendable () async -> Void
+    private let openTimeout: Duration
     private let lock = NIOLock()
     private var childChannel: Channel?
     private var session: TeamRPCSession?
@@ -26,12 +27,14 @@ public final class TeamChannelClient: @unchecked Sendable {
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
         handler: @escaping TeamRPCSession.Handler,
-        onClose: @escaping @Sendable () async -> Void = {}
+        onClose: @escaping @Sendable () async -> Void = {},
+        openTimeout: Duration = .seconds(30)
     ) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.handler = handler
         self.onClose = onClose
+        self.openTimeout = openTimeout
     }
 
     public func open() async throws {
@@ -41,49 +44,79 @@ public final class TeamChannelClient: @unchecked Sendable {
             opened = true
         }
         do {
-            let child = try await openChildChannel(parentChannel: parentChannel, parentHandler: parentHandler) { [weak self] child, _ in
-                guard let self else { return child.eventLoop.makeFailedFuture(ClientError.channelClosed) }
-                return child.eventLoop.makeCompletedFuture {
-                    try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
-                    try child.pipeline.syncOperations.addHandler(ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes))
-                    try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
-                    try child.pipeline.syncOperations.addHandler(TeamChannelRelay(owner: self))
-                }
-            }
-            let session = TeamRPCSession(handler: handler, writer: { [weak child] bytes in
-                guard let child, child.isActive else { throw ClientError.channelClosed }
-                try await child.writeAndFlush(child.allocator.buffer(bytes: bytes)).get()
-            }, onClose: { [weak child] in
-                child?.close(promise: nil)
-            })
-            let accepted = lock.withLock {
-                guard !closed else { return false }
-                self.childChannel = child
-                self.session = session
-                return true
-            }
-            guard accepted else {
-                await session.close()
-                child.close(promise: nil)
-                throw ClientError.channelClosed
-            }
-            child.closeFuture.whenComplete { [weak self] _ in self?.close() }
             try await waiter.wait(
-                scheduleTimeout: { callback in
-                    let deadline = child.eventLoop.scheduleTask(in: .seconds(30), callback)
+                scheduleTimeout: { [openTimeout] callback in
+                    // The transport uses a virtual NIO event loop. Its timers
+                    // do not advance with wall time, so use the task clock.
+                    let deadline = Task {
+                        do { try await Task.sleep(for: openTimeout) }
+                        catch { return }
+                        callback()
+                    }
                     return { deadline.cancel() }
                 },
                 timeoutError: ClientError.timedOut,
-                onAbort: { child.close(promise: nil) },
-                start: { [waiter] in
-                    child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(subsystem: SSHChannelTypeNames.team, wantReply: true)).whenFailure { waiter.finish(.failure($0)) }
-                }
+                onAbort: { [weak self] in self?.close() },
+                start: { [weak self] in self?.startOpening() }
             )
             guard !lock.withLock({ closed }) else { throw ClientError.channelClosed }
         } catch {
             close()
             throw error
         }
+    }
+
+    private func startOpening() {
+        makeChildChannel(
+            parentChannel: parentChannel,
+            parentHandler: parentHandler
+        ) { [weak self] child, _ in
+            guard let self else { return child.eventLoop.makeFailedFuture(ClientError.channelClosed) }
+            return child.eventLoop.makeCompletedFuture {
+                let accepted = self.lock.withLock {
+                    guard !self.closed else { return false }
+                    self.childChannel = child
+                    return true
+                }
+                guard accepted else { throw ClientError.channelClosed }
+                child.closeFuture.whenComplete { [weak self] _ in self?.close() }
+                try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
+                try child.pipeline.syncOperations.addHandler(ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes))
+                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
+                try child.pipeline.syncOperations.addHandler(TeamChannelRelay(owner: self))
+            }
+        }.whenComplete { [weak self] result in
+            switch result {
+            case .success(let child):
+                guard let self else {
+                    child.close(promise: nil)
+                    return
+                }
+                self.requestSubsystem(on: child)
+            case .failure(let error): self?.waiter.finish(.failure(error))
+            }
+        }
+    }
+
+    private func requestSubsystem(on child: Channel) {
+        let session = TeamRPCSession(handler: handler, writer: { [weak child] bytes in
+            guard let child, child.isActive else { throw ClientError.channelClosed }
+            try await child.writeAndFlush(child.allocator.buffer(bytes: bytes)).get()
+        }, onClose: { [weak child] in
+            child?.close(promise: nil)
+        })
+        let accepted = lock.withLock {
+            guard !closed else { return false }
+            self.session = session
+            return true
+        }
+        guard accepted else {
+            Task { await session.close() }
+            child.close(promise: nil)
+            return
+        }
+        child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(subsystem: SSHChannelTypeNames.team, wantReply: true))
+            .whenFailure { [waiter] in waiter.finish(.failure($0)) }
     }
 
     public func send(_ payload: Data) async throws -> Data {

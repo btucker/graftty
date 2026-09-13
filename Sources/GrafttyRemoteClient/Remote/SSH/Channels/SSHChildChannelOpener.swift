@@ -30,6 +30,22 @@ func openChildChannel(
     channelType: SSHChannelType = .session,
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
+    try await makeChildChannel(
+        parentChannel: parentChannel,
+        parentHandler: parentHandler,
+        channelType: channelType,
+        initializer: initializer
+    ).get()
+}
+
+/// Returns the opening future so callers can coordinate the entire handshake
+/// with their own cancellation and deadline without suspending on `get()`.
+func makeChildChannel(
+    parentChannel: Channel,
+    parentHandler: NIOSSHHandler,
+    channelType: SSHChannelType = .session,
+    initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
+) -> EventLoopFuture<Channel> {
     let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
     // `NIOSSHHandler` isn't `Sendable`, but the only thread-safety
     // requirement `createChannel` has is running on the parent channel's
@@ -43,7 +59,7 @@ func openChildChannel(
     parentChannel.eventLoop.execute {
         handlerBox.value.createChannel(promise, channelType: channelType, initializer)
     }
-    return try await promise.futureResult.get()
+    return promise.futureResult
 }
 
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {

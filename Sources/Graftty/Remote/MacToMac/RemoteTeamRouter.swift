@@ -65,6 +65,19 @@ final class RemoteTeamRouter {
         }
     }
 
+    func includingRemoteMembers(
+        in response: ResponseMessage?,
+        for request: NotificationMessage
+    ) async -> ResponseMessage? {
+        guard case .teamList(let name, let localMembers) = response else { return response }
+        switch request {
+        case .teamList, .teamMembers(_, worktree: nil, repo: nil):
+            return .teamList(teamName: name, members: localMembers + (await members()))
+        default:
+            return response
+        }
+    }
+
     func members() async -> [TeamListMember] {
         let selected = routes.keys.compactMap { device -> (RemoteDeviceID, Route)? in
             preferredRoute(for: device).map { (device, $0) }

@@ -3,12 +3,7 @@ import XCTest
 @testable import GrafttyKit
 
 final class TeamActivityLogWindowIDTests: XCTestCase {
-    /// @spec TEAM-7.1: When the user invokes the *Window → Team
-    /// Activity Log* command, the application shall open the Team
-    /// Activity Log window for the focused worktree's team — and shall
-    /// disable the command when the focused selection has no team
-    /// (single-worktree repo, no selection, or `agentTeamsEnabled`
-    /// off).
+    /// @spec TEAM-7.1: When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
     func testFocusedTeamIDResolvesOnlyForTeamEnabledFocusedWorktree() {
         let repo = teamRepoFixture()
 
@@ -35,14 +30,16 @@ final class TeamActivityLogWindowIDTests: XCTestCase {
             agentTeamsEnabled: true
         ))
 
-        // Disabled: focused worktree's repo has only one worktree
-        // (TEAM-2.1 — single-worktree repos have no team).
+        // A single-worktree repository has a team and an activity log.
         let solo = soloRepoFixture()
-        XCTAssertNil(TeamActivityLogWindowID.focusedTeamID(
-            selectedWorktreePath: solo.worktrees[0].path,
-            repos: [solo],
-            agentTeamsEnabled: true
-        ))
+        XCTAssertEqual(
+            TeamActivityLogWindowID.focusedTeamID(
+                selectedWorktreePath: solo.worktrees[0].path,
+                repos: [solo],
+                agentTeamsEnabled: true
+            ),
+            TeamActivityLogWindowID(teamID: solo.path, teamName: solo.displayName)
+        )
     }
 
     /// @spec TEAM-7.2: Right-clicking a team-enabled worktree row in

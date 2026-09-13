@@ -30,9 +30,10 @@ public actor TeamRPCSession {
     public static let maximumEnvelopeBytes = 4 * 1024 * 1024
     private var closed = false
     private struct Pending {
-        let continuation: CheckedContinuation<Data, Error>
+        var continuation: CheckedContinuation<Data, Error>?
         let deadline: Task<Void, Never>
         let write: Task<Void, Never>
+        var writeFinished = false
     }
     private var pending: [UUID: Pending] = [:]
     private var incoming: [UUID: Task<Void, Never>] = [:]
@@ -64,8 +65,14 @@ public actor TeamRPCSession {
                     finish(requestID, result: .failure(SessionError.timedOut))
                 }
                 let write = Task {
-                    do { try await writer(bytes) }
-                    catch { finish(requestID, result: .failure(error)) }
+                    defer { finishWrite(requestID) }
+                    do {
+                        try Task.checkCancellation()
+                        guard !closed else { throw SessionError.channelClosed }
+                        try await writer(bytes)
+                    } catch {
+                        finish(requestID, result: .failure(error))
+                    }
                 }
                 pending[requestID] = Pending(continuation: continuation, deadline: deadline, write: write)
             }
@@ -93,9 +100,10 @@ public actor TeamRPCSession {
                 return
             }
             incoming[envelope.requestID] = Task {
+                defer { incoming[envelope.requestID] = nil }
+                guard !Task.isCancelled, !closed else { return }
                 let response = await handler(envelope.payload)
                 guard !Task.isCancelled, !closed else { return }
-                defer { incoming[envelope.requestID] = nil }
                 do {
                     let bytes = try JSONEncoder().encode(TeamRPCEnvelope(kind: .response, requestID: envelope.requestID, payload: response))
                     guard bytes.count <= Self.maximumEnvelopeBytes else { throw SessionError.messageTooLarge }
@@ -117,7 +125,7 @@ public actor TeamRPCSession {
         for request in requests.values {
             request.deadline.cancel()
             request.write.cancel()
-            request.continuation.resume(throwing: error)
+            request.continuation?.resume(throwing: error)
         }
         incoming.values.forEach { $0.cancel() }
         incoming.removeAll()
@@ -125,9 +133,19 @@ public actor TeamRPCSession {
     }
 
     private func finish(_ requestID: UUID, result: Result<Data, Error>) {
-        guard let request = pending.removeValue(forKey: requestID) else { return }
+        guard var request = pending[requestID], let continuation = request.continuation else { return }
+        request.continuation = nil
+        // Canceling an NIO write task does not cancel the queued write.
+        // Keep its admission slot until the writer actually completes.
+        pending[requestID] = request.writeFinished ? nil : request
         request.deadline.cancel()
         request.write.cancel()
-        request.continuation.resume(with: result)
+        continuation.resume(with: result)
+    }
+
+    private func finishWrite(_ requestID: UUID) {
+        guard var request = pending[requestID] else { return }
+        request.writeFinished = true
+        pending[requestID] = request.continuation == nil ? nil : request
     }
 }
