@@ -163,6 +163,33 @@ extension PagedZmxAttachEngineTests {
         #expect(daemon.error == nil)
     }
 
+    @Test("@spec TERM-12.19: When a paged attachment receives repeated requests for the same grid, the application shall send one resize until the grid changes, while still answering explicit daemon size requests.")
+    func repeatedGridDoesNotEchoDaemonResize() async throws {
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            #expect(try FakePagedDaemon.receive(fd).0 == 2)
+            try FakePagedDaemon.send(fd, tag: 31, payload: Data([30, 0, 100, 0]))
+            // The next frame must be the history request, not a resize echo.
+            #expect(try FakePagedDaemon.receive(fd).0 == 28)
+            try FakePagedDaemon.send(fd, tag: 2, payload: Data())
+            let reply = try FakePagedDaemon.receive(fd)
+            #expect(reply.0 == 2)
+            #expect(reply.1 == Data([30, 0, 100, 0]))
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"), zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        var iterator = engine.events.makeAsyncIterator()
+        _ = await iterator.next()
+        engine.resize(cols: UInt16(100), rows: UInt16(30))
+        #expect(await iterator.next() == .grid(cols: 100, rows: 30))
+        engine.resize(cols: UInt16(100), rows: UInt16(30))
+        try await engine.requestHistory(.init(incarnation: 9, checkpointID: 7, requestID: 1, ordinal: 0, screen: 0))
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test("@spec TERM-12.16: If a paged terminal socket write fails after sending part of an IPC frame, then the application shall close that attachment before sending another frame.")
     func partialFrameWriteFailureClosesAttachment() async throws {
         let sendFinished = DispatchSemaphore(value: 0)

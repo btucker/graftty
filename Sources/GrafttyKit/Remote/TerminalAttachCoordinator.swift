@@ -109,6 +109,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     private let broadcaster: DisplayOwnershipBroadcaster
     private let sendText: @Sendable (String) -> Void
     private let resize: @Sendable (UInt16, UInt16) -> Void
+    private let followDisplayGrid: @Sendable (DisplayOwnershipSnapshot) -> Void
     private let write: @Sendable (Data) -> Void
     private let lock = NSLock()
 
@@ -136,6 +137,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         sendText: @escaping @Sendable (String) -> Void,
         resize: @escaping @Sendable (UInt16, UInt16) -> Void,
         write: @escaping @Sendable (Data) -> Void,
+        followDisplayGrid: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void = { _ in },
         supportsImagePaste: Bool = true,
         pasteImage: (@MainActor @Sendable (Data) -> Bool)? = nil,
         dispatchImageCommit: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void = { $0() }
@@ -147,6 +149,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         self.broadcaster = broadcaster
         self.sendText = sendText
         self.resize = resize
+        self.followDisplayGrid = followDisplayGrid
         self.write = write
         self.supportsImagePaste = supportsImagePaste
         self.pasteImage = pasteImage ?? { HostImagePasteboard.write($0) }
@@ -452,6 +455,12 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 imageUpload = .init()
                 imageUploadEpoch = nil
             }
+        }
+        let shouldFollow = lock.withLock { attached && !detached }
+            && !snapshot.isOwnerless && snapshot.ownerClientID != clientID
+        if shouldFollow,
+           ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid {
+            followDisplayGrid(snapshot)
         }
         sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())
     }

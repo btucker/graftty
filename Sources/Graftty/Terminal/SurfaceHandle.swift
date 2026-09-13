@@ -70,11 +70,13 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     /// would hide.
     func resyncVisibleGrid()
     func takeControl() -> Bool
+    func synchronizeFollowerGrid()
     func close()
     func surfaceWasFreed()
 }
 
 extension SurfaceHandleZmxBackend {
+    func synchronizeFollowerGrid() {}
     func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool {
         try write(data, claimEngagement: claimEngagement)
         return true
@@ -144,8 +146,11 @@ struct SurfaceHandleGhosttySurfaceFactory {
 final class SurfaceHandle {
     let terminalID: PaneSlotID
     let surface: ghostty_surface_t
+    private let app: ghostty_app_t
     let view: NSView
     let worktreePath: String
+    weak var followerPresentation: MacFollowerTerminalView?
+    private(set) var followerScrollbar = ghostty_action_scrollbar_s()
     /// zmx session this pane is attached to, nil for direct-shell panes.
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
     let zmxSessionName: String?
@@ -198,6 +203,7 @@ final class SurfaceHandle {
         initialGridSize: ghostty_surface_size_s? = nil
     ) {
         self.terminalID = terminalID
+        self.app = app
         self.worktreePath = worktreePath
         self.zmxSessionName = zmxSpawnConfiguration?.sessionName
         self.displayOwnershipStore = displayOwnershipStore
@@ -593,7 +599,49 @@ final class SurfaceHandle {
 
     @discardableResult
     func takeDisplayControl() -> Bool {
-        zmxBackend?.takeControl() ?? false
+        // Restore native Mac geometry before the backend reads its new grid.
+        followerPresentation?.followerGrid = nil
+        followerPresentation?.layout()
+        let accepted = zmxBackend?.takeControl() ?? false
+        synchronizeDisplayOwnership()
+        return accepted
+    }
+
+    var followerDisplayGrid: DisplayGrid? {
+        guard canTakeDisplayControl(), let displayOwnershipStore, let zmxSessionName else { return nil }
+        return displayOwnershipStore.snapshot(sessionName: zmxSessionName).grid
+    }
+
+    func synchronizeDisplayOwnership() {
+        followerPresentation?.followerGrid = followerDisplayGrid
+        followerPresentation?.layout()
+        zmxBackend?.synchronizeFollowerGrid()
+    }
+
+    func makeFollowerHistorySurface(in view: NSView, scale: CGFloat) -> ghostty_surface_t? {
+        var config = ghostty_surface_config_new()
+        config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
+        #if GRAFTTY_PAGED_HISTORY
+        // A read-only mirror must match runtime zoom even when the user has
+        // disabled font inheritance for newly created interactive surfaces.
+        config.font_size = ghostty_surface_font_size(surface)
+        #endif
+        config.platform_tag = GHOSTTY_PLATFORM_MACOS
+        config.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
+        config.scale_factor = Double(scale)
+        config.userdata = nil
+        config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
+        config.receive_userdata = nil
+        config.receive_buffer = { _, _, _ in }
+        config.receive_resize = { _, _, _, _, _ in }
+        config.command = nil
+        config.initial_input = nil
+        return ghostty_surface_new(app, &config)
+    }
+
+    func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {
+        followerScrollbar = value
+        followerPresentation?.updateScrollbar(value)
     }
 
     /// @spec OWN-2.1
@@ -778,6 +826,8 @@ final class SurfaceNSView: NSView {
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t?
     var surfaceOperations: SurfaceNSViewGhosttySurfaceOperations = .live
+    var followerPixelSize: CGSize?
+    var followerScrollHandler: ((NSEvent) -> Bool)?
 
     /// The terminal ID this view represents, and a weak reference to the
     /// terminal manager. Both are set by `SurfaceHandle` during init so
@@ -920,7 +970,7 @@ final class SurfaceNSView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         guard let surface else { return }
-        let pixels = convertToBacking(newSize)
+        let pixels = followerPixelSize ?? convertToBacking(newSize)
         guard let proposed = SurfacePixelDimension.resizeProposal(
             width: pixels.width,
             height: pixels.height
@@ -1062,6 +1112,7 @@ final class SurfaceNSView: NSView {
     /// For precision scrolling Ghostty doubles the delta: "subjective, it
     /// 'feels' better." Replicated here.
     override func scrollWheel(with event: NSEvent) {
+        if followerScrollHandler?(event) == true { return }
         guard let surface else {
             super.scrollWheel(with: event)
             return

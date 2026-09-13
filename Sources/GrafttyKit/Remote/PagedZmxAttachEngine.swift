@@ -181,7 +181,13 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     private func sendFrame(tag: UInt8, payload: Data, requestedSize: (UInt16, UInt16)? = nil) throws {
         let frame = PagedZmxWire.frame(tag: tag, payload: payload)
         try withWritableSocket { fd in
-            if let requestedSize { self.requestedSize = requestedSize }
+            if let requestedSize {
+                // A daemon grid notification can prompt the ownership bridge
+                // to synchronize this follower again. Echoing an unchanged
+                // resize produces another grid notification indefinitely.
+                if let previous = self.requestedSize, previous == requestedSize { return }
+                self.requestedSize = requestedSize
+            }
             try Self.write(frame, to: fd)
         }
     }

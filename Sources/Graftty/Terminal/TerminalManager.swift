@@ -156,8 +156,11 @@ final class TerminalManager: ObservableObject {
     /// so the notification is hopped onto the main actor.
     var displayOwnershipStore: SessionDisplayOwnershipStore? {
         didSet {
-            ownershipObserverToken = displayOwnershipStore?.addObserver { [weak self] _ in
-                Task { @MainActor in self?.objectWillChange.send() }
+            ownershipObserverToken = displayOwnershipStore?.addObserver { [weak self] snapshot in
+                Task { @MainActor in
+                    self?.handle(forSessionName: snapshot.sessionName)?.synchronizeDisplayOwnership()
+                    self?.objectWillChange.send()
+                }
             }
         }
     }
@@ -1289,6 +1292,10 @@ final class TerminalManager: ObservableObject {
     /// upgrades don't force immediate handling of new actions.
     private func handleAction(target: ghostty_target_s, action: ghostty_action_s) {
         switch action.tag {
+        case GHOSTTY_ACTION_SCROLLBAR:
+            guard let id = terminalID(from: target) else { return }
+            surfaces[id]?.updateFollowerScrollbar(action.action.scrollbar)
+
         case GHOSTTY_ACTION_SET_TITLE:
             guard let id = terminalID(from: target) else { return }
             let title = action.action.set_title.title.flatMap { String(cString: $0) } ?? ""

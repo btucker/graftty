@@ -6,6 +6,26 @@ import Testing
 @Suite("WebSocket bridge ownership gate")
 struct WebSocketBridgeOwnershipTests {
     private let sessionName = "main"
+    @Test("@spec OWN-2.4: When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.")
+    func followerAttachmentTracksNewOwnerWithoutInput() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster(store: store)
+        let recorder = Recorder()
+        let follower = TerminalAttachCoordinator(
+            sessionName: "main", clientID: DisplayClientID("first"), defaultKind: .ios,
+            ownershipStore: store, broadcaster: broadcaster,
+            sendText: { recorder.send($0) }, resize: { _, _ in }, write: { recorder.write($0) },
+            followDisplayGrid: { recorder.resize(cols: $0.grid.cols, rows: $0.grid.rows) }
+        )
+        follower.handleControl(.hello(clientID: DisplayClientID("first"), kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24))
+        _ = store.attachClient(sessionName: "main", clientID: DisplayClientID("second"), kind: .mac,
+                               role: .interactive, visible: true, grid: .daemonFallback)
+        _ = store.claimOwner(sessionName: "main", clientID: DisplayClientID("second"), kind: .mac,
+                             grid: try DisplayGrid(cols: 120, rows: 40), fallbackGrid: .daemonFallback)
+        #expect(recorder.snapshot().resizes.last == (try DisplayGrid(cols: 120, rows: 40)))
+        #expect(recorder.snapshot().writes.isEmpty)
+    }
+
 
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()

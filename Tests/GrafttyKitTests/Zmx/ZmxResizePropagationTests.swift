@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import GrafttyProtocol
 @testable import GrafttyKit
 
 /// Verifies TIOCSWINSZ on a `zmx attach` PTY propagates to the zmx
@@ -12,6 +13,41 @@ import Darwin
 /// a multi-threaded process is only async-signal-safe until `execve`).
 @Suite("Zmx — SIGWINCH resize propagation", .serialized)
 struct ZmxResizePropagationTests {
+
+    @Test("Taking control resizes a live zmx session while the previous attachment remains its daemon leader.", .timeLimit(.minutes(1)))
+    func takeoverResizesExistingDaemonLeaderWithoutInput() throws {
+        try Self.withScopedZmxDir { launcher in
+            let name = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: name) }
+            let first = try Self.spawnAttachWithInitialSize(launcher: launcher, sessionName: name, cols: 80, rows: 24)
+            defer { first.terminate() }
+            try Self.waitForSteadyState(launcher: launcher, sessionName: name, initialCols: 80, initialRows: 24)
+            let second = try Self.spawnAttachWithInitialSize(launcher: launcher, sessionName: name, cols: 80, rows: 24)
+            defer { second.terminate() }
+            let store = SessionDisplayOwnershipStore()
+            let broadcaster = DisplayOwnershipBroadcaster(store: store)
+            let old = TerminalAttachCoordinator(
+                sessionName: name, clientID: DisplayClientID("old"), defaultKind: .mac,
+                ownershipStore: store, broadcaster: broadcaster, sendText: { _ in },
+                resize: { try? PtyProcess.resize(masterFD: first.masterFd, cols: $0, rows: $1) },
+                write: { _ in Issue.record("Takeover must not send input") },
+                followDisplayGrid: { try? PtyProcess.resize(masterFD: first.masterFd, cols: $0.grid.cols, rows: $0.grid.rows) }
+            )
+            let next = TerminalAttachCoordinator(
+                sessionName: name, clientID: DisplayClientID("new"), defaultKind: .ios,
+                ownershipStore: store, broadcaster: broadcaster, sendText: { _ in },
+                resize: { try? PtyProcess.resize(masterFD: second.masterFd, cols: $0, rows: $1) },
+                write: { _ in Issue.record("Takeover must not send input") }
+            )
+            old.handleControl(.hello(clientID: DisplayClientID("old"), kind: .mac, role: .interactive, visible: true, cols: 80, rows: 24))
+            old.handleControl(.takeControl(clientID: DisplayClientID("old"), kind: .mac, cols: 80, rows: 24))
+            next.handleControl(.hello(clientID: DisplayClientID("new"), kind: .ios, role: .interactive, visible: true, cols: 73, rows: 29))
+            next.handleControl(.takeControl(clientID: DisplayClientID("new"), kind: .ios, cols: 73, rows: 29))
+            let needle = Self.resizeNeedle(rows: 29, cols: 73)
+            let log = Self.waitForLogContains(launcher: launcher, sessionName: name, needle: needle, timeout: 2)
+            #expect(log.contains(needle))
+        }
+    }
 
     // MARK: - Shared helpers
 

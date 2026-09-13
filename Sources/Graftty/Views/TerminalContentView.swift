@@ -58,10 +58,10 @@ struct TerminalContentView: View {
     private func leafView(_ terminalID: PaneSlotID) -> AnyView {
         let isUnfocused = focusedPaneSlotID != nil && terminalID != focusedPaneSlotID
         let dimmingStyle = theme.paneFocusDimmingStyle(isUnfocused: isUnfocused)
-        if let nsView = terminalManager.view(for: terminalID) {
+        if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             return AnyView(
-                SurfaceViewWrapper(nsView: nsView)
+                SurfaceViewWrapper(handle: handle)
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Mirror the iOS "Take Control" affordance (OWN-2.1):
                     // offered when another display client (iOS/web) owns this
