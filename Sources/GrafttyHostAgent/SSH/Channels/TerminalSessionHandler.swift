@@ -445,6 +445,13 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 // run on this event loop, preserving the FIFO enqueue.
                 self?.enqueuePTYWrite(data, channel: channel)
             },
+            followDisplayGrid: { [weak self, ownershipStore] snapshot in
+                loop.execute {
+                    guard ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid,
+                          let engine = self?.stream as? TerminalSyncResizing else { return }
+                    engine.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+                }
+            },
             supportsImagePaste: stream.usesHostClipboard,
             dispatchImageCommit: { action in loop.execute(action) }
         )

@@ -1156,6 +1156,11 @@ public final class WebServer {
             let writeOnLoop = NIOLoopBound({ [weak self] (data: Data) in
                 self?.session?.write(data)
             }, eventLoop: context.eventLoop)
+            let followOnLoop = NIOLoopBound({ [weak self] (snapshot: DisplayOwnershipSnapshot) in
+                guard let self,
+                      self.ownershipStore.snapshot(sessionName: self.sessionName).grid == snapshot.grid else { return }
+                self.session?.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+            }, eventLoop: context.eventLoop)
             let bridge = TerminalAttachCoordinator(
                 sessionName: sessionName,
                 clientID: clientID,
@@ -1175,6 +1180,9 @@ public final class WebServer {
                     self?.session?.resize(cols: cols, rows: rows)
                 },
                 write: { data in writeOnLoop.value(data) },
+                followDisplayGrid: { [loop = context.eventLoop] snapshot in
+                    loop.execute { followOnLoop.value(snapshot) }
+                },
                 dispatchImageCommit: { [loop = context.eventLoop] action in
                     loop.execute(action)
                 }

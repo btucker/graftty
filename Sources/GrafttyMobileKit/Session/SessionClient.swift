@@ -70,6 +70,8 @@ public final class SessionClient {
     public let sessionName: String
     public let session: InMemoryTerminalSession
     public private(set) var paging: PagedTerminalCoordinator?
+    @ObservationIgnored
+    internal var additionalHistoryRowCapacity: (() -> UInt32)?
     private var historyPollTask: Task<Void, Never>?
     private var installingCheckpointGrid: GridSize?
     private var snapshotGrid: GridSize?
@@ -77,9 +79,11 @@ public final class SessionClient {
     private var hasPagedCheckpoint = false
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
+    /// VT-only streams need the same exact grid as paged checkpoints:
+    /// fitting a font alone changes wrapping and cursor-relative redraws.
     /// Owners return to the physical viewport after importing the checkpoint.
     public var snapshotCanvasGrid: GridSize? {
-        installingCheckpointGrid ?? (isOwner ? nil : snapshotGrid)
+        installingCheckpointGrid ?? (isOwner ? nil : (snapshotGrid ?? authoritativeGrid))
     }
 
     /// Legacy server grid fallback. Ownership snapshots are authoritative
@@ -115,10 +119,10 @@ public final class SessionClient {
     }
 
     /// Display scale used to convert libghostty's pixel-based cell
-    /// metrics into SwiftUI points. Seeded from `UIScreen.main.scale`;
-    /// tests inject a known value.
+    /// metrics into SwiftUI points. Seeded from `UIScreen.main.nativeScale`
+    /// to match UITerminalView. Tests inject a known value.
     @ObservationIgnored
-    internal var displayScale: CGFloat = UIScreen.main.scale
+    internal var displayScale: CGFloat = UIScreen.main.nativeScale
 
     nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
@@ -365,7 +369,9 @@ public final class SessionClient {
             }
         }
         paging = PagedTerminalCoordinator(
-            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session) { [weak self] cols, rows in
+            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
+                self?.additionalHistoryRowCapacity?() ?? 0
+            }) { [weak self] cols, rows in
                 self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
             },
             send: { [weak self] request in
@@ -514,7 +520,16 @@ public final class SessionClient {
                     // stale process EOF must not end the resumed client.
                     guard self.isCurrentTransport(generation) else { return }
                     self.resetImagePaste()
+                    NSLog("Graftty terminal channel failed: %@", String(describing: error))
                     self.stopHistoryPaging()
+                    // Replay failures can leave the SSH channel itself open.
+                    // Release it before backoff, including any cached ready task,
+                    // so retries cannot strand owners or write to the old channel.
+                    self.currentWS()?.close()
+                    self.setWS(nil)
+                    self.setWSReadyTask(nil)
+                    self.ownershipSnapshot = nil
+                    self.clearPendingInput()
                     if Self.isTerminalSessionEnded(error) {
                         // Process EOF is final for this pane. Retrying an SSH
                         // `zmx attach` here can recreate the exited session

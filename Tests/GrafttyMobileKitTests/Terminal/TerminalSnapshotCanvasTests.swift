@@ -4,6 +4,30 @@ import Testing
 
 @Suite("@spec TERM-12.13: While a mobile terminal displays a paged checkpoint, the application shall preserve its authoritative columns and rows in a canvas fitted to the pane width, allow vertical scrolling through overflow and history, and map touch and selection coordinates through that canvas.")
 struct TerminalSnapshotCanvasTests {
+    @Test("@spec TERM-12.18: While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with whole scrollback rows without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.")
+    func spareHeightShowsOnlyAvailableWholeHistoryRows() {
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 701, screenHeight: 200, rowHeight: 4,
+            columns: 200, precedingRows: 1000
+        ) == 125)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 701, screenHeight: 200, rowHeight: 4,
+            columns: 200, precedingRows: 12
+        ) == 12)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 199, screenHeight: 200, rowHeight: 4,
+            columns: 200, precedingRows: 1000
+        ) == 0)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 5000, screenHeight: 200, rowHeight: 1,
+            columns: 1000, precedingRows: 10000
+        ) == 262)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 300000, screenHeight: 1, rowHeight: 1,
+            columns: 1, precedingRows: 300000
+        ) == UInt16.max)
+    }
+
     @Test func usesMeasuredCellsAndPreservesPixelRemainders() throws {
         let layout = try #require(TerminalSnapshotCanvas.layout(
             grid: CGSize(width: 80, height: 24),
@@ -71,17 +95,23 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(pinch.isEnabled)
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         #expect(!pinch.isEnabled)
+        #expect(container.snapshotScrollView.followerPinchGesture.isEnabled)
         let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
         #expect(pans.allSatisfy { !$0.isEnabled })
         let canvasPan = container.snapshotScrollView.panGestureRecognizer
+        let canvasPinch = container.snapshotScrollView.followerPinchGesture
+        #expect(canvasPinch.delegate?.gestureRecognizer?(canvasPinch, shouldRecognizeSimultaneouslyWith: canvasPan) == true)
         let savedTouchTypes = canvasPan.allowedTouchTypes
         container.enterSelectionModeForTesting()
         #expect(canvasPan.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes)
+        #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
         container.exitSelectionModeForTesting()
         #expect(canvasPan.allowedTouchTypes == savedTouchTypes)
+        #expect(container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(!pinch.isEnabled)
         container.authoritativeGrid = nil
         #expect(pans.allSatisfy { $0.isEnabled })
+        #expect(!container.snapshotScrollView.followerPinchGesture.isEnabled)
         #expect(pinch.isEnabled)
 
         container.enterSelectionModeForTesting()
@@ -97,6 +127,40 @@ struct MountedTerminalSnapshotCanvasTests {
         container.authoritativeGrid = nil
         container.exitSelectionModeForTesting()
         #expect(!pinch.isEnabled)
+    }
+
+    @Test("@spec IOS-4.32: When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.")
+    func releasingFollowerCanvasConfirmsPhysicalViewportWithoutInput() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.delegate = container
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let physical = try #require(container.terminalGridMetrics)
+        container.authoritativeGrid = .init(cols: 200, rows: 50)
+        container.layoutIfNeeded()
+        container.terminalView.fitToSize()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(container.terminalGridMetrics?.columns == 200)
+        var confirmed: InMemoryTerminalViewport?
+        container.onPhysicalViewportReady = { confirmed = $0 }
+        container.terminalView.renderPace = .reduced(interval: 60)
+        container.authoritativeGrid = nil
+        let box = TerminalContainerBox()
+        box.view = container
+        box.fitTerminalToCurrentSize()
+        for _ in 0..<20 where confirmed == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(confirmed?.columns == physical.columns)
+        #expect(confirmed?.rows == physical.rows)
     }
 
     @Test func verticalOverflowAndHistoryShareOneScrollableViewport() throws {
@@ -134,7 +198,87 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))
     }
 
-    @Test(.enabled(if: MobilePagedTerminalRenderer.isSupported))
+    @Test("@spec TERM-12.22: While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.", arguments: [390, 834])
+    func followerZoomPreservesNativeGridAndAllowsHorizontalScrolling(width: Int) async throws {
+        let viewportWidth = CGFloat(width)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: viewportWidth, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        container.authoritativeGrid = .init(cols: 200, rows: 50)
+        container.layoutIfNeeded()
+        container.terminalView.fitToSize()
+        try await Task.sleep(for: .milliseconds(50))
+        let original = try #require(container.terminalGridMetrics)
+        let nativeBounds = container.terminalView.bounds
+        let scroll = container.snapshotScrollView
+        scroll.setFollowerZoomScale(2, around: CGPoint(x: viewportWidth / 2, y: 350))
+        #expect(abs(scroll.contentSize.width - viewportWidth * 2) < 1)
+        #expect(abs(container.terminalView.frame.width - viewportWidth * 2) < 1)
+        #expect(container.terminalView.bounds == nativeBounds)
+        scroll.contentOffset.x = 250
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(abs(scroll.contentOffset.x - 250) < 1)
+        #expect(container.terminalGridMetrics?.columns == 200)
+        #expect(container.terminalGridMetrics?.rows == 50)
+        #expect(container.terminalGridMetrics?.cellWidthPixels == original.cellWidthPixels)
+        #expect(container.terminalGridMetrics?.cellHeightPixels == original.cellHeightPixels)
+        scroll.setFollowerZoomScale(0.5, around: .zero)
+        #expect(abs(scroll.contentSize.width - viewportWidth) < 1)
+        #expect(scroll.contentOffset.x == 0)
+        scroll.setFollowerZoomScale(2, around: .zero)
+        container.authoritativeGrid = nil
+        container.layoutIfNeeded()
+        #expect(container.terminalView.transform == .identity)
+        #expect(scroll.contentSize == container.bounds.size)
+        #expect(scroll.contentOffset == .zero)
+    }
+
+    @Test("@spec TERM-12.21: When a mobile terminal with a runtime font adjustment becomes a follower, the application shall render additional history using its current font metrics.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func historyPreservesRuntimeFontSize() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+        }
+        try await renderer.install(.init(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: try #require(Data(base64Encoded: Self.ready)),
+            hasPrimaryHistory: true, hasAlternateHistory: false), generation: 1)
+        let surface = try #require(container.terminalView.surface)
+        #expect(surface.performAction("increase_font_size:4"))
+        container.snapshotScrollView.showsAdditionalHistory = true
+        for _ in 0..<100 {
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            container.snapshotScrollView.refreshAdditionalHistory()
+            if container.snapshotScrollView.additionalHistoryTextForTesting?.contains("row-099975") == true { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(container.snapshotScrollView.additionalHistoryTextForTesting?.contains("row-099975") == true)
+        #expect(container.terminalGridMetrics?.columns == 80)
+        #expect(container.terminalGridMetrics?.rows == 24)
+    }
+
+    @Test("@spec TERM-12.20: While a mounted mobile follower has space for older rows above its live screen, the application shall request history for that visible space without scrolling, and stop prefetching for that space when it is filled or the follower canvas is released.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
     func checkpointInstallsInARealCanvasWhoseContainerHasDifferentDimensions() async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         let host = UIViewController()
@@ -155,7 +299,9 @@ struct MountedTerminalSnapshotCanvasTests {
         let pinch = try #require(container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPinchGestureRecognizer }.first)
         #expect(pinch.isEnabled)
         #expect(physicalGrid.columns != 80 || physicalGrid.rows != 24)
-        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+        let renderer = MobilePagedTerminalRenderer(session: session, additionalHistoryRows: {
+            container.snapshotScrollView.additionalHistoryRowCapacity
+        }) { cols, rows in
             container.authoritativeGrid = .init(cols: cols, rows: rows)
             container.setNeedsLayout()
             container.layoutIfNeeded()
@@ -174,6 +320,47 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(abs(container.terminalView.frame.width - container.bounds.width) < 0.1)
         #expect(container.terminalView.frame.height <= container.bounds.height + 0.1)
 
+        #expect(!renderer.isNearHistoryTop(screen: 0, generation: 1))
+        container.snapshotScrollView.showsAdditionalHistory = true
+        container.frame.size.height = 1600
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(container.snapshotScrollView.additionalHistoryRowCapacity > 64)
+        #expect(renderer.isNearHistoryTop(screen: 0, generation: 1))
+        #expect(!renderer.isNearHistoryTop(screen: 1, generation: 1))
+        container.snapshotScrollView.showsAdditionalHistory = false
+        #expect(!renderer.isNearHistoryTop(screen: 0, generation: 1))
+        container.frame.size.height = 500
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let sourceSurface = try #require(container.terminalView.surface)
+        #expect(sourceSurface.performAction("select_all"))
+        let selectionBeforeHistory = try #require(sourceSurface.readSelection())
+        let liveBeforeHistory = session.readViewportText()
+        let liveGridBeforeHistory = container.terminalGridMetrics
+        container.snapshotScrollView.showsAdditionalHistory = true
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        for _ in 0..<100 {
+            container.snapshotScrollView.refreshAdditionalHistory()
+            if container.snapshotScrollView.additionalHistoryTextForTesting?.contains("row-099975") == true { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let extraText = try #require(container.snapshotScrollView.additionalHistoryTextForTesting)
+        #expect(extraText.contains("row-099975"))
+        #expect(!extraText.contains("row-099999"))
+        #expect(session.readViewportText() == liveBeforeHistory)
+        #expect(sourceSurface.readSelection() == selectionBeforeHistory)
+        #expect(sourceSurface.performAction("clear_selection"))
+        #expect(container.terminalGridMetrics == liveGridBeforeHistory)
+        let extraFrame = try #require(container.snapshotScrollView.additionalHistoryFrameForTesting)
+        #expect(abs(extraFrame.maxY - container.terminalView.frame.minY) < 0.1)
+        #expect(abs(extraFrame.width - container.bounds.width) < 0.1)
+        container.snapshotScrollView.showsAdditionalHistory = false
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
         let canvasSize = container.terminalView.bounds.size
         container.frame.size = CGSize(width: 700, height: 180)
         container.setNeedsLayout()
@@ -185,6 +372,16 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(await renderer.appendHistory(
             try #require(Data(base64Encoded: Self.page)), screen: 0, generation: 1
         ) == .applied)
+
+        container.snapshotScrollView.showsAdditionalHistory = true
+        container.frame.size = CGSize(width: 390, height: 1600)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(!renderer.isNearHistoryTop(screen: 0, generation: 1))
+        container.snapshotScrollView.showsAdditionalHistory = false
+        container.frame.size = CGSize(width: 700, height: 180)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
 
         // Selection pans are measured in the child; menu anchors are converted
         // back to the container. Verify both ends of the visible canvas.
@@ -218,7 +415,8 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(session.readViewportText()?.contains("row-099999") == true)
         let bottomCanvasY = scroll.contentSize.height - scroll.bounds.height
             + (scroll.bounds.height - container.terminalView.frame.height) / 2
-        #expect(abs(container.terminalView.frame.minY - bottomCanvasY) < 0.5)
+        #expect(abs(container.terminalView.frame.minY - bottomCanvasY) < 0.5,
+                "offset=\(scroll.contentOffset) content=\(scroll.contentSize) bounds=\(scroll.bounds) frame=\(container.terminalView.frame) grid=\(String(describing: container.terminalGridMetrics))")
 
 
         container.authoritativeGrid = nil

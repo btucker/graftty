@@ -1107,6 +1107,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
+            showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
                 + externalPendingFocusRequests,
@@ -1140,6 +1141,9 @@ struct SingleSessionView: View {
             },
             captureContainer: { [paneContainerBox] view in
                 paneContainerBox.view = view
+                client.additionalHistoryRowCapacity = { [weak view] in
+                    view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
+                }
                 view.onPhysicalViewportReady = { [weak client] viewport in
                     client?.physicalViewportDidBecomeReady(viewport)
                 }

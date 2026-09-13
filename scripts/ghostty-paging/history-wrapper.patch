@@ -1,0 +1,30 @@
+--- /dev/null
++++ b/Sources/GhosttyTerminal/Surface/TerminalSurface+History.swift
+@@ -0,0 +1,27 @@
++import Foundation
++import GhosttyKit
++
++/// A bounded styled copy of history, independent of the source viewport.
++public struct TerminalHistorySlice: Equatable, Sendable {
++    public let rows: UInt32
++    public let bytes: Data
++}
++
++extension TerminalSurface {
++    /// The live native font size, including runtime zoom actions.
++    public var currentFontSize: Float? {
++        guard let surface = rawValue else { return nil }
++        return ghostty_surface_font_size(surface)
++    }
++
++    /// Returns rows immediately before an absolute history row without scrolling
++    /// or changing the source terminal's cursor, dimensions, or selection.
++    public func readHistory(beforeRow: UInt64, rows: UInt32) -> TerminalHistorySlice? {
++        guard let surface = rawValue, rows > 0 else { return nil }
++        var result = ghostty_text_s()
++        guard ghostty_surface_read_history(surface, beforeRow, rows, &result) else { return nil }
++        defer { ghostty_surface_free_text(surface, &result) }
++        guard let text = result.text else { return nil }
++        return TerminalHistorySlice(rows: result.offset_len, bytes: Data(bytes: text, count: Int(result.text_len)))
++    }
++}
