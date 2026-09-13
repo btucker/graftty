@@ -1,0 +1,152 @@
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -2201,6 +2201,57 @@
+         ptr.deinit();
+     }
+ 
++    /// Read on the UI thread, like inherited configuration and font actions.
++    export fn ghostty_surface_font_size(surface: *Surface) f32 {
++        return surface.core_surface.font_size.points;
++    }
++
++    /// Format only the rows preceding the viewport into a detached VT buffer.
++    /// The source terminal's grid, cursor, viewport, and selection are unchanged.
++    export fn ghostty_surface_read_history(
++        surface: *Surface,
++        before_row: u64,
++        requested_rows: u32,
++        result: *Text,
++    ) bool {
++        const core = &surface.core_surface;
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        defer core.renderer_state.mutex.unlock(global.io());
++        const t = &core.io.terminal;
++        const screen = t.screens.active;
++        const bar = screen.pages.scrollbar();
++        const history_rows = bar.total -| bar.len;
++        if (requested_rows == 0 or t.cols == 0 or before_row > history_rows) return false;
++        const count: usize = @intCast(@min(before_row, requested_rows, 262144 / @as(u32, t.cols)));
++        if (count == 0) return false;
++        const end: usize = @intCast(before_row);
++        const top = screen.pages.pin(.{ .screen = .{ .x = 0, .y = @intCast(end - count) } }) orelse return false;
++        const bottom = screen.pages.pin(.{ .screen = .{ .x = t.cols - 1, .y = @intCast(end - 1) } }) orelse return false;
++        var formatter: terminal.formatter.ScreenFormatter = .init(screen, .{
++            .emit = .vt,
++            .unwrap = false,
++            .trim = false,
++            .preserve_styled_blank_rows = true,
++            .foreground = t.colors.foreground.get(),
++            .background = t.colors.background.get(),
++            .palette = &t.colors.palette.current,
++        });
++        formatter.content = .{ .selection = .init(top, bottom, false) };
++        var buffer: std.Io.Writer.Allocating = .init(global.alloc());
++        defer buffer.deinit();
++        formatter.format(&buffer.writer) catch return false;
++        const bytes = buffer.toOwnedSliceSentinel(0) catch return false;
++        result.* = .{
++            .tl_px_x = -1,
++            .tl_px_y = -1,
++            .offset_start = 0,
++            .offset_len = @intCast(count),
++            .text = bytes.ptr,
++            .text_len = bytes.len,
++        };
++        return true;
++    }
++
+     /// Tell the surface that it needs to schedule a render
+     export fn ghostty_surface_refresh(surface: *Surface) void {
+         surface.refresh();
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1263,6 +1263,10 @@
+ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
+                                               ghostty_selection_s,
+                                               ghostty_text_s*);
++// Current native font size, including runtime zoom. Call on the UI thread.
++GHOSTTY_API float ghostty_surface_font_size(ghostty_surface_t);
++// Read styled history without moving the viewport. offset_len returns row count.
++GHOSTTY_API bool ghostty_surface_read_history(ghostty_surface_t, uint64_t before_row, uint32_t rows, ghostty_text_s*);
+ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+ 
+ #ifdef __APPLE__
+--- a/src/terminal/formatter.zig
++++ b/src/terminal/formatter.zig
+@@ -96,6 +96,10 @@
+     /// is currently only space characters (0x20).
+     trim: bool = true,
+ 
++    /// Preserve textless rows with cell backgrounds in styled history copies.
++    /// Plain text continues to omit cell styling.
++    preserve_styled_blank_rows: bool = false,
++
+     /// Replace matching Unicode codepoints with some other values.
+     /// This will use the last matching range found in the list.
+     codepoint_map: ?std.MultiArrayList(CodepointMap) = .{},
+@@ -1216,7 +1220,15 @@
+             // If this row is blank, accumulate to avoid a bunch of extra
+             // work later. If it isn't blank, make sure we dump all our
+             // blanks.
+-            if (!Cell.hasTextAny(cells_subset)) {
++            const blank_row = blank: {
++                for (cells_subset) |cell| {
++                    if (cell.hasText()) break :blank false;
++                    if (emit != .plain and self.opts.preserve_styled_blank_rows and
++                        (!cell.isEmpty() or cell.hasStyling())) break :blank false;
++                }
++                break :blank true;
++            };
++            if (blank_row) {
+                 blank_rows += 1;
+                 continue;
+             }
+@@ -7028,3 +7040,48 @@
+         try testing.expectEqual(expected_coord, point_map.items[i]);
+     }
+ }
++
++test "Graftty history preserves blank colored rows" {
++    const alloc = std.testing.allocator;
++    var t = try Terminal.init(std.testing.io, alloc, .{ .cols = 8, .rows = 2 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b[41m\x1b[2K\x1b[0m\r\nafter");
++    var output: std.Io.Writer.Allocating = .init(alloc);
++    defer output.deinit();
++    var formatter: ScreenFormatter = .init(t.screens.active, .{
++        .emit = .vt,
++        .trim = false,
++        .preserve_styled_blank_rows = true,
++    });
++    try formatter.format(&output.writer);
++    const bytes = output.writer.buffered();
++    const newline = std.mem.indexOf(u8, bytes, "\r\n") orelse return error.TestUnexpectedResult;
++    try std.testing.expect(std.mem.indexOf(u8, bytes[0..newline], "\x1b[48;5;1m") != null);
++    output.clearRetainingCapacity();
++    formatter.opts.emit = .plain;
++    try formatter.format(&output.writer);
++    try std.testing.expectEqualStrings("\nafter", output.writer.buffered());
++}
++
++test "Graftty history copies dynamic default colors" {
++    const alloc = std.testing.allocator;
++    var t = try Terminal.init(std.testing.io, alloc, .{ .cols = 8, .rows = 2 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b]10;rgb:12/34/56\x1b\\\x1b]11;rgb:ab/cd/ef\x1b\\text");
++    var output: std.Io.Writer.Allocating = .init(alloc);
++    defer output.deinit();
++    const formatter: ScreenFormatter = .init(t.screens.active, .{
++        .emit = .vt,
++        .foreground = t.colors.foreground.get(),
++        .background = t.colors.background.get(),
++    });
++    try formatter.format(&output.writer);
++    try std.testing.expectEqualStrings(
++        "\x1b]10;rgb:12/34/56\x1b\\\x1b]11;rgb:ab/cd/ef\x1b\\text",
++        output.writer.buffered(),
++    );
++}

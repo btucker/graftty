@@ -32,22 +32,19 @@ struct MultiPaneDetailViewTests {
     }
 
     @Test("""
-@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 """)
-    func ipad_2_5_embeddedLeafReusesSingleSessionFontFit() {
-        let decision = TerminalWidthLayout.decide(
-            containerWidth: 320,
-            authoritativeCols: 160,
-            configFontSize: 11,
-            measuredCellWidthPoints: nil,
-            measuredAtFontSize: nil,
-            isOwner: false
-        )
-
-        guard case .fitFont = decision else {
-            Issue.record("Expected a per-leaf fit-font decision")
-            return
-        }
+    func ipad_2_5_embeddedLeafReusesSingleSessionCanvas() throws {
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 160, height: 40),
+            measuredGrid: CGSize(width: 80, height: 24),
+            measuredPixels: CGSize(width: 807, height: 487),
+            cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 2,
+            container: CGSize(width: 320, height: 240)
+        ))
+        #expect(canvas.size == CGSize(width: 803.5, height: 403.5))
+        #expect(abs(canvas.size.width * canvas.scale - 320) < 0.001)
     }
 
     @Test("""

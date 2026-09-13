@@ -3,9 +3,7 @@ import CoreGraphics
 import Testing
 @testable import GrafttyMobileKit
 
-@Suite("""
-@spec IOS-5.6: While the iOS client is not the display owner and the authoritative grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `authoritativeCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / authoritativeCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When authoritative cols are not yet known, the application shall leave the base config font in place.
-""")
+@Suite("Terminal font estimation")
 struct TerminalWidthLayoutTests {
 
     @Test

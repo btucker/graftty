@@ -4,7 +4,7 @@ import UIKit
 
 /// Scrolls a width-fitted checkpoint without resizing its native terminal grid.
 /// The content includes loaded history followed by the full authoritative screen.
-/// Only one native screen is rendered, positioned at its absolute history row.
+/// The live screen keeps its native grid; a separate display fills spare height with history.
 @MainActor
 final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
     let terminalView: UITerminalView
@@ -14,6 +14,31 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
     private var nativeRow: UInt64 = 0
     private var adjusting = false
     private var viewportHeight: CGFloat = 0
+    var showsAdditionalHistory = false {
+        didSet {
+            guard showsAdditionalHistory != oldValue else { return }
+            #if GRAFTTY_PAGED_HISTORY
+            updateHistoryTimer()
+            #endif
+        }
+    }
+    private var includesAdditionalHistory: Bool {
+        #if GRAFTTY_PAGED_HISTORY
+        showsAdditionalHistory
+        #else
+        false
+        #endif
+    }
+    private var columns: UInt16 = 0
+    #if GRAFTTY_PAGED_HISTORY
+    private var historyView: UITerminalView?
+    private var historyController: TerminalController?
+    private var historyConfig: String?
+    private let historySession = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+    private var lastHistory: TerminalHistorySlice?
+    private var lastHistoryFittedPixels: CGSize?
+    private var historyTimer: Timer?
+    #endif
 
     init(terminalView: UITerminalView) {
         self.terminalView = terminalView
@@ -37,20 +62,30 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
         return scrollbar.total - min(scrollbar.total, scrollbar.len)
     }
 
-    func configure(canvas: TerminalSnapshotCanvas.Layout?, rowHeight: CGFloat) {
-        let wasAtBottom = contentOffset.y >= contentSize.height - viewportHeight - 0.5
+    /// Rows visible above the live grid, including rows not fetched yet.
+    var additionalHistoryRowCapacity: UInt32 {
+        guard window != nil, includesAdditionalHistory, let canvas else { return 0 }
+        return TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: bounds.height, screenHeight: canvas.size.height * canvas.scale,
+            rowHeight: rowHeight, columns: columns, precedingRows: .max
+        )
+    }
+
+    func configure(canvas: TerminalSnapshotCanvas.Layout?, rowHeight: CGFloat, columns: UInt16 = 0) {
+        let wasAtBottom = contentOffset.y >= contentSize.height - viewportHeight - 1
         let withinCanvas = self.rowHeight > 0
             ? (contentOffset.y / self.rowHeight - CGFloat(nativeRow)) * rowHeight : 0
         viewportHeight = bounds.height
         self.canvas = canvas
         self.rowHeight = rowHeight
+        self.columns = columns
         isScrollEnabled = canvas != nil
         reconcile(wasAtBottom: wasAtBottom, withinCanvas: withinCanvas)
     }
 
     func updateScrollbar(_ value: TerminalScrollbar) {
         guard value != scrollbar else { return }
-        let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 0.5
+        let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
         scrollbar = value
@@ -67,6 +102,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
             contentOffset = .zero
             terminalView.transform = .identity
             terminalView.frame = CGRect(origin: .zero, size: bounds.size)
+            #if GRAFTTY_PAGED_HISTORY
+            removeHistoryView()
+            #endif
             return
         }
         let screenHeight = canvas.size.height * canvas.scale
@@ -85,16 +123,120 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate {
         terminalView.bounds = CGRect(origin: .zero, size: canvas.size)
         terminalView.center = CGPoint(
             x: bounds.width / 2,
-            y: CGFloat(nativeRow) * rowHeight + max(bounds.height, canvas.size.height * canvas.scale) / 2
+            y: CGFloat(nativeRow) * rowHeight
+                + (includesAdditionalHistory ? max(bounds.height, canvas.size.height * canvas.scale)
+                    - canvas.size.height * canvas.scale / 2
+                    : max(bounds.height, canvas.size.height * canvas.scale) / 2)
         )
         terminalView.transform = CGAffineTransform(scaleX: canvas.scale, y: canvas.scale)
+        #if GRAFTTY_PAGED_HISTORY
+        refreshAdditionalHistory()
+        #endif
     }
+
+    #if GRAFTTY_PAGED_HISTORY
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateHistoryTimer()
+    }
+
+    private func updateHistoryTimer() {
+        historyTimer?.invalidate()
+        historyTimer = nil
+        if window != nil && showsAdditionalHistory {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            historyTimer = timer
+        }
+    }
+
+    private func removeHistoryView() {
+        historyView?.removeFromSuperview()
+        historyView = nil
+        historyController = nil
+        historyConfig = nil
+        lastHistory = nil
+        lastHistoryFittedPixels = nil
+    }
+
+    func refreshAdditionalHistory() {
+        guard showsAdditionalHistory, let canvas, rowHeight > 0,
+              let sourceController = terminalView.controller else {
+            removeHistoryView()
+            return
+        }
+        let rows = TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: bounds.height, screenHeight: canvas.size.height * canvas.scale,
+            rowHeight: rowHeight, columns: columns, precedingRows: nativeRow
+        )
+        guard rows > 0, let source = terminalView.surface,
+              let history = source.readHistory(beforeRow: nativeRow, rows: rows) else {
+            removeHistoryView()
+            return
+        }
+        guard let fontSize = source.currentFontSize else { return }
+        let config = sourceController.renderedConfig
+            + "\nwindow-padding-y = 0\nfont-size = \(fontSize)\n"
+        if historyConfig != config {
+            historyController = MobileTerminalControllerFactory.make(configText: config)
+            historyConfig = config
+            lastHistory = nil
+            lastHistoryFittedPixels = nil
+        }
+        let view: UITerminalView
+        if let historyView { view = historyView } else {
+            view = UITerminalView(frame: .zero)
+            view.isUserInteractionEnabled = false
+            view.configuration = .init(backend: .inMemory(historySession))
+            historyView = view
+            insertSubview(view, belowSubview: terminalView)
+        }
+        view.controller = historyController
+        view.overrideUserInterfaceStyle = terminalView.overrideUserInterfaceStyle
+        // Native sizing floors pixels. Leave half a pixel below the final row
+        // so floating-point roundoff cannot remove a row from this display.
+        let pixelScale = terminalView.contentScaleFactor
+        let pixels = (CGFloat(history.rows) * rowHeight / canvas.scale * pixelScale).rounded()
+        let nativeHeight = (pixels + 0.5) / pixelScale
+        let height = nativeHeight * canvas.scale
+        view.bounds = CGRect(x: 0, y: 0, width: canvas.size.width, height: nativeHeight)
+        view.center = CGPoint(x: bounds.width / 2, y: terminalView.frame.minY - height / 2)
+        view.transform = CGAffineTransform(scaleX: canvas.scale, y: canvas.scale)
+        let fittedPixels = CGSize(
+            width: floor(view.bounds.width * view.contentScaleFactor),
+            height: floor(view.bounds.height * view.contentScaleFactor)
+        )
+        // Fitting requests a native redraw. Poll grid readiness below without
+        // waking the renderer again when the display dimensions are unchanged.
+        if fittedPixels != lastHistoryFittedPixels {
+            view.fitToSize()
+            lastHistoryFittedPixels = fittedPixels
+        }
+        guard historySession.gridMatches(columns: columns, rows: UInt16(history.rows)), history != lastHistory else { return }
+        // Repaint only this detached history display. Its VT parser never
+        // receives live host commands, and its replies never reach the host.
+        var repaint = Data("\u{18}\u{1b}[0m\u{1b}[2J\u{1b}[H\u{1b}[?25l".utf8)
+        repaint.append(history.bytes)
+        historySession.receive(repaint)
+        lastHistory = history
+    }
+
+    var additionalHistoryTextForTesting: String? { historySession.readViewportText() }
+    var additionalHistoryFrameForTesting: CGRect? { historyView?.frame }
+    #else
+    func refreshAdditionalHistory() {}
+    var additionalHistoryTextForTesting: String? { nil }
+    var additionalHistoryFrameForTesting: CGRect? { nil }
+    #endif
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !adjusting, let canvas, rowHeight > 0 else { return }
         // UIScrollView quantizes offsets to display pixels. Treat its rounded
         // bottom as the final row instead of occasionally stopping one row up.
-        let atBottom = contentOffset.y >= contentSize.height - bounds.height - 0.5
+        // Allow one point for a near-bottom offset plus display-pixel rounding.
+        let atBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let row = atBottom ? historyRows
             : UInt64(min(CGFloat(historyRows), max(0, floor(contentOffset.y / rowHeight))))
         if row != nativeRow {

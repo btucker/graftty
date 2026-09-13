@@ -1,9 +1,11 @@
 # Build the paging renderer package
 
-Build the local `libghostty-spm` dependency before opening GrafttyMobile in Xcode.
-The package includes the current-screen restore and scrollback-page APIs used by
-GrafttyMobile. The published dependency does not yet include these APIs. Without
-the local package, builds continue using the legacy attachment path.
+Build the local `libghostty-spm` dependency before building the Mac or iOS app.
+The package includes the current-screen restore, scrollback-page, and read-only
+history APIs used by the Mac and iOS apps. The history API lets followers fill spare
+vertical space above the live grid with earlier rows. The published dependency
+does not yet include these APIs. Without the local package, builds continue using
+the legacy attachment path and show only the fitted live grid.
 
 Use macOS with Xcode, the iOS SDK, and Zig 0.16.0. The first build downloads the
 pinned source repositories and their Zig dependencies. Build all five architecture
@@ -25,6 +27,12 @@ xcodebuild -downloadComponent MetalToolchain
 ```
 
 After the package build finishes, resolve package dependencies again in Xcode.
+For `xcodebuild`, set `GRAFTTY_GHOSTTY_PACKAGE_PATH` to the absolute local package
+path and pass `'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG GRAFTTY_PAGED_HISTORY'`
+when testing a Debug build. This also enables the native integration tests when
+Xcode retains build settings from the published dependency. Confirm that
+`checkpointInstallsInARealCanvasWhoseContainerHasDifferentDimensions` runs rather
+than being skipped.
 For command-line builds, use the repository wrapper:
 
 ```bash

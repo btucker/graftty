@@ -56,9 +56,10 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public let session: InMemoryTerminalSession
     public let controller: TerminalController
-    /// The grid carried by a paged checkpoint. The native canvas preserves
+    /// The leader's grid, from ownership or a paged checkpoint. The canvas preserves
     /// both dimensions while its presentation fits the available container.
     public let authoritativeGrid: SessionClient.GridSize?
+    public let showsAdditionalHistory: Bool
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
     /// focus-request counters can mark them consumed.
@@ -103,6 +104,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         session: InMemoryTerminalSession,
         controller: TerminalController,
         authoritativeGrid: SessionClient.GridSize? = nil,
+        showsAdditionalHistory: Bool = false,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
@@ -118,6 +120,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.session = session
         self.controller = controller
         self.authoritativeGrid = authoritativeGrid
+        self.showsAdditionalHistory = showsAdditionalHistory
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
@@ -155,6 +158,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         let view = TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.authoritativeGrid = authoritativeGrid
+        view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.committedSoftwareInput = committedSoftwareInput
@@ -175,6 +179,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.authoritativeGrid = authoritativeGrid
+        view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
@@ -293,7 +298,8 @@ public final class TerminalInputContainerView: UIView,
         }
         snapshotScrollView.configure(
             canvas: canvas,
-            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale
+            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale,
+            columns: grid.cols
         )
     }
 

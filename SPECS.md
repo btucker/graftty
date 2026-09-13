@@ -358,6 +358,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.17** When the renderer requests clipboard types only, the application shall report available text types without reading clipboard contents or taking display control.
 
+**TERM-12.18** While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with whole scrollback rows without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.
+
+**TERM-12.19** When a paged attachment receives repeated requests for the same grid, the application shall send one resize until the grid changes, while still answering explicit daemon size requests.
+
+**TERM-12.20** While a mounted mobile follower has space for older rows above its live screen, the application shall request history for that visible space without scrolling, and stop prefetching for that space when it is filled or the follower canvas is released.
+
+**TERM-12.21** When a mobile terminal with a runtime font adjustment becomes a follower, the application shall render additional history using its current font metrics.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1216,6 +1224,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.3** When a clipboard paste is delivered to a zmx-backed Mac pane that can take display control (OWN-2.1), the application shall reclaim display ownership before completing the clipboard request — the clipboard read completes asynchronously on the main queue after the triggering key or menu event, so neither the OWN-2.2 key-event reclaim (command chords are excluded) nor the emitted-bytes classification can claim ownership for the paste bytes.
 
+**OWN-2.4** When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.
+
+**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow
@@ -1508,7 +1520,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
-**IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a paged follower canvas.
+**IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a follower canvas.
 
 **IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
 
@@ -1524,13 +1536,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.31** When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
 
+**IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
 
 **IOS-5.5** While a session's terminal is rendered full-screen (navigation bar hidden per the fullscreen layout), the application shall overlay a translucent back-button in the top-left that pops the current session off the `NavigationPath`, returning the user to the worktree detail they drilled in from. The button shall be rendered as a chevron inside an `.ultraThinMaterial` circle at a fixed 44×44pt tap target, padded 12pt from the top and leading edges so it floats above the terminal content without being clipped by the device's notch / rounded corners. The system edge-swipe gesture remains available but is not discoverable, so this overlay is the primary affordance.
 
-**IOS-5.6** While the iOS client is not the display owner and the authoritative grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `authoritativeCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / authoritativeCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When authoritative cols are not yet known, the application shall leave the base config font in place.
+**IOS-5.6** While the iOS client follows an authoritative terminal grid, the application shall preserve the leader's exact columns and rows on a canvas fitted to the available width, including non-paged streams, so terminal redraws and wrapping match the leader.
 
 ### IOS-6.x — Input
 
@@ -1591,6 +1605,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-7.6** When a mobile terminal channel is replaced after its mounted terminal has received output, the application shall cancel unfinished VT parsing and reset the retained terminal before applying the replacement zmx attach's first replay bytes, so the replay replaces the existing screen and scrollback instead of appending a duplicate copy.
 
 **IOS-7.7** When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
+
+**IOS-7.8** When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.") func failedReplayClosesChannelBeforeReconnect() async throws { let first = DelayedReceiveWS(paged: true) let client = SessionClient(sessionName: "s", webSocketFactory: { first }, pagedRenderer: PagingRenderer()) client.start() defer { client.stop() } try await waitUntil("initial receive") { first.receiveCalls == 1 } // Output before READY is a protocol failure on a still-open channel. first.deliver(.binary(Data("unexpected output".utf8))) try await waitUntil("reconnect backoff") { client.connectionState != .live } #expect(first.closed) } final class PagingRenderer: PagedTerminalRenderer { var installed: [UInt64] = [] var generations: [UInt64] = [] var nearTop = false var pages = 0 var holdResize = false var resizeContinuation: CheckedContinuation<Void, Never>? var resized: [SessionClient.GridSize] = [] func resize(cols: UInt16, rows: UInt16) async throws { if holdResize { await withCheckedContinuation { resizeContinuation = $0 } } resized.append(.init(cols: cols, rows: rows)) } func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws { installed.append(checkpoint.id) generations.append(generation) } func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult { pages += 1 return .applied } func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 } } @Test(
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -1734,7 +1750,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
-**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 
 **IPAD-2.6** While a focused pane exists in the iPad split tree, the application shall apply the same Ghostty `unfocused-split-fill` and `unfocused-split-opacity` dimming treatment as the Mac to every other live pane, without drawing an iPad-only focus outline. When no pane is focused, no pane shall be dimmed.
 
