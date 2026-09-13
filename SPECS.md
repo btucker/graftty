@@ -2242,7 +2242,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.6** If an SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
 
-**REMOTE-11.7** When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation and close the stalled transport.
+**REMOTE-11.7** When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation while preserving the shared parent transport and sibling channels.
 
 **REMOTE-11.8** When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.
 

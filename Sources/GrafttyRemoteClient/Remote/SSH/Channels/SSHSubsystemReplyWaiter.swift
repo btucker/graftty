@@ -31,6 +31,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
         timeout: Duration,
         timeoutError: any Error,
         onAbort: @escaping @Sendable () -> Void,
+        onCancel: (@Sendable () -> Void)? = nil,
         start: @escaping @Sendable () -> Void
     ) async throws -> Value {
         try await wait(
@@ -44,6 +45,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
             },
             timeoutError: timeoutError,
             onAbort: onAbort,
+            onCancel: onCancel,
             start: start
         )
     }
@@ -52,6 +54,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
         scheduleTimeout: @escaping ScheduleTimeout,
         timeoutError: any Error,
         onAbort: @escaping @Sendable () -> Void,
+        onCancel: (@Sendable () -> Void)? = nil,
         start: @escaping @Sendable () -> Void
     ) async throws -> Value {
         try await withTaskCancellationHandler {
@@ -96,7 +99,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
             guard self?.finish(.failure(CancellationError())) == true else {
                 return
             }
-            onAbort()
+            (onCancel ?? onAbort)()
         }
     }
 

@@ -42,8 +42,8 @@ struct SSHChildChannelOpenerTests {
         #expect(!fixture.channel.isActive)
     }
 
-    @Test("@spec REMOTE-11.7: When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation and close the stalled transport.")
-    func cancellationUnblocksPendingOpen() async throws {
+    @Test("@spec REMOTE-11.7: When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation while preserving the shared parent transport and sibling channels.")
+    func cancellationUnblocksPendingOpenAndPreservesParent() async throws {
         let fixture = try await StalledSSHParent.make()
         let watchdog = fixture.closeAfterDelay()
         defer { watchdog.cancel() }
@@ -53,15 +53,22 @@ struct SSHChildChannelOpenerTests {
                 parentHandler: fixture.handler
             ) { child, _ in child.eventLoop.makeSucceededVoidFuture() }
         }
-        // Cancellation must work both before and after open registers its wait.
+        // Let the open park waiting for the peer, which never answers in this
+        // fixture. Already-cancelled callers have a separate test above.
         try await Task.sleep(for: .milliseconds(25))
+        let cancelledAt = ContinuousClock.now
         task.cancel()
 
         await #expect(throws: CancellationError.self) {
             _ = try await task.value
         }
+        #expect(cancelledAt.duration(to: .now) < .seconds(1))
+        // Drain any close enqueued by cancellation before asserting that the
+        // parent survived. The waiter can resume before cleanup reaches NIO.
+        try await fixture.channel.eventLoop.submit {}.get()
+        #expect(fixture.channel.isActive)
+        fixture.channel.close(promise: nil)
         try await fixture.channel.closeFuture.get()
-        #expect(!fixture.channel.isActive)
     }
 }
 
@@ -98,6 +105,7 @@ private final class StalledSSHParent: @unchecked Sendable {
         Task {
             do { try await Task.sleep(for: .seconds(2)) }
             catch { return }
+            Issue.record("SSH child open did not complete before watchdog cleanup")
             channel.close(promise: nil)
         }
     }

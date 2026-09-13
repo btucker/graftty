@@ -52,6 +52,9 @@ func openChildChannel(
         timeout: timeout,
         timeoutError: SSHChildChannelOpenError.timedOut,
         onAbort: { parentChannel.close(promise: nil) },
+        // A dismissed preview can cancel an open on a healthy connection.
+        // Preserve its siblings; the completion handler closes any late child.
+        onCancel: {},
         start: {
             parentChannel.eventLoop.execute {
                 let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
