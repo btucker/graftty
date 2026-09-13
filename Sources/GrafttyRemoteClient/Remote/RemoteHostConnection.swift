@@ -506,6 +506,21 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
+    public func makeTeamClient(
+        handler: @escaping TeamRPCSession.Handler,
+        onClose: @escaping @Sendable () async -> Void = {}
+    ) throws -> TeamChannelClient {
+        guard let transport = sshTransport, let box = sshHandlerBox else {
+            throw ConnectionError.notConnected
+        }
+        return TeamChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler,
+            handler: handler,
+            onClose: onClose
+        )
+    }
+
     public func close() {
         setState(.closed)
     }

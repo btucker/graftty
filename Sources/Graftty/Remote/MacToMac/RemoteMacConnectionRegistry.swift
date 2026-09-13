@@ -126,9 +126,12 @@ final class RemoteMacConnectionRegistry {
         case paneEnvironmentUnavailable(RemoteMacIdentity)
         case connectionTerminated(RemoteMacIdentity)
         case worktreeManagementUnavailable
+        case teamMessagingUnavailable
     }
 
     private var entries: [RemoteMacIdentity: Entry] = [:]
+    private var teamClients: [UUID: TeamChannelClient] = [:]
+    weak var teamRouter: RemoteTeamRouter?
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
     private let legacyFactory: ConnectionFactory?
     private let identityProvider: IdentityProvider
@@ -251,6 +254,7 @@ final class RemoteMacConnectionRegistry {
                 await close(entry)
                 throw ConnectionError.connectionTerminated(identity)
             }
+            Task { await self.openTeamChannel(for: entry) }
             return entry
         }
         inFlight[identity] = InFlightAttempt(id: attemptID, task: task)
@@ -494,7 +498,49 @@ final class RemoteMacConnectionRegistry {
         onPaneSnapshot(identity, snapshot)
     }
 
+    private func teamChannelClosed(_ entry: Entry) {
+        teamClients[entry.id] = nil
+        teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
+    }
+
+    private func openTeamChannel(for entry: Entry) async {
+        guard let router = teamRouter else { return }
+        do {
+            let client = try await entry.connection.makeTeamClient(
+                handler: { [weak router] data in
+                    guard let router else { return Data() }
+                    return await router.receive(from: entry.identity.id, data: data)
+                },
+                onClose: { [weak self] in
+                    await self?.teamChannelClosed(entry)
+                }
+            )
+            // Retain while opening so disconnect can close the subsystem too.
+            guard entries[entry.identity]?.id == entry.id else {
+                client.close()
+                return
+            }
+            teamClients[entry.id] = client
+            try await client.open()
+            guard entries[entry.identity]?.id == entry.id,
+                  teamClients[entry.id] != nil else {
+                client.close()
+                return
+            }
+            router.register(deviceID: entry.identity.id, connectionID: entry.id, label: entry.remoteMac.label) { data in
+                try await client.send(data)
+            }
+        } catch {
+            teamClients.removeValue(forKey: entry.id)?.close()
+            router.unregister(deviceID: entry.identity.id, connectionID: entry.id)
+            // Older Macs can continue providing terminals when they reject
+            // the optional team subsystem.
+        }
+    }
+
     private func close(_ entry: Entry) async {
+        teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
+        teamClients.removeValue(forKey: entry.id)?.close()
         await entry.connection.setOnStateChange(nil)
         await entry.paneEnvironment.close()
         await entry.connection.close()
@@ -504,6 +550,7 @@ final class RemoteMacConnectionRegistry {
         identity: RemoteMacIdentity
     ) -> DisconnectWork {
         let entry = entries.removeValue(forKey: identity)
+        if let entry { teamRouter?.unregister(deviceID: identity.id, connectionID: entry.id) }
         let attempt = inFlight.removeValue(forKey: identity)
         attempt?.task.cancel()
         return DisconnectWork(entry: entry, attempt: attempt)
@@ -538,10 +585,21 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
     func makeWorktreeManagementDriver() async throws
         -> any WorktreeManagementChannelDriver
+    func makeTeamClient(
+        handler: @escaping @Sendable (Data) async -> Data,
+        onClose: @escaping @Sendable () async -> Void
+    ) async throws -> TeamChannelClient
     func close() async
 }
 
 extension RemoteMacHostConnection {
+    func makeTeamClient(
+        handler: @escaping @Sendable (Data) async -> Data,
+        onClose: @escaping @Sendable () async -> Void
+    ) async throws -> TeamChannelClient {
+        throw RemoteMacConnectionRegistry.ConnectionError.teamMessagingUnavailable
+    }
+
     func setOnStateChange(
         _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
     ) async {}
@@ -606,6 +664,13 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     func makeWorktreeManagementDriver() async throws
         -> any WorktreeManagementChannelDriver {
         try await connection.makeWorktreeManagementClient()
+    }
+
+    func makeTeamClient(
+        handler: @escaping @Sendable (Data) async -> Data,
+        onClose: @escaping @Sendable () async -> Void
+    ) async throws -> TeamChannelClient {
+        try await connection.makeTeamClient(handler: handler, onClose: onClose)
     }
 
     func close() async {

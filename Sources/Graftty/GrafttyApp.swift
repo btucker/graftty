@@ -270,6 +270,7 @@ final class AppServices {
     /// connections and, once wired, native Mac panes.
     let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
+    let remoteTeamRouter = RemoteTeamRouter()
     let teamEventDispatcher: TeamEventDispatcher
     let cliWorktreeCreations: CLIWorktreeCreationStore
     let cliWorktreeRemovals: CLIWorktreeRemovalStore
@@ -380,6 +381,7 @@ final class AppServices {
         )
         let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
         self.remoteMacsModel = remoteMacsModel
+        remoteMacsModel.setTeamRouter(remoteTeamRouter)
         self.remoteMacPairingDriverFactory = {
             LocalAddRemoteMacPairingDriver(
                 identityStore: ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory),
@@ -1550,6 +1552,27 @@ struct GrafttyApp: App {
         let tm = terminalManager
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
+        let remoteTeamRouter = services.remoteTeamRouter
+        remoteTeamRouter.handler = { deviceID, data in
+            do {
+                let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
+                let repos = binding.wrappedValue.repos
+                let enabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                let handler = RemoteTeamService(
+                    inbox: teamInbox,
+                    agentRecords: {
+                        (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
+                    },
+                    agentReachability: { TeamAgentReachability.isReachable($0) }
+                )
+                let response = await OffMainIO.run {
+                    handler.handle(request, from: deviceID, repos: repos, teamsEnabled: enabled)
+                }
+                return try JSONEncoder().encode(response)
+            } catch {
+                return (try? JSONEncoder().encode(RemoteTeamResponse.error("Invalid remote team request: \(error)"))) ?? Data()
+            }
+        }
         do {
             try SocketServerStartup.start(
                 server: services.socketServer,
@@ -1563,7 +1586,10 @@ struct GrafttyApp: App {
                     }
                 },
                 onAsyncRequest: { message in
-                    await Self.handlePaneRequest(
+                    if let response = await Self.handleRemoteTeamSend(
+                        message, appState: binding, router: remoteTeamRouter
+                    ) { return response }
+                    let response = await Self.handlePaneRequest(
                         message,
                         appState: binding,
                         terminalManager: tm,
@@ -1576,6 +1602,11 @@ struct GrafttyApp: App {
                         worktreeRemovals: services.cliWorktreeRemovals,
                         remoteBranchStore: services.remoteBranchStore
                     )
+                    if case .teamList(let name, let localMembers) = response {
+                        let remoteMembers = await remoteTeamRouter.members()
+                        return .teamList(teamName: name, members: localMembers + remoteMembers)
+                    }
+                    return response
                 }
             )
         } catch let error as SocketServerError {
@@ -2812,6 +2843,21 @@ struct GrafttyApp: App {
                 await hostAgent.setPaneControlMutator(paneControlMutator)
                 await hostAgent.setWorktreeManagementMutator(
                     worktreeManagementMutator
+                )
+                await hostAgent.setTeamMessaging(
+                    handler: { deviceID, data in
+                        await services.remoteTeamRouter.receive(from: deviceID, data: data)
+                    },
+                    onConnect: { deviceID, session in
+                        await services.remoteTeamRouter.register(
+                            deviceID: deviceID,
+                            connectionID: session.id,
+                            label: deviceID.value
+                        ) { data in try await session.send(data) }
+                    },
+                    onDisconnect: { deviceID, connectionID in
+                        await services.remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
+                    }
                 )
                 do {
                     try await services.startRemoteMacAccessServices(
@@ -4057,6 +4103,34 @@ struct GrafttyApp: App {
             }
         }
         return .worktreeCreate(status)
+    }
+
+    @MainActor
+    private static func handleRemoteTeamSend(
+        _ message: NotificationMessage,
+        appState: Binding<AppState>,
+        router: RemoteTeamRouter
+    ) async -> ResponseMessage? {
+        let caller: String
+        let agentID: String?
+        let recipient: String
+        let text: String
+        let priority: TeamInboxPriority
+        switch message {
+        case .teamSend(let path, let agent, let address, let body, let urgency):
+            (caller, agentID, recipient, text, priority) = (path, agent, address, body, urgency)
+        case .teamMessage(let path, let address, let body):
+            (caller, agentID, recipient, text, priority) = (path, nil, address, body, .normal)
+        default: return nil
+        }
+        guard recipient.hasPrefix("graftty-mac:") else { return nil }
+        guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
+            return .error(TeamInboxRequestError.teamModeDisabled.description)
+        }
+        guard appState.wrappedValue.worktree(forPath: caller) != nil else {
+            return .error(TeamInboxRequestError.callerNotTracked.description)
+        }
+        return await router.send(callerWorktree: caller, callerAgentID: agentID, recipient: recipient, text: text, priority: priority)
     }
 
     @MainActor

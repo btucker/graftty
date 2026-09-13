@@ -9,9 +9,8 @@ import GrafttyProtocol
 public enum TeamLookup {
 
     /// Resolves the `TeamView` for the worktree located at `worktreePath`.
-    /// Returns nil when the path is not in any tracked repo or when the
-    /// repo has fewer than two worktrees (matches `TeamView.team(for:in:teamsEnabled:)`
-    /// with `teamsEnabled: true`).
+    /// Returns nil when the path is not in any tracked repo. Matches
+    /// `TeamView.team(for:in:teamsEnabled:)` with `teamsEnabled: true`.
     public static func team(for worktreePath: String, in repos: [RepoEntry]) -> TeamView? {
         for repo in repos {
             if let worktree = repo.worktrees.first(where: { $0.path == worktreePath }) {
@@ -47,10 +46,7 @@ public enum TeamLookup {
     }
 
     /// Same convention as `id(of:)` but derived directly from a repo
-    /// path. Useful when a team has shrunk to one worktree (so
-    /// `team(for:in:)` returns nil) but the dispatcher still needs to
-    /// address the inbox bucket — e.g. when emitting a
-    /// `team_member_left` row after the last linked worktree is removed.
+    /// path, including when emitting a departure after removing a worktree.
     public static func id(forRepoPath repoPath: String) -> String {
         repoPath
     }

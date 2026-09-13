@@ -149,17 +149,14 @@ The built-in team session prompt explains these forms and tells agents they may
 suggest concise instruction files when durable team structure would help, but
 to create or modify them only when authorized.
 
-Requires **Agent Teams** to be enabled in Settings, and a repository with
-more than one worktree.
+Requires **Agent Teams** to be enabled in Settings.
 
 ## Agent teams
 
-When a repo has more than one worktree open, Graftty treats it as an
-*agent team*. AI coding agents (Claude Code, Codex, etc.) running inside
-each worktree can register their presence, message each other through a
-per-worktree inbox, and react to PR/CI events that affect the team —
-useful when you've got one agent per branch grinding through PRs and
-want them to coordinate.
+With Agent Teams enabled, each tracked repository has a team. Agents
+running in its worktrees can register their presence, send inbox messages,
+and react to PR and CI events. A repository with one local worktree can
+also communicate with agents on a remote Mac.
 
 Enable it under **Settings → Agent Teams**. From there you choose which
 events (PR state, merges, CI conclusion, mergability) get routed to the
@@ -206,6 +203,30 @@ configuration mutation.
 
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
+
+### Message agents on another Mac
+
+Enable **Agent Teams** on both Macs, add the other Mac under **Remote Macs**,
+and connect it. Both Macs must run a version of Graftty that supports remote
+team messaging. One pairing provides messaging in both directions while
+that connection is open.
+
+Run `graftty team list --json` from a tracked worktree. The roster includes
+all teams on each directly connected Mac. Copy the remote agent's `address`
+unchanged into `graftty team send --stdin`. Remote addresses start with
+`graftty-mac://` and include a device identity, an escaped worktree path,
+and an optional `#codex`, `#claude`, or exact agent suffix.
+
+Replies use the sender's device-qualified `agent` or `fallback-agent`
+address from the message envelope. An exact agent address fails if that
+session is gone. A provider address queues the message for that provider's
+next agent after the receiving Mac accepts it.
+
+A successful send means the receiving Mac wrote the message to its durable
+inbox. Disconnected Macs reject new sends. If the connection breaks before
+an acknowledgement arrives, check the recipient's inbox before retrying,
+because the message may already have arrived. `team broadcast` continues
+to send only to other worktrees in the caller's local repository.
 
 ### Team inbox delivery cursors and maintenance
 

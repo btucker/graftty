@@ -37,7 +37,7 @@ public struct TeamView: Sendable, Equatable {
     public let members: [TeamMember]
 
     /// Internal so external modules must construct via `team(for:in:teamsEnabled:)`,
-    /// which enforces the "members[0] is the main worktree, count >= 2" invariant.
+    /// which enforces the "members[0] is the main worktree, count >= 1" invariant.
     internal init(repoPath: String, repoDisplayName: String, members: [TeamMember]) {
         self.repoPath = repoPath
         self.repoDisplayName = repoDisplayName
@@ -63,8 +63,8 @@ public struct TeamView: Sendable, Equatable {
     }
 
     /// Resolves the team for a given worktree. Returns nil when team mode is
-    /// off, the worktree's repo is not in `repos`, or the repo has fewer than
-    /// two worktrees (a one-worktree repo has no team).
+    /// off, the worktree's repo is not in `repos`, or the repository has no worktrees.
+    /// A single local worktree still needs presence and inbox delivery to communicate with agents on another Mac.
     public static func team(
         for worktree: WorktreeEntry,
         in repos: [RepoEntry],
@@ -74,7 +74,6 @@ public struct TeamView: Sendable, Equatable {
         guard let repo = repos.first(where: { $0.worktrees.contains(where: { $0.id == worktree.id }) }) else {
             return nil
         }
-        guard repo.worktrees.count >= 2 else { return nil }
 
         let members = repo.worktrees.map { wt -> TeamMember in
             TeamMember(

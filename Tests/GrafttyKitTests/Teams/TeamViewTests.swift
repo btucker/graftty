@@ -9,9 +9,10 @@ struct TeamViewTests {
         TeamTestFixtures.makeRepo(path: path, displayName: displayName, branches: branches)
     }
 
-    @Test func singleWorktreeRepoHasNoTeam() {
+    @Test("@spec TEAM-2.1: While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.")
+    func singleWorktreeRepoHasTeam() {
         let repo = makeRepo(path: "/r/single", displayName: "single", branches: ["main"])
-        #expect(TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true) == nil)
+        #expect(TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)?.members.count == 1)
     }
 
     @Test func multiWorktreeRepoHasTeamWhenEnabled() {
