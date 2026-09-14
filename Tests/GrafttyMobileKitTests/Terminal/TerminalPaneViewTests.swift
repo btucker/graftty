@@ -44,6 +44,34 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
+    @Test("@spec IOS-6.23: While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.")
+    func hiddenKeyboardRejectsTouchFocusUntilShown() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        host.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let input = TerminalPaneView.CommittedSoftwareInput(insertText: { _ in }, deleteBackward: {})
+        for keyboardAllowed in [true, false, false, true] {
+            container.committedSoftwareInput = SingleSessionView.isTerminalKeyboardEligible(
+                clientIsOwner: true,
+                isPaneFocused: true,
+                keyboardAllowed: keyboardAllowed
+            ) ? input : nil
+
+            #expect(container.terminalView.canBecomeFirstResponder == keyboardAllowed)
+            // Ghostty requests focus from touchesBegan before recognizing a scroll.
+            #expect(container.terminalView.becomeFirstResponder() == keyboardAllowed)
+            #expect(container.terminalView.isFirstResponder == keyboardAllowed)
+            #expect(container.terminalView.gestureRecognizers?
+                .compactMap { $0 as? UIPanGestureRecognizer }
+                .contains { $0.isEnabled } == true)
+        }
+    }
+
     @Test("Canvas release confirms an unchanged physical viewport without awaiting a deduplicated resize", arguments: [CGSize.zero, CGSize(width: 0.1, height: 0.1), CGSize(width: 300, height: -100)])
     func canvasReleaseConfirmsViewportOnlyWithoutResize(sizeChange: CGSize) {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
