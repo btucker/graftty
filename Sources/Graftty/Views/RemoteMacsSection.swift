@@ -428,6 +428,7 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
+        let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
         VStack(spacing: 0) {
             Button {
                 onSelectRemoteWorktree(remoteMac, worktree.path)
@@ -448,7 +449,7 @@ struct RemoteMacsSection: View {
                         )
                     }
                 )
-                .frame(minHeight: showsMacHierarchy ? 0 : 44)
+                .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -499,6 +500,7 @@ struct RemoteMacsSection: View {
                 }
             }
         }
+        .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.foreground.opacity(0.16) : .clear)

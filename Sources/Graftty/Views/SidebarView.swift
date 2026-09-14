@@ -502,6 +502,7 @@ struct SidebarView: View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
+        let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
         VStack(spacing: 0) {
             Button {
                 onSelect(worktree.path)
@@ -528,7 +529,7 @@ struct SidebarView: View {
                     },
                     attentionStyle: attention.worktreeCapsule
                 )
-                .frame(minHeight: showsProjectRail ? 44 : 0)
+                .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -604,6 +605,7 @@ struct SidebarView: View {
                 }
             }
         }
+        .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.foreground.opacity(0.16) : .clear)

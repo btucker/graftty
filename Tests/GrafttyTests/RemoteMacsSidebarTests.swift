@@ -35,7 +35,8 @@ struct RemoteMacsSidebarTests {
         try store.add(remote)
         let model = RemoteMacsModel(store: store)
         await model.loadSavedRemotes()
-        let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature", layout: nil)
+        let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature",
+            layout: .leaf(sessionName: "shell", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil))
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {
