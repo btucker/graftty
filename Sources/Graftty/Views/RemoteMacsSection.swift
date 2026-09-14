@@ -369,10 +369,10 @@ struct RemoteMacsSection: View {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
-            }, rowInsets: showsMacHierarchy ? nil : SidebarWorktreeListStyle.projectRowInsets) { worktree in
+            }, folderIndent: showsMacHierarchy ? 0 : 16) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
-                        showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : SidebarWorktreeListStyle.projectRowInsets
+                        showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil
                     )
                     .listRowSeparator(.hidden)
             }
@@ -396,7 +396,7 @@ struct RemoteMacsSection: View {
         } else {
             if model.repositoriesByRemote[identity]?.contains(where: { $0.id == repositoryGroup.id }) == true {
                 HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
-                    .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+                    .frame(height: 44)
             }
             rows
         }

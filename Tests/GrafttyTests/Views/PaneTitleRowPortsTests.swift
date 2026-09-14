@@ -8,6 +8,18 @@ import GrafttyProtocol
 
 @Suite("PaneTitleRow port chip rendering and attention precedence")
 struct PaneTitleRowPortsTests {
+    @MainActor
+    @Test("@spec LAYOUT-2.56: When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.")
+    func worktreeLabelsStayOnOneLine() {
+        let row = WorktreeRow(entry: .init(path: "/repo/load-team-skill", branch: "auto-update-agent-plugins"),
+            isActive: false, displayName: "load-team-skill", isMainCheckout: false,
+            theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+        let host = NSHostingController(rootView: row)
+        let size = host.sizeThatFits(in: CGSize(width: 160, height: 1000))
+        #expect(size.height < 30)
+        #expect(size.width <= 160)
+    }
+
     @Test("@spec PORTS-3.1: While a pane has at least one `PortBinding`, the application shall render one `PortChip` per binding inline with the pane title.")
     func chipPerBinding() {
         let row = PaneTitleRow(

@@ -8,15 +8,18 @@ public struct SidebarWorktreeRows<Row: View>: View {
     public var onMove: (WorktreePanes, WorktreePanes, Bool) -> Void
     public var row: (WorktreePanes) -> Row
     public var rowInsets: EdgeInsets?
+    public var folderIndent: CGFloat
     @State private var collapsed: Set<String> = []
 
     public init(worktrees: [WorktreePanes], allowsReordering: Bool = false,
                 onMove: @escaping (WorktreePanes, WorktreePanes, Bool) -> Void = { _, _, _ in },
                 rowInsets: EdgeInsets? = nil,
+                folderIndent: CGFloat = 0,
                 @ViewBuilder row: @escaping (WorktreePanes) -> Row) {
         self.worktrees = worktrees; self.allowsReordering = allowsReordering
         self.onMove = onMove; self.row = row
         self.rowInsets = rowInsets
+        self.folderIndent = folderIndent
     }
 
     public var body: some View { rows(SidebarWorktreeTree.nodes(worktrees)) }
@@ -31,6 +34,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
                     if $0 { collapsed.remove(node.id) } else { collapsed.insert(node.id) }
                 })) {
                     rows(children)
+                        .padding(.leading, folderIndent)
                 } label: { Label(node.name, systemImage: "folder").font(.callout) }
                 .listRowInsets(rowInsets)
                 .moveDisabled(true)

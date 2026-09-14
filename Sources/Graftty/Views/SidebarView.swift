@@ -183,7 +183,7 @@ struct SidebarView: View {
             Button("Remove Repository") { onRemoveRepo(repo) }
         })
     }
-    private func remoteSection(projectFilter: String?, query: String = "", management: Bool = false) -> some View {
+    private func remoteSection(projectFilter: String?, query: String = "") -> some View {
         RemoteMacsSection(model: remoteMacsModel, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
@@ -191,8 +191,8 @@ struct SidebarView: View {
                           onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
                           projectFilter: projectFilter, query: query,
-                          showsMacHierarchy: management || !showsProjectRail,
-                          showsRepositoryHeaders: management || !showsProjectRail || !query.isEmpty,
+                          showsMacHierarchy: !showsProjectRail,
+                          showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
     }
 
@@ -205,7 +205,10 @@ struct SidebarView: View {
         .help("Manage Remote Macs")
         .accessibilityLabel("Manage Remote Macs")
         .popover(isPresented: $showsRemoteManagement) {
-            List { remoteSection(projectFilter: nil, management: true) }.frame(width: 340, height: 380)
+            RemoteMacConnectionsPopover(model: remoteMacsModel) {
+                showsRemoteManagement = false
+                onAddRemoteMac()
+            }
         }
     }
 
@@ -239,29 +242,10 @@ struct SidebarView: View {
                     TextField("Find any project or worktree", text: $navigation.query)
                         .textFieldStyle(.roundedBorder).padding(10)
                     ScrollViewReader { proxy in
-                        List {
-                            if navigation.query.isEmpty {
-                                let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
-                                ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
-                                    repoSection(repo)
-                                }
-                                remoteSection(projectFilter: filter)
-                            } else {
-                                remoteSection(projectFilter: nil, query: navigation.query)
-                                ForEach(appState.repos) { repo in
-                                    let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
-                                        defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
-                                    ForEach(repo.worktrees.filter {
-                                        SidebarInteractionPolicy.matches(query: navigation.query, projectName: repo.displayName,
-                                            worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
-                                    }) { worktree in
-                                        worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)")
-                                            .listRowInsets(showsProjectRail ? SidebarWorktreeListStyle.projectRowInsets : nil)
-                                    }
-                                }
-                            }
+                        Group {
+                            if showsProjectRail { ProjectWorktreeColumn { worktreeRows } }
+                            else { List { worktreeRows }.listStyle(.sidebar) }
                         }
-                        .modifier(SidebarWorktreeListStyle(projectColumn: showsProjectRail))
                         .onChange(of: navigation.selectedProjectID) { _, _ in
                             if let path = navigation.selectedProjectID.flatMap({ navigation.rememberedWorktrees[$0] }) {
                                 proxy.scrollTo(path, anchor: .center)
@@ -338,6 +322,29 @@ struct SidebarView: View {
                 },
                 onCancel: { pendingAddWorktree = nil }
             )
+        }
+    }
+
+    @ViewBuilder
+    private var worktreeRows: some View {
+        if navigation.query.isEmpty {
+            let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
+            ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
+                repoSection(repo)
+            }
+            remoteSection(projectFilter: filter)
+        } else {
+            remoteSection(projectFilter: nil, query: navigation.query)
+            ForEach(appState.repos) { repo in
+                let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+                ForEach(repo.worktrees.filter {
+                    SidebarInteractionPolicy.matches(query: navigation.query, projectName: repo.displayName,
+                        worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
+                }) { worktree in
+                    worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)")
+                }
+            }
         }
     }
 
@@ -428,7 +435,7 @@ struct SidebarView: View {
         if showsProjectRail {
             if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                 HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
-                    .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+                    .frame(height: 44)
             }
             rows
         } else {
@@ -760,7 +767,7 @@ struct SidebarView: View {
 /// that treatment on leaf rows at every depth: a folder owns a native
 /// disclosure column, while its worktree children should advance by the same
 /// visual amount that a direct worktree advances beneath a repository.
-private struct SidebarWorktreeRowInsets: ViewModifier {
+struct SidebarWorktreeRowInsets: ViewModifier {
     let node: SidebarWorktreeNode
     let depth: Int
     var projectColumn: Bool = false
@@ -768,8 +775,7 @@ private struct SidebarWorktreeRowInsets: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if projectColumn {
-            content.listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
-                .listRowSeparator(.hidden)
+            content
         } else if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
             content.listRowInsets(
                 EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
@@ -784,7 +790,7 @@ private struct SidebarWorktreeRowInsets: ViewModifier {
 /// owns its expansion state internally and starts folders collapsed; using
 /// explicit `DisclosureGroup` bindings makes the initial state deterministic
 /// and lets the folder label react to collapse by showing aggregate stats.
-private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
+struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let node: SidebarWorktreeNode
     let depth: Int
     let repositoryID: UUID
@@ -832,6 +838,7 @@ private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         depth: depth + 1,
                         projectColumn: projectColumn
                     ))
+                    .padding(.leading, projectColumn ? 16 : 0)
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -852,6 +859,7 @@ private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
+                .frame(minHeight: projectColumn ? 44 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }

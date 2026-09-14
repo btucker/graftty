@@ -253,6 +253,7 @@ struct WorktreeRow: View {
             typeIcon
             if let prBadge {
                 prBadgeLabel(prBadge)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             branchLabel
             if let attentionStyle {
@@ -406,6 +407,9 @@ struct WorktreeRow: View {
                     .foregroundColor(theme.sidebarSecondaryText)
             }
         }
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
     }
 
 }

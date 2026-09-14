@@ -13,6 +13,18 @@ import GrafttyCommandUI
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
+    @Test("@spec LAYOUT-2.55: While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
+    func machineStatusActions() {
+        #expect(RemoteMacConnectionState.connected.statusText == "Connected")
+        #expect(RemoteMacConnectionState.connected.connectionActionTitle == nil)
+        #expect(RemoteMacConnectionState.connecting.statusText == "Connecting…")
+        #expect(RemoteMacConnectionState.connecting.connectionActionTitle == nil)
+        #expect(RemoteMacConnectionState.offline.connectionActionTitle == "Connect")
+        #expect(RemoteMacConnectionState.discovered.connectionActionTitle == "Connect")
+        #expect(RemoteMacConnectionState.failed.connectionActionTitle == "Retry")
+        #expect(RemoteMacConnectionState.needsPairing.connectionActionTitle == "Pair…")
+    }
+
     @Test("@spec LAYOUT-2.54: While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.")
     func projectColumnRemovesRemoteHierarchy() async throws {
         let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -31,15 +43,34 @@ struct RemoteMacsSidebarTests {
                 collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
                 onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
             Divider()
-            List {
+            ProjectWorktreeColumn {
                 RemoteMacsSection(model: model, worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
                     selectedRemoteIdentity: RemoteMacIdentity(remote), selectedRemoteWorktreePath: row.path,
                     theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
                     showsMacHierarchy: false, showsRepositoryHeaders: false)
-            }.modifier(SidebarWorktreeListStyle(projectColumn: true)).frame(width: 260)
+            }.frame(width: 260)
+            Divider()
+            ProjectWorktreeColumn {
+                let entry = WorktreeEntry(path: "/local/feature", branch: "feature")
+                let node = SidebarWorktreeNode.worktree(entry, displayName: "feature")
+                SidebarWorktreeNodeRow(node: node, depth: 0, repositoryID: UUID(), expansion: .constant(.init()),
+                    statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
+                    WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        .frame(minHeight: 44)
+                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+                }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))
+                SidebarWorktreeNodeRow(node: .folder(path: "topic", name: "topic", children: [node]), depth: 0,
+                    repositoryID: UUID(), expansion: .constant(.init()), statsByWorktreePath: [:], theme: .fallback,
+                    projectColumn: true) { entry, name in
+                    WorktreeRow(entry: entry, isActive: false, displayName: name, isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        .frame(minHeight: 44)
+                }
+            }.frame(width: 260)
         }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
         let hosting = NSHostingView(rootView: content)
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 457, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 718, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
         window.orderFront(nil)
         defer { window.orderOut(nil) }
@@ -49,15 +80,32 @@ struct RemoteMacsSidebarTests {
             if let table = view as? NSTableView { return table }
             return view.subviews.lazy.compactMap { table(in: $0) }.first
         }
-        let list = try #require(table(in: hosting))
-        #expect(list.numberOfRows == 1)
-        #expect(abs(list.rect(ofRow: 0).height - 47) <= 1)
+        #expect(table(in: hosting) == nil)
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        for columnStart in [197, 458] {
+            let firstHighlight = try #require((0..<260).first { x in
+                let color = bitmap.colorAt(x: Int(CGFloat(columnStart + x) * scale), y: Int(23 * scale))?.usingColorSpace(.deviceRGB)
+                return (color?.redComponent ?? 0) > 0.2
+            })
+            #expect(abs(firstHighlight - 6) <= 1)
+        }
         if let path = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
             let url = URL(fileURLWithPath: path, isDirectory: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("project-worktree-spacing.png"))
+            let menuHost = NSHostingView(rootView: RemoteMacConnectionsPopover(model: model, onAddRemoteMac: {})
+                .background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark))
+            let menuWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 165), styleMask: .borderless, backing: .buffered, defer: false)
+            menuWindow.contentView = menuHost
+            menuWindow.orderFront(nil)
+            defer { menuWindow.orderOut(nil) }
+            try await Task.sleep(for: .milliseconds(100))
+            menuHost.layoutSubtreeIfNeeded()
+            let menuBitmap = try #require(menuHost.bitmapImageRepForCachingDisplay(in: menuHost.bounds))
+            menuHost.cacheDisplay(in: menuHost.bounds, to: menuBitmap)
+            try menuBitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("remote-mac-menu.png"))
         }
     }
 
