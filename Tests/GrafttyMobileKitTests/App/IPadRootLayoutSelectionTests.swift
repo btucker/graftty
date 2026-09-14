@@ -1302,12 +1302,17 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// @spec IOS-6.14: The owner shall install committed-software-input
-    /// handlers on the sole `UITerminalView` responder. A non-owner shall
-    /// disable terminal keyboard eligibility without blocking Ghostty gestures.
+    /// @spec IOS-6.14: While the mobile client is the display owner, its pane
+    /// is focused, and the user allows the keyboard, the application shall
+    /// install committed-software-input handlers on the sole `UITerminalView`
+    /// responder; otherwise it shall disable keyboard eligibility without
+    /// blocking Ghostty gestures.
     func testTerminalKeyboardEligibilityRequiresDisplayOwnership() {
         XCTAssertFalse(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: false))
         XCTAssertTrue(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: true))
+        XCTAssertFalse(SingleSessionView.isTerminalKeyboardEligible(
+            clientIsOwner: true, keyboardAllowed: false
+        ))
     }
 
     func testOnlyFocusedPaneMayDismissTheSharedKeyboard() {

@@ -1574,7 +1574,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.13** GrafttyMobile shall expose software-keyboard chrome and keyboard responder wiring only while the mobile client is the current display owner. Followers and ownerless clients can take control, but showing a keyboard before ownership is confirmed sends no useful input and implies authority the client does not have.
 
-**IOS-6.14** The owner shall install committed-software-input handlers on the sole `UITerminalView` responder. A non-owner shall disable terminal keyboard eligibility without blocking Ghostty gestures.
+**IOS-6.14** While the mobile client is the display owner, its pane is focused, and the user allows the keyboard, the application shall install committed-software-input handlers on the sole `UITerminalView` responder; otherwise it shall disable keyboard eligibility without blocking Ghostty gestures.
 
 **IOS-6.15** When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
 
@@ -1591,6 +1591,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.21** When the user pinch-zooms an owner terminal, the application shall persist the resulting font size by host and worktree path, use it as the live base through ownership changes, and restore it for every terminal in that worktree when the worktree is reopened.
 
 **IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
+
+**IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
 
 ### IOS-7.x — Lifecycle
 
