@@ -72,6 +72,7 @@ struct SidebarView: View {
     /// state across projects.
     @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
 
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
@@ -82,7 +83,14 @@ struct SidebarView: View {
 
     private var owner: WorktreeOrigin { iconStore.owner }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
-    private var selectedLocalRepo: RepoEntry? { appState.repos.first { localProjectID($0) == navigation.selectedProjectID } }
+    private var orderedSidebarRepos: [RepoEntry] {
+        let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
+        return appState.repos.enumerated().sorted {
+            let left = positions[localProjectID($0.element), default: .max]
+            let right = positions[localProjectID($1.element), default: .max]
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
+    }
     private var activity: [SidebarActivityItem] {
         SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession)
             + remoteMacsModel.promotedWorktreesForRelay())
@@ -185,12 +193,14 @@ struct SidebarView: View {
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
         HStack(spacing: 0) {
-            ProjectNavigationRail(projects: projects, counts: attentionCounts, icons: projectIcons,
-                                  selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
-                                  collapsed: $navigation.railCollapsed, onSelect: selectProject,
-                                  onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
-                                  onMove: moveProject, menu: projectMenu)
-            Divider()
+            if showsProjectRail {
+                ProjectNavigationRail(projects: projects, counts: attentionCounts, icons: projectIcons,
+                                      selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
+                                      collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
+                                      onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
+                                      onMove: moveProject, menu: projectMenu)
+                Divider()
+            }
             VStack(spacing: 0) {
                 if let navigationError {
                     Text(navigationError).font(.caption).foregroundStyle(.red).padding(8)
@@ -209,10 +219,11 @@ struct SidebarView: View {
                     ScrollViewReader { proxy in
                         List {
                             if navigation.query.isEmpty {
-                                if let repo = selectedLocalRepo { repoSection(repo) }
-                                else if let selected = navigation.selectedProjectID {
-                                    remoteSection(projectFilter: selected)
-                                } else { Text("Choose a project").foregroundStyle(.secondary) }
+                                let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
+                                ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
+                                    repoSection(repo)
+                                }
+                                remoteSection(projectFilter: filter)
                             } else {
                                 remoteSection(projectFilter: nil, query: navigation.query)
                                 ForEach(appState.repos) { repo in
@@ -239,6 +250,11 @@ struct SidebarView: View {
                 HStack {
                     Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
                     Spacer()
+                    if !showsProjectRail {
+                        Button(navigation.showsAttention ? "Projects" : "Attention") {
+                            onNavigationIntent(); navigation.showsAttention.toggle(); navigation.query = ""
+                        }
+                    }
                     Button { showsRemoteManagement.toggle() } label: { Image(systemName: "desktopcomputer") }
                         .help("Manage Remote Macs")
                         .popover(isPresented: $showsRemoteManagement) { List { remoteSection(projectFilter: nil) }.frame(width: 340, height: 380) }
@@ -266,9 +282,16 @@ struct SidebarView: View {
                 navigation.selectedProjectID = SidebarProjection.projectID(row)
             }
         }
-        .onChange(of: navigation.railCollapsed) { _, collapsed in
-            let delta = collapsed ? -132.0 : 132.0
-            appState.sidebarWidth = max(collapsed ? 284 : 416, appState.sidebarWidth + delta)
+        .onChange(of: showsProjectRail) { _, enabled in
+            onNavigationIntent()
+            navigation.showsAttention = false
+            navigation.query = ""
+            let delta = navigation.railWidth + 1
+            appState.sidebarWidth = max(enabled ? delta + 220 : 220, appState.sidebarWidth + (enabled ? delta : -delta))
+        }
+        .onChange(of: navigation.railWidth) { previous, current in
+            guard showsProjectRail else { return }
+            appState.sidebarWidth = max(current + 221, appState.sidebarWidth + current - previous)
         }
         .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in

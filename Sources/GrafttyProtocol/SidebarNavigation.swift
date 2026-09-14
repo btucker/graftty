@@ -1,6 +1,25 @@
 import Foundation
 
 public enum SidebarLayoutPolicy {
+    public static let projectRailSettingKey = "showProjectRail"
+
+    public static func projectFilter(selectedID: String?, showsProjectRail: Bool) -> String? {
+        showsProjectRail ? selectedID : nil
+    }
+
+    public static func clampedRailWidth(_ width: Double) -> Double {
+        width.isFinite ? min(280, max(128, width)) : 196
+    }
+
+    public static func railWidth(collapsed: Bool, expandedWidth: Double) -> Double {
+        collapsed ? 64 : clampedRailWidth(expandedWidth)
+    }
+
+    public static func resizedRail(proposedWidth: Double, expandedWidth: Double) -> (collapsed: Bool, expandedWidth: Double) {
+        let collapsed = proposedWidth < 112
+        return (collapsed, clampedRailWidth(collapsed ? expandedWidth : proposedWidth))
+    }
+
     public static func railCollapsed(preference: Bool, isMobile: Bool, windowWidth: Double) -> Bool {
         preference || (isMobile && windowWidth < 1100)
     }

@@ -58,7 +58,12 @@ struct MainWindow: View {
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var attentionOpenGeneration: UInt64 = 0
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
+    @AppStorage("sidebar.mac.railWidth") private var projectRailExpandedWidth = 196.0
+    private var minimumSidebarWidth: Double {
+        (showsProjectRail ? SidebarLayoutPolicy.railWidth(collapsed: projectRailCollapsed, expandedWidth: projectRailExpandedWidth) + 1 : 0) + 220
+    }
     @State private var selectedRemoteWorktreePath: String?
     @State private var selectedRemotePaneSessionName: String?
     @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
@@ -131,8 +136,8 @@ struct MainWindow: View {
                 pendingAddWorktree: $pendingAddWorktree
             )
             .navigationSplitViewColumnWidth(
-                min: projectRailCollapsed ? 284 : 416,
-                ideal: max(projectRailCollapsed ? 284 : 416, appState.sidebarWidth),
+                min: minimumSidebarWidth,
+                ideal: max(minimumSidebarWidth, appState.sidebarWidth),
                 max: 676
             )
             // Deliberately do NOT call ignoresSafeArea here. The sidebar

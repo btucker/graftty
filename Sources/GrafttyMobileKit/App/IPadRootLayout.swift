@@ -15,6 +15,11 @@ public struct IPadRootLayout: View {
         SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
     }
 
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+    private var projectRailWidth: Double {
+        showsProjectRail ? SidebarLayoutPolicy.railWidth(collapsed: railIsCollapsed, expandedWidth: appState.sidebarNavigation.railExpandedWidth) + 1 : 0
+    }
+
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
     /// Shared with the compact path's `SingleSessionView` at the
@@ -184,8 +189,8 @@ public struct IPadRootLayout: View {
                 }
                 .publishSidebarWidth()
                 .navigationSplitViewColumnWidth(
-                    min: railIsCollapsed ? 284 : 416,
-                    ideal: max(railIsCollapsed ? 344 : 476, appState.sidebarWidth),
+                    min: projectRailWidth + 220,
+                    ideal: max(projectRailWidth + 280, appState.sidebarWidth),
                     max: 676
                 )
             } detail: {
@@ -1245,6 +1250,7 @@ private struct HostPresentationRefreshKey: Hashable {
 
 /// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 private struct HostMenu: View {
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     let selectedHost: Host?
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
@@ -1278,6 +1284,8 @@ private struct HostMenu: View {
             } label: {
                 Label("Add Host…", systemImage: "plus")
             }
+            Divider()
+            Toggle("Show project rail", isOn: $showsProjectRail)
         } label: {
             HStack(spacing: 4) {
                 Text(selectedHost?.label ?? "No host")

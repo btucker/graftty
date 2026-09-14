@@ -12,13 +12,20 @@ public struct SidebarAttentionList: View {
         self.navigation = navigation; self.items = items; self.projects = projects; self.icons = icons; self.onOpen = onOpen
     }
     public var body: some View {
+        GeometryReader { geometry in
+            content.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Attention").font(.headline).padding(.horizontal, 12)
             TextField("Find a request or project", text: $navigation.query)
                 .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-            Picker("Activity", selection: $navigation.filter) {
-                ForEach(SidebarActivityFilter.allCases, id: \.self) { filter in Text(filter.title).tag(filter) }
-            }.pickerStyle(.segmented).padding(.horizontal, 10)
+            ViewThatFits(in: .horizontal) {
+                filterPicker.pickerStyle(.segmented).fixedSize()
+                filterPicker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 10)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     let pending = navigation.filter.apply(to: items, query: navigation.query)
@@ -43,6 +50,12 @@ public struct SidebarAttentionList: View {
             }.scrollPosition(id: Binding(get: { navigation.scrollAnchors["attention"] }, set: { navigation.scrollAnchors["attention"] = $0 }))
         }.padding(.top, 12)
     }
+    private var filterPicker: some View {
+        Picker("Filter attention", selection: $navigation.filter) {
+            ForEach(SidebarActivityFilter.allCases, id: \.self) { filter in Text(filter.title).tag(filter) }
+        }.labelsHidden().fixedSize(horizontal: false, vertical: true)
+    }
+
     private func row(_ item: SidebarActivityItem, recent: Bool) -> some View {
         let project = projects.first { $0.id == item.projectID }
         return Button { onOpen(item) } label: {
@@ -56,6 +69,7 @@ public struct SidebarAttentionList: View {
                 Text(item.worktreeName).font(.callout).lineLimit(1)
                 Text(item.title).font(.caption).foregroundStyle(recent ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
                 .background(.secondary.opacity(recent ? 0.06 : 0.12), in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
             .disabled(project?.isAvailable == false)

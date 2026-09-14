@@ -47,6 +47,7 @@ public struct WorktreeListContent: View {
     @State private var projectIcons: [String: Data] = [:]
     @State private var iconRevisions: [String: String] = [:]
     @State private var orderMutationID: UUID?
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
     @State private var restoringWorktreeScroll = false
     @State private var restoredWorktreeProjectID: String?
@@ -230,6 +231,7 @@ public struct WorktreeListContent: View {
                 }
             }
         }
+        .onChange(of: showsProjectRail) { _, _ in setNavigationMode(showsAttention: false) }
         .confirmationDialog(
             pendingDelete?.action.dialogTitle ?? "",
             isPresented: Binding(
@@ -485,15 +487,36 @@ public struct WorktreeListContent: View {
         let projects = projects(for: worktrees)
         let items = SidebarProjection.activity(worktrees)
         let counts = Dictionary(grouping: items.filter(\.needsAttention), by: \.projectID).mapValues(\.count)
-        if horizontalSizeClass == .regular {
+        if !showsProjectRail {
+            VStack(spacing: 0) {
+                HStack {
+                    if !navigation.showsAttention { Text("Worktrees").font(.headline) }
+                    Spacer()
+                    Button(navigation.showsAttention ? "Worktrees" : "Attention") {
+                        setNavigationMode(showsAttention: !navigation.showsAttention)
+                    }
+                }.padding(12)
+                if navigation.showsAttention {
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons) { item in
+                        openAttention(item, worktrees: worktrees)
+                    }
+                } else {
+                    TextField("Find any project or worktree", text: $navigation.query)
+                        .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
+                    worktreeList(worktrees.filter { SidebarInteractionPolicy.matches($0, query: navigation.query) })
+                }
+            }
+        } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
                 ProjectNavigationRail(projects: projects, counts: counts, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
                 }, set: { navigation.railCollapsed = $0 }),
+                                      expandedWidth: $navigation.railExpandedWidth,
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
+                                      selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                       onSelect: { selectProject($0, worktrees: worktrees) },
                                       onAttention: { setNavigationMode(showsAttention: true) },
                                       onMove: moveProject)
@@ -525,7 +548,7 @@ public struct WorktreeListContent: View {
                                     Spacer()
                                     if !project.isAvailable { Text("Offline").font(.caption) }
                                     else if let count = counts[project.id] { Text(String(count)).foregroundStyle(.orange) }
-                                }.frame(minHeight: 44)
+                                }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                         }.onMove { offsets, destination in
                             guard sidebarSnapshot?.supportsNavigationEditing == true, let source = offsets.first,
@@ -715,9 +738,10 @@ public struct WorktreeListContent: View {
     }
 
     private func worktreeList(_ worktrees: [WorktreePanes]) -> some View {
-        let scrollKey = navigation.query.isEmpty ? navigation.selectedProjectID : nil
+        let scrollKey = navigation.query.isEmpty ? SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail) : nil
         return ScrollViewReader { proxy in
                     List {
+                        if !showsProjectRail { remoteMacConnectionsSection }
                         ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                             Section {
                                 let projectID = group.worktrees.first.map(SidebarProjection.projectID)

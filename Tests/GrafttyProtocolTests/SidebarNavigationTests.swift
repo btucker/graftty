@@ -3,6 +3,14 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("""
+@spec LAYOUT-2.50: While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
+""")
+    func singleSidebarShowsAllProjects() {
+        #expect(SidebarLayoutPolicy.projectFilter(selectedID: "one", showsProjectRail: false) == nil)
+        #expect(SidebarLayoutPolicy.projectFilter(selectedID: "one", showsProjectRail: true) == "one")
+    }
+
     @Test("@spec LAYOUT-2.38: When projects are reordered, the application shall preserve their manual order across refreshes, retain unavailable projects, and append newly discovered projects.")
     func projectOrder() {
         var order = SidebarProjectOrder(ids: ["local-a", "remote-b", "local-c"])

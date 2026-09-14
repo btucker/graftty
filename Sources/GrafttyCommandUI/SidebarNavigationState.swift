@@ -12,12 +12,20 @@ public final class SidebarNavigationState {
     public var scrollAnchors: [String: String] = [:]
     public var compactShowsProjects = true
     public var railCollapsed: Bool { didSet { defaults.set(railCollapsed, forKey: prefix + ".collapsed") } }
+    public var railExpandedWidth: Double {
+        didSet { defaults.set(railExpandedWidth, forKey: prefix + ".railWidth") }
+    }
+    public var railWidth: Double {
+        SidebarLayoutPolicy.railWidth(collapsed: railCollapsed, expandedWidth: railExpandedWidth)
+    }
     public private(set) var history: SidebarRecentHistory
     private let defaults: UserDefaults
     private let prefix: String
     public init(prefix: String, defaults: UserDefaults = .standard, collapsed: Bool = false) {
         self.prefix = prefix; self.defaults = defaults
         railCollapsed = defaults.object(forKey: prefix + ".collapsed") == nil ? collapsed : defaults.bool(forKey: prefix + ".collapsed")
+        railExpandedWidth = SidebarLayoutPolicy.clampedRailWidth(
+            (defaults.object(forKey: prefix + ".railWidth") as? Double) ?? 196)
         history = defaults.data(forKey: prefix + ".recent").flatMap { try? JSONDecoder().decode(SidebarRecentHistory.self, from: $0) } ?? .init()
     }
     public func opened(_ item: SidebarActivityItem) {
