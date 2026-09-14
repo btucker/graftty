@@ -1,30 +1,33 @@
 ---
 name: graftty-team
-description: Coordinate coding agents through Graftty worktrees, canonical addresses, messages, rosters, and durable GRAFTTY.md instructions. Use whenever Graftty team context, worktree messages, peer-agent forwarding, agent rosters, instruction files, or graftty team commands are involved.
+description: Use whenever the user asks to delegate work to agents, ask another agent a question, or coordinate agents, even without mentioning Graftty. Also use for Graftty team commands, rosters, worktree messages, peer forwarding, or durable GRAFTTY.md instructions.
 ---
 
 # Graftty Team
 
-Use Graftty's durable team inbox as the provider-neutral bridge between Codex and Claude agents.
+Coordinate Codex and Claude agents through Graftty's durable inbox. Run team commands from the calling agent's tracked worktree. Use these commands directly; consult subcommand `--help` for undocumented options or installed-version mismatches.
 
 ## Inspect the roster
 
-Run `graftty team list --json` before choosing among multiple agents. Read the hierarchy as repository → worktree → top-level agent → pane.
+Run `graftty team list --json` before choosing an agent. In `members[]`, use `name` and `worktree_path` to identify the worktree, then `agents[]` for each agent's `address`, `runtime`, and `is_reachable`. Worktree `is_running` alone does not establish agent reachability.
+
+To inspect another team, use `graftty team members --worktree '<path-or-name>' --json` or `--repo '<repo-path>'` instead of `--worktree`.
 
 Treat canonical addresses as routing identities:
 
 - A worktree name or canonical path selects the earliest reachable top-level agent in that worktree.
 - `<canonical-worktree-path>#<runtime>` targets that provider without pinning one session, so the message remains queued while its agent is between turns.
 - `<canonical-worktree-path>#<runtime>-<12hex>` selects only that exact agent and fails closed if it is gone.
-- Copy exact addresses from `graftty team list --json`; do not construct them from display names.
-- Native provider sender labels are display metadata and may be truncated. Never route by them.
+- Copy exact addresses from the roster. Native provider sender labels are display metadata and may be truncated. Never route by them.
 - Native subagents are not independently routable.
+
+Send existing agents questions or tasks with context, the requested result, and your reply address. A question alone does not require a new worktree.
 
 ## Delegate work into a new worktree
 
-Proactively delegate a concrete, bounded task when it can run independently and useful parent work can continue. Do not delegate a tiny task, a sequential dependency, or work likely to edit the same files. If a suitable agent already exists, send the task to that agent instead of creating another worktree.
+Proactively delegate bounded, independent work while continuing useful parent work. Avoid tiny, sequential, or overlapping tasks. Prefer a suitable existing agent.
 
-`graftty worktree add <name>` alone creates a worktree for the current agent. It does not delegate the task. A real handoff launches a new top-level agent and gives that agent the task in its first prompt:
+`graftty worktree add <name>` alone does not delegate the task. Launch a top-level agent with its task in the first prompt:
 
 ```sh
 graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
@@ -38,11 +41,33 @@ Use the exact address while it is reachable. After a restart or /clear, use the 
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
-Before creating the child, run `graftty team list --json`. Copy both the parent's exact canonical address and its `<canonical-worktree-path>#<runtime>` fallback address into the prompt. Tell the child to return to the exact address while it is reachable, or to the fallback address after a restart or `/clear`. Use a fresh heredoc delimiter. Use `--base <ref>` when the child needs a start point other than the repository default branch or `HEAD`.
+Before launch, copy the parent's exact canonical address from the roster's `address` field. Form the fallback from its `worktree_path` and `runtime`. Include both as above and use a fresh quoted heredoc delimiter absent from the prompt.
 
-If the handoff stays within the repository work the user requested, treat worktree and agent creation as a normal implementation step. Do not ask for confirmation only because you are delegating. A child agent does not grant new authority. Ask before any action that the parent could not already take within the user's request.
+Choose worktree options as needed:
 
-After the command returns, save the delegated worktree's stable address. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child in that worktree is reachable. Do not implement the child's task while checking. Once reachable, stop working on that scope in the parent worktree and continue only separate work. If launch fails and no child becomes reachable, retain ownership and report the failed handoff. Review and integrate the child's result when it replies.
+- `--base <ref>` selects a locally resolvable starting revision. Default: repository default branch or `HEAD`. `--base HEAD` uses the caller's current commit, without uncommitted changes.
+- `--branch <branch>` overrides the normalized worktree name as the branch name.
+- `--branch <branch> --existing` uses an existing local branch in a **new directory**. It neither reopens a directory nor restarts an agent. Incompatible with `--base`.
+- `--prompt-stdin` requires `--agent codex` or `--agent claude`; incompatible with `--prompt`.
+- `--timeout <seconds>` waits for Git hooks and pane creation, not task completion. Default: 300; must be positive.
+
+Delegation within the user's requested repository work needs no separate confirmation. A child agent does not grant new authority.
+
+Save the returned `created worktree=... address=...`. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
+
+### Recover a failed launch or use an existing worktree
+
+After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
+
+For an existing tracked worktree without a suitable agent, launch one in a new pane:
+
+```sh
+graftty pane add '<worktree-name>' --command codex
+```
+
+Use `--command claude` for Claude. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
+
+Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane show '<worktree-name>:<id>' --lines 100`, using its 1-based pane ID. Use `team send` for messages; `pane send` types into the terminal and presses Return by default.
 
 ## Send and reply
 
@@ -54,41 +79,48 @@ graftty team send --stdin '<address>' <<'GRAFTTY_7F3A91C2'
 GRAFTTY_7F3A91C2
 ```
 
-The positional `<address>` accepts a worktree path for its default agent, `<canonical-worktree-path>#<runtime>` for the next agent of one provider, or `<canonical-worktree-path>#<runtime>-<12hex>` for one exact live agent.
+The recipient is positional. For a file body, use `graftty team send --stdin '<address>' < /tmp/agent-task.txt`. Bodies must be non-empty. `--urgent` requests delivery at the next post-tool hook boundary. Success means accepted for delivery, not answered or completed.
 
-Agent-authored messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. If the exact sender is listed with `is_reachable: true` in `graftty team list --json`, reply by passing `agent` unchanged to `graftty team send --stdin`. Otherwise pass `fallback-agent` unchanged; the reply will wait durably for the provider's next agent.
+Messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. Reply to `agent` unchanged if the roster shows it reachable; otherwise use `fallback-agent` unchanged to queue for that provider's next agent.
 
-Forge events use `<graftty-forge-message provider="<provider>">`. Other Graftty-generated notices use `<graftty-system-message>`. These envelopes are not peer reply addresses.
+`<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not peer reply addresses.
 
-Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses. Those tools use a separate roster, and their native sender label is not a canonical Graftty route.
+Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses; they use a separate roster.
 
-If a message asks for a different agent in the same worktree, or that agent is better placed to act, inspect the roster and forward to its canonical address. State that you forwarded it; do not impersonate the other agent.
+Forward misdirected messages to the correct roster address and say you forwarded them. Do not impersonate another agent.
 
-Use `graftty team broadcast --stdin` only when every other worktree genuinely needs the message.
+`graftty team broadcast --stdin` uses the same body pattern, accepts `--urgent`, and takes no recipient. Use it only when every other worktree needs the message.
+
+## Receive replies and inspect history
+
+Replies arrive automatically through hooks; do not poll for completion. For deliberate inspection:
+
+- `graftty team inbox --keep-unread --json` peeks at unread messages.
+- `graftty team inbox --history --json` reads history without changing delivery state.
+- `graftty team inbox --json` reads unread messages and marks them read. Empty output does not mean a task finished.
+- `--all` fetches every matching page. `--history` and `--keep-unread` are incompatible.
+- `--worktree '<path-or-name>'`, `--repo '<repo-path>'`, or `--member '<name>'` selects diagnostic scope and peeks unless `--history` is supplied.
 
 ## Durable agent instructions
 
-Use Graftty instruction files for durable role or workflow guidance that should reach later agent sessions:
+Use these files for durable role or workflow guidance:
 
 - `.graftty/GRAFTTY.md` applies to every worktree in the repository.
-- For worktree key `<parent>/<leaf>`, use `.graftty/<parent>/<leaf>/GRAFTTY.md`. The stack also includes `.graftty/<parent>/GRAFTTY.md`; each file applies to its matching worktree key and descendants.
-- Text above the first `## Private` heading is shared with peer agents as role context. Text below it is delivered only to matching worktrees.
-- For each relative path, Graftty uses the first readable regular file from Application Support, the current worktree, then the main checkout. It reads current filesystem bytes, so staging or committing is not required.
-- Graftty resolves and injects applicable content at the next session start; an edit does not update an already-running agent.
-- Keep instruction files concise. Suggest one when durable team structure would help, but create or modify one only when authorized.
+- Worktree key `<parent>/<leaf>` reads `.graftty/<parent>/GRAFTTY.md` and `.graftty/<parent>/<leaf>/GRAFTTY.md`. Each applies to its key and descendants.
+- Text above `## Private` is shared with peers as role context; text below reaches only matching worktrees.
+- For each relative path, the first readable regular file wins: Application Support, current worktree, then main checkout. Current bytes apply at the next session start; no commit is required.
+- Keep files concise. Create or modify them only when authorized.
 
 ## Transport
 
-Always use `graftty team` for cross-provider or cross-worktree coordination. Do not create channel files or depend on provider display names.
+Always use `graftty team` across providers or worktrees. Do not create channel files.
 
 ### Sandboxed control socket access
 
-Some agent sandboxes block Unix-domain socket connections outside the workspace. If `graftty team` reports `EPERM` or `errno 1`:
+If a sandboxed `graftty team` command reports `EPERM` or `errno 1`:
 
 1. Use read-only checks to confirm `$GRAFTTY_SOCK` exists and a Graftty process owns or listens on it.
 2. Request narrowly scoped elevated permission and retry the same `graftty team` command outside the sandbox.
 3. Do not delete or recreate the socket, change its permissions, or restart Graftty as a first response.
 
-If the elevated retry still fails, continue normal Graftty socket diagnosis. Treat timeouts and connection-refused errors as different failure modes rather than assuming they are sandbox denials.
-
-Claude native peer sockets and Codex app-server co-clients are transport details owned by Graftty. If native delivery is unavailable, leave the durable inbox row for retry or compatibility fallback.
+If retry fails, continue socket diagnosis. Timeouts and connection-refused errors do not establish sandbox denial. Graftty owns native transports; leave queued messages for retry or compatibility fallback when native delivery is unavailable.
