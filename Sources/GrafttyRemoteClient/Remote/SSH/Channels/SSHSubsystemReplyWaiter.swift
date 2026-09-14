@@ -1,43 +1,72 @@
 import Foundation
 import NIOConcurrencyHelpers
 
-/// Coordinates the reply to an SSH subsystem request.
+typealias SSHSubsystemReplyWaiter = SSHReplyWaiter<Void>
+
+/// Coordinates an SSH reply or child-channel open.
 ///
 /// Cancellation may run before the async operation registers its continuation.
 /// Keeping an explicit terminal state lets the later registration observe that
 /// cancellation (or a child-channel close) and resume immediately instead of
 /// leaving an unchecked continuation suspended forever.
-final class SSHSubsystemReplyWaiter: @unchecked Sendable {
+final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
     typealias ScheduleTimeout = @Sendable (
         @escaping @Sendable () -> Void
     ) -> @Sendable () -> Void
 
     private enum State {
         case idle
-        case waiting(CheckedContinuation<Void, Error>)
-        case finished(Result<Void, Error>)
+        case waiting(CheckedContinuation<Value, Error>)
+        case finished(Result<Value, Error>)
     }
 
     private let lock = NIOLock()
     private var state: State = .idle
     private var cancelTimeout: (@Sendable () -> Void)?
 
+    /// The WebRTC transport uses NIOAsyncTestingEventLoop, whose scheduled
+    /// clock does not advance with elapsed time. Network deadlines must use
+    /// Swift's clock instead of that event loop's scheduleTask.
+    func wait(
+        timeout: Duration,
+        timeoutError: any Error,
+        onAbort: @escaping @Sendable () -> Void,
+        onCancel: (@Sendable () -> Void)? = nil,
+        start: @escaping @Sendable () -> Void
+    ) async throws -> Value {
+        try await wait(
+            scheduleTimeout: { callback in
+                let task = Task {
+                    do { try await Task.sleep(for: timeout) }
+                    catch { return }
+                    callback()
+                }
+                return { task.cancel() }
+            },
+            timeoutError: timeoutError,
+            onAbort: onAbort,
+            onCancel: onCancel,
+            start: start
+        )
+    }
+
     func wait(
         scheduleTimeout: @escaping ScheduleTimeout,
         timeoutError: any Error,
         onAbort: @escaping @Sendable () -> Void,
+        onCancel: (@Sendable () -> Void)? = nil,
         start: @escaping @Sendable () -> Void
-    ) async throws {
+    ) async throws -> Value {
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await withCheckedThrowingContinuation { continuation in
-                let completedResult: Result<Void, Error>? = lock.withLock {
+            return try await withCheckedThrowingContinuation { continuation in
+                let completedResult: Result<Value, Error>? = lock.withLock {
                     switch state {
                     case .idle:
                         state = .waiting(continuation)
                         return nil
                     case .waiting:
-                        return Result<Void, Error>.failure(
+                        return Result<Value, Error>.failure(
                             CancellationError()
                         )
                     case .finished(let result):
@@ -70,18 +99,18 @@ final class SSHSubsystemReplyWaiter: @unchecked Sendable {
             guard self?.finish(.failure(CancellationError())) == true else {
                 return
             }
-            onAbort()
+            (onCancel ?? onAbort)()
         }
     }
 
     @discardableResult
-    func finish(_ result: Result<Void, Error>) -> Bool {
+    func finish(_ result: Result<Value, Error>) -> Bool {
         let completion: (
-            continuation: CheckedContinuation<Void, Error>?,
+            continuation: CheckedContinuation<Value, Error>?,
             cancelTimeout: (@Sendable () -> Void)?,
             didFinish: Bool
         ) = lock.withLock {
-            let continuation: CheckedContinuation<Void, Error>?
+            let continuation: CheckedContinuation<Value, Error>?
             switch state {
             case .idle:
                 continuation = nil

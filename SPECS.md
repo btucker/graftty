@@ -2240,6 +2240,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.5** While Graftty uses non-trickle SDP signaling, the application shall configure both peers to gather ICE candidates once so offer and answer generation can finish when the initial candidates have been collected.
 
+**REMOTE-11.6** If an SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
+
+**REMOTE-11.7** When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation while preserving the shared parent transport and sibling channels.
+
+**REMOTE-11.8** When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.
+
+**REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.

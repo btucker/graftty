@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import GrafttyProtocol
 import NIO
 import NIOEmbedded
 import Testing
@@ -7,6 +9,29 @@ import WebRTC
 
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
 struct SSHNIOTransportUnitTests {
+
+    @Test("@spec REMOTE-11.8: When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.")
+    func closingParentChannelFailsRemoteConnection() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let publicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: key.publicKey.rawRepresentation
+        )
+        let connection = RemoteHostConnection(
+            clientKey: key,
+            expectedHostFingerprint: .init(of: publicKey)
+        )
+        _ = try await connection.createOffer()
+        let transport = try #require(await connection.sshTransportForTesting)
+        try await transport.channel.close().get()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while !(await connection.state.isTerminal), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await connection.state.isTerminal)
+        #expect(await connection.sshTransportForTesting == nil)
+        await connection.close()
+        await transport.close()
+    }
 
     @Test("@spec SSH-1.1: When `RTCDataChannel.sendData` returns false mid-loop in `OutboundRelayHandler.write` (SCTP backpressure on a multi-slice write), the handler shall close both the DataChannel AND the NIO embedded channel — the peer cannot safely continue interpreting bytes after a partial SSH frame.")
     func partialWriteAbortsAndClosesChannel() async throws {

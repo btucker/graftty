@@ -151,13 +151,7 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
                 wantReply: true
             )
             try await replyWaiter.wait(
-                scheduleTimeout: { callback in
-                    let scheduled = child.eventLoop.scheduleTask(
-                        in: self.subsystemReplyTimeout,
-                        callback
-                    )
-                    return { scheduled.cancel() }
-                },
+                timeout: .nanoseconds(subsystemReplyTimeout.nanoseconds),
                 timeoutError: ClientError.timedOut,
                 onAbort: {
                     child.close(promise: nil)
