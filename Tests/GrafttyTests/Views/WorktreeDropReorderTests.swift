@@ -30,13 +30,13 @@ struct WorktreeDropReorderTests {
 
         let changed = WorktreeDropReorder.apply(
             TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[2].id),
-            targetWorktreeID: repo.worktrees[0].id,
+            targetWorktreeID: repo.worktrees[1].id,
             placement: .before,
             to: &state
         )
 
         #expect(changed)
-        #expect(state.repos[0].worktrees.map(\.branch) == ["b", "main", "a"])
+        #expect(state.repos[0].worktrees.map(\.branch) == ["main", "b", "a"])
     }
 
     @Test("Dropping a worktree after a lower sibling moves it downward")
@@ -49,14 +49,14 @@ struct WorktreeDropReorderTests {
         var state = AppState(repos: [repo])
 
         let changed = WorktreeDropReorder.apply(
-            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[0].id),
+            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[1].id),
             targetWorktreeID: repo.worktrees[2].id,
             placement: .after,
             to: &state
         )
 
         #expect(changed)
-        #expect(state.repos[0].worktrees.map(\.branch) == ["a", "b", "main"])
+        #expect(state.repos[0].worktrees.map(\.branch) == ["main", "b", "a"])
     }
 
     @Test("@spec LAYOUT-2.34: If a user drops a worktree row onto a worktree with a different virtual-folder parent, then the application shall reject the reorder so persisted flat order cannot disagree with the displayed hierarchy.")

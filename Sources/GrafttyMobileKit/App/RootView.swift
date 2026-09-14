@@ -103,6 +103,9 @@ public struct RootView: View {
                         host: host,
                         coordinator: coordinator,
                         onSelect: { wt in
+                            iPadAppState.selectedHostId = host.id
+                            iPadAppState.selectedWorktreePath = wt.path
+                            iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
                             switch MobileNavigationDecision.decide(layout: wt.layout) {
                             case let .session(sessionName, title):
                                 navigationPath.append(SessionStep(
@@ -116,6 +119,9 @@ public struct RootView: View {
                             }
                         },
                         onSelectPaneWithWorktree: { worktree, leaf in
+                            iPadAppState.selectedHostId = host.id
+                            iPadAppState.selectedWorktreePath = worktree.path
+                            iPadAppState.focusedPaneId = leaf.sessionName
                             if case let .session(sessionName, title) =
                                 MobileNavigationDecision.decide(paneRow: leaf) {
                                 navigationPath.append(SessionStep(
@@ -125,7 +131,8 @@ public struct RootView: View {
                                     title: title
                                 ))
                             }
-                        }
+                        },
+                        navigation: iPadAppState.sidebarNavigation
                     )
                 }
                 .navigationDestination(for: WorktreeStep.self) { step in

@@ -389,6 +389,10 @@ public final class RemoteConnectionCoordinator {
     /// Returns the latest authenticated worktree snapshot, establishing one
     /// long-lived panes-state-v2 subscription on first use. V2 includes the
     /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.
+    public func sidebarSnapshot(for host: Host) async -> SidebarSnapshot? {
+        await panesStores[host.id]?.sidebar
+    }
+
     public func worktreePanes(
         for host: Host,
         onProgress: RemoteWorktreeLoadProgress? = nil

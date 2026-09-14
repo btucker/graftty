@@ -29,14 +29,9 @@ struct LayoutTodo {
     func layout_1_4() async throws { }
 
     @Test("""
-@spec LAYOUT-2.1: The sidebar shall display an ordered list of repositories, each expandable to show its worktrees.
+@spec LAYOUT-2.1: While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
 """, .disabled("not yet implemented"))
     func layout_2_1() async throws { }
-
-    @Test("""
-@spec LAYOUT-2.2: Each repository entry shall be collapsible and expandable by clicking its disclosure indicator.
-""", .disabled("not yet implemented"))
-    func layout_2_2() async throws { }
 
     @Test("""
 @spec LAYOUT-2.3: When a repository is expanded, the sidebar shall display the repository's own working directory as the first child entry, labeled by its current branch name.

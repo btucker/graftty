@@ -11,6 +11,9 @@ import SwiftUI
 /// split tree supplied by the Mac.
 public struct IPadRootLayout: View {
     public static let paintsTerminalBackgroundBehindSidebar = true
+    private var railIsCollapsed: Bool {
+        SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
+    }
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
@@ -127,7 +130,10 @@ public struct IPadRootLayout: View {
                                     host: host
                                 ),
                             onSelect: { wt in selectWorktree(wt) },
-                            onSelectPane: { leaf in selectPane(leaf) },
+                            onSelectPaneWithWorktree: { worktree, leaf in
+                                selectWorktree(worktree)
+                                selectPane(leaf)
+                            },
                             onListChanged: { list in
                                 Self.onWorktreeListChanged(
                                     appState: appState,
@@ -137,7 +143,10 @@ public struct IPadRootLayout: View {
                                 resolveLegacyMobileSplit(in: list)
                                 applyPendingMobileCreatedFocus(in: list)
                             },
-                            externalRefreshToken: worktreeListRefreshToken
+                            externalRefreshToken: worktreeListRefreshToken,
+                            navigation: appState.sidebarNavigation,
+                            navigationWindowWidth: appState.navigationWindowWidth,
+                            remoteSidebarProvider: { await coordinator.sidebarSnapshot(for: host) }
                         )
                     } else {
                         Spacer()
@@ -172,9 +181,9 @@ public struct IPadRootLayout: View {
                 }
                 .publishSidebarWidth()
                 .navigationSplitViewColumnWidth(
-                    min: 220,
-                    ideal: appState.sidebarWidth,
-                    max: 480
+                    min: railIsCollapsed ? 284 : 416,
+                    ideal: max(railIsCollapsed ? 344 : 476, appState.sidebarWidth),
+                    max: 676
                 )
             } detail: {
                 IPadDetailColumn(
@@ -199,6 +208,10 @@ public struct IPadRootLayout: View {
         // (and other built-in chrome) picks contrast that matches the
         // sidebar text color rather than the OS-level appearance.
         .preferredColorScheme(appState.theme.isDark ? .dark : .light)
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear { appState.navigationWindowWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, width in appState.navigationWindowWidth = width }
+        })
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }

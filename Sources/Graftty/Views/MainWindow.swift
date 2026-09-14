@@ -57,6 +57,8 @@ struct MainWindow: View {
     @State private var isShowingAddRemoteMacSheet = false
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
+    @State private var attentionOpenGeneration: UInt64 = 0
+    @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
     @State private var selectedRemoteWorktreePath: String?
     @State private var selectedRemotePaneSessionName: String?
     @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
@@ -109,6 +111,7 @@ struct MainWindow: View {
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
+                onOpenAttention: openAttentionTarget,
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -127,9 +130,9 @@ struct MainWindow: View {
                 pendingAddWorktree: $pendingAddWorktree
             )
             .navigationSplitViewColumnWidth(
-                min: 180,
-                ideal: appState.sidebarWidth,
-                max: 400
+                min: projectRailCollapsed ? 284 : 416,
+                ideal: max(projectRailCollapsed ? 284 : 416, appState.sidebarWidth),
+                max: 676
             )
             // Deliberately do NOT call ignoresSafeArea here. The sidebar
             // respects the title-bar safe area so its content begins below
@@ -168,6 +171,7 @@ struct MainWindow: View {
                             focusedPaneSlotID: focusedRemoteTerminalID,
                             theme: terminalManager.theme,
                             onFocusTerminal: { terminalID in
+                                attentionOpenGeneration &+= 1
                                 suppressPendingRemoteSplitFocus()
                                 if let sessionName = remoteSessionName(
                                     for: terminalID
@@ -225,6 +229,7 @@ struct MainWindow: View {
                         focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
                         theme: terminalManager.theme,
                         onFocusTerminal: { terminalID in
+                            attentionOpenGeneration &+= 1
                             // Persist the focus change on the model BEFORE
                             // routing to libghostty: `TERM-2.3`'s focus-
                             // restore after a worktree switch reads
@@ -588,8 +593,59 @@ struct MainWindow: View {
     /// Selects a worktree *and* focuses a specific pane within it. Used by
     /// the sidebar's per-pane title rows so clicking "claude" under a
     /// worktree both activates that worktree and focuses Claude's pane.
+    private func openAttentionTarget(_ item: SidebarActivityItem) async -> Bool {
+        attentionOpenGeneration &+= 1
+        let generation = attentionOpenGeneration
+        if let route = remoteMacsModel.relayRouter.resolveWorktree(item.worktreeID),
+           let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == route.identity }) {
+            guard let worktree = remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path }),
+                  worktree.state.hasOnDiskWorktree else { return false }
+            if worktree.state == .closed {
+                guard await remoteMacsModel.openWorktree(on: mac, worktreePath: route.path) == .ok else { return false }
+                for _ in 0..<20 {
+                    guard !Task.isCancelled, generation == attentionOpenGeneration else { return false }
+                    if remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil { break }
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+            }
+            guard generation == attentionOpenGeneration,
+                  remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil else { return false }
+            _ = remoteMacsModel.promotedWorktreesForRelay()
+            if let paneID = item.paneID {
+                guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
+                selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
+            } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
+            if let occurrence = item.occurrence {
+                let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.supportsNavigationEditing == true
+                let request: WorktreeManagementRequest = supportsExact
+                    ? .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
+                    : .acknowledge(worktreeID: item.worktreeID, paneID: item.paneID)
+                guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(request) else { return false }
+                if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
+            }
+            return true
+        }
+        guard let worktree = appState.worktree(forPath: item.worktreeID), worktree.state.hasOnDiskWorktree else { return false }
+        if let paneID = item.paneID {
+            guard let slot = worktree.paneSlot(forSessionName: paneID) else { return false }
+            selectPane(worktree.path, slot, acknowledging: false)
+        } else { selectWorktree(worktree.path, acknowledging: false) }
+        guard appState.selectedWorktreePath == item.worktreeID,
+              let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
+              !active.splitTree.allLeaves.isEmpty else { return false }
+        if let occurrence = item.occurrence {
+            SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
+        }
+        return true
+    }
+
     private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID) {
-        selectWorktree(worktreePath)
+        attentionOpenGeneration &+= 1
+        selectPane(worktreePath, terminalID, acknowledging: true)
+    }
+
+    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) {
+        selectWorktree(worktreePath, acknowledging: acknowledging)
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
@@ -609,6 +665,11 @@ struct MainWindow: View {
     }
 
     private func selectWorktree(_ path: String) {
+        attentionOpenGeneration &+= 1
+        selectWorktree(path, acknowledging: true)
+    }
+
+    private func selectWorktree(_ path: String, acknowledging: Bool) {
         // In-flight rows have no surfaces to focus and no PR / stats
         // to refresh — let the user keep their current worktree until
         // the owning flow finalizes (`.creating → .running`, or
@@ -704,7 +765,7 @@ struct MainWindow: View {
                     // clean slate once they're looking at the worktree.
                     // Same `acknowledgeAttention()` the notification-
                     // activation path uses, so the two can't drift.
-                    appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention()
+                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
                 }
             }
         }
@@ -782,6 +843,11 @@ struct MainWindow: View {
     }
 
     private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) {
+        attentionOpenGeneration &+= 1
+        selectRemoteWorktree(remoteMac, worktreePath: worktreePath, acknowledging: true)
+    }
+
+    private func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
         let identity = RemoteMacIdentity(remoteMac)
         if remoteMacsModel.worktreePanesByRemote[identity]?.first(where: {
             $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
@@ -847,12 +913,12 @@ struct MainWindow: View {
                 }
             }
         }
-        Task {
+        if acknowledging { Task {
             await remoteMacsModel.acknowledge(
                 on: remoteMac,
                 worktreePath: worktreePath
             )
-        }
+        } }
     }
 
     private func beginAddRemoteWorktree(
@@ -933,6 +999,11 @@ struct MainWindow: View {
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {
+        attentionOpenGeneration &+= 1
+        selectRemotePane(remoteMac, worktreePath: worktreePath, sessionName: sessionName, acknowledging: true)
+    }
+
+    private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String, acknowledging: Bool) {
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)
@@ -977,13 +1048,13 @@ struct MainWindow: View {
             worktreePath: worktreePath,
             preferredSessionName: sessionName
         )
-        Task {
+        if acknowledging { Task {
             await remoteMacsModel.acknowledge(
                 on: remoteMac,
                 worktreePath: worktreePath,
                 paneSessionName: sessionName
             )
-        }
+        } }
     }
 
     private func activateRemoteNotification(_ event: RemoteNotificationEvent) {

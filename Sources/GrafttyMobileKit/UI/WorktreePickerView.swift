@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GrafttyProtocol
+import GrafttyCommandUI
 import SwiftUI
 
 /// Thin wrapper around `WorktreeListContent` for the compact (iPhone) path.
@@ -7,6 +8,7 @@ import SwiftUI
 /// the `onSelect` / `onSelectPane` callbacks. The iPad path uses
 /// `WorktreeListContent` directly with different callbacks.
 public struct WorktreePickerView: View {
+    public var navigation: SidebarNavigationState? = nil
     public let host: Host
     public let theme: GhosttyThemeColors?
     public let coordinator: RemoteConnectionCoordinator
@@ -21,8 +23,10 @@ public struct WorktreePickerView: View {
         theme: GhosttyThemeColors? = nil,
         coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void
+        onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
+        navigation: SidebarNavigationState? = nil
     ) {
+        self.navigation = navigation
         self.host = host
         self.theme = theme
         self.coordinator = coordinator
@@ -36,8 +40,10 @@ public struct WorktreePickerView: View {
         theme: GhosttyThemeColors? = nil,
         coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void
+        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
+        navigation: SidebarNavigationState? = nil
     ) {
+        self.navigation = navigation
         self.host = host
         self.theme = theme
         self.coordinator = coordinator
@@ -71,7 +77,9 @@ public struct WorktreePickerView: View {
                 } else {
                     onSelectPane(leaf)
                 }
-            }
+            },
+            navigation: navigation,
+            remoteSidebarProvider: { await coordinator.sidebarSnapshot(for: host) }
         )
         // Set on this iPhone-compact wrapper rather than inside
         // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the

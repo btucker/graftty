@@ -170,6 +170,8 @@
     "REMOTE.7": "pane_control Channel",
     "REMOTE.8": "SSH session layer",
     "REMOTE.12": "Mac-to-Mac Remote Access",
+    "REMOTE.14": "Shared project navigation",
+    "PROJECT.3": "Project icons and navigation preferences",
     "TEAM.10": "Codex Wrapper App-Server Routing",
     "TEAM.11": "Idle Delivery",
     "TEAM.14": "Messaging between Macs"

@@ -610,6 +610,33 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
+    func sidebarProjectsForRelay() async -> [SidebarProject] {
+        var result: [SidebarProject] = []
+        for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected {
+            let identity = RemoteMacIdentity(mac)
+            let snapshot = await connectionRegistry.sidebarSnapshot(for: identity)
+            let projects = snapshot?.projects ?? SidebarProjection.projects(worktreePanesByRemote[identity] ?? [])
+            result += relayRouter.promoteProjects(projects, from: mac)
+        }
+        return result
+    }
+
+    /// Only a complete metadata snapshot confirms repository removal. A
+    /// disconnected peer (or one still delivering its first frame) is unknown.
+    func authoritativeSidebarOwnerIDs() async -> Set<RemoteDeviceID> {
+        var result: Set<RemoteDeviceID> = []
+        for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected {
+            if await connectionRegistry.sidebarSnapshot(for: RemoteMacIdentity(mac)) != nil {
+                result.insert(mac.id)
+            }
+        }
+        return result
+    }
+
+    func sidebarSnapshot(for mac: RemoteMac) async -> SidebarSnapshot? {
+        await connectionRegistry.sidebarSnapshot(for: RemoteMacIdentity(mac))
+    }
+
     func promotedRepositoriesForRelay() async -> [RemoteRepositoryInfo] {
         var promoted: [RemoteRepositoryInfo] = []
         for remoteMac in savedRemoteMacs
@@ -631,7 +658,7 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
-        case .hostPresentation, .listRemoteMacConnections,
+        case .hostPresentation, .listRemoteMacConnections, .moveProject,
              .connectRemoteMac:
             return nil
 
@@ -701,6 +728,27 @@ final class RemoteMacsModel: ObservableObject {
                 )
             }
             return response
+
+        case let .projectIcon(repositoryID, revision):
+            guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
+            return await forwardManagement(identity: route.identity, request: .projectIcon(repositoryID: route.repositoryID, revision: revision))
+
+        case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
+            guard let repo = relayRouter.resolveRepository(repositoryID),
+                  let worktree = relayRouter.resolveWorktree(worktreeID),
+                  let target = relayRouter.resolveWorktree(relativeTo),
+                  repo.identity == worktree.identity, repo.identity == target.identity else { return nil }
+            return await forwardManagement(identity: repo.identity, request: .moveWorktree(repositoryID: repo.repositoryID, worktreeID: worktree.path, relativeTo: target.path, after: after))
+
+        case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            var downstreamPane: String?
+            if let paneID {
+                guard let pane = relayRouter.resolvePane(paneID), pane.identity == route.identity,
+                      pane.worktreePath == route.path else { return nil }
+                downstreamPane = pane.sessionName
+            }
+            return await forwardManagement(identity: route.identity, request: .acknowledgeOccurrence(worktreeID: route.path, paneID: downstreamPane, occurrence: occurrence))
 
         case .acknowledge(let worktreeID, let paneID):
             guard let worktreeRoute = relayRouter.resolveWorktree(worktreeID)
@@ -784,7 +832,10 @@ final class RemoteMacsModel: ObservableObject {
         _ snapshot: [WorktreePanes],
         from identity: RemoteMacIdentity
     ) {
-        worktreePanesByRemote[identity] = snapshot
+        let ownerLabel = savedRemoteMacs.first { RemoteMacIdentity($0) == identity }?.label ?? identity.id.value
+        worktreePanesByRemote[identity] = snapshot.map {
+            RemoteWorktreeRelayRouter.normalizingSidebarIdentity($0, ownerID: identity.id, ownerLabel: ownerLabel)
+        }
         processAttentionTransitions(snapshot, from: identity)
         refreshRelayRoutes()
     }

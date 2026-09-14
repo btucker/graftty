@@ -1,6 +1,8 @@
 import SwiftUI
+import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 struct RemoteMacsSidebarProjection: Equatable {
     enum Action: Equatable {
@@ -235,9 +237,17 @@ struct RemoteMacsSection: View {
         )
     }
 
+    var projectFilter: String? = nil
+    var query: String = ""
+
     var body: some View {
         Section {
-            ForEach(model.savedRemoteMacs) { remoteMac in
+            ForEach(model.savedRemoteMacs.filter { mac in
+                (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
+                    (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                        && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+                }
+            }) { remoteMac in
                 remoteMacGroup(remoteMac)
             }
 
@@ -269,7 +279,12 @@ struct RemoteMacsSection: View {
                 }
             )
         ) {
-            ForEach(groupedRepositories(for: identity), id: \.id) { repository in
+            ForEach(groupedRepositories(for: identity).filter { repository in
+                repository.worktrees.contains {
+                    (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                        && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+                }
+            }, id: \.id) { repository in
                 repositoryGroup(
                     repository,
                     worktrees: repository.worktrees,
@@ -328,7 +343,10 @@ struct RemoteMacsSection: View {
                 }
             )
         ) {
-            ForEach(worktrees, id: \.path) { worktree in
+            SidebarWorktreeRows(worktrees: worktrees.filter {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+            }) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
                         EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
@@ -393,6 +411,15 @@ struct RemoteMacsSection: View {
             .rightClickMenu {
                 remoteWorktreeMenu(worktree, remoteMac: remoteMac)
             }
+            .draggable("graftty-remote-worktree:" + worktree.path)
+            .dropDestination(for: String.self) { values, location in
+                guard query.isEmpty, let value = values.first, value.hasPrefix("graftty-remote-worktree:"),
+                      let source = worktreePanesByRemote[identity]?.first(where: { $0.path == String(value.dropFirst("graftty-remote-worktree:".count)) }),
+                      source.repositoryID == worktree.repositoryID else { return false }
+                moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
+                return true
+            }
+
 
             if let layout = worktree.layout {
                 ForEach(layout.leaves, id: \.sessionName) { leaf in
@@ -483,11 +510,40 @@ struct RemoteMacsSection: View {
         }
     }
 
+    private func moveRemoteWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, remoteMac: RemoteMac) {
+        guard let repositoryID = source.repositoryID else { return }
+        Task {
+            guard await model.sidebarSnapshot(for: remoteMac)?.supportsNavigationEditing == true else { return }
+            do {
+                let response = try await model.sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+                    request: .moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
+                if case .error(_, let message, _, _) = response {
+                    let alert = NSAlert(); alert.messageText = "Couldn't reorder worktrees"; alert.informativeText = message; alert.runModal()
+                }
+            } catch {
+                let alert = NSAlert(); alert.messageText = "Couldn't reach the owning Mac"; alert.informativeText = error.localizedDescription; alert.runModal()
+            }
+        }
+    }
+
     private func remoteWorktreeMenu(
         _ worktree: WorktreePanes,
         remoteMac: RemoteMac
     ) -> NSMenu {
         let menu = NSMenu()
+        let siblings = (worktreePanesByRemote[RemoteMacIdentity(remoteMac)] ?? []).filter {
+            $0.repositoryID == worktree.repositoryID && $0.sidebar?.folders == worktree.sidebar?.folders
+        }
+        if !worktree.isMainCheckout, !worktree.state.isInFlight,
+           let index = siblings.firstIndex(where: { $0.path == worktree.path }) {
+            if index > 0, !siblings[index - 1].isMainCheckout {
+                menu.addItem(ClosureMenuItem(title: "Move Up") { moveRemoteWorktree(worktree, relativeTo: siblings[index - 1], after: false, remoteMac: remoteMac) })
+            }
+            if index + 1 < siblings.count {
+                menu.addItem(ClosureMenuItem(title: "Move Down") { moveRemoteWorktree(worktree, relativeTo: siblings[index + 1], after: true, remoteMac: remoteMac) })
+            }
+        }
+
         guard !worktree.isMainCheckout, !worktree.state.isInFlight else {
             return menu
         }

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 public struct WindowFrame: Codable, Sendable, Equatable {
     public var x: Double
@@ -15,6 +16,7 @@ public struct AppState: Codable, Sendable, Equatable {
     public var repos: [RepoEntry]
     public var selectedWorktreePath: String?
     public var windowFrame: WindowFrame
+    public var sidebarNavigation: SidebarHostState? = nil
     public var sidebarWidth: Double
 
     public init(
@@ -82,6 +84,7 @@ public struct AppState: Codable, Sendable, Equatable {
         guard let repo = repos.first(where: { $0.path == path }) else { return }
         let victimPaths = Set(repo.worktrees.map(\.path))
         repos.removeAll { $0.path == path }
+        sidebarNavigation?.cachedProjects.removeAll { $0.repositoryID == path && $0.owner?.relayDepth == 0 }
         if let selected = selectedWorktreePath, victimPaths.contains(selected) {
             selectedWorktreePath = nil
         }

@@ -715,7 +715,14 @@ struct RemoteMacsModelTests {
 
         registry.onPaneSnapshot(RemoteMacIdentity(remote), snapshot)
 
-        #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == snapshot)
+        let rows = try #require(model.worktreePanesByRemote[RemoteMacIdentity(remote)])
+        #expect(rows.count == snapshot.count)
+        let row = try #require(rows.first)
+        #expect(row.path == snapshot[0].path)
+        #expect(row.displayBranch == snapshot[0].displayBranch)
+        #expect(row.layout == snapshot[0].layout)
+        #expect(row.origin?.deviceID == remote.id)
+        #expect(row.sidebar?.projectID == "\(remote.id.value):project")
     }
 
     @Test("""

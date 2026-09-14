@@ -39,91 +39,21 @@ enum WorktreeDropReorder {
         placement: WorktreeDropPlacement,
         to appState: inout AppState
     ) -> Bool {
-        guard payload.worktreeID != targetWorktreeID else { return false }
-        guard let repoIndex = appState.repos.firstIndex(where: { $0.id == payload.repoID }) else {
-            return false
-        }
-        let repo = appState.repos[repoIndex]
-        let worktrees = repo.worktrees
-        guard let sourceIndex = worktrees.firstIndex(where: { $0.id == payload.worktreeID }),
-              let targetIndex = worktrees.firstIndex(where: { $0.id == targetWorktreeID })
-        else {
-            return false
-        }
-
-        let nodes = SidebarWorktreeHierarchy.nodes(
-            for: worktrees,
-            inRepoAtPath: repo.path,
-            defaultBranch: nil
-        )
-        let parentFolderPaths = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
-        let sourceParent = parentFolderPaths[payload.worktreeID]
-        let targetParent = parentFolderPaths[targetWorktreeID]
-        guard sourceParent == targetParent else { return false }
-
-        // The hierarchy can collect worktrees that are noncontiguous in the
-        // persisted flat array. Reorder the visible siblings within their
-        // existing slots so a child-only move cannot shift an unrelated row
-        // or the virtual folder's root position.
-        let siblingIndices = worktrees.indices.filter {
-            parentFolderPaths[worktrees[$0].id] == sourceParent
-        }
-        let siblings = siblingIndices.map { worktrees[$0] }
-        guard let sourceSiblingIndex = siblingIndices.firstIndex(of: sourceIndex),
-              let targetSiblingIndex = siblingIndices.firstIndex(of: targetIndex)
-        else { return false }
-        let destination = placement == .before
-            ? targetSiblingIndex
-            : targetSiblingIndex + 1
-        guard let reorderedSiblings = reorderedWorktrees(
-            siblings,
-            fromOffsets: IndexSet(integer: sourceSiblingIndex),
-            toOffset: destination
-        ) else { return false }
-
-        var reordered = worktrees
-        for (index, sibling) in zip(siblingIndices, reorderedSiblings) {
-            reordered[index] = sibling
-        }
-        appState.repos[repoIndex].worktrees = reordered
-        return true
+        guard let repo = appState.repos.first(where: { $0.id == payload.repoID }),
+              let source = repo.worktrees.first(where: { $0.id == payload.worktreeID }),
+              let target = repo.worktrees.first(where: { $0.id == targetWorktreeID }) else { return false }
+        return SidebarHostNavigation.moveWorktree(in: &appState, repositoryID: repo.path,
+                                                 worktreeID: source.path, relativeTo: target.path,
+                                                 after: placement == .after)
     }
 
-    private static func reorderedWorktrees(
-        _ worktrees: [WorktreeEntry],
-        fromOffsets: IndexSet,
-        toOffset: Int
-    ) -> [WorktreeEntry]? {
-        guard !fromOffsets.isEmpty else { return nil }
-        guard fromOffsets.allSatisfy({ worktrees.indices.contains($0) }) else { return nil }
-        guard toOffset >= 0, toOffset <= worktrees.count else { return nil }
-
-        let movingIDs = fromOffsets.map { worktrees[$0].id }
-        guard movingIDs.allSatisfy({ id in
-            worktrees.first(where: { $0.id == id })?.state.isInFlight == false
-        }) else {
-            return nil
-        }
-
-        let neighborIndices = [toOffset - 1, toOffset]
-            .filter { worktrees.indices.contains($0) && !fromOffsets.contains($0) }
-        guard neighborIndices.allSatisfy({ !worktrees[$0].state.isInFlight }) else {
-            return nil
-        }
-
-        guard let reordered = WorktreeOrdering.move(
-            worktrees,
-            movingIDs: movingIDs,
-            toIndex: toOffset
-        ), reordered != worktrees else { return nil }
-        return reordered
-    }
 }
 
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
     @Binding var appState: AppState
+    var isEnabled: Bool = true
     @State private var rowHeight: CGFloat = 28
 
     func body(content: Content) -> some View {
@@ -141,7 +71,7 @@ struct WorktreeReorderTarget: ViewModifier {
             }
             .draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID))
             .dropDestination(for: TransferableWorktreeMove.self) { items, location in
-                guard let item = items.first else { return false }
+                guard isEnabled, let item = items.first else { return false }
                 return WorktreeDropReorder.apply(
                     item,
                     targetWorktreeID: worktreeID,
@@ -159,12 +89,13 @@ extension View {
     func worktreeReorderTarget(
         repoID: RepoEntry.ID,
         worktreeID: WorktreeEntry.ID,
-        appState: Binding<AppState>
+        appState: Binding<AppState>,
+        isEnabled: Bool = true
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID,
             worktreeID: worktreeID,
-            appState: appState
+            appState: appState, isEnabled: isEnabled
         ))
     }
 }

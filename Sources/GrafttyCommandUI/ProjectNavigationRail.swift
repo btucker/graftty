@@ -1,0 +1,148 @@
+import SwiftUI
+import GrafttyProtocol
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
+
+public struct ProjectIdentityView: View {
+    public let project: SidebarProject
+    public var imageData: Data?
+    public init(project: SidebarProject, imageData: Data? = nil) { self.project = project; self.imageData = imageData }
+    private let palette: [Color] = [.purple, .orange, .pink, .green, .gray, .teal, .blue, .indigo]
+    public var body: some View {
+        Group {
+            if let image = decodedImage {
+                image.resizable().scaledToFit().padding(2)
+            } else {
+                Text(project.displayInitials).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(palette[project.colorIndex])
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(palette[project.colorIndex].opacity(0.16))
+            }
+        }
+        .frame(width: 28, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.35)))
+        .accessibilityHidden(true)
+    }
+    private var decodedImage: Image? {
+        guard let imageData, imageData.count <= 65536 else { return nil }
+        #if canImport(AppKit)
+        return NSImage(data: imageData).map { Image(nsImage: $0) }
+        #elseif canImport(UIKit)
+        return UIImage(data: imageData).map { Image(uiImage: $0) }
+        #else
+        return nil
+        #endif
+    }
+}
+
+public struct ProjectNavigationRail: View {
+    public var projects: [SidebarProject]
+    public var counts: [String: Int]
+    public var icons: [String: Data]
+    public var selectedID: String?
+    public var showsAttention: Bool
+    @Binding public var collapsed: Bool
+    public var onSelect: (SidebarProject) -> Void
+    public var onAttention: () -> Void
+    public var onMove: (String, String, Bool) -> Void
+    public var menu: (SidebarProject) -> AnyView
+    public var allowsReordering: Bool
+    public var canExpand: Bool
+    @State private var dropTarget: String?
+
+    public init(projects: [SidebarProject], counts: [String: Int], icons: [String: Data], selectedID: String?,
+                showsAttention: Bool, collapsed: Binding<Bool>, allowsReordering: Bool = true, canExpand: Bool = true,
+                onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
+                onMove: @escaping (String, String, Bool) -> Void,
+                menu: @escaping (SidebarProject) -> AnyView = { _ in AnyView(EmptyView()) }) {
+        self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
+        self.showsAttention = showsAttention; self._collapsed = collapsed; self.onSelect = onSelect
+        self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand
+    }
+    public var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                if !collapsed { Text("Projects").font(.caption).foregroundStyle(.secondary); Spacer() }
+                Button { collapsed.toggle() } label: { Image(systemName: collapsed ? "sidebar.left" : "chevron.left") }
+                    .buttonStyle(.plain).frame(minWidth: 36, minHeight: 40)
+                    .disabled(collapsed && !canExpand)
+                    .help(collapsed ? "Expand project rail" : "Collapse project rail")
+                    .accessibilityLabel(collapsed ? "Expand project rail" : "Collapse project rail")
+            }.padding(.horizontal, 10)
+            Button(action: onAttention) {
+                HStack(spacing: 9) {
+                    Image(systemName: "tray.full").frame(width: 28, height: 28)
+                    if !collapsed { Text("Attention").font(.callout); Spacer() }
+                    if !collapsed { badge(counts.values.reduce(0, +)) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .overlay(alignment: .topTrailing) { if collapsed { badge(counts.values.reduce(0, +)) } }
+                .padding(.horizontal, collapsed ? 0 : 8)
+                .background(showsAttention ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).padding(.horizontal, 6)
+                .accessibilityLabel("Attention, \(counts.values.reduce(0, +)) pending requests")
+                .help("Attention across all projects")
+            Divider().padding(.vertical, 8)
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(projects) { project in
+                        projectButton(project)
+                            .overlay(alignment: .top) { if dropTarget == project.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+                            .draggable("graftty-project:" + project.id)
+                            .dropDestination(for: String.self) { values, location in
+                                guard allowsReordering, let value = values.first, value.hasPrefix("graftty-project:") else { return false }
+                                onMove(String(value.dropFirst("graftty-project:".count)), project.id, location.y > 22)
+                                return true
+                            } isTargeted: { dropTarget = $0 ? project.id : nil }
+                    }
+                }.padding(.horizontal, 6)
+            }
+        }.frame(width: collapsed ? 64 : 196)
+    }
+    private func projectButton(_ project: SidebarProject) -> some View {
+        Button { onSelect(project) } label: {
+            HStack(spacing: 9) {
+                ProjectIdentityView(project: project, imageData: icons[project.id])
+                if !collapsed {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(project.name).font(.callout).lineLimit(1)
+                        if !project.isAvailable { Text("Offline").font(.caption2).foregroundStyle(.secondary) }
+                    }
+                    Spacer(minLength: 0)
+                    badge(counts[project.id, default: 0])
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .overlay(alignment: .topTrailing) { if collapsed { badge(counts[project.id, default: 0]) } }
+            .padding(.horizontal, collapsed ? 0 : 8)
+            .background(!showsAttention && selectedID == project.id ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }.buttonStyle(.plain)
+            .help(project.name + (project.owner.map { " on " + $0.deviceLabel } ?? "") + (project.isAvailable ? "" : " · Offline"))
+            .accessibilityLabel(project.name + ", \(counts[project.id, default: 0]) pending requests" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
+            .contextMenu {
+                if allowsReordering, let index = projects.firstIndex(where: { $0.id == project.id }) {
+                    if index > 0 { Button("Move Up") { onMove(project.id, projects[index-1].id, false) } }
+                    if index+1 < projects.count { Button("Move Down") { onMove(project.id, projects[index+1].id, true) } }
+                }
+                menu(project)
+            }
+            .accessibilityAction(named: "Move Up") { move(project.id, offset: -1) }
+            .accessibilityAction(named: "Move Down") { move(project.id, offset: 1) }
+    }
+    private func move(_ id: String, offset: Int) {
+        guard allowsReordering, let index = projects.firstIndex(where: { $0.id == id }), projects.indices.contains(index + offset) else { return }
+        onMove(id, projects[index + offset].id, offset > 0)
+    }
+    @ViewBuilder private func badge(_ count: Int) -> some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold))
+                .padding(.horizontal, 4).padding(.vertical, 2)
+                .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
+                .foregroundStyle(.orange)
+        }
+    }
+}

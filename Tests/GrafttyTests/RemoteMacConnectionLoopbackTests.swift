@@ -65,7 +65,7 @@ struct RemoteMacConnectionLoopbackTests {
             trustedPeerStore: trustedPeerStore,
             streamFactory: { _ in EchoTerminalStream() },
             panesStateSubscribe: { onChange in
-                await onChange([])
+                await onChange(.snapshot([]))
                 return PanesStateChannelHandler.Cancellable(cancel: {})
             },
             paneControlMutator: { _ in .ok },

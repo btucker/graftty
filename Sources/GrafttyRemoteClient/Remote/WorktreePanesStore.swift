@@ -23,6 +23,7 @@ public actor WorktreePanesStore {
     }
 
     public private(set) var current: [WorktreePanes] = []
+    public var sidebar: SidebarSnapshot? { (driver as? SidebarSnapshotProviding)?.sidebarSnapshot }
     public private(set) var connectionState: ConnectionState = .idle
     /// Distinguishes a legitimate first empty snapshot from "the SSH
     /// subsystem is open but has not delivered its initial state yet."
@@ -84,3 +85,8 @@ public protocol PanesStateCallbacksConfigurable: Sendable {
 extension PanesStateChannelClient:
     PanesStateChannelDriver,
     PanesStateCallbacksConfigurable {}
+
+public protocol SidebarSnapshotProviding: Sendable {
+    var sidebarSnapshot: SidebarSnapshot? { get }
+}
+extension PanesStateChannelClient: SidebarSnapshotProviding {}

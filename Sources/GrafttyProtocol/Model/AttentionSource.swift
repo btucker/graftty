@@ -3,7 +3,7 @@
 /// reference one definition — the iPad/web surface needs the source to know
 /// whether a capsule is the agent "needs input" state (rendered as an icon)
 /// versus a `graftty notify` ping or a ✓/! marker (rendered as text).
-public enum AttentionSource: String, Codable, Sendable, Equatable {
+public enum AttentionSource: String, Codable, Sendable, Equatable, Hashable {
     case agentStop        // "<Agent> needs input" from a Stop hook
     case userNotify       // `graftty notify` — a deliberate user ping
     case commandFinished  // ✓ / ! shell-integration COMMAND_FINISHED

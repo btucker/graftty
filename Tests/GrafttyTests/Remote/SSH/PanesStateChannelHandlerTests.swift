@@ -162,7 +162,7 @@ private final class FakeSubscription: @unchecked Sendable {
     private let lock = NIOLock()
     private var _subscribed = false
     private var _cancelled = false
-    private var _onChange: (@Sendable ([WorktreePanes]) async -> Void)?
+    private var _onChange: (@Sendable (PanesStateMessage) async -> Void)?
     private let initialSnapshot: [WorktreePanes]
 
     var subscribed: Bool { lock.withLock { _subscribed } }
@@ -173,13 +173,13 @@ private final class FakeSubscription: @unchecked Sendable {
     }
 
     func subscribe(
-        _ onChange: @escaping @Sendable ([WorktreePanes]) async -> Void
+        _ onChange: @escaping @Sendable (PanesStateMessage) async -> Void
     ) async -> PanesStateChannelHandler.Cancellable {
         lock.withLock {
             _subscribed = true
             _onChange = onChange
         }
-        await onChange(initialSnapshot)
+        await onChange(.snapshot(initialSnapshot))
         return PanesStateChannelHandler.Cancellable { [weak self] in
             self?.lock.withLock { self?._cancelled = true }
         }
@@ -187,7 +187,7 @@ private final class FakeSubscription: @unchecked Sendable {
 
     func fire(_ snapshot: [WorktreePanes]) async {
         let cb = lock.withLock { _onChange }
-        await cb?(snapshot)
+        await cb?(.snapshot(snapshot))
     }
 }
 
@@ -214,11 +214,11 @@ private final class SuspendingFakeSubscription: @unchecked Sendable {
     }
 
     func subscribe(
-        _ onChange: @escaping @Sendable ([WorktreePanes]) async -> Void
+        _ onChange: @escaping @Sendable (PanesStateMessage) async -> Void
     ) async -> PanesStateChannelHandler.Cancellable {
         // Fire the initial snapshot so the handler can write it, then suspend
         // until release() is called — simulating a slow subscribe path.
-        await onChange(initialSnapshot)
+        await onChange(.snapshot(initialSnapshot))
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             lock.withLock {
                 _continuation = cont

@@ -3,6 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 struct SidebarView: View {
     @Binding var appState: AppState
@@ -23,6 +24,7 @@ struct SidebarView: View {
     let selectedRemoteWorktreePath: String?
     let selectedRemotePaneSessionName: String?
     let onSelect: (String) -> Void
+    var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -69,42 +71,199 @@ struct SidebarView: View {
     /// state across projects.
     @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
 
+    @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
+    @ObservedObject private var iconStore = SidebarHostController.shared
+    @State private var projects: [SidebarProject] = []
+    @State private var remoteIcons: [String: Data] = [:]
+    @State private var fetchedIconRevisions: [String: String] = [:]
+    @State private var navigationError: String?
+    @State private var showsRemoteManagement = false
+
+    private var owner: WorktreeOrigin {
+        WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
+    }
+    private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
+    private var selectedLocalRepo: RepoEntry? { appState.repos.first { localProjectID($0) == navigation.selectedProjectID } }
+    private var activity: [SidebarActivityItem] {
+        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession)
+            + remoteMacsModel.promotedWorktreesForRelay())
+    }
+    private var attentionCounts: [String: Int] {
+        Dictionary(grouping: activity.filter(\.needsAttention), by: \.projectID).mapValues(\.count)
+    }
+    private var projectIcons: [String: Data] {
+        var result = remoteIcons
+        for repo in appState.repos { result[localProjectID(repo)] = iconStore.icons[repo.id.uuidString] }
+        return result
+    }
+    private func refreshNavigation() async {
+        let remote = await remoteMacsModel.sidebarProjectsForRelay()
+        let authoritative = await remoteMacsModel.authoritativeSidebarOwnerIDs()
+        let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote,
+            authoritativeRemoteOwners: authoritative, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
+        if projects != snapshot.projects { projects = snapshot.projects }
+        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession) + remoteMacsModel.promotedWorktreesForRelay(), projects: projects)
+        if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
+            navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
+        }
+        for project in remote where project.isAvailable {
+            if project.iconRevision == nil {
+                remoteIcons[project.id] = nil
+                fetchedIconRevisions[project.id] = nil
+            }
+            guard let revision = project.iconRevision, fetchedIconRevisions[project.id] != revision else { continue }
+            if case .icon(let data) = await remoteMacsModel.sendRelayedWorktreeManagement(.projectIcon(repositoryID: project.repositoryID, revision: revision)) {
+                remoteIcons[project.id] = data
+                fetchedIconRevisions[project.id] = revision
+            }
+        }
+    }
+    private func rememberSelection(_ path: String?) {
+        guard let path, let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == path } }) else { return }
+        navigation.rememberedWorktrees[localProjectID(repo)] = path
+    }
+    private func rememberRemoteSelection() {
+        guard let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
+              let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) else { return }
+        navigation.rememberedWorktrees[SidebarProjection.projectID(row)] = path
+    }
+    private func selectProject(_ project: SidebarProject) {
+        rememberSelection(appState.selectedWorktreePath)
+        rememberRemoteSelection()
+        navigation.selectedProjectID = project.id; navigation.showsAttention = false; navigation.query = ""; navigationError = nil
+        guard project.isAvailable else { navigationError = "The owning Mac is offline. Use Manage Remote Macs to reconnect."; return }
+        if let index = appState.repos.firstIndex(where: { localProjectID($0) == project.id }) {
+            appState.repos[index].isCollapsed = false
+            let repo = appState.repos[index]
+            let path = navigation.rememberedWorktrees[project.id].flatMap { saved in repo.worktrees.first { $0.path == saved }?.path } ?? repo.worktrees.first?.path
+            if let path { onSelect(path) }
+        } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == project.owner?.deviceID }) {
+            let rows = (remoteMacsModel.worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).filter { SidebarProjection.projectID($0) == project.id }
+            if let target = rows.first(where: { $0.path == navigation.rememberedWorktrees[project.id] }) ?? rows.first {
+                onSelectRemoteWorktree(mac, target.path)
+            }
+        }
+    }
+    private func moveProject(_ id: String, _ target: String, _ after: Bool) {
+        guard var state = appState.sidebarNavigation else { return }
+        guard state.order.move(id, relativeTo: target, after: after) else { return }
+        state.cachedProjects = state.order.sorted(state.cachedProjects)
+        appState.sidebarNavigation = state; projects = state.cachedProjects
+    }
+    private func projectMenu(_ project: SidebarProject) -> AnyView {
+        guard let repo = appState.repos.first(where: { localProjectID($0) == project.id }) else { return AnyView(EmptyView()) }
+        return AnyView(Group {
+            Button("Choose Project Icon…") { iconStore.chooseIcon(for: repo.id, state: &appState) }
+            Button("Use Initials") {
+                if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                    appState.repos[index].iconOverride = .initials(project.displayInitials)
+                    iconStore.refreshIcons(appState.repos, force: true)
+                }
+            }
+            Button("Reset Icon to Automatic") {
+                if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                    appState.repos[index].iconOverride = nil
+                    iconStore.refreshIcons(appState.repos, force: true)
+                }
+            }
+            Divider()
+            Button("Remove Repository") { onRemoveRepo(repo) }
+        })
+    }
+    private func remoteSection(projectFilter: String?, query: String = "") -> some View {
+        RemoteMacsSection(model: remoteMacsModel, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
+                          selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+                          selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
+                          onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
+                          onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
+                          onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
+                          projectFilter: projectFilter, query: query)
+    }
+
     var body: some View {
         // Explicit dependency: the titles live on TerminalManager, while this
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
-        VStack(spacing: 0) {
-            List {
-                ForEach(appState.repos) { repo in
-                    repoSection(repo)
-                }
-                RemoteMacsSection(
-                    model: remoteMacsModel,
-                    worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
-                    selectedRemoteIdentity: selectedRemoteIdentity,
-                    selectedRemoteWorktreePath: selectedRemoteWorktreePath,
-                    selectedRemotePaneSessionName: selectedRemotePaneSessionName,
-                    theme: theme,
-                    onSelectRemoteMac: onSelectRemoteMac,
-                    onSelectRemoteWorktree: onSelectRemoteWorktree,
-                    onSelectRemotePane: onSelectRemotePane,
-                    onAddRemoteWorktree: onAddRemoteWorktree,
-                    onDeleteRemoteWorktree: onDeleteRemoteWorktree,
-                    onAddRemoteMac: onAddRemoteMac
-                )
-            }
-            .listStyle(.sidebar)
-
+        HStack(spacing: 0) {
+            ProjectNavigationRail(projects: projects, counts: attentionCounts, icons: projectIcons,
+                                  selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
+                                  collapsed: $navigation.railCollapsed, onSelect: selectProject,
+                                  onAttention: { navigation.showsAttention = true; navigation.query = "" },
+                                  onMove: moveProject, menu: projectMenu)
             Divider()
-                .opacity(0.4)
-
-            Button(action: onAddRepo) {
-                Label("Add Repository", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: false))
+            VStack(spacing: 0) {
+                if let navigationError {
+                    Text(navigationError).font(.caption).foregroundStyle(.red).padding(8)
+                }
+                if navigation.showsAttention {
+                    SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
+                                         icons: projectIcons) { item in
+                        Task {
+                            if await onOpenAttention(item) { navigation.opened(item) }
+                            else { navigationError = "This target is unavailable or its request has changed." }
+                        }
+                    }
+                } else {
+                    TextField("Find any project or worktree", text: $navigation.query)
+                        .textFieldStyle(.roundedBorder).padding(10)
+                    ScrollViewReader { proxy in
+                        List {
+                            if navigation.query.isEmpty {
+                                if let repo = selectedLocalRepo { repoSection(repo) }
+                                else if let selected = navigation.selectedProjectID {
+                                    remoteSection(projectFilter: selected)
+                                } else { Text("Choose a project").foregroundStyle(.secondary) }
+                            } else {
+                                remoteSection(projectFilter: nil, query: navigation.query)
+                                ForEach(appState.repos) { repo in
+                                    ForEach(repo.worktrees.filter { "\(repo.displayName) \($0.branch)".localizedCaseInsensitiveContains(navigation.query) }) { worktree in
+                                        worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(worktree.branch)")
+                                    }
+                                }
+                            }
+                        }
+                        .listStyle(.sidebar)
+                        .onChange(of: navigation.selectedProjectID) { _, _ in
+                            if let path = navigation.selectedProjectID.flatMap({ navigation.rememberedWorktrees[$0] }) {
+                                proxy.scrollTo(path, anchor: .center)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                HStack {
+                    Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
+                    Spacer()
+                    Button { showsRemoteManagement.toggle() } label: { Image(systemName: "desktopcomputer") }
+                        .help("Manage Remote Macs")
+                        .popover(isPresented: $showsRemoteManagement) { List { remoteSection(projectFilter: nil) }.frame(width: 340, height: 380) }
+                }.buttonStyle(.plain).font(.caption).padding(10)
+            }.frame(minWidth: 220, maxWidth: .infinity)
+        }
+        .task {
+            while !Task.isCancelled {
+                await refreshNavigation()
+                try? await Task.sleep(for: .seconds(1))
             }
-            .buttonStyle(.plain)
-            .padding(8)
+        }
+        .onChange(of: appState.selectedWorktreePath) { old, new in
+            rememberSelection(old)
+            if !navigation.showsAttention, let new,
+               let repo = appState.repos.first(where: { $0.worktrees.contains { $0.path == new } }) {
+                navigation.selectedProjectID = localProjectID(repo)
+                navigation.rememberedWorktrees[localProjectID(repo)] = new
+            }
+        }
+        .onChange(of: selectedRemoteWorktreePath) { _, _ in
+            rememberRemoteSelection()
+            if !navigation.showsAttention, let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
+               let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) {
+                navigation.selectedProjectID = SidebarProjection.projectID(row)
+            }
+        }
+        .onChange(of: navigation.railCollapsed) { _, collapsed in
+            let delta = collapsed ? -132.0 : 132.0
+            appState.sidebarWidth = max(collapsed ? 284 : 416, appState.sidebarWidth + delta)
         }
         .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -322,10 +481,11 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
+            .id(worktree.path)
             .worktreeReorderTarget(
                 repoID: repo.id,
                 worktreeID: worktree.id,
-                appState: $appState
+                appState: $appState, isEnabled: navigation.query.isEmpty
             )
             // PWD-1.4: same-repo drop target. Sources are sidebar pane
             // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
@@ -409,6 +569,16 @@ struct SidebarView: View {
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
     /// SwiftUI `.contextMenu`) for the List-row hoisting reason
     /// `.rightClickMenu` documents.
+    private func worktreeNeighbor(_ worktree: WorktreeEntry, repo: RepoEntry, offset: Int) -> WorktreeEntry? {
+        let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
+        let siblings = repo.worktrees.filter { parents[$0.id] == parents[worktree.id] }
+        guard let index = siblings.firstIndex(where: { $0.id == worktree.id }), siblings.indices.contains(index + offset) else { return nil }
+        let target = siblings[index + offset]
+        var copy = appState
+        return SidebarHostNavigation.moveWorktree(in: &copy, repositoryID: repo.path, worktreeID: worktree.path,
+                                                  relativeTo: target.path, after: offset > 0) ? target : nil
+    }
+
     private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> NSMenu {
         let menu = NSMenu()
         // In-flight rows have nothing the menu actions can act on
@@ -416,6 +586,16 @@ struct SidebarView: View {
         // either error or race the flow that owns the placeholder.
         if worktree.state.isInFlight {
             return menu
+        }
+        if navigation.query.isEmpty {
+            for (title, offset) in [("Move Up", -1), ("Move Down", 1)] {
+                if let target = worktreeNeighbor(worktree, repo: repo, offset: offset) {
+                    menu.addItem(ClosureMenuItem(title: title) {
+                        SidebarHostNavigation.moveWorktree(in: &appState, repositoryID: repo.path,
+                                                           worktreeID: worktree.path, relativeTo: target.path, after: offset > 0)
+                    })
+                }
+            }
         }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {

@@ -18,9 +18,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
-**LAYOUT-2.1** The sidebar shall display an ordered list of repositories, each expandable to show its worktrees.
+**LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
 
-**LAYOUT-2.2** Each repository entry shall be collapsible and expandable by clicking its disclosure indicator.
+**LAYOUT-2.2** When the project rail is collapsed, the application shall retain project icons and attention badges in a 64-point rail and persist the collapse preference independently of recent history.
 
 **LAYOUT-2.3** When a repository is expanded, the sidebar shall display the repository's own working directory as the first child entry, labeled by its current branch name.
 
@@ -91,6 +91,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.36** When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
 
 **LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
+
+**LAYOUT-2.38** When projects are reordered, the application shall preserve their manual order across refreshes, retain unavailable projects, and append newly discovered projects.
+
+**LAYOUT-2.39** When an attention target is opened, the application shall retain the last 20 distinct recently viewed targets locally across relaunches, newest first, without counting them as pending requests.
+
+**LAYOUT-2.40** While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time.
+
+**LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
+
+**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.
+
+**LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1742,6 +1754,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.20** While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 
+**IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -2382,6 +2396,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.24** While GrafttyMobile views a paired Mac, the application shall show each saved downstream Mac's connection state and allow an unavailable downstream Mac to reconnect from the mobile list.
 
+### REMOTE-14.x — Shared project navigation
+
+**REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
+
+**REMOTE-14.2** When a client requests a project move, worktree move, icon, or occurrence acknowledgement, the application shall round-trip stable ordering identities separately from opaque resource routes.
+
+**REMOTE-14.3** When a snapshot supplies folder ancestry, the client shall preserve nested folders and sibling order without interpreting opaque worktree routes as filesystem paths.
+
+**REMOTE-14.4** When attention crosses the authenticated wire, the application shall preserve subsecond occurrence identity so identical requests within one second cannot acknowledge each other.
+
+**REMOTE-14.5** When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
@@ -2673,6 +2699,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-2.3** While a repo's origin resolves to a supported forge, the repo context menu shall include an Open on GitHub…/Open on GitLab… item opening the project URL.
 
 **PROJECT-2.4** When origin detection resolves a repo's origin remote, the application shall publish the resolved HostingOrigin in PRStatusStore.originByRepo, omit repos whose detection returns nil, and prune entries for repos removed from the model.
+
+### PROJECT-3.x — Project icons and navigation preferences
+
+**PROJECT-3.1** When a project has no valid supported icon, the application shall fall back to stable initials without accepting malformed image data.
+
+**PROJECT-3.2** When a project icon override or manual project order is saved, the application shall retain it across relaunches and decode older application state without those settings.
 
 ## SSH — SSH
 

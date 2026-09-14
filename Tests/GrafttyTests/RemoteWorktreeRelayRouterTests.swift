@@ -8,6 +8,25 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-14.5: When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.")
+    func legacySidebarIdentitySurvivesRelay() throws {
+        let remote = try makeRemoteMac()
+        let router = RemoteWorktreeRelayRouter()
+        let legacy = worktree(path: "/repos/one/.worktrees/feature", repositoryID: "/repos/one",
+                              layout: nil, origin: nil)
+        let promoted = try #require(router.promotedWorktrees(
+            snapshots: [RemoteMacIdentity(remote): [legacy]], remoteMacs: [remote]).first)
+        #expect(promoted.sidebar?.projectID == "\(remote.id.value):/repos/one")
+        #expect(promoted.sidebar?.id == "\(remote.id.value):/repos/one:/repos/one/.worktrees/feature")
+        #expect(SidebarProjection.projectID(promoted) == "\(remote.id.value):/repos/one")
+        let normalized = RemoteWorktreeRelayRouter.normalizingSidebarIdentity(legacy, ownerID: remote.id, ownerLabel: remote.label)
+        let project = try #require(router.promoteProjects(SidebarProjection.projects([normalized]), from: remote).first)
+        #expect(project.id == SidebarProjection.projectID(promoted))
+        #expect(project.repositoryID == promoted.repositoryID)
+        let other = RemoteWorktreeRelayRouter.normalizingSidebarIdentity(legacy, ownerID: .init(value: "other-mac"), ownerLabel: "Other")
+        #expect(SidebarProjection.projectID(other) != project.id)
+    }
+
     @Test("""
     @spec REMOTE-13.1: While a Mac shares worktrees from a directly connected \
     Remote Mac, the application shall preserve the remote split layout, replace \
