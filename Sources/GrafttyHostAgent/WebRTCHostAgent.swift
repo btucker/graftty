@@ -33,6 +33,9 @@ public actor WebRTCHostAgent {
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
+    private var teamHandler: TeamChannelHandler.Handler?
+    private var teamOnConnect: TeamChannelHandler.OnConnect = { _, _ in }
+    private var teamOnDisconnect: TeamChannelHandler.OnDisconnect = { _, _ in }
     private var worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     /// REMOTE-9: the SAME process-wide store the `/ws` bridge uses
     /// (`AppServices.displayOwnershipStore`), so a Mac-side or web-side
@@ -211,6 +214,16 @@ public actor WebRTCHostAgent {
     /// split and the same "wire before signaling" ordering requirement.
     public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
         self.paneControlMutator = mutator
+    }
+
+    public func setTeamMessaging(
+        handler: @escaping TeamChannelHandler.Handler,
+        onConnect: @escaping TeamChannelHandler.OnConnect,
+        onDisconnect: @escaping TeamChannelHandler.OnDisconnect
+    ) {
+        self.teamHandler = handler
+        self.teamOnConnect = onConnect
+        self.teamOnDisconnect = onDisconnect
     }
 
     public func setWorktreeManagementMutator(
@@ -584,6 +597,9 @@ public actor WebRTCHostAgent {
         let panesStateV2Subscribe = self.panesStateV2Subscribe
         let paneControlMutator = self.paneControlMutator
         let worktreeManagementMutator = self.worktreeManagementMutator
+        let teamHandler = self.teamHandler
+        let teamOnConnect = self.teamOnConnect
+        let teamOnDisconnect = self.teamOnDisconnect
         let activeRemotePeers = self.activeRemotePeers
         transport.channel.closeFuture.whenComplete { [weak self, transport] _ in
             Task {
@@ -656,7 +672,11 @@ public actor WebRTCHostAgent {
                                 worktreeManagementAllowed: {
                                     peerBox.worktreeManagementAllowed
                                 },
-                                displayKindProvider: { peerBox.displayKind }
+                                displayKindProvider: { peerBox.displayKind },
+                                teamHandler: teamHandler,
+                                teamOnConnect: teamOnConnect,
+                                teamOnDisconnect: teamOnDisconnect,
+                                teamAllowed: { peerBox.peer?.kind == .mac }
                             )
                             try child.pipeline.syncOperations.addHandler(dispatcher)
                         }

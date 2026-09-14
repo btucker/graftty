@@ -6,6 +6,9 @@
 /// convention; the channel types are namespaced and will not collide with
 /// stock OpenSSH or other SSH libraries.
 public enum SSHChannelTypeNames {
+    /// Duplex team discovery and messaging between authenticated Macs.
+    public static let team = "team@graftty.dev"
+
     public static let terminalPaged = "terminal-paged-v1@graftty.dev"
     /// Server-pushed snapshots of `[WorktreePanes]`. One channel per
     /// `RemoteHostConnection`.

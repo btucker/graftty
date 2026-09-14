@@ -2,6 +2,7 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import NIOCore
+import NIOExtras
 import NIOSSH
 
 /// Server-side channel-open dispatcher. Installs into every inbound
@@ -53,6 +54,10 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// Authenticated transport kind. The control envelope's kind remains
     /// caller-controlled and must not decide ownership eligibility.
     private let displayKindProvider: @Sendable () -> DisplayClientKind
+    private let teamHandler: TeamChannelHandler.Handler?
+    private let teamOnConnect: TeamChannelHandler.OnConnect
+    private let teamOnDisconnect: TeamChannelHandler.OnDisconnect
+    private let teamAllowed: @Sendable () -> Bool
     private var dispatched = false
 
     public init(
@@ -66,8 +71,16 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
         worktreeManagementAllowed: @escaping @Sendable () -> Bool = { true },
-        displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios }
+        displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios },
+        teamHandler: TeamChannelHandler.Handler? = nil,
+        teamOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
+        teamOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
+        teamAllowed: @escaping @Sendable () -> Bool = { false }
     ) {
+        self.teamHandler = teamHandler
+        self.teamOnConnect = teamOnConnect
+        self.teamOnDisconnect = teamOnDisconnect
+        self.teamAllowed = teamAllowed
         self.streamFactory = streamFactory
         self.pagedFactory = pagedFactory
         self.panesStateSubscribe = panesStateSubscribe
@@ -148,6 +161,19 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         context: ChannelHandlerContext
     ) {
         switch request.subsystem {
+        case SSHChannelTypeNames.team:
+            dispatched = true
+            guard teamAllowed(), let deviceID = deviceIDProvider(), let teamHandler else {
+                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+                context.close(promise: nil)
+                return
+            }
+            installSubsystem(
+                handler: TeamChannelHandler(deviceID: deviceID, handler: teamHandler, onConnect: teamOnConnect, onDisconnect: teamOnDisconnect),
+                request: request,
+                context: context
+            )
+
         case SSHChannelTypeNames.terminalPaged:
             guard let pagedFactory else {
                 if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
@@ -234,8 +260,15 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             try context.pipeline.syncOperations.addHandler(handler, position: .after(self))
             try context.pipeline.syncOperations.addHandler(
                 LengthPrefixedFraming.makeFramePrepender(), position: .after(self))
-            try context.pipeline.syncOperations.addHandler(
-                LengthPrefixedFraming.makeFrameDecoder(), position: .after(self))
+            if request.subsystem == SSHChannelTypeNames.team {
+                try context.pipeline.syncOperations.addHandler(
+                    ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes),
+                    position: .after(self)
+                )
+            } else {
+                try context.pipeline.syncOperations.addHandler(
+                    LengthPrefixedFraming.makeFrameDecoder(), position: .after(self))
+            }
             // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
             // so the downstream framing handlers operate on raw bytes.
             try context.pipeline.syncOperations.addHandler(

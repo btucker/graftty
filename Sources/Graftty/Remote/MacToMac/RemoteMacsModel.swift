@@ -100,6 +100,10 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
+    func setTeamRouter(_ router: RemoteTeamRouter) {
+        connectionRegistry.teamRouter = router
+    }
+
     func loadSavedRemotes() async {
         await store.loadIfNeeded()
         savedRemoteMacs = store.remoteMacs

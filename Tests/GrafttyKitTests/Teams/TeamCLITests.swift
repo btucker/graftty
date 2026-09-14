@@ -180,13 +180,6 @@ struct TeamCLITests {
         #expect(team.memberNamed("alice") != nil)
     }
 
-    @Test func singleWorktreeRepoHasNoTeamForMsgOrList() {
-        let repo = makeRepo(path: "/repo", displayName: "myrepo", branches: ["main"])
-        let wt = repo.worktrees[0]
-        // team() returns nil → msg/list handlers return "not in a team" / "no other team members"
-        #expect(TeamView.team(for: wt, in: [repo], teamsEnabled: true) == nil)
-    }
-
     @Test func teamModeDisabledReturnsNilFromTeamView() {
         let repo = makeRepo(path: "/repo", displayName: "myrepo", branches: ["main", "dev"])
         let wt = repo.worktrees[0]

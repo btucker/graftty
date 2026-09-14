@@ -36,14 +36,6 @@ func openChildChannel(
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
     try Task.checkCancellation()
-    // `NIOSSHHandler` isn't `Sendable`, but the only thread-safety
-    // requirement `createChannel` has is running on the parent channel's
-    // own event loop — the executor hop above is what makes that safe, not
-    // anything about which thread carries the handler reference there.
-    // Every one of this helper's three callers used to satisfy the
-    // `@Sendable` closure checker by capturing `self` (a class, hence
-    // `@unchecked Sendable`) instead of the handler directly; a free
-    // function has no `self` to lean on, so this box plays that role.
     let handlerBox = UncheckedSendableBox(value: parentHandler)
     let waiter = SSHReplyWaiter<Channel>()
     // Keep NIOSSH's promise separate from the deadline. NIOSSH still owns
@@ -56,22 +48,47 @@ func openChildChannel(
         // Preserve its siblings; the completion handler closes any late child.
         onCancel: {},
         start: {
-            parentChannel.eventLoop.execute {
-                let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
-                promise.futureResult.whenComplete { result in
-                    if !waiter.finish(result),
-                       case .success(let child) = result {
-                        child.close(promise: nil)
-                    }
+            makeChildChannel(
+                parentChannel: parentChannel,
+                parentHandler: handlerBox.value,
+                channelType: channelType,
+                initializer: initializer
+            ).whenComplete { result in
+                if !waiter.finish(result),
+                   case .success(let child) = result {
+                    child.close(promise: nil)
                 }
-                guard parentChannel.isActive else {
-                    promise.fail(ChannelError.ioOnClosedChannel)
-                    return
-                }
-                handlerBox.value.createChannel(promise, channelType: channelType, initializer)
             }
         }
     )
+}
+
+/// Returns the opening future so callers can coordinate the entire handshake
+/// with their own cancellation and deadline without suspending on `get()`.
+func makeChildChannel(
+    parentChannel: Channel,
+    parentHandler: NIOSSHHandler,
+    channelType: SSHChannelType = .session,
+    initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
+) -> EventLoopFuture<Channel> {
+    let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
+    // `NIOSSHHandler` isn't `Sendable`, but the only thread-safety
+    // requirement `createChannel` has is running on the parent channel's
+    // own event loop — the executor hop above is what makes that safe, not
+    // anything about which thread carries the handler reference there.
+    // Every one of this helper's three callers used to satisfy the
+    // `@Sendable` closure checker by capturing `self` (a class, hence
+    // `@unchecked Sendable`) instead of the handler directly; a free
+    // function has no `self` to lean on, so this box plays that role.
+    let handlerBox = UncheckedSendableBox(value: parentHandler)
+    parentChannel.eventLoop.execute {
+        guard parentChannel.isActive else {
+            promise.fail(ChannelError.ioOnClosedChannel)
+            return
+        }
+        handlerBox.value.createChannel(promise, channelType: channelType, initializer)
+    }
+    return promise.futureResult
 }
 
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {

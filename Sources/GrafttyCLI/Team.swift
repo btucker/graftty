@@ -34,7 +34,7 @@ struct TeamSend: ParsableCommand {
     @Flag(name: .long, help: "Read message text from standard input")
     var stdin: Bool = false
 
-    @Argument(help: "Worktree name/path, <path>#<runtime>, or <path>#<agent-id>")
+    @Argument(help: "Local worktree name/path or a local or remote agent address from team list --json")
     var address: String
 
     @Argument(help: "Message text")
@@ -59,7 +59,7 @@ struct TeamSend: ParsableCommand {
 struct TeamBroadcast: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "broadcast",
-        abstract: "Send the same message to every teammate"
+        abstract: "Send the same message to every other worktree in the local repository"
     )
 
     @Flag(name: .long, help: "Deliver at the next post-tool hook boundary when possible")

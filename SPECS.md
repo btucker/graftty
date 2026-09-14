@@ -1864,7 +1864,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
-**TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable team event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `teamEventRoutingPreferences` for the corresponding row and write one inbox row per recipient resolved by `TeamEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
+**TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable team event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `teamEventRoutingPreferences` for the corresponding row and write one inbox row per recipient resolved by `TeamEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
 
 **TEAM-1.10** When the application starts, the application shall migrate any legacy `channelRoutingPreferences` UserDefaults string into `teamEventRoutingPreferences` and clear the old key. The migration is idempotent: if `teamEventRoutingPreferences` is already populated, the migration leaves the new value alone and only clears the old key. If neither key is present the migration is a no-op.
 
@@ -1876,7 +1876,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-2.x — Team Identity & Membership
 
-**TEAM-2.1** A *team* is implicit in any `RepoEntry` with two or more `WorktreeEntry` children, while `agentTeamsEnabled` is true. A repo with one worktree (or with team mode off) has no team and no team-aware behavior.
+**TEAM-2.1** While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
 
 **TEAM-2.2** A team's *member name* for a given worktree shall be `WorktreeNameSanitizer(worktree.branch)`, the same sanitization rule used for new worktree names per `GIT-5.1`.
 
@@ -1944,7 +1944,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-7.x — Team Activity Log Window
 
-**TEAM-7.1** When the user invokes the *Window → Team Activity Log* command, the application shall open the Team Activity Log window for the focused worktree's team — and shall disable the command when the focused selection has no team (single-worktree repo, no selection, or `agentTeamsEnabled` off).
+**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
 
 **TEAM-7.2** Right-clicking a team-enabled worktree row in the sidebar shall include a *Show Team Activity…* item that opens the activity-log window for that team. The routing key derives from the same `(teamID, teamName)` pair the Window menu command uses, so both entry points target the same per-team `WindowGroup` instance.
 
@@ -2025,6 +2025,60 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-12.3** On application launch, the immediate retry of preexisting unread messages shall refresh automatic-delivery liveness after restoring pane-session metadata, so a live background Codex agent is not delayed until the periodic presence retry.
 
 **TEAM-12.4** When a Codex app-server has one loaded root thread and one or more loaded subagent threads for the same worktree cwd, automatic team-message delivery shall use `thread/read` metadata to target the root thread. Spawned subagents are identified by `parentThreadId`; other subagent kinds are identified by their `source`. If more than one root thread matches, delivery shall remain ambiguous and shall not start a turn.
+
+### TEAM-14.x — Messaging between Macs
+
+**TEAM-14.1** When a team address names a remote Mac, the application shall preserve its device ID, absolute worktree path, and optional runtime or canonical agent suffix without path-character collisions.
+
+**TEAM-14.2** When an authenticated remote Mac requests team members, the application shall list tracked local worktrees across repositories, including repositories with one worktree, with repository names and canonical agent addresses.
+
+**TEAM-14.3** While team mode is disabled, the application shall reject remote team listing and messages without writing an inbox row.
+
+**TEAM-14.4** When an authenticated remote Mac sends a team message, the application shall durably append it to the local recipient inbox and qualify the sender worktree with the authenticated device ID.
+
+**TEAM-14.5** When a remote team message names a recipient, the application shall require an exact tracked local worktree path and reject branch names, child paths, and unknown worktrees.
+
+**TEAM-14.6** When a remote team message targets a canonical agent ID, the application shall bind delivery to that exact reachable agent and reject missing or stale agents without enqueuing.
+
+**TEAM-14.7** When a remote team message targets a runtime, the application shall retain the runtime without pinning an agent so it can wait for that provider's next session.
+
+**TEAM-14.8** If a remote team message has an invalid sender path, invalid sender agent ID, or blank body, then the application shall reject it without enqueuing.
+
+**TEAM-14.9** When exchanging remote team requests and responses, the application shall preserve message priority, agent identities, and member records through encoding and decoding.
+
+**TEAM-14.10** When a connected Mac publishes team members, the application shall qualify their worktree and agent addresses with that Mac's device identity.
+
+**TEAM-14.11** When an agent sends to a remote address, the application shall route only to that connected device and return its inbox acknowledgement.
+
+**TEAM-14.12** If a remote Mac is disconnected, then the application shall reject directed team sends without falling back to a local worktree.
+
+**TEAM-14.13** When a replaced team connection closes, the application shall preserve the newer connection to that Mac.
+
+**TEAM-14.20** When either Mac sends concurrent team requests over one authenticated channel, the application shall correlate each response by its request identifier.
+
+**TEAM-14.21** When a team channel closes, the application shall fail pending requests and reject subsequent sends.
+
+**TEAM-14.22** If a team response does not arrive before its deadline, then the application shall fail that request without matching its late response to another request.
+
+**TEAM-14.23** When a peer opens the team subsystem, the application shall admit the channel only when team messaging is configured and the authenticated peer is an allowed Mac.
+
+**TEAM-14.24** When a paired Mac opens a team channel, the application shall expose that same channel for host-originated requests and remove its session after channel closure.
+
+**TEAM-14.25** When a caller cancels a team request, the application shall release that request without closing the shared channel.
+
+**TEAM-14.26** When a Mac opens an authenticated SSH team subsystem, the application shall exchange concurrent requests in both directions and notify both endpoints when the subsystem closes.
+
+**TEAM-14.27** If a team channel receives a malformed envelope, then the application shall close its transport and remove the registered team session.
+
+**TEAM-14.28** When a host registers a team channel, the application shall defer incoming requests until registration completes while permitting replies to requests originated during registration.
+
+**TEAM-14.29** While canceled or timed-out team requests still have unfinished network writes, the application shall retain their admission slots until those writes finish.
+
+**TEAM-14.30** When a team session closes before a queued request starts, the application shall discard that request without invoking its application handler.
+
+**TEAM-14.31** If opening a team channel stalls before SSH channel confirmation, then the application shall honor cancellation, closure, and a wall-clock deadline, and close any late channel without closing the shared connection.
+
+**TEAM-14.32** When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.
 
 ## INSTR — Agent Instruction Files
 
