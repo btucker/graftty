@@ -498,8 +498,10 @@ public struct WorktreeListContent: View {
                     }
                 }.padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons) { item in
-                        openAttention(item, worktrees: worktrees)
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                                         selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
+                        await openAttention(item, worktrees: worktrees)
                     }
                 } else {
                     TextField("Find any project or worktree", text: $navigation.query)
@@ -532,8 +534,10 @@ public struct WorktreeListContent: View {
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
                 }.pickerStyle(.segmented).padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons) { item in
-                        openAttention(item, worktrees: worktrees)
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                                         selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
+                        await openAttention(item, worktrees: worktrees)
                     }
                 } else if navigation.compactShowsProjects {
                     List {
@@ -572,8 +576,10 @@ public struct WorktreeListContent: View {
     @ViewBuilder
     private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem]) -> some View {
         if navigation.showsAttention {
-            SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons) { item in
-                openAttention(item, worktrees: worktrees)
+            SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                                         selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
+                await openAttention(item, worktrees: worktrees)
             }
         } else {
             VStack(spacing: 0) {
@@ -651,56 +657,55 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func openAttention(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) {
+    private func openAttention(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) async -> Bool {
         guard let worktree = worktrees.first(where: { $0.path == item.worktreeID }), worktree.state.hasOnDiskWorktree else {
-            showErrorToast("This worktree is no longer available."); return
+            showErrorToast("This worktree is no longer available."); return false
         }
         selectionIntentGeneration &+= 1
         let generation = selectionIntentGeneration
         let requestHostID = host.id
         let provider: RemoteConnectionProvider? = remoteConnectionProvider
-        Task {
-            do {
-                var target = worktree
-                if target.state == .closed {
-                    let response = try await RelayedWorktreeManagementClient.send(.open(worktreeID: target.path), using: provider)
-                    guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return }
-                    guard response == .ok else { showErrorToast("Couldn't open the worktree."); return }
-                    for _ in 0..<12 {
-                        let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
-                        guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return }
-                        applyLoadedList(list)
-                        if let running = list.first(where: { $0.path == target.path && $0.layout != nil }) { target = running; break }
-                        try await Task.sleep(for: .milliseconds(250))
-                    }
+        do {
+            var target = worktree
+            if target.state == .closed {
+                let response = try await RelayedWorktreeManagementClient.send(.open(worktreeID: target.path), using: provider)
+                guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
+                guard response == .ok else { showErrorToast("Couldn't open the worktree."); return false }
+                for _ in 0..<12 {
+                    let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
+                    guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
+                    applyLoadedList(list)
+                    if let running = list.first(where: { $0.path == target.path && $0.layout != nil }) { target = running; break }
+                    try await Task.sleep(for: .milliseconds(250))
                 }
-                guard presentedHostID == requestHostID, generation == selectionIntentGeneration, target.layout != nil else { return }
-                if let paneID = item.paneID {
-                    guard let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) else {
-                        navigation.forget(item.id); showErrorToast("This pane is no longer available."); return
-                    }
-                    if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
-                } else { onSelect(target) }
-                acknowledgeViewedStop(target)
-                let supportsExactAcknowledgement = projects(for: worktrees)
-                    .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-                if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
-                    for: item, supportsExactAcknowledgement: supportsExactAcknowledgement
-                ) {
-                    let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
-                    guard presentedHostID == requestHostID else { return }
-                    if case .error(let code, let message, _, _) = response, code != "occurrence-changed" { showErrorToast(message); return }
-                }
-                // Selection above already displayed this target. Its own
-                // selected-worktree/focus binding updates advance the intent
-                // generation while acknowledgement is in flight; they must
-                // not prevent this successful visit entering history.
-                guard presentedHostID == requestHostID else { return }
-                navigation.opened(item)
-            } catch {
-                guard presentedHostID == requestHostID else { return }
-                showErrorToast("Couldn't open this request on the owning Mac.")
             }
+            guard presentedHostID == requestHostID, generation == selectionIntentGeneration, target.layout != nil else { return false }
+            if let paneID = item.paneID {
+                guard let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) else {
+                    navigation.forget(item.id); showErrorToast("This pane is no longer available."); return false
+                }
+                if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
+            } else { onSelect(target) }
+            acknowledgeViewedStop(target)
+            let supportsExactAcknowledgement = projects(for: worktrees)
+                .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
+            if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
+                for: item, supportsExactAcknowledgement: supportsExactAcknowledgement
+            ) {
+                let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
+                guard presentedHostID == requestHostID else { return false }
+                if case .error(let code, let message, _, _) = response, code != "occurrence-changed" { showErrorToast(message); return false }
+            }
+            // Selection above already displayed this target. Its own
+            // selected-worktree/focus binding updates advance the intent
+            // generation while acknowledgement is in flight; they must
+            // not prevent this successful visit entering history.
+            guard presentedHostID == requestHostID else { return false }
+            return true
+        } catch {
+            guard presentedHostID == requestHostID else { return false }
+            showErrorToast("Couldn't open this request on the owning Mac.")
+            return false
         }
     }
 

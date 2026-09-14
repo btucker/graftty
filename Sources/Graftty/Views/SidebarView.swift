@@ -232,11 +232,11 @@ struct SidebarView: View {
                 }
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
-                                         icons: projectIcons) { item in
-                        Task {
-                            if await onOpenAttention(item) { navigation.opened(item) }
-                            else { navigationError = "This target is unavailable or its request has changed." }
-                        }
+                                         icons: projectIcons, selectionColor: theme.foreground.opacity(0.16),
+                                         isCurrentWorktree: isCurrentAttentionWorktree) { item in
+                        let opened = await onOpenAttention(item)
+                        if !opened { navigationError = "This target is unavailable or its request has changed." }
+                        return opened
                     }
                 } else {
                     TextField("Find any project or worktree", text: $navigation.query)
@@ -323,6 +323,14 @@ struct SidebarView: View {
                 onCancel: { pendingAddWorktree = nil }
             )
         }
+    }
+
+    private func isCurrentAttentionWorktree(_ item: SidebarActivityItem) -> Bool {
+        if let selectedRemoteIdentity {
+            guard let route = remoteMacsModel.relayRouter.resolveWorktree(item.worktreeID) else { return false }
+            return route.identity == selectedRemoteIdentity && route.path == selectedRemoteWorktreePath
+        }
+        return item.worktreeID == appState.selectedWorktreePath
     }
 
     @ViewBuilder

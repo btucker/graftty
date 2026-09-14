@@ -195,9 +195,9 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
             case .all: matches = true }
             return matches && (query.isEmpty || "\(item.projectName) \(item.worktreeName) \(item.title)".localizedCaseInsensitiveContains(query))
         }.sorted {
-            let lhs = $0.occurrence?.timestamp ?? .distantFuture
-            let rhs = $1.occurrence?.timestamp ?? .distantFuture
-            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+            let lhs = $0.occurrence?.timestamp ?? .distantPast
+            let rhs = $1.occurrence?.timestamp ?? .distantPast
+            return lhs == rhs ? $0.id < $1.id : lhs > rhs
         }
     }
 }

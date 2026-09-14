@@ -96,7 +96,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.39** When an attention target is opened, the application shall retain the last 20 distinct recently viewed targets locally across relaunches, newest first, without counting them as pending requests.
 
-**LAYOUT-2.40** While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time.
+**LAYOUT-2.40** While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time with newest first.
 
 **LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
 
@@ -127,6 +127,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.55** While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
+
+**LAYOUT-2.57** When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.
 
 ### LAYOUT-3.x — Adding Repositories
 

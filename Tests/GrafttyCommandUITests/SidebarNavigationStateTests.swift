@@ -9,6 +9,41 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
+    @Test("@spec LAYOUT-2.57: When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.")
+    func openingAttentionPreservesPosition() throws {
+        let suite = "AttentionOrder." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "Project")
+        func item(_ id: String, _ time: Double) -> SidebarActivityItem {
+            .init(id: id, projectID: "p", worktreeID: id, paneID: nil, projectName: "Project", worktreeName: id,
+                title: "Stopped", occurrence: .init(timestamp: Date(timeIntervalSince1970: time), text: "Stopped", source: .agentStop), isBusy: false)
+        }
+        let older = item("older", 1), selected = item("selected", 2), latest = item("latest", 3)
+        #expect(navigation.attentionItems(live: [older, selected, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
+        let opening = navigation.beginOpening(selected)
+        #expect(navigation.selectedAttentionID == selected.id)
+        // Host acknowledgement can arrive before the open request completes.
+        #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
+        navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
+        #expect(navigation.hasViewed(selected))
+        #expect(navigation.attentionItems(live: [older, latest, item("new", 4)], projects: [project]).map(\.id) == ["new", "latest", "selected", "older"])
+        let reopen = navigation.beginOpening(selected)
+        navigation.finishOpening(reopen, succeeded: true)
+        #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
+        let failed = navigation.beginOpening(older)
+        navigation.finishOpening(failed, succeeded: false)
+        #expect(!navigation.hasViewed(older))
+        #expect(navigation.selectedAttentionID == selected.id)
+        let fresh = item("selected", 5)
+        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project]).first == fresh)
+        #expect(!navigation.hasViewed(fresh))
+        navigation.filter = .running
+        #expect(navigation.attentionItems(live: [], projects: [project]).isEmpty)
+    }
+
     @Test("""
 @spec LAYOUT-2.48: When the user drags the project rail edge, the application shall resize the rail, collapse it to icons below the collapse threshold, and retain the last expanded width across relaunches.
 """)
@@ -51,8 +86,18 @@ struct SidebarNavigationStateTests {
             projectName: project.name, worktreeName: "deploy-to-cloudflare", title: "Claude stopped",
             occurrence: .init(timestamp: Date(), text: "Claude stopped", source: .agentStop), isBusy: false,
             agentStop: SidebarAgentStop(agentName: "Claude", stoppedAt: Date().addingTimeInterval(-120)))
+        let visit = navigation.beginOpening(item)
+        navigation.finishOpening(visit, succeeded: true)
+        var incoming = item
+        incoming.id = "new"
+        incoming.worktreeID = "new"
+        incoming.worktreeName = "newer-request"
+        incoming.title = "Codex needs input"
+        incoming.agentStop = nil
+        incoming.occurrence = .init(timestamp: Date().addingTimeInterval(1), text: incoming.title, source: .agentStop)
         for width in [220.0, 300, 420] {
-            let content = SidebarAttentionList(navigation: navigation, items: [item], projects: [project], icons: [:], onOpen: { _ in })
+            let content = SidebarAttentionList(navigation: navigation, items: [incoming], projects: [project], icons: [:],
+                selectionColor: Color.white.opacity(0.16), onOpen: { _ in true })
                 .frame(width: width, height: 520)
                 .background(Color(red: 0.21, green: 0.23, blue: 0.25)).environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: content)

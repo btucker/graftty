@@ -77,12 +77,12 @@ struct SidebarNavigationTests {
         #expect(try JSONDecoder().decode(SidebarRecentHistory.self, from: data) == history)
     }
 
-    @Test("@spec LAYOUT-2.40: While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time.")
+    @Test("@spec LAYOUT-2.40: While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time with newest first.")
     func attentionSources() {
         let input = [item("command", source: .commandFinished, time: 1),
                      item("agent", source: .agentStop, time: 3),
                      item("user", source: .userNotify, time: 2)]
-        #expect(SidebarActivityFilter.needsYou.apply(to: input).map(\.id) == ["user", "agent"])
+        #expect(SidebarActivityFilter.needsYou.apply(to: input).map(\.id) == ["agent", "user"])
         #expect(SidebarActivityFilter.all.apply(to: input).count == 3)
         #expect(SidebarActivityFilter.running.apply(to: input).isEmpty)
     }
