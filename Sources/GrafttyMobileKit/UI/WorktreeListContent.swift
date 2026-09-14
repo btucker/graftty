@@ -487,7 +487,8 @@ public struct WorktreeListContent: View {
     private func navigationContent(_ worktrees: [WorktreePanes]) -> some View {
         let projects = projects(for: worktrees)
         let items = SidebarProjection.activity(worktrees)
-        let counts = Dictionary(grouping: items.filter(\.needsAttention), by: \.projectID).mapValues(\.count)
+        let activityCounts = SidebarActivityCounts(items: items)
+        let counts = activityCounts.attentionByProject
         if !showsProjectRail {
             VStack(spacing: 0) {
                 HStack {
@@ -511,7 +512,7 @@ public struct WorktreeListContent: View {
             }
         } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
-                ProjectNavigationRail(projects: projects, counts: counts, icons: projectIcons,
+                ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
@@ -552,7 +553,10 @@ public struct WorktreeListContent: View {
                                     }
                                     Spacer()
                                     if !project.isAvailable { Text("Offline").font(.caption) }
-                                    else if let count = counts[project.id] { Text(String(count)).foregroundStyle(.orange) }
+                                    HStack(spacing: 4) {
+                                        SidebarActivityBadge(activityCounts.workingByProject[project.id, default: 0], kind: .working)
+                                        SidebarActivityBadge(counts[project.id, default: 0])
+                                    }
                                 }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                         }.onMove { offsets, destination in
@@ -1652,6 +1656,7 @@ private struct WorktreeRowContent: View {
             // the first pane row (see WorktreeBlock.paneRows), not
             // here — "needs input" pills always sit on pane rows.
             Spacer()
+            SidebarActivityBadge(SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0])
             DivergenceGutter(stats: worktree.stats, theme: theme)
         }
         .padding(.vertical, 4)

@@ -36,11 +36,13 @@ struct RemoteMacsSidebarTests {
         let model = RemoteMacsModel(store: store)
         await model.loadSavedRemotes()
         let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature",
-            layout: .leaf(sessionName: "shell", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil))
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil),
+                right: .leaf(sessionName: "claude", title: "Claude", attentionText: "Claude needs input", isBusy: false, attentionSource: .agentStop)))
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {
-            ProjectNavigationRail(projects: [project], counts: [:], icons: [:], selectedID: "p", showsAttention: false,
+            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p", showsAttention: false,
                 collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
                 onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
             Divider()
@@ -57,7 +59,7 @@ struct RemoteMacsSidebarTests {
                 SidebarWorktreeNodeRow(node: node, depth: 0, repositoryID: UUID(), expansion: .constant(.init()),
                     statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
                     WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
-                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil, attentionCount: 1)
                         .frame(minHeight: 44)
                         .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
                 }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))

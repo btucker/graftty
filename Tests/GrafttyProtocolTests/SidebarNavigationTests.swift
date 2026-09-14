@@ -3,6 +3,27 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.")
+    func activityCountsAgreeAcrossProjectsAndWorktrees() {
+        let working = SidebarActivityItem(id: "busy", projectID: "p", worktreeID: "w1", paneID: "agent",
+            projectName: "Project", worktreeName: "worktree", title: "Codex", occurrence: nil, isBusy: true)
+        var request = working
+        request.id = "request"
+        request.occurrence = .init(timestamp: Date(), text: "Needs input", source: .agentStop)
+        request.isBusy = false
+        var stopped = request
+        stopped.id = "stop"
+        stopped.worktreeID = "w2"
+        var command = request
+        command.id = "command"
+        command.occurrence?.source = .commandFinished
+        let counts = SidebarActivityCounts(items: [working, working, request, stopped, command])
+        #expect(counts.workingByProject == ["p": 1])
+        #expect(counts.attentionByProject == ["p": 2])
+        #expect(counts.attentionByWorktree == ["w1": 1, "w2": 1])
+        #expect(SidebarActivityCounts(items: []).attentionByProject.isEmpty)
+    }
+
     @Test("@spec LAYOUT-2.53: While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.")
     func projectOwnerContext() {
         let local = RemoteDeviceID(value: "local")

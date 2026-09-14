@@ -202,6 +202,24 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
+public struct SidebarActivityCounts: Sendable {
+    public private(set) var workingByProject: [String: Int] = [:]
+    public private(set) var attentionByProject: [String: Int] = [:]
+    public private(set) var attentionByWorktree: [String: Int] = [:]
+
+    public init(items: [SidebarActivityItem]) {
+        var seen: Set<String> = []
+        for item in items where seen.insert(item.id).inserted {
+            if item.isBusy { workingByProject[item.projectID, default: 0] += 1 }
+            if item.needsAttention {
+                attentionByProject[item.projectID, default: 0] += 1
+                attentionByWorktree[item.worktreeID, default: 0] += 1
+            }
+        }
+    }
+}
+
 /// @spec LAYOUT-2.39: When an attention target is opened, the application shall retain the last 20 distinct recently viewed targets locally across relaunches, newest first, without counting them as pending requests.
 public struct SidebarRecentHistory: Codable, Sendable, Equatable {
     public struct Entry: Codable, Sendable, Equatable, Identifiable {

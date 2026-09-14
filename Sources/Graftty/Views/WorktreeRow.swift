@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
 /// `PaneTitleRow` (pane-scoped shell-integration pings). Centralized so
@@ -247,6 +248,7 @@ struct WorktreeRow: View {
     /// worktree's running state so a ping set on a closed worktree stays
     /// reachable.
     let attentionStyle: AttentionCapsuleStyle?
+    var attentionCount: Int = 0
 
     var body: some View {
         HStack(spacing: 6) {
@@ -260,6 +262,7 @@ struct WorktreeRow: View {
                 AttentionCapsule(style: attentionStyle)
             }
             Spacer()
+            SidebarActivityBadge(attentionCount)
             WorktreeRowGutter(
                 stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,

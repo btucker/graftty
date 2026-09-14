@@ -447,7 +447,8 @@ struct RemoteMacsSection: View {
                             text: $0,
                             source: worktree.attentionSource
                         )
-                    }
+                    },
+                    attentionCount: SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0]
                 )
                 .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
                 .contentShape(Rectangle())

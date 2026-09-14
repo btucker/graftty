@@ -42,6 +42,7 @@ public struct ProjectIdentityView: View {
 public struct ProjectNavigationRail: View {
     public var projects: [SidebarProject]
     public var counts: [String: Int]
+    public var workingCounts: [String: Int]
     public var icons: [String: Data]
     public var selectedID: String?
     public var showsAttention: Bool
@@ -59,7 +60,7 @@ public struct ProjectNavigationRail: View {
     @State private var dropTarget: String?
     @State private var resizeStartWidth: Double?
 
-    public init(projects: [SidebarProject], counts: [String: Int], icons: [String: Data], selectedID: String?,
+    public init(projects: [SidebarProject], counts: [String: Int], workingCounts: [String: Int] = [:], icons: [String: Data], selectedID: String?,
                 showsAttention: Bool, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
@@ -67,6 +68,7 @@ public struct ProjectNavigationRail: View {
                 management: @escaping () -> AnyView = { AnyView(EmptyView()) },
                 menu: @escaping (SidebarProject) -> AnyView = { _ in AnyView(EmptyView()) }) {
         self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
+        self.workingCounts = workingCounts
         self.localDeviceID = localDeviceID; self.management = management
         self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
@@ -82,11 +84,11 @@ public struct ProjectNavigationRail: View {
                     if !collapsed {
                         if expandedWidth >= 160 { Text("Attention").font(.callout).lineLimit(1) }
                         Spacer(minLength: 0)
-                        badge(counts.values.reduce(0, +))
+                        SidebarActivityBadge(counts.values.reduce(0, +))
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .overlay(alignment: .topTrailing) { if collapsed { badge(counts.values.reduce(0, +)) } }
+                .overlay(alignment: .topTrailing) { if collapsed { SidebarActivityBadge(counts.values.reduce(0, +)) } }
                 .padding(.horizontal, collapsed ? 0 : 8)
                 .contentShape(Rectangle())
                 .background(showsAttention ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
@@ -160,11 +162,18 @@ public struct ProjectNavigationRail: View {
         Button { onSelect(project) } label: {
             HStack(spacing: 9) {
                 ProjectIdentityView(project: project, imageData: icons[project.id])
-                    .overlay(alignment: .bottomTrailing) {
+                    .overlay(alignment: .bottomLeading) {
                         if collapsed, let owner = project.owner, owner.deviceID != localDeviceID {
                             Image(systemName: "desktopcomputer").font(.system(size: 8))
                                 .padding(2).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 3))
                         }
+                    }
+                    .frame(height: 44)
+                    .overlay(alignment: .topTrailing) {
+                        if !collapsed && expandedWidth < 160 { SidebarActivityBadge(counts[project.id, default: 0]) }
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        if !collapsed && expandedWidth < 160 { SidebarActivityBadge(workingCounts[project.id, default: 0], kind: .working) }
                     }
                 if !collapsed {
                     VStack(alignment: .leading, spacing: 2) {
@@ -174,17 +183,23 @@ public struct ProjectNavigationRail: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    badge(counts[project.id, default: 0])
+                    if expandedWidth >= 160 {
+                        HStack(spacing: 4) {
+                            SidebarActivityBadge(workingCounts[project.id, default: 0], kind: .working)
+                            SidebarActivityBadge(counts[project.id, default: 0])
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 44)
-            .overlay(alignment: .topTrailing) { if collapsed { badge(counts[project.id, default: 0]) } }
+            .overlay(alignment: .topTrailing) { if collapsed { SidebarActivityBadge(counts[project.id, default: 0]) } }
+            .overlay(alignment: .bottomTrailing) { if collapsed { SidebarActivityBadge(workingCounts[project.id, default: 0], kind: .working) } }
             .padding(.horizontal, collapsed ? 0 : 8)
             .contentShape(Rectangle())
             .background(!showsAttention && selectedID == project.id ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
             .help(project.name + (project.owner.map { " on " + $0.deviceLabel } ?? "") + (project.isAvailable ? "" : " · Offline"))
-            .accessibilityLabel(project.name + ", \(counts[project.id, default: 0]) pending requests" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
+            .accessibilityLabel(project.name + ", \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
             .contextMenu {
                 if allowsReordering, let index = projects.firstIndex(where: { $0.id == project.id }) {
                     if index > 0 { Button("Move Up") { onMove(project.id, projects[index-1].id, false) } }
@@ -198,13 +213,5 @@ public struct ProjectNavigationRail: View {
     private func move(_ id: String, offset: Int) {
         guard allowsReordering, let index = projects.firstIndex(where: { $0.id == id }), projects.indices.contains(index + offset) else { return }
         onMove(id, projects[index + offset].id, offset > 0)
-    }
-    @ViewBuilder private func badge(_ count: Int) -> some View {
-        if count > 0 {
-            Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .semibold)).fixedSize()
-                .padding(.horizontal, 4).padding(.vertical, 2)
-                .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
-                .foregroundStyle(.orange)
-        }
     }
 }
