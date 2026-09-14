@@ -5,6 +5,60 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
+    @spec AGENT-6.29: When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
+    """)
+    func sharedFilesSurviveIndependentPluginCaching() throws {
+        let fileManager = FileManager.default
+        let temporary = fileManager.temporaryDirectory
+            .appendingPathComponent("graftty-shared-plugin-files-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: temporary) }
+        try fileManager.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let source = temporary.appendingPathComponent("source")
+        try fileManager.copyItem(
+            at: GrafttyKitResourceBundle.bundle.bundleURL.appendingPathComponent("AgentPlugins"),
+            to: source
+        )
+        let claudeRoot = source.appendingPathComponent("claude/plugins/graftty-team")
+        let links = [
+            "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-team/SKILL.md",
+            ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty-team/.codex-plugin/plugin.json",
+        ]
+        for (path, target) in links {
+            let link = claudeRoot.appendingPathComponent(path)
+            try fileManager.removeItem(at: link)
+            try fileManager.createSymbolicLink(atPath: link.path, withDestinationPath: target)
+        }
+        let expectedSkill = try Data(contentsOf: claudeRoot
+            .appendingPathComponent("skills/graftty-team/SKILL.md"))
+        let expectedManifest = try Data(contentsOf: claudeRoot
+            .appendingPathComponent(".claude-plugin/plugin.json"))
+        let destination = temporary.appendingPathComponent("prepared")
+        _ = try AgentPluginInstaller(resourceRoot: source).prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            try fileManager.copyItem(
+                at: destination.appendingPathComponent("\(provider)/plugins/graftty-team"),
+                to: temporary.appendingPathComponent("cached-\(provider)")
+            )
+        }
+        try fileManager.removeItem(at: source)
+        try fileManager.removeItem(at: destination)
+
+        for provider in ["codex", "claude"] {
+            let cached = temporary.appendingPathComponent("cached-\(provider)")
+            for (path, expected) in [
+                "skills/graftty-team/SKILL.md": expectedSkill,
+                ".\(provider)-plugin/plugin.json": expectedManifest,
+            ] {
+                let file = cached.appendingPathComponent(path)
+                let attributes = try fileManager.attributesOfItem(atPath: file.path)
+                #expect(attributes[.type] as? FileAttributeType == .typeRegular)
+                #expect(try Data(contentsOf: file) == expected)
+            }
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.28: When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
     """)
     func providerHooksCaptureExplicitAttentionSignals() throws {
@@ -106,10 +160,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.3.0""#))
+        #expect(claudeManifest.contains(#""version": "0.3.1""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.3.0""#))
+        #expect(codexManifest.contains(#""version": "0.3.1""#))
     }
 
     @Test("""

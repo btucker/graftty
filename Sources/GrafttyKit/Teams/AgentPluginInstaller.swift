@@ -140,6 +140,17 @@ public struct AgentPluginInstaller: Sendable {
             defer { try? FileManager.default.removeItem(at: staging) }
             try FileManager.default.copyItem(at: source, to: staging)
             try materializeHookCommands(in: staging)
+            // Source links can cross provider roots; cached plugins cannot.
+            // Read through the original links before replacing staged copies.
+            for path in [
+                "plugins/graftty-team/skills/graftty-team/SKILL.md",
+                "plugins/graftty-team/.\(provider.rawValue)-plugin/plugin.json",
+            ] {
+                let contents = try Data(contentsOf: source.appendingPathComponent(path))
+                let stagedFile = staging.appendingPathComponent(path)
+                try FileManager.default.removeItem(at: stagedFile)
+                try contents.write(to: stagedFile)
+            }
             if FileManager.default.fileExists(atPath: destination.path) {
                 _ = try FileManager.default.replaceItemAt(
                     destination,

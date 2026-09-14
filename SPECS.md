@@ -2530,6 +2530,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.28** When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
 
+**AGENT-6.29** When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
+
 ## CLI — CLI
 
 ### CLI-1.x
