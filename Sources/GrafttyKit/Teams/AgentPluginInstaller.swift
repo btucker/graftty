@@ -88,27 +88,49 @@ public struct AgentPluginInstallationReport: Equatable, Sendable {
 
 public enum AgentPluginInstallerError: Error, Equatable {
     case bundledResourcesMissing
+    case invalidPluginManifest
 }
 
 public struct AgentPluginInstaller: Sendable {
-    /// Bump when the bundled provider integration changes in a way that
-    /// warrants presenting the launch-time install offer again.
+    /// Bump when the integration changes enough to re-offer first-time setup
+    /// to users who declined it. Completed installations refresh per app build.
     public static let integrationRevision = 7
 
     private let resourceRoot: URL?
     private let grafttyCLIPath: String
+    private let pluginVersion: String?
+
+    /// Native plugin caches key by manifest version. Give every app build a
+    /// distinct cache version, including builds with only hook-path changes.
+    public static var appBuildPluginVersion: String? {
+        guard let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String else {
+            return nil
+        }
+        return pluginVersion(forBuild: build)
+    }
+
+    static func pluginVersion(forBuild build: String) -> String? {
+        let parts = build.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count),
+              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }
+        let numbers = parts.compactMap { UInt($0) }
+        guard numbers.count == parts.count else { return nil }
+        return (numbers + Array(repeating: 0, count: 3 - numbers.count))
+            .map(String.init).joined(separator: ".")
+    }
 
     public init(
         resourceRoot: URL? = nil,
-        grafttyCLIPath: String = "graftty"
+        grafttyCLIPath: String = "graftty",
+        pluginVersion: String? = Self.appBuildPluginVersion
     ) {
         self.resourceRoot = resourceRoot
         self.grafttyCLIPath = grafttyCLIPath
+        self.pluginVersion = pluginVersion
     }
 
     /// Materializes an app-owned marketplace snapshot. Provider configuration
-    /// remains untouched until Settings explicitly offers the returned install
-    /// plan and the user accepts it.
+    /// remains untouched until installation or an automatic refresh runs.
     public func prepare(
         destinationRoot: URL = AppState.defaultDirectory
             .appendingPathComponent("agent-plugins", isDirectory: true)
@@ -146,7 +168,14 @@ public struct AgentPluginInstaller: Sendable {
                 "plugins/graftty-team/skills/graftty-team/SKILL.md",
                 "plugins/graftty-team/.\(provider.rawValue)-plugin/plugin.json",
             ] {
-                let contents = try Data(contentsOf: source.appendingPathComponent(path))
+                var contents = try Data(contentsOf: source.appendingPathComponent(path))
+                if path.hasSuffix("plugin.json"), let pluginVersion {
+                    guard var manifest = try JSONSerialization.jsonObject(with: contents) as? [String: Any] else {
+                        throw AgentPluginInstallerError.invalidPluginManifest
+                    }
+                    manifest["version"] = pluginVersion
+                    contents = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+                }
                 let stagedFile = staging.appendingPathComponent(path)
                 try FileManager.default.removeItem(at: stagedFile)
                 try contents.write(to: stagedFile)
@@ -226,7 +255,8 @@ public struct AgentPluginInstaller: Sendable {
     }
 
     /// Runs the structured installation plan only after the caller has
-    /// obtained explicit consent. Each step is a direct executable invocation,
+    /// obtained installation consent, including refreshes of that installation.
+    /// Each step is a direct executable invocation,
     /// not a shell string, and failures do not prevent the other provider from
     /// being attempted.
     public func install(
@@ -257,6 +287,74 @@ public struct AgentPluginInstaller: Sendable {
             }
         }
         return AgentPluginInstallationReport(results: results)
+    }
+
+    /// Refresh only enabled, currently installed user plugins. Replaying the
+    /// initial installation unconditionally would undo provider-side removal
+    /// or disabling. Inventory failures remain retryable installation errors.
+    public func refresh(
+        _ plan: AgentPluginSetupPlan,
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(60)
+    ) async -> AgentPluginInstallationReport {
+        var results: [AgentPluginInstallResult] = []
+        for provider in AgentPluginProvider.allCases {
+            let listStep = AgentPluginInstallStep(
+                provider: provider,
+                executable: provider.rawValue,
+                arguments: provider == .codex
+                    ? ["plugin", "list", "--marketplace", "graftty", "--json"]
+                    : ["plugin", "list", "--json"]
+            )
+            do {
+                let output = try await executor.run(
+                    command: listStep.executable,
+                    args: listStep.arguments,
+                    at: plan.rootDirectory.path,
+                    timeout: timeout
+                )
+                let data = Data(output.stdout.utf8)
+                let installed: Bool
+                switch provider {
+                case .codex:
+                    installed = try JSONDecoder().decode(CodexPluginInventory.self, from: data)
+                        .installed.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled }
+                case .claude:
+                    installed = try JSONDecoder().decode([ClaudePluginEntry].self, from: data)
+                        .contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled }
+                }
+                guard installed else { continue }
+                let steps = plan.installSteps.filter {
+                    $0.provider == provider && $0.arguments.prefix(2) != ["plugin", "install"]
+                }
+                let report = await install(
+                    AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: steps),
+                    executor: executor,
+                    timeout: timeout
+                )
+                results.append(contentsOf: report.results)
+            } catch {
+                results.append(AgentPluginInstallResult(
+                    step: listStep, output: nil, errorDescription: Self.describe(error)
+                ))
+            }
+        }
+        return AgentPluginInstallationReport(results: results)
+    }
+
+    private struct CodexPluginInventory: Decodable {
+        let installed: [Entry]
+        struct Entry: Decodable {
+            let pluginId: String
+            let installed: Bool
+            let enabled: Bool
+        }
+    }
+
+    private struct ClaudePluginEntry: Decodable {
+        let id: String
+        let scope: String
+        let enabled: Bool
     }
 
     private static func bundledResourceRoot() -> URL? {

@@ -17,6 +17,9 @@ struct AgentTeamsSettingsPane: View {
     @State private var preparedPluginPlan: AgentPluginSetupPlan?
     @State private var showingPluginInstallOffer = false
     @State private var pluginInstallInProgress = false
+    private let automaticUpdate = AgentPluginAutomaticUpdate.shared
+
+    private var pluginSetupIsBusy: Bool { pluginInstallInProgress || automaticUpdate.isRunning }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -56,12 +59,12 @@ struct AgentTeamsSettingsPane: View {
                     Button("Prepare Codex and Claude Plugins…") {
                         prepareProviderPlugins()
                     }
-                    .disabled(pluginInstallInProgress)
+                    .disabled(pluginSetupIsBusy)
                     if preparedPluginPlan != nil {
                         Button("Install Prepared Plugins…") {
                             showingPluginInstallOffer = true
                         }
-                        .disabled(pluginInstallInProgress)
+                        .disabled(pluginSetupIsBusy)
                     }
                     if pluginInstallInProgress {
                         ProgressView("Installing provider plugins…")
@@ -76,11 +79,15 @@ struct AgentTeamsSettingsPane: View {
                         Text(pluginSetupStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    } else if let status = automaticUpdate.status {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("Native provider integration")
                 } footer: {
-                    Text("Preparation copies a Graftty-owned marketplace snapshot and five provider-native setup commands to the clipboard, then offers to run those commands. Graftty changes provider configuration only after you explicitly approve that offer. You can enable native messaging before Codex, Claude, or their plugins are installed. The plugins install the shared team skill and lifecycle hooks. Native mode removes Graftty's Claude wrapper and uses Claude's peer socket. Codex 0.147 still needs a small Graftty transport wrapper to launch an app-server/remote pair; its plugin owns hooks and instructions. After changing this setting or installing the plugins, start new provider sessions.")
+                    Text("Prepare and install the shared team skill and lifecycle hooks once. Graftty then refreshes the plugins automatically after app updates while agent teams are enabled. Failed updates retry on the next launch. You can enable native messaging before either provider is installed. Start new provider sessions after installation or an update to use the new plugins.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -156,14 +163,16 @@ struct AgentTeamsSettingsPane: View {
                 AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
             }
         } message: {
-            Text("Graftty will run the five displayed provider-native commands. Each provider remains responsible for its own plugin configuration, and failures are reported without preventing the other provider from being attempted.")
+            Text("Graftty will run the five displayed provider-native commands and refresh these plugins automatically after future app updates. Failures are reported without preventing the other provider from being attempted.")
         }
         .onChange(of: agentTeamsEnabled) { _, enabled in
-            guard enabled,
-                  AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
-            // The user toggled agent teams, not a plugin action; surfacing the
-            // offer is fine, but silently replacing their clipboard is not.
-            prepareProviderPlugins(copyToClipboard: false)
+            guard enabled else { return }
+            Task { @MainActor in
+                await automaticUpdate.runAtLaunch(defaults: defaults)
+                guard AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
+                // Enabling teams must not silently replace the clipboard.
+                prepareProviderPlugins(copyToClipboard: false)
+            }
         }
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
@@ -191,6 +200,7 @@ struct AgentTeamsSettingsPane: View {
     }
 
     private func prepareProviderPlugins(copyToClipboard: Bool = true) {
+        guard !pluginSetupIsBusy else { return }
         do {
             let plan = try AgentPluginInstaller(
                 grafttyCLIPath: GrafttyApp.agentHookCLIPath()
@@ -215,7 +225,7 @@ struct AgentTeamsSettingsPane: View {
     private func installPreparedProviderPlugins(
         enableNativeMessagingOnSuccess: Bool
     ) {
-        guard let plan = preparedPluginPlan else { return }
+        guard !pluginSetupIsBusy, let plan = preparedPluginPlan else { return }
         pluginInstallInProgress = true
         pluginSetupStatus = "Installing Codex and Claude plugins…"
         let userSelectionRevision = AgentPluginIntegrationActivation

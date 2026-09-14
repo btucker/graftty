@@ -8,6 +8,7 @@ enum SettingsKeys {
     static let nativeAgentMessagingSelectionRevision = "nativeAgentMessagingSelectionRevision"
     static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"
     static let agentPluginInstalledRevision = "agentPluginInstalledRevision"
+    static let agentPluginInstalledBuildVersion = "agentPluginInstalledBuildVersion"
     static let channelsEnabled           = "channelsEnabled"
     static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamSessionPrompt         = "teamSessionPrompt"
