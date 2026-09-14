@@ -59,13 +59,13 @@ Save the returned `created worktree=... address=...`. Pause the delegated scope 
 
 After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
 
-For an existing tracked worktree without a suitable agent, launch one in a new pane:
+For a running worktree with an existing pane but no suitable agent, launch one in a new pane. Open closed worktrees in Graftty first.
 
 ```sh
-graftty pane add '<worktree-name>' --command codex
+graftty pane add '<worktree-name>' --command 'codex -- "Check Graftty messages, then report ready for a task."'
 ```
 
-Use `--command claude` for Claude. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
+For Claude, replace `codex` with `claude`, keeping the initial prompt so a completed turn activates fallback inbox delivery. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
 
 Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane show '<worktree-name>:<id>' --lines 100`, using its 1-based pane ID. Use `team send` for messages; `pane send` types into the terminal and presses Return by default.
 
