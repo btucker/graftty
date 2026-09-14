@@ -49,6 +49,12 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
             : String(name.prefix(2)).uppercased()
     }
 
+    public func ownerSubtitle(localDeviceID: RemoteDeviceID?) -> String? {
+        let host = owner.flatMap { $0.deviceID == localDeviceID ? nil : $0.deviceLabel }
+        let parts = [host, isAvailable ? nil : "Offline"].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// FNV-1a, rather than Swift's process-randomized Hasher, keeps colors stable.
     public var colorIndex: Int {
         Int(id.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 } % 8)

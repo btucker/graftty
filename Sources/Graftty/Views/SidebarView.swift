@@ -183,15 +183,30 @@ struct SidebarView: View {
             Button("Remove Repository") { onRemoveRepo(repo) }
         })
     }
-    private func remoteSection(projectFilter: String?, query: String = "") -> some View {
+    private func remoteSection(projectFilter: String?, query: String = "", management: Bool = false) -> some View {
         RemoteMacsSection(model: remoteMacsModel, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
                           onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
-                          projectFilter: projectFilter, query: query, showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
+                          projectFilter: projectFilter, query: query,
+                          showsMacHierarchy: management || !showsProjectRail,
+                          showsRepositoryHeaders: management || !showsProjectRail || !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
+    }
+
+    private var remoteManagementButton: some View {
+        Button { showsRemoteManagement.toggle() } label: {
+            Image(systemName: "desktopcomputer")
+                .frame(minWidth: 28, minHeight: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Manage Remote Macs")
+        .accessibilityLabel("Manage Remote Macs")
+        .popover(isPresented: $showsRemoteManagement) {
+            List { remoteSection(projectFilter: nil, management: true) }.frame(width: 340, height: 380)
+        }
     }
 
     var body: some View {
@@ -204,7 +219,8 @@ struct SidebarView: View {
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
                                       onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
-                                      onMove: moveProject, menu: projectMenu)
+                                      onMove: moveProject, localDeviceID: owner.deviceID,
+                                      management: { AnyView(remoteManagementButton) }, menu: projectMenu)
                 Divider()
             }
             VStack(spacing: 0) {
@@ -240,11 +256,12 @@ struct SidebarView: View {
                                             worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
                                     }) { worktree in
                                         worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)")
+                                            .listRowInsets(showsProjectRail ? SidebarWorktreeListStyle.projectRowInsets : nil)
                                     }
                                 }
                             }
                         }
-                        .listStyle(.sidebar)
+                        .modifier(SidebarWorktreeListStyle(projectColumn: showsProjectRail))
                         .onChange(of: navigation.selectedProjectID) { _, _ in
                             if let path = navigation.selectedProjectID.flatMap({ navigation.rememberedWorktrees[$0] }) {
                                 proxy.scrollTo(path, anchor: .center)
@@ -261,9 +278,7 @@ struct SidebarView: View {
                             onNavigationIntent(); navigation.showsAttention.toggle(); navigation.query = ""
                         }
                     }
-                    Button { showsRemoteManagement.toggle() } label: { Image(systemName: "desktopcomputer") }
-                        .help("Manage Remote Macs")
-                        .popover(isPresented: $showsRemoteManagement) { List { remoteSection(projectFilter: nil) }.frame(width: 340, height: 380) }
+                    if !showsProjectRail { remoteManagementButton }
                 }.buttonStyle(.plain).font(.caption).padding(10)
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
@@ -398,7 +413,8 @@ struct SidebarView: View {
                     repositoryID: repo.id,
                     expansion: $worktreeFolderExpansion,
                     statsByWorktreePath: statsStore.stats,
-                    theme: theme
+                    theme: theme,
+                    projectColumn: showsProjectRail
                 ) { worktree, displayName in
                     worktreeBlock(
                         worktree,
@@ -406,12 +422,13 @@ struct SidebarView: View {
                         displayName: displayName
                     )
                 }
-                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, outdent: !showsProjectRail))
+                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
             }
         }
         if showsProjectRail {
             if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                 HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
+                    .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
             }
             rows
         } else {
@@ -504,6 +521,8 @@ struct SidebarView: View {
                     },
                     attentionStyle: attention.worktreeCapsule
                 )
+                .frame(minHeight: showsProjectRail ? 44 : 0)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .id(worktree.path)
@@ -744,11 +763,14 @@ struct SidebarView: View {
 private struct SidebarWorktreeRowInsets: ViewModifier {
     let node: SidebarWorktreeNode
     let depth: Int
-    var outdent: Bool = true
+    var projectColumn: Bool = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if outdent && SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
+        if projectColumn {
+            content.listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+                .listRowSeparator(.hidden)
+        } else if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
             content.listRowInsets(
                 EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
             )
@@ -769,6 +791,7 @@ private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     @Binding var expansion: SidebarWorktreeFolderExpansion
     let statsByWorktreePath: [String: WorktreeStats]
     let theme: GhosttyTheme
+    var projectColumn: Bool = false
     let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
 
     @ViewBuilder
@@ -801,11 +824,13 @@ private struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         expansion: $expansion,
                         statsByWorktreePath: statsByWorktreePath,
                         theme: theme,
+                        projectColumn: projectColumn,
                         worktreeContent: worktreeContent
                     )
                     .modifier(SidebarWorktreeRowInsets(
                         node: child,
-                        depth: depth + 1
+                        depth: depth + 1,
+                        projectColumn: projectColumn
                     ))
                 }
             } label: {

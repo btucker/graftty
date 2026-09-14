@@ -89,7 +89,10 @@ struct SidebarNavigationStateTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
-        let projects = (0..<50).map { SidebarProject(id: "project-\($0)", repositoryID: "route-\($0)", name: "Project \($0)") }
+        let projects = (0..<50).map { index in
+            SidebarProject(id: "project-\(index)", repositoryID: "route-\(index)", name: "Project \(index)",
+                owner: index.isMultiple(of: 2) ? nil : .init(deviceID: .init(value: "studio"), deviceLabel: "Studio Mac", relayDepth: 0))
+        }
         navigation.railCollapsed = true
         let restored = SidebarNavigationState(prefix: "test", defaults: defaults)
         #expect(restored.railCollapsed)

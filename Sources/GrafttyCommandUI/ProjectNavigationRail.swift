@@ -54,6 +54,8 @@ public struct ProjectNavigationRail: View {
     public var allowsReordering: Bool
     public var canExpand: Bool
     public var selectionColor: Color
+    public var localDeviceID: RemoteDeviceID?
+    public var management: () -> AnyView
     @State private var dropTarget: String?
     @State private var resizeStartWidth: Double?
 
@@ -61,8 +63,11 @@ public struct ProjectNavigationRail: View {
                 showsAttention: Bool, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
+                localDeviceID: RemoteDeviceID? = nil,
+                management: @escaping () -> AnyView = { AnyView(EmptyView()) },
                 menu: @escaping (SidebarProject) -> AnyView = { _ in AnyView(EmptyView()) }) {
         self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
+        self.localDeviceID = localDeviceID; self.management = management
         self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
     }
@@ -103,8 +108,9 @@ public struct ProjectNavigationRail: View {
                     }
                 }.padding(.horizontal, 6)
             }
+            if collapsed { management() }
             HStack {
-                if !collapsed { Spacer() }
+                if !collapsed { management(); Spacer() }
                 Button { collapsed.toggle() } label: {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.left")
                         .frame(minWidth: 36, minHeight: 40).contentShape(Rectangle())
@@ -154,10 +160,18 @@ public struct ProjectNavigationRail: View {
         Button { onSelect(project) } label: {
             HStack(spacing: 9) {
                 ProjectIdentityView(project: project, imageData: icons[project.id])
+                    .overlay(alignment: .bottomTrailing) {
+                        if collapsed, let owner = project.owner, owner.deviceID != localDeviceID {
+                            Image(systemName: "desktopcomputer").font(.system(size: 8))
+                                .padding(2).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
                 if !collapsed {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(project.name).font(.callout).lineLimit(1)
-                        if !project.isAvailable { Text("Offline").font(.caption2).foregroundStyle(.secondary) }
+                        if let subtitle = project.ownerSubtitle(localDeviceID: localDeviceID) {
+                            Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 0)
                     badge(counts[project.id, default: 0])

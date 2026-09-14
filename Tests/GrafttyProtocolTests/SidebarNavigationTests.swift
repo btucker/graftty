@@ -3,6 +3,21 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.53: While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.")
+    func projectOwnerContext() {
+        let local = RemoteDeviceID(value: "local")
+        let remote = RemoteDeviceID(value: "remote")
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
+            owner: .init(deviceID: remote, deviceLabel: "Studio Mac", relayDepth: 0))
+        #expect(project.ownerSubtitle(localDeviceID: local) == "Studio Mac")
+        #expect(project.ownerSubtitle(localDeviceID: remote) == nil)
+        #expect(project.ownerSubtitle(localDeviceID: nil) == "Studio Mac")
+        var offline = project
+        offline.isAvailable = false
+        #expect(offline.ownerSubtitle(localDeviceID: local) == "Studio Mac · Offline")
+        #expect(offline.ownerSubtitle(localDeviceID: remote) == "Offline")
+    }
+
     @Test("@spec LAYOUT-2.52: While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.")
     func stoppedTurnAge() throws {
         let date = Date(timeIntervalSince1970: 100)

@@ -213,7 +213,7 @@ enum RemoteMacSidebarSelectionReducer {
     }
 }
 
-/// @spec REMOTE-13.8: While a Remote Mac is connected, the sidebar shall
+/// @spec REMOTE-13.8: While a Remote Mac is connected and the project column is disabled, the sidebar shall
 /// render Mac → repository → worktree → pane hierarchy using the same
 /// WorktreeRow and PaneTitleRow presentation components as local worktrees.
 struct RemoteMacsSection: View {
@@ -255,30 +255,42 @@ struct RemoteMacsSection: View {
 
     var projectFilter: String? = nil
     var query: String = ""
+    var showsMacHierarchy = true
     var showsRepositoryHeaders = true
     var editableProjectIDs: Set<String> = []
 
+    @ViewBuilder
     var body: some View {
-        Section {
-            ForEach(model.savedRemoteMacs.filter { mac in
-                (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
-                    (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                        && SidebarInteractionPolicy.matches($0, query: query)
-                }
-            }) { remoteMac in
-                remoteMacGroup(remoteMac)
+        if showsMacHierarchy {
+            Section {
+                remoteContents
+            } header: {
+                Text(projection.title).font(.caption).foregroundStyle(.secondary)
             }
+        } else {
+            remoteContents
+        }
+    }
 
+    @ViewBuilder
+    private var remoteContents: some View {
+        ForEach(model.savedRemoteMacs.filter { mac in
+            (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && SidebarInteractionPolicy.matches($0, query: query)
+            }
+        }) { remoteMac in
+            if showsMacHierarchy { remoteMacGroup(remoteMac) }
+            else { repositories(for: remoteMac) }
+        }
+
+        if showsMacHierarchy {
             Button(action: onAddRemoteMac) {
                 Label("Add Remote Mac...", systemImage: "plus")
                     .foregroundColor(theme.sidebarPrimaryText(isActive: false))
             }
             .buttonStyle(.plain)
             .help("Add Remote Mac")
-        } header: {
-            Text(projection.title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -297,18 +309,7 @@ struct RemoteMacsSection: View {
                 }
             )
         ) {
-            ForEach(groupedRepositories(for: identity).filter { repository in
-                repository.worktrees.contains {
-                    (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                        && SidebarInteractionPolicy.matches($0, query: query)
-                }
-            }, id: \.id) { repository in
-                repositoryGroup(
-                    repository,
-                    worktrees: repository.worktrees,
-                    remoteMac: remoteMac
-                )
-            }
+            repositories(for: remoteMac)
         } label: {
             Button {
                 onSelectRemoteMac(remoteMac)
@@ -338,6 +339,21 @@ struct RemoteMacsSection: View {
         }
     }
 
+    private func repositories(for remoteMac: RemoteMac) -> some View {
+        ForEach(groupedRepositories(for: RemoteMacIdentity(remoteMac)).filter { repository in
+            repository.worktrees.contains {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && SidebarInteractionPolicy.matches($0, query: query)
+            }
+        }, id: \.id) { repository in
+            repositoryGroup(
+                repository,
+                worktrees: repository.worktrees,
+                remoteMac: remoteMac
+            )
+        }
+    }
+
     @ViewBuilder
     private func repositoryGroup(
         _ repositoryGroup: RemoteRepositoryGroup,
@@ -353,11 +369,12 @@ struct RemoteMacsSection: View {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
-            }) { worktree in
+            }, rowInsets: showsMacHierarchy ? nil : SidebarWorktreeListStyle.projectRowInsets) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
-                        EdgeInsets(top: 0, leading: showsRepositoryHeaders ? -20 : 0, bottom: 0, trailing: 0)
+                        showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : SidebarWorktreeListStyle.projectRowInsets
                     )
+                    .listRowSeparator(.hidden)
             }
         }
         if showsRepositoryHeaders {
@@ -377,7 +394,10 @@ struct RemoteMacsSection: View {
                 }
             }
         } else {
-            HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
+            if model.repositoriesByRemote[identity]?.contains(where: { $0.id == repositoryGroup.id }) == true {
+                HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
+                    .listRowInsets(SidebarWorktreeListStyle.projectRowInsets)
+            }
             rows
         }
     }
@@ -428,6 +448,8 @@ struct RemoteMacsSection: View {
                         )
                     }
                 )
+                .frame(minHeight: showsMacHierarchy ? 0 : 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .rightClickMenu {

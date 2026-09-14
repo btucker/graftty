@@ -120,6 +120,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
+**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.
+
+**LAYOUT-2.54** While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2378,7 +2382,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
 
-**REMOTE-13.8** While a Remote Mac is connected, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
+**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
 
 **REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
 

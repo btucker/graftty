@@ -756,7 +756,7 @@ public struct WorktreeListContent: View {
                                     onMove: { source, target, after in
                                         guard let repositoryID = source.repositoryID else { return }
                                         performNavigationMutation(.moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
-                                    }) { wt in
+                                    }, rowInsets: showsProjectRail && horizontalSizeClass == .regular ? SidebarWorktreeListStyle.projectRowInsets : nil) { wt in
                                     WorktreeBlock(
                                         worktree: wt,
                                         theme: theme,
@@ -768,6 +768,7 @@ public struct WorktreeListContent: View {
                                             )
                                         ),
                                         focusedPaneId: focusedPaneId,
+                                        projectColumn: showsProjectRail && horizontalSizeClass == .regular,
                                         onSelect: {
                                             beginSelectingWorktree(wt)
                                         },
@@ -809,7 +810,7 @@ public struct WorktreeListContent: View {
                     }
                     // Mac-parity: `.sidebar` style + transparent scroll
                     // content lets the enclosing iPad surface show through.
-                    .listStyle(.sidebar)
+                    .modifier(SidebarWorktreeListStyle(projectColumn: showsProjectRail && horizontalSizeClass == .regular))
                     .scrollContentBackground(.hidden)
                     .refreshable { await refresh() }
                     .toolbar { EditButton() }
@@ -1474,6 +1475,7 @@ private struct WorktreeBlock: View {
     /// row tests `leaf.sessionName == focusedPaneId` to decide whether
     /// to use the brightest focused bucket from `theme.paneTitle(…)`.
     let focusedPaneId: String?
+    var projectColumn: Bool = false
     let onSelect: () -> Void
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
@@ -1492,18 +1494,18 @@ private struct WorktreeBlock: View {
         // Painted on the whole VStack so the rounded rectangle spans
         // both the worktree row and its pane children — same visual
         // grouping as the Mac sidebar's `worktreeBlock`.
-        .padding(.leading, 6)
-        .padding(.trailing, 2)
-        .padding(.vertical, 3)
+        .padding(.leading, projectColumn ? 8 : 6)
+        .padding(.trailing, projectColumn ? 8 : 2)
+        .padding(.vertical, projectColumn ? 0 : 3)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
         )
         .listRowInsets(EdgeInsets(
-            top: 4,
-            leading: WorktreeListContent.iPadRowLeadingInset,
-            bottom: 4,
-            trailing: WorktreeListContent.iPadRowTrailingInset
+            top: projectColumn ? 0 : 4,
+            leading: projectColumn ? 6 : WorktreeListContent.iPadRowLeadingInset,
+            bottom: projectColumn ? 0 : 4,
+            trailing: projectColumn ? 6 : WorktreeListContent.iPadRowTrailingInset
         ))
         .listRowSeparator(.hidden)
     }
@@ -1530,6 +1532,7 @@ private struct WorktreeBlock: View {
                 isActive: isActive,
                 isOpening: isOpening
             )
+            .frame(minHeight: projectColumn ? 44 : 0)
         } else {
             Button(action: onSelect) {
                 WorktreeRowContent(
@@ -1538,6 +1541,8 @@ private struct WorktreeBlock: View {
                     isActive: isActive,
                     isOpening: isOpening
                 )
+                .frame(minHeight: projectColumn ? 44 : 0)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isOpening)

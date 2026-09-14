@@ -3,6 +3,9 @@ import Foundation
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+import SwiftUI
+import AppKit
+import GrafttyCommandUI
 
 @testable import Graftty
 @testable import GrafttyKit
@@ -10,6 +13,54 @@ import Testing
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
+    @Test("@spec LAYOUT-2.54: While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.")
+    func projectColumnRemovesRemoteHierarchy() async throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RemoteMacStore(storeURL: directory.appendingPathComponent("remotes.json"))
+        let remote = try makeRemoteMac(label: "Studio Mac")
+        try store.add(remote)
+        let model = RemoteMacsModel(store: store)
+        await model.loadSavedRemotes()
+        let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature", layout: nil)
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
+            owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
+        let content = HStack(spacing: 0) {
+            ProjectNavigationRail(projects: [project], counts: [:], icons: [:], selectedID: "p", showsAttention: false,
+                collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
+                onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
+            Divider()
+            List {
+                RemoteMacsSection(model: model, worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
+                    selectedRemoteIdentity: RemoteMacIdentity(remote), selectedRemoteWorktreePath: row.path,
+                    theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
+                    showsMacHierarchy: false, showsRepositoryHeaders: false)
+            }.modifier(SidebarWorktreeListStyle(projectColumn: true)).frame(width: 260)
+        }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
+        let hosting = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 457, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        func table(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { table(in: $0) }.first
+        }
+        let list = try #require(table(in: hosting))
+        #expect(list.numberOfRows == 1)
+        #expect(abs(list.rect(ofRow: 0).height - 47) <= 1)
+        if let path = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("project-worktree-spacing.png"))
+        }
+    }
+
     @Test("@spec LAYOUT-2.44: If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.")
     func reorderRequiresOwningHostCapability() {
         let row = WorktreePanes(path: "/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .closed,
