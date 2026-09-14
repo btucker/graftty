@@ -735,6 +735,26 @@ final class HostManagedZmxBackend {
     /// authoritative lifecycle event, not unsolicited placeholder noise.
     /// Ordinary deferred panes are still idle and therefore no-op; followers
     /// still no-op when the ownership check rejects the resize.
+    /// Keep the attach client's PTY at the authoritative grid. zmx may still
+    /// consider this attachment its leader until another client types.
+    /// Resizing that existing leader applies Take Control without fake input.
+    func synchronizeFollowerGrid() {
+        guard let ownership else { return }
+        lock.lock()
+        let snapshot = ownership.snapshot(fallbackGrid: fallbackDisplayGridLocked())
+        guard case .running = lifecycle, let session,
+              !snapshot.isOwnerless, snapshot.ownerClientID != ownership.clientID else {
+            lock.unlock()
+            return
+        }
+        pendingCoalescedResize = nil
+        lock.unlock()
+        repairSession(session, to: snapshot)
+        // A newer owner can win while the ioctl runs. Repair to that winner.
+        let latest = ownership.snapshot(fallbackGrid: snapshot.grid)
+        if latest.revision != snapshot.revision { repairSession(session, to: latest) }
+    }
+
     func resyncVisibleGrid() {
         lock.lock()
         // No `currentGridSize() != nil` pre-check here: `flushSizeToPtyLocked`

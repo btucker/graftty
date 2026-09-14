@@ -4,6 +4,34 @@ import Testing
 
 @Suite("SSH subsystem reply waiter")
 struct SSHSubsystemReplyWaiterTests {
+    @Test("@spec REMOTE-11.9: If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.")
+    func elapsedTimeAbortsWait() async throws {
+        let events = WaiterEvents()
+        let waiter = SSHSubsystemReplyWaiter()
+        let watchdog = Task {
+            do { try await Task.sleep(for: .seconds(2)) }
+            catch { return }
+            waiter.finish(.failure(TestError.channelClosed))
+        }
+        defer { watchdog.cancel() }
+
+        await #expect(throws: TestError.timedOut) {
+            try await waiter.wait(
+                timeout: .milliseconds(25),
+                timeoutError: TestError.timedOut,
+                onAbort: { events.recordAbort() },
+                start: { events.recordStart() }
+            )
+        }
+        // Timeout resumes the waiter before invoking the abort callback.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while events.abortCount == 0, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(events.abortCount == 1)
+        #expect(events.startCount == 1)
+    }
+
     @Test("a close before wait registration is observed immediately")
     func completionBeforeWaitRegistration() async {
         let deadline = ManualDeadline()

@@ -1,6 +1,10 @@
 import NIOCore
 import NIOSSH
 
+enum SSHChildChannelOpenError: Error, Equatable {
+    case timedOut
+}
+
 /// Opens an SSH child channel on `parentChannel` and returns it once NIOSSH's
 /// `createChannel` promise resolves.
 ///
@@ -28,14 +32,35 @@ func openChildChannel(
     parentChannel: Channel,
     parentHandler: NIOSSHHandler,
     channelType: SSHChannelType = .session,
+    timeout: Duration = .seconds(10),
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
-    try await makeChildChannel(
-        parentChannel: parentChannel,
-        parentHandler: parentHandler,
-        channelType: channelType,
-        initializer: initializer
-    ).get()
+    try Task.checkCancellation()
+    let handlerBox = UncheckedSendableBox(value: parentHandler)
+    let waiter = SSHReplyWaiter<Channel>()
+    // Keep NIOSSH's promise separate from the deadline. NIOSSH still owns
+    // its completion if the peer responds after the caller has timed out.
+    return try await waiter.wait(
+        timeout: timeout,
+        timeoutError: SSHChildChannelOpenError.timedOut,
+        onAbort: { parentChannel.close(promise: nil) },
+        // A dismissed preview can cancel an open on a healthy connection.
+        // Preserve its siblings; the completion handler closes any late child.
+        onCancel: {},
+        start: {
+            makeChildChannel(
+                parentChannel: parentChannel,
+                parentHandler: handlerBox.value,
+                channelType: channelType,
+                initializer: initializer
+            ).whenComplete { result in
+                if !waiter.finish(result),
+                   case .success(let child) = result {
+                    child.close(promise: nil)
+                }
+            }
+        }
+    )
 }
 
 /// Returns the opening future so callers can coordinate the entire handshake
@@ -57,6 +82,10 @@ func makeChildChannel(
     // function has no `self` to lean on, so this box plays that role.
     let handlerBox = UncheckedSendableBox(value: parentHandler)
     parentChannel.eventLoop.execute {
+        guard parentChannel.isActive else {
+            promise.fail(ChannelError.ioOnClosedChannel)
+            return
+        }
         handlerBox.value.createChannel(promise, channelType: channelType, initializer)
     }
     return promise.futureResult

@@ -32,7 +32,7 @@ xcrun metal --version >/dev/null
 
 renderer_pin=8af6897c0afc63037a8a3efee4162a380e3a4572
 wrapper_pin=52a84d611b1442dbeffa972b37022346a8a32ec6
-renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot)
+renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport)
 mkdir -p "$cache" "$(dirname "$output")"
 cache=$(cd "$cache" && pwd)
 output=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")
@@ -74,6 +74,8 @@ trap cleanup EXIT
 checkout https://github.com/btucker/libghostty-spm.git "$wrapper_pin" "$stage"
 git -C "$stage" apply --check "$patches/production-wrapper.patch"
 git -C "$stage" apply "$patches/production-wrapper.patch"
+git -C "$stage" apply --check "$patches/history-wrapper.patch"
+git -C "$stage" apply "$patches/history-wrapper.patch"
 cp "$stage/Package.local.swift" "$stage/Package.swift"
 
 build_archive() {
@@ -133,7 +135,7 @@ assert found == {('macos', None): expected, ('ios', None): {'arm64'},
 PY
 {
     printf 'renderer %s\nwrapper %s\nzig 0.16.0\narm64_only %s\n' "$renderer_pin" "$wrapper_pin" "$arm64_only"
-    for name in "${renderer_patches[@]}" production-wrapper; do
+    for name in "${renderer_patches[@]}" production-wrapper history-wrapper; do
         (cd "$patches"; shasum -a 256 "$name.patch")
     done
 } > "$stage/PAGING-BUILD.txt"

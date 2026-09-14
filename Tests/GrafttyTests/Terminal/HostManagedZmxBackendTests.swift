@@ -166,6 +166,24 @@ struct HostManagedZmxBackendTests {
         #expect(followerSession.resizes().isEmpty)
     }
 
+    @Test("An old Mac leader mirrors the new display grid to its zmx attachment without typing or claiming ownership.")
+    func formerMacOwnerForwardsAuthoritativeFollowerGrid() throws {
+        let store = SessionDisplayOwnershipStore()
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session, ownership: Self.ownership(store: store, clientID: "mac"))
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        _ = store.attachClient(sessionName: "graftty-test", clientID: DisplayClientID("phone"), kind: .ios,
+                               role: .interactive, visible: true, grid: .daemonFallback)
+        _ = store.claimOwner(sessionName: "graftty-test", clientID: DisplayClientID("phone"), kind: .ios,
+                             grid: try DisplayGrid(cols: 45, rows: 70), fallbackGrid: .daemonFallback)
+        backend.synchronizeFollowerGrid()
+        #expect(session.resizes().last == Resize(cols: 45, rows: 70))
+        #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("phone"))
+    }
+
     @Test("Mac Take Control swaps owner, increments epoch, and immediately sends the new natural grid.")
     func takeControlSwapsOwnerIncrementsEpochAndSendsGrid() throws {
         let store = SessionDisplayOwnershipStore()

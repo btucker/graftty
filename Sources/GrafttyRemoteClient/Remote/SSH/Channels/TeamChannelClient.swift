@@ -45,16 +45,7 @@ public final class TeamChannelClient: @unchecked Sendable {
         }
         do {
             try await waiter.wait(
-                scheduleTimeout: { [openTimeout] callback in
-                    // The transport uses a virtual NIO event loop. Its timers
-                    // do not advance with wall time, so use the task clock.
-                    let deadline = Task {
-                        do { try await Task.sleep(for: openTimeout) }
-                        catch { return }
-                        callback()
-                    }
-                    return { deadline.cancel() }
-                },
+                timeout: openTimeout,
                 timeoutError: ClientError.timedOut,
                 onAbort: { [weak self] in self?.close() },
                 start: { [weak self] in self?.startOpening() }

@@ -14,10 +14,12 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
         #endif
     }
     private let session: InMemoryTerminalSession
+    private let additionalHistoryRows: () -> UInt32
     private let prepareGrid: (UInt16, UInt16) -> Void
 
-    init(session: InMemoryTerminalSession, prepareGrid: @escaping (UInt16, UInt16) -> Void) {
+    init(session: InMemoryTerminalSession, additionalHistoryRows: @escaping () -> UInt32 = { 0 }, prepareGrid: @escaping (UInt16, UInt16) -> Void) {
         self.session = session
+        self.additionalHistoryRows = additionalHistoryRows
         self.prepareGrid = prepareGrid
     }
 
@@ -70,7 +72,11 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
 
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool {
         #if GRAFTTY_PAGED_HISTORY
-        session.nearHistoryTop(generation: generation, screen: screen, thresholdRows: 20)
+        // The fitted follower can display rows above the native viewport.
+        // Treat those visible rows as demand even while the live grid stays
+        // at the bottom. The native check still gates screen and generation.
+        session.nearHistoryTop(generation: generation, screen: screen,
+                               thresholdRows: max(20, additionalHistoryRows()))
         #else
         false
         #endif
