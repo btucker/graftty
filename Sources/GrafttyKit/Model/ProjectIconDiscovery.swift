@@ -2,8 +2,25 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
+import Darwin
 
 public enum ProjectIconDiscovery {
+    /// Open without following a final symlink or blocking on a FIFO, then
+    /// validate the opened descriptor so replacing the path cannot bypass it.
+    public static func readImageData(at url: URL) -> Data? {
+        let limit = 2 * 1024 * 1024
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        var attributes = stat()
+        guard fstat(descriptor, &attributes) == 0,
+              attributes.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              attributes.st_size <= limit,
+              let data = try? file.read(upToCount: limit + 1), data.count <= limit else { return nil }
+        return data
+    }
+
     public static func thumbnail(_ data: Data) -> Data? {
         guard data.count <= 2 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -28,9 +45,7 @@ public enum ProjectIconDiscovery {
         candidates += ["Resources/AppIcon.png", "Resources/AppIcon.icns"]
         func load(_ candidate: String) -> Data? {
             let url = root.appendingPathComponent(candidate)
-            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
-                  let size = attrs[.size] as? NSNumber, size.intValue <= 2 * 1024 * 1024,
-                  let data = try? Data(contentsOf: url) else { return nil }
+            guard let data = readImageData(at: url) else { return nil }
             return thumbnail(data)
         }
         for candidate in candidates { if let image = load(candidate) { return image } }

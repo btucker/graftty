@@ -3,6 +3,24 @@ import GrafttyProtocol
 import GrafttyCommandUI
 import SwiftUI
 
+struct SidebarWorktreeViewportRow: Equatable {
+    var id: String
+    var minY: CGFloat
+    var maxY: CGFloat
+    var projectID: String? = nil
+
+    static func topVisible(in rows: [Self]) -> String? {
+        rows.filter { $0.maxY > 0 }.min { $0.minY < $1.minY }?.id
+    }
+}
+
+private struct SidebarWorktreeViewportPreference: PreferenceKey {
+    static let defaultValue: [SidebarWorktreeViewportRow] = []
+    static func reduce(value: inout [SidebarWorktreeViewportRow], nextValue: () -> [SidebarWorktreeViewportRow]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
 public struct WorktreeListContent: View {
     public static let iPadRowTrailingInset: CGFloat = 2
     static let iPadRowLeadingInset: CGFloat = 10
@@ -29,9 +47,12 @@ public struct WorktreeListContent: View {
     @State private var projectIcons: [String: Data] = [:]
     @State private var iconRevisions: [String: String] = [:]
     @State private var orderMutationID: UUID?
+    @State private var worktreeScrollSpace = UUID()
+    @State private var restoringWorktreeScroll = false
+    @State private var restoredWorktreeProjectID: String?
     private var orderMutationInFlight: Bool { orderMutationID != nil }
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    private var remoteSidebarProvider: (@MainActor () async -> SidebarSnapshot?)?
+    private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
     private var navigationWindowWidth: Double
 
     private struct PendingDelete: Identifiable, Equatable {
@@ -103,7 +124,7 @@ public struct WorktreeListContent: View {
         externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor () async -> SidebarSnapshot?)? = nil
+        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
     ) {
         self.host = host
         self.theme = theme
@@ -138,7 +159,7 @@ public struct WorktreeListContent: View {
         externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor () async -> SidebarSnapshot?)? = nil
+        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
     ) {
         self.host = host
         self.theme = theme
@@ -474,7 +495,7 @@ public struct WorktreeListContent: View {
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       onSelect: { selectProject($0, worktrees: worktrees) },
-                                      onAttention: { navigation.showsAttention = true; navigation.query = "" },
+                                      onAttention: { setNavigationMode(showsAttention: true) },
                                       onMove: moveProject)
                 Divider()
                 projectDetail(worktrees, projects: projects, items: items)
@@ -482,7 +503,7 @@ public struct WorktreeListContent: View {
             }
         } else {
             VStack(spacing: 0) {
-                Picker("Navigation", selection: $navigation.showsAttention) {
+                Picker("Navigation", selection: Binding(get: { navigation.showsAttention }, set: { setNavigationMode(showsAttention: $0) })) {
                     Text("Projects").tag(false)
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
                 }.pickerStyle(.segmented).padding(12)
@@ -515,7 +536,7 @@ public struct WorktreeListContent: View {
                         }.moveDisabled(sidebarSnapshot?.supportsNavigationEditing != true || orderMutationInFlight)
                     }.toolbar { EditButton() }
                 } else {
-                    Button { navigation.compactShowsProjects = true; navigation.query = "" } label: {
+                    Button { setNavigationMode(showsAttention: false); navigation.compactShowsProjects = true } label: {
                         Label("All projects", systemImage: "chevron.left").frame(maxWidth: .infinity, alignment: .leading)
                     }.padding(.horizontal, 14).padding(.bottom, 8)
                     projectDetail(worktrees, projects: projects, items: items)
@@ -543,24 +564,41 @@ public struct WorktreeListContent: View {
                 TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
                 worktreeList(worktrees.filter {
                     navigation.query.isEmpty ? SidebarProjection.projectID($0) == navigation.selectedProjectID
-                        : "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(navigation.query)
+                        : SidebarInteractionPolicy.matches($0, query: navigation.query)
                 })
             }
         }
     }
 
     private func selectProject(_ project: SidebarProject, worktrees: [WorktreePanes]) {
+        Self.applyProjectSelection(project, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
         if let selectedWorktreePath, let previous = worktrees.first(where: { $0.path == selectedWorktreePath }) {
             navigation.rememberedWorktrees[SidebarProjection.projectID(previous)] = previous.path
         }
-        navigation.selectedProjectID = project.id
-        navigation.showsAttention = false; navigation.query = ""; navigation.compactShowsProjects = false
         if horizontalSizeClass == .regular, project.isAvailable {
             let available = worktrees.filter { SidebarProjection.projectID($0) == project.id }
             if let target = available.first(where: { $0.path == navigation.rememberedWorktrees[project.id] }) ?? available.first {
                 beginSelectingWorktree(target)
             }
         }
+    }
+
+    static func applyProjectSelection(_ project: SidebarProject, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
+        // Invalidate before changing modes: offline and compact project picks
+        // do not call beginSelectingWorktree, but must still cancel old opens.
+        applyNavigationMode(showsAttention: false, navigation: navigation, selectionGeneration: &selectionGeneration)
+        navigation.selectedProjectID = project.id
+        navigation.compactShowsProjects = false
+    }
+
+    static func applyNavigationMode(showsAttention: Bool, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
+        selectionGeneration &+= 1
+        navigation.showsAttention = showsAttention
+        navigation.query = ""
+    }
+
+    private func setNavigationMode(showsAttention: Bool) {
+        Self.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
     }
 
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {
@@ -617,12 +655,11 @@ public struct WorktreeListContent: View {
                     }
                     if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
                 } else { onSelect(target) }
-                if includeRemoteWorktrees, let occurrence = item.occurrence {
-                    let canAcknowledgeOccurrence = projects(for: worktrees)
-                        .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-                    let request: WorktreeManagementRequest = canAcknowledgeOccurrence
-                        ? .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
-                        : .acknowledge(worktreeID: item.worktreeID, paneID: item.paneID)
+                let supportsExactAcknowledgement = projects(for: worktrees)
+                    .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
+                if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
+                    for: item, supportsExactAcknowledgement: supportsExactAcknowledgement
+                ) {
                     let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
                     guard presentedHostID == requestHostID else { return }
                     if case .error(let code, let message, _, _) = response, code != "occurrence-changed" { showErrorToast(message); return }
@@ -640,9 +677,18 @@ public struct WorktreeListContent: View {
         }
     }
 
+    static func shouldApplyNavigationSnapshot(_ snapshot: PanesStateMessage?, matching rows: [WorktreePanes]) -> Bool {
+        guard case let .snapshot(snapshotRows, _)? = snapshot else { return false }
+        return snapshotRows == rows
+    }
+
     private func updateNavigationMetadata(_ list: [WorktreePanes], requestHostID: UUID) async {
-        let metadata = await remoteSidebarProvider?()
-        guard presentedHostID == requestHostID else { return }
+        let snapshot: PanesStateMessage?
+        if let remoteSidebarProvider { snapshot = await remoteSidebarProvider(list) }
+        else { snapshot = .snapshot(list) }
+        guard presentedHostID == requestHostID,
+              Self.shouldApplyNavigationSnapshot(snapshot, matching: list),
+              case let .snapshot(_, metadata)? = snapshot else { return }
         if sidebarSnapshot != metadata { sidebarSnapshot = metadata }
         let projects = metadata?.projects ?? SidebarProjection.projects(list)
         navigation.reconcile(worktrees: list, projects: projects)
@@ -669,6 +715,8 @@ public struct WorktreeListContent: View {
     }
 
     private func worktreeList(_ worktrees: [WorktreePanes]) -> some View {
+        let scrollKey = navigation.query.isEmpty ? navigation.selectedProjectID : nil
+        return ScrollViewReader { proxy in
                     List {
                         ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                             Section {
@@ -705,6 +753,14 @@ public struct WorktreeListContent: View {
                                             }
                                         }
                                     )
+                                    .id(wt.sidebar?.id ?? wt.path)
+                                    .background(GeometryReader { geometry in
+                                        let frame = geometry.frame(in: .named(worktreeScrollSpace))
+                                        Color.clear.preference(key: SidebarWorktreeViewportPreference.self, value: [
+                                            SidebarWorktreeViewportRow(id: wt.sidebar?.id ?? wt.path,
+                                                minY: frame.minY, maxY: frame.maxY, projectID: SidebarProjection.projectID(wt))
+                                        ])
+                                    })
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         if let action = WorktreePickerGrouping.swipeAction(for: wt) {
                                             Button(role: .destructive) {
@@ -727,6 +783,28 @@ public struct WorktreeListContent: View {
                     .scrollContentBackground(.hidden)
                     .refreshable { await refresh() }
                     .toolbar { EditButton() }
+                    .coordinateSpace(name: worktreeScrollSpace)
+                    .onPreferenceChange(SidebarWorktreeViewportPreference.self) { positions in
+                        guard !restoringWorktreeScroll, let scrollKey, restoredWorktreeProjectID == scrollKey,
+                              let anchor = SidebarWorktreeViewportRow.topVisible(in: positions.filter { $0.projectID == scrollKey }) else { return }
+                        navigation.scrollAnchors[scrollKey] = anchor
+                    }
+                    .task(id: scrollKey) {
+                        restoringWorktreeScroll = true
+                        defer {
+                            restoringWorktreeScroll = false
+                            if !Task.isCancelled { restoredWorktreeProjectID = scrollKey }
+                        }
+                        guard let scrollKey, let anchor = navigation.scrollAnchors[scrollKey] else { return }
+                        // List installs its new row IDs after the project changes.
+                        // Restore through ScrollViewReader; List does not consume
+                        // the ScrollView-only scrollPosition binding.
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        proxy.scrollTo(anchor, anchor: .top)
+                        await Task.yield()
+                    }
+        }
     }
 
     private func refresh(reportsLoadingProgress: Bool = false) async {

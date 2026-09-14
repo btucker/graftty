@@ -2036,7 +2036,7 @@ struct GrafttyApp: App {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
                 let projectID = "\(localWorktreeOrigin.deviceID.value):\(repo.id.uuidString)"
-                let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
+                let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
                 let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
                     forRepoAt: repo.path,
                     hint: repo.defaultBranchHint
@@ -2075,7 +2075,7 @@ struct GrafttyApp: App {
                             },
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: parents[wt.id].map { $0.split(separator: "/").map(String.init) } ?? [])
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
                     ))
                 }
             }
@@ -2290,11 +2290,10 @@ struct GrafttyApp: App {
             let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
                 onChange in
                 let snapshot: @MainActor () async -> PanesStateMessage = {
-                    let remoteProjects = await services.remoteMacsModel.sidebarProjectsForRelay()
-                    let authoritative = await services.remoteMacsModel.authoritativeSidebarOwnerIDs()
-                    let navigation = SidebarHostController.shared.snapshot(state: &appStateBinding.wrappedValue, owner: localWorktreeOrigin, remote: remoteProjects,
-                        authoritativeRemoteOwners: authoritative, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
-                    let worktrees = buildWorktreePanesSnapshot() + services.remoteMacsModel.promotedWorktreesForRelay()
+                    let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
+                    let navigation = SidebarHostController.shared.snapshot(state: &appStateBinding.wrappedValue, owner: localWorktreeOrigin, remote: remote.projects,
+                        authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
+                    let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
                     let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
                     let sorted = worktrees.enumerated().sorted {
                         let a = order[SidebarProjection.projectID($0.element), default: .max]

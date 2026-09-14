@@ -104,6 +104,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
 
+**LAYOUT-2.44** If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.
+
+**LAYOUT-2.46** When a user searches worktrees, the application shall match the displayed worktree name, repository name, or branch, including snapshots without branch metadata.
+
+**LAYOUT-2.47** When the user returns to a project on mobile, the application shall restore that project's previously visible worktree independently of other projects and search results.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2408,6 +2414,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-14.5** When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.
 
+**REMOTE-14.6** When folder metadata is published, the application shall retain native virtual-folder labels and identities, including separate folders with the same display name.
+
+**REMOTE-14.7** When remote project metadata arrives during refresh, the application shall derive project contents and removal authority from the same per-owner snapshot.
+
+**REMOTE-14.8** When sidebar metadata arrives before its worktree callback is applied, the application shall retain the previous complete snapshot and reject navigation reconciliation against rows from a different snapshot.
+
+**REMOTE-14.10** When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
@@ -2705,6 +2719,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-3.1** When a project has no valid supported icon, the application shall fall back to stable initials without accepting malformed image data.
 
 **PROJECT-3.2** When a project icon override or manual project order is saved, the application shall retain it across relaunches and decode older application state without those settings.
+
+**PROJECT-3.3** When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.
 
 ## SSH — SSH
 

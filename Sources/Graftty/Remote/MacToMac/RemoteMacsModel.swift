@@ -610,26 +610,38 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
-    func sidebarProjectsForRelay() async -> [SidebarProject] {
-        var result: [SidebarProject] = []
-        for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected {
-            let identity = RemoteMacIdentity(mac)
-            let snapshot = await connectionRegistry.sidebarSnapshot(for: identity)
-            let projects = snapshot?.projects ?? SidebarProjection.projects(worktreePanesByRemote[identity] ?? [])
-            result += relayRouter.promoteProjects(projects, from: mac)
-        }
-        return result
+    struct SidebarRelaySnapshot {
+        var projects: [SidebarProject] = []
+        var authoritativeOwnerIDs: Set<RemoteDeviceID> = []
+        var worktrees: [WorktreePanes] = []
     }
 
-    /// Only a complete metadata snapshot confirms repository removal. A
-    /// disconnected peer (or one still delivering its first frame) is unknown.
-    func authoritativeSidebarOwnerIDs() async -> Set<RemoteDeviceID> {
-        var result: Set<RemoteDeviceID> = []
+    /// Contents and removal authority come from the same per-owner read. A
+    /// first frame arriving later must not turn an earlier empty read into an
+    /// authoritative deletion of that owner's cached projects and order.
+    func sidebarRelaySnapshot() async -> SidebarRelaySnapshot {
+        var result = SidebarRelaySnapshot()
+        var snapshots: [RemoteMacIdentity: [WorktreePanes]] = [:]
         for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected {
-            if await connectionRegistry.sidebarSnapshot(for: RemoteMacIdentity(mac)) != nil {
-                result.insert(mac.id)
+            let identity = RemoteMacIdentity(mac)
+            let frame = await connectionRegistry.panesSnapshot(for: identity)
+            guard connectionState(for: identity) == .connected,
+                  savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }) else { continue }
+            let rows: [WorktreePanes]
+            let sidebar: SidebarSnapshot?
+            if case .snapshot(let worktrees, let metadata) = frame {
+                rows = worktrees.map { RemoteWorktreeRelayRouter.normalizingSidebarIdentity($0, ownerID: mac.id, ownerLabel: mac.label) }
+                sidebar = metadata
+            } else {
+                rows = worktreePanesByRemote[identity] ?? []
+                sidebar = nil
             }
+            snapshots[identity] = rows
+            let projects = sidebar?.projects ?? SidebarProjection.projects(rows)
+            result.projects += relayRouter.promoteProjects(projects, from: mac)
+            if sidebar != nil { result.authoritativeOwnerIDs.insert(mac.id) }
         }
+        result.worktrees = relayRouter.promotedWorktrees(snapshots: snapshots, remoteMacs: savedRemoteMacs)
         return result
     }
 

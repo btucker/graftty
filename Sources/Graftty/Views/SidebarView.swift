@@ -25,6 +25,7 @@ struct SidebarView: View {
     let selectedRemotePaneSessionName: String?
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
+    var onNavigationIntent: () -> Void = {}
     let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -79,9 +80,7 @@ struct SidebarView: View {
     @State private var navigationError: String?
     @State private var showsRemoteManagement = false
 
-    private var owner: WorktreeOrigin {
-        WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
-    }
+    private var owner: WorktreeOrigin { iconStore.owner }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
     private var selectedLocalRepo: RepoEntry? { appState.repos.first { localProjectID($0) == navigation.selectedProjectID } }
     private var activity: [SidebarActivityItem] {
@@ -97,16 +96,15 @@ struct SidebarView: View {
         return result
     }
     private func refreshNavigation() async {
-        let remote = await remoteMacsModel.sidebarProjectsForRelay()
-        let authoritative = await remoteMacsModel.authoritativeSidebarOwnerIDs()
-        let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote,
-            authoritativeRemoteOwners: authoritative, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
+        let remote = await remoteMacsModel.sidebarRelaySnapshot()
+        let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote.projects,
+            authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
         if projects != snapshot.projects { projects = snapshot.projects }
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession) + remoteMacsModel.promotedWorktreesForRelay(), projects: projects)
+        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession) + remote.worktrees, projects: projects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
         }
-        for project in remote where project.isAvailable {
+        for project in remote.projects where project.isAvailable {
             if project.iconRevision == nil {
                 remoteIcons[project.id] = nil
                 fetchedIconRevisions[project.id] = nil
@@ -128,6 +126,7 @@ struct SidebarView: View {
         navigation.rememberedWorktrees[SidebarProjection.projectID(row)] = path
     }
     private func selectProject(_ project: SidebarProject) {
+        onNavigationIntent()
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
         navigation.selectedProjectID = project.id; navigation.showsAttention = false; navigation.query = ""; navigationError = nil
@@ -177,7 +176,8 @@ struct SidebarView: View {
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
                           onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
-                          projectFilter: projectFilter, query: query)
+                          projectFilter: projectFilter, query: query,
+                          editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
     }
 
     var body: some View {
@@ -188,7 +188,7 @@ struct SidebarView: View {
             ProjectNavigationRail(projects: projects, counts: attentionCounts, icons: projectIcons,
                                   selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                   collapsed: $navigation.railCollapsed, onSelect: selectProject,
-                                  onAttention: { navigation.showsAttention = true; navigation.query = "" },
+                                  onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
                                   onMove: moveProject, menu: projectMenu)
             Divider()
             VStack(spacing: 0) {
@@ -216,8 +216,13 @@ struct SidebarView: View {
                             } else {
                                 remoteSection(projectFilter: nil, query: navigation.query)
                                 ForEach(appState.repos) { repo in
-                                    ForEach(repo.worktrees.filter { "\(repo.displayName) \($0.branch)".localizedCaseInsensitiveContains(navigation.query) }) { worktree in
-                                        worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(worktree.branch)")
+                                    let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                                        defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+                                    ForEach(repo.worktrees.filter {
+                                        SidebarInteractionPolicy.matches(query: navigation.query, projectName: repo.displayName,
+                                            worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
+                                    }) { worktree in
+                                        worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)")
                                     }
                                 }
                             }

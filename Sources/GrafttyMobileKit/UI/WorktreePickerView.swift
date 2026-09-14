@@ -79,7 +79,10 @@ public struct WorktreePickerView: View {
                 }
             },
             navigation: navigation,
-            remoteSidebarProvider: { await coordinator.sidebarSnapshot(for: host) }
+            remoteSidebarProvider: { rows in
+                guard coordinator.isPaired(host) else { return .snapshot(rows) }
+                return await coordinator.navigationSnapshot(for: host, matching: rows)
+            }
         )
         // Set on this iPhone-compact wrapper rather than inside
         // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the

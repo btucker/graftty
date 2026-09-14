@@ -7,6 +7,7 @@ import GrafttyProtocol
 @MainActor
 final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
+    let owner = WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
     @Published private(set) var icons: [String: Data] = [:]
     private var checked: [UUID: Date] = [:]
     private struct IconSignature: Equatable { var path: String; var iconOverride: ProjectIconOverride? }
@@ -74,9 +75,7 @@ final class SidebarHostController: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .ico, .icns]
         guard panel.runModal() == .OK, let url = panel.url,
-              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              (attrs[.size] as? NSNumber)?.intValue ?? Int.max <= 2 * 1024 * 1024,
-              let data = try? Data(contentsOf: url), let png = ProjectIconDiscovery.thumbnail(data),
+              let data = ProjectIconDiscovery.readImageData(at: url), let png = ProjectIconDiscovery.thumbnail(data),
               let index = state.repos.firstIndex(where: { $0.id == repoID }) else { return }
         state.repos[index].iconOverride = .image(png)
         refreshIcons(state.repos, force: true)
@@ -90,7 +89,7 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
     state.repos.flatMap { repo in
         let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
         let nodes = SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil)
-        let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
+        let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: nodes)
         return repo.worktrees.map { wt in
             WorktreePanes(path: wt.path, displayName: wt.branch, repoDisplayName: repo.displayName,
                           repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
@@ -99,7 +98,7 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           attentionTimestamp: wt.attention?.timestamp,
                           layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles, paneAttention: wt.paneAttention, liveness: liveness) },
                           origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: parents[wt.id].map { $0.split(separator: "/").map(String.init) } ?? []))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id)))
         }
     }
 }

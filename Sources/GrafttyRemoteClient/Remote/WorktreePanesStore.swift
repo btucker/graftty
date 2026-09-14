@@ -23,7 +23,16 @@ public actor WorktreePanesStore {
     }
 
     public private(set) var current: [WorktreePanes] = []
-    public var sidebar: SidebarSnapshot? { (driver as? SidebarSnapshotProviding)?.sidebarSnapshot }
+    public private(set) var sidebar: SidebarSnapshot?
+    public var currentSnapshot: PanesStateMessage? {
+        hasReceivedSnapshot ? .snapshot(current, sidebar: sidebar) : nil
+    }
+
+    /// A consumer that already fetched rows may reconcile only against the
+    /// same frame. Nil differs from a matching legacy frame without metadata.
+    public func navigationSnapshot(matching worktrees: [WorktreePanes]) -> PanesStateMessage? {
+        current == worktrees ? currentSnapshot : nil
+    }
     public private(set) var connectionState: ConnectionState = .idle
     /// Distinguishes a legitimate first empty snapshot from "the SSH
     /// subsystem is open but has not delivered its initial state yet."
@@ -57,6 +66,9 @@ public actor WorktreePanesStore {
     /// snapshot arrives. Wired up by whoever constructs the driver +
     /// store (see Task 12 for production wiring; tests inject directly).
     public func applySnapshot(_ snapshot: [WorktreePanes]) {
+        // The channel's serial drain awaits this callback before decoding the
+        // next frame, so these metadata and rows belong to the same frame.
+        self.sidebar = (driver as? SidebarSnapshotProviding)?.sidebarSnapshot
         self.current = snapshot
         self.hasReceivedSnapshot = true
     }

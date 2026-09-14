@@ -32,10 +32,10 @@ public enum SidebarHostNavigation {
             + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path })
     }
 
-    public static func metadata(for worktree: WorktreeEntry, projectID: String, folders: [String]) -> SidebarWorktreeMetadata {
+    public static func metadata(for worktree: WorktreeEntry, projectID: String, folders: [String], folderIDs: [String]? = nil) -> SidebarWorktreeMetadata {
         var times = Dictionary(worktree.paneAttention.map { ($0.key.id.uuidString, $0.value.timestamp.timeIntervalSinceReferenceDate) }, uniquingKeysWith: { first, _ in first })
         times["worktree"] = worktree.attention?.timestamp.timeIntervalSinceReferenceDate
-        return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders,
+        return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      attentionTimestamps: times)
     }
@@ -57,8 +57,13 @@ public enum SidebarHostNavigation {
         guard parents[rows[source].id] == parents[rows[target].id] else { return false }
         let indices = rows.indices.filter { parents[rows[$0].id] == parents[rows[source].id] }
         let siblings = indices.map { rows[$0] }
-        guard let ti = indices.firstIndex(of: target),
-              let moved = WorktreeOrdering.move(siblings, movingIDs: [rows[source].id], toIndex: ti + (after ? 1 : 0)),
+        guard let ti = indices.firstIndex(of: target) else { return false }
+        let destination = ti + (after ? 1 : 0)
+        let neighbors = [destination - 1, destination].filter {
+            siblings.indices.contains($0) && siblings[$0].id != rows[source].id
+        }
+        guard neighbors.allSatisfy({ !siblings[$0].state.isInFlight }),
+              let moved = WorktreeOrdering.move(siblings, movingIDs: [rows[source].id], toIndex: destination),
               moved != siblings else { return false }
         for (index, worktree) in zip(indices, moved) { state.repos[ri].worktrees[index] = worktree }
         return true

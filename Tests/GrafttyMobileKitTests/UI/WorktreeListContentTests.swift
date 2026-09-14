@@ -2,11 +2,43 @@
 import Testing
 import Foundation
 import GrafttyProtocol
+import GrafttyCommandUI
 @testable import GrafttyMobileKit
 
 @MainActor
 @Suite("WorktreeListContent — extracted picker preserves callbacks + onListChanged")
 struct WorktreeListContentTests {
+
+    @Test("Navigation metadata accepts matching legacy snapshots and rejects missing or mismatched generations")
+    func metadataMustMatchDisplayedRows() {
+        let rows = [WorktreePanes(path: "old", displayName: "Feature", repoDisplayName: "Repo", displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)]
+        #expect(WorktreeListContent.shouldApplyNavigationSnapshot(.snapshot(rows), matching: rows))
+        #expect(!WorktreeListContent.shouldApplyNavigationSnapshot(nil, matching: rows))
+        #expect(!WorktreeListContent.shouldApplyNavigationSnapshot(.snapshot([]), matching: rows))
+    }
+
+    @Test("Selecting a project or changing navigation mode cancels an outstanding attention open, including offline projects")
+    func projectAndModeChangesCancelAttentionOpen() {
+        let defaults = UserDefaults(suiteName: "selection-\(UUID())")!
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        var generation: UInt64 = 7
+        for isAvailable in [true, false] {
+            let pending = generation
+            navigation.showsAttention = true
+            let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project", isAvailable: isAvailable)
+            WorktreeListContent.applyProjectSelection(project, navigation: navigation, selectionGeneration: &generation)
+            #expect(!WorktreeListContent.shouldApplySelectionIntent(capturedGeneration: pending, currentGeneration: generation))
+            #expect(navigation.selectedProjectID == "project")
+            #expect(!navigation.showsAttention)
+            #expect(!navigation.compactShowsProjects)
+        }
+        for showsAttention in [true, false] {
+            let pending = generation
+            WorktreeListContent.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &generation)
+            #expect(!WorktreeListContent.shouldApplySelectionIntent(capturedGeneration: pending, currentGeneration: generation))
+            #expect(navigation.showsAttention == showsAttention)
+        }
+    }
 
     private func sampleHost() -> Host {
         Host(

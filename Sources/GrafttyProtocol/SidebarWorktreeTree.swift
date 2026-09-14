@@ -18,12 +18,12 @@ public struct SidebarWorktreeTree: Identifiable, Sendable {
                 continue
             }
             let folder = folders[depth]
-            guard emitted.insert(folder).inserted else { continue }
+            let folderID = worktree.sidebar?.folderID(at: depth) ?? folder
+            guard emitted.insert(folderID).inserted else { continue }
             let descendants = worktrees.filter { row in
-                let ancestry = row.sidebar?.folders ?? []
-                return ancestry.count > depth && ancestry[depth] == folder
+                row.sidebar?.folderID(at: depth) == folderID
             }
-            result.append(.init(id: SidebarProjection.projectID(worktree) + ":folder:" + folders.prefix(depth + 1).joined(separator: "/"),
+            result.append(.init(id: SidebarProjection.projectID(worktree) + ":folder:" + folderID,
                                 name: folder, children: nodes(descendants, depth: depth + 1)))
         }
         return result

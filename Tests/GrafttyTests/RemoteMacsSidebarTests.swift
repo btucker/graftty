@@ -10,6 +10,19 @@ import Testing
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
+    @Test("@spec LAYOUT-2.44: If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.")
+    func reorderRequiresOwningHostCapability() {
+        let row = WorktreePanes(path: "/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .closed,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "worktree", projectID: "project"))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: [], query: ""))
+        #expect(RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["other"], query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: "feature"))
+        let main = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "Project", displayBranch: "main", state: .closed,
+            isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "main", projectID: "project"))
+        #expect(!RemoteWorktreeReorderPolicy.allows(main, editableProjectIDs: ["project"], query: ""))
+    }
+
     @Test("empty sidebar projection still exposes Add Remote Mac")
     func emptyProjectionShowsAddRemoteMacAction() throws {
         let projection = RemoteMacsSidebarProjection.make(

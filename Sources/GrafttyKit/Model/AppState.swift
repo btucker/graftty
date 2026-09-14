@@ -216,7 +216,15 @@ public struct AppState: Codable, Sendable, Equatable {
         // Selectable worktrees in sidebar order, carried as entries so the
         // attention check below is a direct property read rather than a
         // repeated `worktree(forPath:)` scan.
-        let ordered: [WorktreeEntry] = repos.flatMap { repo in
+        let projects = sidebarNavigation.map { $0.order.sorted($0.cachedProjects) } ?? []
+        let localPaths = projects.filter { ($0.owner?.relayDepth ?? 0) == 0 }.map(\.repositoryID)
+        let positions = Dictionary(localPaths.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let orderedRepos = repos.enumerated().sorted {
+            let left = positions[$0.element.path, default: .max]
+            let right = positions[$1.element.path, default: .max]
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
+        let ordered: [WorktreeEntry] = orderedRepos.flatMap { repo in
             repo.worktrees.filter { $0.state.hasOnDiskWorktree }
         }
         let n = ordered.count

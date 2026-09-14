@@ -48,10 +48,17 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var id: String
     public var projectID: String
     public var folders: [String]
+    public var folderIDs: [String]?
     public var paneIDs: [String: String]?
     public var attentionTimestamps: [String: Double]?
-    public init(id: String, projectID: String, folders: [String] = [], paneIDs: [String: String]? = nil, attentionTimestamps: [String: Double]? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.paneIDs = paneIDs; self.attentionTimestamps = attentionTimestamps
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, attentionTimestamps: [String: Double]? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.attentionTimestamps = attentionTimestamps
+    }
+
+    public func folderID(at depth: Int) -> String? {
+        guard folders.indices.contains(depth) else { return nil }
+        if let folderIDs, folderIDs.indices.contains(depth) { return folderIDs[depth] }
+        return folders.prefix(depth + 1).joined(separator: "/")
     }
 }
 

@@ -6,6 +6,28 @@ import Testing
 
 @Suite("WorktreePanesStore — channel-driver-backed façade.")
 struct WorktreePanesStoreTests {
+    @Test("@spec REMOTE-14.8: When sidebar metadata arrives before its worktree callback is applied, the application shall retain the previous complete snapshot and reject navigation reconciliation against rows from a different snapshot.")
+    func sidebarMetadataWaitsForMatchingRows() async throws {
+        let driver = MetadataChannelDriver()
+        let store = WorktreePanesStore(driver: driver)
+        let old = SidebarSnapshot(projects: [])
+        driver.sidebarSnapshot = old
+        await store.applySnapshot([])
+        let next = SidebarSnapshot(projects: [.init(id: "p", repositoryID: "/repo", name: "Project")])
+        // The channel decoder receives a frame before its asynchronous
+        // callback reaches the store. Readers must still see the old pair.
+        driver.sidebarSnapshot = next
+        #expect(await store.sidebar == old)
+        #expect(await store.currentSnapshot == .snapshot([], sidebar: old))
+        let rows = makeWorktrees(count: 1)
+        await store.applySnapshot(rows)
+        #expect(await store.sidebar == next)
+        #expect(await store.navigationSnapshot(matching: []) == nil)
+        #expect(await store.navigationSnapshot(matching: rows) == .snapshot(rows, sidebar: next))
+        driver.sidebarSnapshot = nil
+        await store.applySnapshot([])
+        #expect(await store.navigationSnapshot(matching: []) == .snapshot([]))
+    }
 
     @Test func subscribeOpensDriverAndUpdatesState() async throws {
         let driver = FakeChannelDriver()
@@ -101,6 +123,16 @@ private final class ClosingDuringOpenDriver:
     func close() {
         lock.withLock { $0.closed = true }
     }
+}
+
+private final class MetadataChannelDriver: PanesStateChannelDriver, SidebarSnapshotProviding, @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock(initialState: Optional<SidebarSnapshot>.none)
+    var sidebarSnapshot: SidebarSnapshot? {
+        get { lock.withLock { $0 } }
+        set { lock.withLock { $0 = newValue } }
+    }
+    func open() async throws {}
+    func close() {}
 }
 
 private final class FakeChannelDriver: PanesStateChannelDriver, @unchecked Sendable {

@@ -146,7 +146,10 @@ public struct IPadRootLayout: View {
                             externalRefreshToken: worktreeListRefreshToken,
                             navigation: appState.sidebarNavigation,
                             navigationWindowWidth: appState.navigationWindowWidth,
-                            remoteSidebarProvider: { await coordinator.sidebarSnapshot(for: host) }
+                            remoteSidebarProvider: { rows in
+                                guard coordinator.isPaired(host) else { return .snapshot(rows) }
+                                return await coordinator.navigationSnapshot(for: host, matching: rows)
+                            }
                         )
                     } else {
                         Spacer()

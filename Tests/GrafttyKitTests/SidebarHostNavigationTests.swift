@@ -2,8 +2,54 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 import GrafttyProtocol
+import Darwin
 
 struct SidebarHostNavigationTests {
+    @Test("@spec REMOTE-14.6: When folder metadata is published, the application shall retain native virtual-folder labels and identities, including separate folders with the same display name.")
+    func folderMetadataPreservesNativeHierarchy() throws {
+        let root = "/projects/repo"
+        let managed = ["a", "b"].map { WorktreeEntry(path: root + "/.worktrees/worktrees/" + $0, branch: $0) }
+        let external = ["c", "d"].map { WorktreeEntry(path: "/tmp/external/worktrees/" + $0, branch: $0) }
+        let nodes = SidebarWorktreeHierarchy.nodes(for: managed + external, inRepoAtPath: root, defaultBranch: nil)
+        let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: nodes)
+        let first = try #require(ancestry[managed[0].id])
+        let second = try #require(ancestry[external[0].id])
+        #expect(first.map(\.name) == ["worktrees"])
+        #expect(second.map(\.name) == ["worktrees"])
+        #expect(first.map(\.id) != second.map(\.id))
+        let rows = (managed + external).map { worktree in
+            let folders = ancestry[worktree.id] ?? []
+            return WorktreePanes(path: worktree.path, displayName: worktree.branch, repoDisplayName: "Project", displayBranch: worktree.branch, state: .closed, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: "p", folders: folders.map(\.name), folderIDs: folders.map(\.id)))
+        }
+        let projected = SidebarWorktreeTree.nodes(rows)
+        #expect(projected.map(\.name) == ["worktrees", "worktrees"])
+        #expect(Set(projected.map(\.id)).count == 2)
+        #expect(projected[0].children?.compactMap { $0.worktree?.path } == managed.map(\.path))
+        #expect(projected[1].children?.compactMap { $0.worktree?.path } == external.map(\.path))
+    }
+
+    @Test("@spec PROJECT-3.3: When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.")
+    func boundedRegularIconRead() throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let regular = directory.appendingPathComponent("icon.png")
+        let bytes = Data("small regular file".utf8)
+        try bytes.write(to: regular)
+        #expect(ProjectIconDiscovery.readImageData(at: regular) == bytes)
+        let link = directory.appendingPathComponent("favicon.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: regular)
+        #expect(ProjectIconDiscovery.readImageData(at: link) == nil)
+        let fifo = directory.appendingPathComponent("favicon.ico")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(ProjectIconDiscovery.readImageData(at: fifo) == nil)
+        #expect(ProjectIconDiscovery.readImageData(at: directory) == nil)
+        try Data(repeating: 0, count: 2 * 1024 * 1024 + 1).write(to: regular)
+        #expect(ProjectIconDiscovery.readImageData(at: regular) == nil)
+        #expect(ProjectIconDiscovery.discover(at: directory) == nil)
+    }
+
     @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.")
     func worktreeMove() {
         let root = "/tmp/project"

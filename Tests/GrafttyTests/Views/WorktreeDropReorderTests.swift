@@ -169,20 +169,21 @@ struct WorktreeDropReorderTests {
     func customDropsRejectInFlightDestinationNeighbors() {
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
             WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/.worktrees/moving", branch: "moving"),
             WorktreeEntry(path: "/repo/.worktrees/creating", branch: "creating", state: .creating),
             WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature"),
         ])
         var state = AppState(repos: [repo])
 
         let changed = WorktreeDropReorder.apply(
-            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[0].id),
-            targetWorktreeID: repo.worktrees[2].id,
+            TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[1].id),
+            targetWorktreeID: repo.worktrees[3].id,
             placement: .before,
             to: &state
         )
 
         #expect(!changed)
-        #expect(state.repos[0].worktrees.map(\.branch) == ["main", "creating", "feature"])
+        #expect(state.repos[0].worktrees.map(\.branch) == ["main", "moving", "creating", "feature"])
     }
 
     @Test("Dropping a worktree on itself is ignored")

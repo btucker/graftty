@@ -4,6 +4,22 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+enum RemoteWorktreeReorderPolicy {
+    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String) -> Bool {
+        query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
+            && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
+    }
+}
+
+private struct RemoteWorktreeDragSource: ViewModifier {
+    let route: String
+    let isEnabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if isEnabled { content.draggable("graftty-remote-worktree:" + route) }
+        else { content }
+    }
+}
+
 struct RemoteMacsSidebarProjection: Equatable {
     enum Action: Equatable {
         case addRemoteMac
@@ -239,13 +255,14 @@ struct RemoteMacsSection: View {
 
     var projectFilter: String? = nil
     var query: String = ""
+    var editableProjectIDs: Set<String> = []
 
     var body: some View {
         Section {
             ForEach(model.savedRemoteMacs.filter { mac in
                 (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
                     (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                        && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+                        && SidebarInteractionPolicy.matches($0, query: query)
                 }
             }) { remoteMac in
                 remoteMacGroup(remoteMac)
@@ -282,7 +299,7 @@ struct RemoteMacsSection: View {
             ForEach(groupedRepositories(for: identity).filter { repository in
                 repository.worktrees.contains {
                     (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                        && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+                        && SidebarInteractionPolicy.matches($0, query: query)
                 }
             }, id: \.id) { repository in
                 repositoryGroup(
@@ -345,7 +362,7 @@ struct RemoteMacsSection: View {
         ) {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                    && (query.isEmpty || "\($0.repoDisplayName) \($0.displayBranch)".localizedCaseInsensitiveContains(query))
+                    && SidebarInteractionPolicy.matches($0, query: query)
             }) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
@@ -411,11 +428,16 @@ struct RemoteMacsSection: View {
             .rightClickMenu {
                 remoteWorktreeMenu(worktree, remoteMac: remoteMac)
             }
-            .draggable("graftty-remote-worktree:" + worktree.path)
+            .modifier(RemoteWorktreeDragSource(route: worktree.path, isEnabled: canReorder(worktree, on: remoteMac)))
             .dropDestination(for: String.self) { values, location in
-                guard query.isEmpty, let value = values.first, value.hasPrefix("graftty-remote-worktree:"),
+                guard query.isEmpty, !worktree.state.isInFlight,
+                      editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
+                      let value = values.first, value.hasPrefix("graftty-remote-worktree:"),
                       let source = worktreePanesByRemote[identity]?.first(where: { $0.path == String(value.dropFirst("graftty-remote-worktree:".count)) }),
-                      source.repositoryID == worktree.repositoryID else { return false }
+                      canReorder(source, on: remoteMac), source.path != worktree.path,
+                      source.repositoryID == worktree.repositoryID,
+                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
+                      !worktree.isMainCheckout || location.y > 14 else { return false }
                 moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
                 return true
             }
@@ -510,10 +532,22 @@ struct RemoteMacsSection: View {
         }
     }
 
+    private func canReorder(_ worktree: WorktreePanes, on remoteMac: RemoteMac) -> Bool {
+        model.connectionState(for: RemoteMacIdentity(remoteMac)) == .connected
+            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query)
+    }
+
     private func moveRemoteWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, remoteMac: RemoteMac) {
-        guard let repositoryID = source.repositoryID else { return }
+        guard canReorder(source, on: remoteMac), !target.state.isInFlight,
+              let repositoryID = source.repositoryID else { return }
         Task {
-            guard await model.sidebarSnapshot(for: remoteMac)?.supportsNavigationEditing == true else { return }
+            guard await model.sidebarSnapshot(for: remoteMac)?.supportsNavigationEditing == true else {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't reorder worktrees"
+                alert.informativeText = "The owning Mac no longer advertises worktree editing. Reconnect to a supported version of Graftty."
+                alert.runModal()
+                return
+            }
             do {
                 let response = try await model.sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
                     request: .moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
@@ -532,14 +566,14 @@ struct RemoteMacsSection: View {
     ) -> NSMenu {
         let menu = NSMenu()
         let siblings = (worktreePanesByRemote[RemoteMacIdentity(remoteMac)] ?? []).filter {
-            $0.repositoryID == worktree.repositoryID && $0.sidebar?.folders == worktree.sidebar?.folders
+            $0.repositoryID == worktree.repositoryID && ($0.sidebar?.folderIDs ?? $0.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders)
         }
-        if !worktree.isMainCheckout, !worktree.state.isInFlight,
+        if canReorder(worktree, on: remoteMac),
            let index = siblings.firstIndex(where: { $0.path == worktree.path }) {
-            if index > 0, !siblings[index - 1].isMainCheckout {
+            if index > 0, !siblings[index - 1].isMainCheckout, !siblings[index - 1].state.isInFlight {
                 menu.addItem(ClosureMenuItem(title: "Move Up") { moveRemoteWorktree(worktree, relativeTo: siblings[index - 1], after: false, remoteMac: remoteMac) })
             }
-            if index + 1 < siblings.count {
+            if index + 1 < siblings.count, !siblings[index + 1].state.isInFlight {
                 menu.addItem(ClosureMenuItem(title: "Move Down") { moveRemoteWorktree(worktree, relativeTo: siblings[index + 1], after: true, remoteMac: remoteMac) })
             }
         }

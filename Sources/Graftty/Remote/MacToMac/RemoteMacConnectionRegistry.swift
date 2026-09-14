@@ -488,8 +488,15 @@ final class RemoteMacConnectionRegistry {
     }
 
     func sidebarSnapshot(for identity: RemoteMacIdentity) async -> SidebarSnapshot? {
-        guard let store = entries[identity]?.paneEnvironment.worktreePanesStore else { return nil }
-        return await store.sidebar
+        guard case .snapshot(_, let sidebar) = await panesSnapshot(for: identity) else { return nil }
+        return sidebar
+    }
+
+    func panesSnapshot(for identity: RemoteMacIdentity) async -> PanesStateMessage? {
+        guard let entry = entries[identity], let store = entry.paneEnvironment.worktreePanesStore else { return nil }
+        let snapshot = await store.currentSnapshot
+        guard entries[identity]?.id == entry.id else { return nil }
+        return snapshot
     }
 
     private func publishPaneSnapshot(

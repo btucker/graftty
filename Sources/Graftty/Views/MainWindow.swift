@@ -112,6 +112,7 @@ struct MainWindow: View {
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
+                onNavigationIntent: { attentionOpenGeneration &+= 1 },
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -615,11 +616,9 @@ struct MainWindow: View {
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
                 selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
             } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
-            if let occurrence = item.occurrence {
-                let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.supportsNavigationEditing == true
-                let request: WorktreeManagementRequest = supportsExact
-                    ? .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
-                    : .acknowledge(worktreeID: item.worktreeID, paneID: item.paneID)
+            let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
+                .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
+            if let request = SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: supportsExact) {
                 guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(request) else { return false }
                 if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
             }
@@ -802,6 +801,7 @@ struct MainWindow: View {
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        attentionOpenGeneration &+= 1
         let previousIdentity = selectedRemoteIdentity
         let previousWorktreePath = selectedRemoteWorktreePath
         setRemoteSurfacesVisible(false)

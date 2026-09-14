@@ -89,6 +89,28 @@ public struct SidebarWorktreeFolderExpansion: Equatable, Sendable {
 /// specific directory, that directory becomes an inferred root. Broad
 /// ancestors shared with the main checkout are deliberately rejected.
 public enum SidebarWorktreeHierarchy {
+    public struct Folder: Hashable, Sendable {
+        public let id: String
+        public let name: String
+    }
+
+    /// Preserve the native hierarchy's display labels separately from the
+    /// identity paths used for external roots and sibling move validation.
+    public static func folderAncestry(in nodes: [SidebarWorktreeNode]) -> [WorktreeEntry.ID: [Folder]] {
+        var result: [WorktreeEntry.ID: [Folder]] = [:]
+        func visit(_ nodes: [SidebarWorktreeNode], ancestry: [Folder]) {
+            for node in nodes {
+                switch node {
+                case .worktree(let worktree, _): result[worktree.id] = ancestry
+                case .folder(let path, let name, let children):
+                    visit(children, ancestry: ancestry + [.init(id: path, name: name)])
+                }
+            }
+        }
+        visit(nodes, ancestry: [])
+        return result
+    }
+
     public static func nodes(
         for worktrees: [WorktreeEntry],
         inRepoAtPath repoPath: String,
