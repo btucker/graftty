@@ -68,6 +68,12 @@ public struct SidebarAttentionList: View {
                 }
                 Text(item.worktreeName).font(.callout).lineLimit(1)
                 Text(item.title).font(.caption).foregroundStyle(recent ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
+                if let stop = item.agentStop {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text("Stopped " + stop.elapsedDescription(at: context.date))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .background(.secondary.opacity(recent ? 0.06 : 0.12), in: RoundedRectangle(cornerRadius: 6))

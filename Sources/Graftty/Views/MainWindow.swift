@@ -621,6 +621,11 @@ struct MainWindow: View {
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
                 selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
             } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
+            if let stop = worktree.sidebar?.unseenAgentStop {
+                guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(.acknowledgeOccurrence(
+                    worktreeID: item.worktreeID, paneID: nil, occurrence: stop.occurrence)) else { return false }
+                if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
+            }
             let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
             if let request = SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: supportsExact) {
@@ -770,6 +775,7 @@ struct MainWindow: View {
                     // Same `acknowledgeAttention()` the notification-
                     // activation path uses, so the two can't drift.
                     if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
+                    appState.repos[repoIdx].worktrees[wtIdx].unseenAgentStop = nil
                 }
             }
         }

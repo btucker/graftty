@@ -87,6 +87,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// specific pane. Rendered on the worktree's own sidebar row
     /// (STATE-2.3), independent of the pane rows beneath it.
     public var attention: Attention?
+    public var unseenAgentStop: SidebarAgentStop?
     /// Pane-scoped attention slots keyed by pane `PaneSlotID`. Driven by
     /// shell-integration events (`COMMAND_FINISHED`) that are emitted by
     /// one specific pane — so the ping must land on that pane's sidebar
@@ -124,6 +125,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
+        self.unseenAgentStop = nil
         self.paneAttention = [:]
         self.paneSessions = [:]
         self.splitTree = splitTree
@@ -138,7 +140,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, state, staleSince, attention, paneAttention,
+        case id, path, branch, state, staleSince, attention, unseenAgentStop, paneAttention,
              paneSessions, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
@@ -161,6 +163,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
+        self.unseenAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .unseenAgentStop)
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
             forKey: .paneAttention
@@ -188,10 +191,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
 
     /// True when this worktree is requesting attention at either scope — a
     /// worktree-level ping (`graftty notify`) or any per-pane badge — from
-    /// any `AttentionSource`. Single home for the predicate so worktree
+    /// any `AttentionSource`, or an unseen agent stop. Single home for the predicate so worktree
     /// navigation (KBD-5) and any other consumer can't drift on scope.
     public var hasAttention: Bool {
-        attention != nil || !paneAttention.isEmpty
+        attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
     }
 
     /// Single setter for attention: pane-scoped when `pane` is non-nil,
@@ -234,6 +237,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// every pane (STATE-2.4). One method so both acknowledgement paths
     /// can't drift on scope.
     public mutating func acknowledgeAttention() {
+        unseenAgentStop = nil
         attention = nil
         paneAttention.removeAll()
     }
@@ -243,6 +247,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// worktree-scoped overlay and sibling panes are left alone — the user
     /// only attended to this one.
     public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
+        unseenAgentStop = nil
         paneAttention[pane] = nil
     }
 

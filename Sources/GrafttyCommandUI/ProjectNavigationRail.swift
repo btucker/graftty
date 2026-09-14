@@ -70,15 +70,7 @@ public struct ProjectNavigationRail: View {
         VStack(spacing: 0) {
             HStack {
                 if !collapsed { Text("Projects").font(.caption).foregroundStyle(.secondary); Spacer() }
-                Button { collapsed.toggle() } label: {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.left")
-                        .frame(minWidth: 36, minHeight: 40).contentShape(Rectangle())
-                }
-                    .buttonStyle(.plain)
-                    .disabled(collapsed && !canExpand)
-                    .help(collapsed ? "Expand project rail" : "Collapse project rail")
-                    .accessibilityLabel(collapsed ? "Expand project rail" : "Collapse project rail")
-            }.padding(.horizontal, 10)
+            }.frame(height: 40).padding(.horizontal, 10)
             Button(action: onAttention) {
                 HStack(spacing: 9) {
                     Image(systemName: "tray.full").frame(width: 28, height: 28)
@@ -111,6 +103,17 @@ public struct ProjectNavigationRail: View {
                     }
                 }.padding(.horizontal, 6)
             }
+            HStack {
+                if !collapsed { Spacer() }
+                Button { collapsed.toggle() } label: {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.left")
+                        .frame(minWidth: 36, minHeight: 40).contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain)
+                    .disabled(collapsed && !canExpand)
+                    .help(collapsed ? "Expand project rail" : "Collapse project rail")
+                    .accessibilityLabel(collapsed ? "Expand project rail" : "Collapse project rail")
+            }.padding(.horizontal, 10)
         }
         .frame(width: SidebarLayoutPolicy.railWidth(collapsed: collapsed, expandedWidth: expandedWidth))
         .clipped()

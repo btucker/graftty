@@ -255,6 +255,7 @@ struct RemoteMacsSection: View {
 
     var projectFilter: String? = nil
     var query: String = ""
+    var showsRepositoryHeaders = true
     var editableProjectIDs: Set<String> = []
 
     var body: some View {
@@ -348,50 +349,54 @@ struct RemoteMacsSection: View {
             identity: identity,
             id: repositoryGroup.id
         )
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { !collapsedRepositories.contains(key) },
-                set: { expanded in
-                    if expanded {
-                        collapsedRepositories.remove(key)
-                    } else {
-                        collapsedRepositories.insert(key)
-                    }
-                }
-            )
-        ) {
+        let rows = Group {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
             }) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
-                        EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
+                        EdgeInsets(top: 0, leading: showsRepositoryHeaders ? -20 : 0, bottom: 0, trailing: 0)
                     )
             }
-        } label: {
-            HStack(spacing: 6) {
-                Text(repositoryGroup.displayName)
-                    .foregroundColor(theme.foreground)
-                    .fontWeight(.semibold)
-                Spacer()
-                if let repository = model.repositoriesByRemote[identity]?
-                    .first(where: { $0.id == repositoryGroup.id }) {
-                    Button {
-                        onAddRemoteWorktree(remoteMac, repository)
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.sidebarDimIcon)
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(
-                        "Add worktree to \(repositoryGroup.displayName) on \(remoteMac.label)"
-                    )
+        }
+        if showsRepositoryHeaders {
+            DisclosureGroup(isExpanded: Binding(
+                get: { !collapsedRepositories.contains(key) },
+                set: { expanded in
+                    if expanded { collapsedRepositories.remove(key) }
+                    else { collapsedRepositories.insert(key) }
+                }
+            )) {
+                rows
+            } label: {
+                HStack(spacing: 6) {
+                    Text(repositoryGroup.displayName).foregroundColor(theme.foreground).fontWeight(.semibold)
+                    Spacer()
+                    addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: false)
                 }
             }
+        } else {
+            HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
+            rows
+        }
+    }
+
+    @ViewBuilder
+    private func addWorktreeButton(_ group: RemoteRepositoryGroup, remoteMac: RemoteMac, showsLabel: Bool) -> some View {
+        if let repository = model.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?.first(where: { $0.id == group.id }) {
+            Button { onAddRemoteWorktree(remoteMac, repository) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                    if showsLabel { Text("Add worktree") }
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.sidebarDimIcon)
+                .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Add worktree to \(group.displayName) on \(remoteMac.label)")
+            .accessibilityLabel("Add worktree to \(group.displayName) on \(remoteMac.label)")
         }
     }
 

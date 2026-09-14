@@ -1,6 +1,11 @@
 import Foundation
 
 public enum SidebarInteractionPolicy {
+    public static func stoppedTurnAcknowledgement(for worktree: WorktreePanes) -> WorktreeManagementRequest? {
+        guard let stop = worktree.sidebar?.unseenAgentStop else { return nil }
+        return .acknowledgeOccurrence(worktreeID: worktree.path, paneID: nil, occurrence: stop.occurrence)
+    }
+
     /// A legacy acknowledgement has broader semantics and can clear a request
     /// that the user has not seen. Opening the target remains supported.
     public static func acknowledgement(for item: SidebarActivityItem, supportsExactAcknowledgement: Bool) -> WorktreeManagementRequest? {

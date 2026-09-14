@@ -116,6 +116,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 
+**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+
+**LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2428,6 +2432,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-14.10** When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.
 
+**REMOTE-14.11** When a viewed agent stop is acknowledged remotely, the application shall clear only that stop occurrence and preserve newer stops and unrelated prompts.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
@@ -2484,7 +2490,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
 
-**AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall not create needs-input attention or post a waiting-for-you notification.
+**AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 
 **AGENT-3.6** When a provider hook explicitly reports a surfaced permission request, user question, or plan-review prompt, the application shall create the corresponding needs-input attention for that agent.
 

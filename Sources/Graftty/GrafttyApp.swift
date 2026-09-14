@@ -2859,7 +2859,7 @@ struct GrafttyApp: App {
                                     }
                                     appStateBinding.wrappedValue.repos[repoIndex]
                                         .worktrees[worktreeIndex]
-                                        .paneAttention[slot] = nil
+                                        .acknowledgePaneAttention(slot)
                                 } else {
                                     appStateBinding.wrappedValue.repos[repoIndex]
                                         .worktrees[worktreeIndex]
@@ -4263,6 +4263,14 @@ struct GrafttyApp: App {
         remoteBranchStore: RemoteBranchStore
     ) async -> ResponseMessage {
         switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
+        case .recordStoppedTurn:
+            let stop = SidebarAgentStop(agentName: AgentStopNotification.displayName(runtime), stoppedAt: Date())
+            for ri in appState.wrappedValue.repos.indices {
+                if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
+                    appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
+                    break
+                }
+            }
         case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,

@@ -5,6 +5,46 @@ import GrafttyProtocol
 import Darwin
 
 struct SidebarHostNavigationTests {
+    @Test("""
+@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+""")
+    func unseenStopSurvivesUntilVisit() throws {
+        var worktree = WorktreeEntry(path: "/repo/w", branch: "feature")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100))
+        worktree.unseenAgentStop = stop
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        #expect(worktree.unseenAgentStop == stop)
+        #expect(worktree.hasAttention)
+        let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        #expect(restored.unseenAgentStop == stop)
+        let metadata = SidebarHostNavigation.metadata(for: restored, projectID: "p", folders: [])
+        let row = WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo", displayBranch: "feature", state: .closed, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: metadata)
+        let queue = SidebarActivityFilter.needsYou.apply(to: SidebarProjection.activity([row]))
+        #expect(queue.count == 1)
+        #expect(queue.first?.title == "Codex stopped")
+        #expect(queue.first?.occurrence?.timestamp == stop.stoppedAt)
+        worktree.acknowledgeAttention()
+        #expect(worktree.unseenAgentStop == nil)
+        worktree.unseenAgentStop = stop
+        worktree.acknowledgePaneAttention(PaneSlotID())
+        #expect(worktree.unseenAgentStop == nil)
+    }
+
+    @Test("@spec REMOTE-14.11: When a viewed agent stop is acknowledged remotely, the application shall clear only that stop occurrence and preserve newer stops and unrelated prompts.")
+    func acknowledgeExactStop() {
+        var worktree = WorktreeEntry(path: "/repo/w", branch: "feature")
+        let old = SidebarAgentStop(agentName: "Claude", stoppedAt: Date(timeIntervalSince1970: 100))
+        let newer = SidebarAgentStop(agentName: "Claude", stoppedAt: Date(timeIntervalSince1970: 200))
+        worktree.unseenAgentStop = newer
+        worktree.attention = Attention(text: "Review this", timestamp: Date(), source: .userNotify)
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [worktree])])
+        #expect(!SidebarHostNavigation.acknowledge(in: &state, worktreeID: worktree.path, paneID: nil, occurrence: old.occurrence))
+        #expect(state.repos[0].worktrees[0].unseenAgentStop == newer)
+        #expect(SidebarHostNavigation.acknowledge(in: &state, worktreeID: worktree.path, paneID: nil, occurrence: newer.occurrence))
+        #expect(state.repos[0].worktrees[0].unseenAgentStop == nil)
+        #expect(state.repos[0].worktrees[0].attention?.text == "Review this")
+    }
+
     @Test("@spec REMOTE-14.6: When folder metadata is published, the application shall retain native virtual-folder labels and identities, including separate folders with the same display name.")
     func folderMetadataPreservesNativeHierarchy() throws {
         let root = "/projects/repo"

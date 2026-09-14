@@ -160,6 +160,12 @@ struct SidebarView: View {
     private func projectMenu(_ project: SidebarProject) -> AnyView {
         guard let repo = appState.repos.first(where: { localProjectID($0) == project.id }) else { return AnyView(EmptyView()) }
         return AnyView(Group {
+            if !repo.isGitTracked {
+                Button("Initialize Git Repository") { onInitializeGit(repo) }
+            }
+            if let forge = forgeLink(for: repo) {
+                Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
+            }
             Button("Choose Project Icon…") { iconStore.chooseIcon(for: repo.id, state: &appState) }
             Button("Use Initials") {
                 if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
@@ -184,7 +190,7 @@ struct SidebarView: View {
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
                           onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
-                          projectFilter: projectFilter, query: query,
+                          projectFilter: projectFilter, query: query, showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
     }
 
@@ -384,16 +390,7 @@ struct SidebarView: View {
             inRepoAtPath: repo.path,
             defaultBranch: resolvedDefaultBranch
         )
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { !repo.isCollapsed },
-                set: { expanded in
-                    if let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) {
-                        appState.repos[idx].isCollapsed = !expanded
-                    }
-                }
-            )
-        ) {
+        let rows = Group {
             ForEach(worktreeNodes) { node in
                 SidebarWorktreeNodeRow(
                     node: node,
@@ -409,60 +406,60 @@ struct SidebarView: View {
                         displayName: displayName
                     )
                 }
-                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0))
+                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, outdent: !showsProjectRail))
             }
-        } label: {
-            // No leading glyph — the top level is always projects, so
-            // a folder icon would be tautological noise, and even an
-            // informative forge logo proved to be repeated clutter in
-            // practice (the "Open on GitHub…" affordance lives in the
-            // context menu instead). The disclosure arrow and semibold
-            // weight carry the "expandable heading" cues on their own.
-            // Trailing "+" opens the add-worktree sheet;
-            // .buttonStyle(.plain) keeps its tap from toggling the
-            // enclosing disclosure.
-            HStack(spacing: 6) {
-                Text(repo.displayName)
-                    .foregroundColor(theme.foreground)
-                    .fontWeight(.semibold)
-                Spacer()
-                if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
-                    Button {
-                        // Kick off fresh branch + PR data so the
-                        // BranchPicker renders something current as
-                        // the sheet appears, even if the polling
-                        // cadence is in a long-backoff.
-                        remoteBranchStore.pulse()
-                        prStatusStore.pulse()
-                        pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.sidebarDimIcon)
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Add worktree to \(repo.displayName)")
-                }
+        }
+        if showsProjectRail {
+            if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+                HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
             }
-            .contextMenu {
-                if !repo.isGitTracked {
-                    Button("Initialize Git Repository") {
-                        onInitializeGit(repo)
+            rows
+        } else {
+            DisclosureGroup(isExpanded: Binding(
+                get: { !repo.isCollapsed },
+                set: { expanded in
+                    if let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                        appState.repos[idx].isCollapsed = !expanded
                     }
                 }
-                // PROJECT-2.3: context-menu forge link.
-                if let forge = forgeLink {
-                    Button(forge.menuTitle) {
-                        NSWorkspace.shared.open(forge.url)
-                    }
+            )) {
+                rows
+            } label: {
+                HStack(spacing: 6) {
+                    Text(repo.displayName).foregroundColor(theme.foreground).fontWeight(.semibold)
+                    Spacer()
+                    if SidebarMenuVisibility.showsAddWorktree(repo: repo) { addWorktreeButton(repo, showsLabel: false) }
                 }
-                Button("Remove Repository") {
-                    onRemoveRepo(repo)
+                .contextMenu {
+                    if !repo.isGitTracked {
+                        Button("Initialize Git Repository") { onInitializeGit(repo) }
+                    }
+                    if let forge = forgeLink {
+                        Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
+                    }
+                    Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
         }
+    }
+
+    private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool) -> some View {
+        Button {
+            remoteBranchStore.pulse()
+            prStatusStore.pulse()
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "plus")
+                if showsLabel { Text("Add worktree") }
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(theme.sidebarDimIcon)
+            .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Add worktree to \(repo.displayName)")
+        .accessibilityLabel("Add worktree to \(repo.displayName)")
     }
 
     /// Renders a worktree and its pane children as one visually-unified
@@ -747,10 +744,11 @@ struct SidebarView: View {
 private struct SidebarWorktreeRowInsets: ViewModifier {
     let node: SidebarWorktreeNode
     let depth: Int
+    var outdent: Bool = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
+        if outdent && SidebarWorktreeRowIndentation.shouldOutdent(node, depth: depth) {
             content.listRowInsets(
                 EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
             )

@@ -37,7 +37,7 @@ public enum SidebarHostNavigation {
         times["worktree"] = worktree.attention?.timestamp.timeIntervalSinceReferenceDate
         return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
-                     attentionTimestamps: times)
+                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop)
     }
 
     @discardableResult
@@ -74,6 +74,11 @@ public enum SidebarHostNavigation {
                                     occurrence: SidebarAttentionOccurrence) -> Bool {
         for ri in state.repos.indices {
             guard let wi = state.repos[ri].worktrees.firstIndex(where: { $0.path == worktreeID }) else { continue }
+            if paneID == nil, let stop = state.repos[ri].worktrees[wi].unseenAgentStop,
+               occurrence == stop.occurrence {
+                state.repos[ri].worktrees[wi].unseenAgentStop = nil
+                return true
+            }
             if let paneID {
                 guard let slot = state.repos[ri].worktrees[wi].paneSlot(forSessionName: paneID),
                       let attention = state.repos[ri].worktrees[wi].paneAttention[slot],

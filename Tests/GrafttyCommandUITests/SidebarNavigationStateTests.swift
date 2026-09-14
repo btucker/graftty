@@ -48,8 +48,9 @@ struct SidebarNavigationStateTests {
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty-server")
         let item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "w", paneID: nil,
-            projectName: project.name, worktreeName: "deploy-to-cloudflare", title: "Claude needs input",
-            occurrence: .init(timestamp: Date(), text: "Claude needs input", source: .agentStop), isBusy: false)
+            projectName: project.name, worktreeName: "deploy-to-cloudflare", title: "Claude stopped",
+            occurrence: .init(timestamp: Date(), text: "Claude stopped", source: .agentStop), isBusy: false,
+            agentStop: SidebarAgentStop(agentName: "Claude", stoppedAt: Date().addingTimeInterval(-120)))
         for width in [220.0, 300, 420] {
             let content = SidebarAttentionList(navigation: navigation, items: [item], projects: [project], icons: [:], onOpen: { _ in })
                 .frame(width: width, height: 520)

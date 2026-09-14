@@ -365,6 +365,7 @@ public struct WorktreeListContent: View {
             selectionIntentGeneration &+= 1
             if let path, case .loaded(let rows) = state, let worktree = rows.first(where: { $0.path == path }) {
                 rememberWorktree(worktree)
+                acknowledgeViewedStop(worktree)
             }
         }
         .onChange(of: focusedPaneId) { _, _ in
@@ -577,11 +578,13 @@ public struct WorktreeListContent: View {
         } else {
             VStack(spacing: 0) {
                 if let selected = projects.first(where: { $0.id == navigation.selectedProjectID }) {
-                    HStack {
-                        ProjectIdentityView(project: selected, imageData: projectIcons[selected.id])
-                        Text(selected.name).font(.headline).lineLimit(1)
-                        Spacer()
-                    }.padding(12)
+                    if horizontalSizeClass != .regular {
+                        HStack {
+                            ProjectIdentityView(project: selected, imageData: projectIcons[selected.id])
+                            Text(selected.name).font(.headline).lineLimit(1)
+                            Spacer()
+                        }.padding(12)
+                    }
                     if !selected.isAvailable { Text("The owning Mac is offline.").font(.caption).foregroundStyle(.secondary) }
                 }
                 TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
@@ -678,6 +681,7 @@ public struct WorktreeListContent: View {
                     }
                     if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
                 } else { onSelect(target) }
+                acknowledgeViewedStop(target)
                 let supportsExactAcknowledgement = projects(for: worktrees)
                     .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
                 if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
@@ -769,6 +773,7 @@ public struct WorktreeListContent: View {
                                         },
                                         onSelectPane: { leaf in
                                             rememberWorktree(wt)
+                                            acknowledgeViewedStop(wt)
                                             selectionIntentGeneration &+= 1
                                             if let onSelectPaneWithWorktree {
                                                 onSelectPaneWithWorktree(wt, leaf)
@@ -796,8 +801,9 @@ public struct WorktreeListContent: View {
                                     }
                                 }
                             } header: {
-                                Text(group.title)
-                                    .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
+                                if !showsProjectRail || horizontalSizeClass != .regular || !navigation.query.isEmpty {
+                                    Text(group.title).foregroundColor(theme?.sidebarPrimaryText(isActive: false))
+                                }
                             }
                         }
                     }
@@ -1080,6 +1086,25 @@ public struct WorktreeListContent: View {
         if !navigation.showsAttention { navigation.selectedProjectID = id }
     }
 
+    private func acknowledgeViewedStop(_ worktree: WorktreePanes) {
+        guard includeRemoteWorktrees,
+              let request = SidebarInteractionPolicy.stoppedTurnAcknowledgement(for: worktree) else { return }
+        let provider: RemoteConnectionProvider? = remoteConnectionProvider
+        let requestHostID = host.id
+        Task {
+            do {
+                let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
+                guard presentedHostID == requestHostID else { return }
+                if case .error(let code, _, _, _) = response, code != "occurrence-changed" {
+                    showErrorToast("Couldn't mark this agent stop as viewed.")
+                }
+            } catch {
+                guard presentedHostID == requestHostID else { return }
+                showErrorToast("Couldn't mark this agent stop as viewed.")
+            }
+        }
+    }
+
     private func beginSelectingWorktree(_ worktree: WorktreePanes) {
         rememberWorktree(worktree)
         selectionIntentGeneration &+= 1
@@ -1122,6 +1147,7 @@ public struct WorktreeListContent: View {
         ) else {
             if selectionIsCurrent() {
                 onSelect(worktree)
+                acknowledgeViewedStop(worktree)
             }
             return
         }
@@ -1166,6 +1192,7 @@ public struct WorktreeListContent: View {
                 }) {
                     if selectionIsCurrent() {
                         onSelect(opened)
+                        acknowledgeViewedStop(opened)
                     }
                     return
                 }

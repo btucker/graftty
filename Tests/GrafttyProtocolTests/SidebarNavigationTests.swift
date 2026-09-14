@@ -3,6 +3,28 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.52: While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.")
+    func stoppedTurnAge() throws {
+        let date = Date(timeIntervalSince1970: 100)
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: date)
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(59)) == "just now")
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(60)) == "1 minute ago")
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(120)) == "2 minutes ago")
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(3600)) == "1 hour ago")
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(172800)) == "2 days ago")
+        #expect(stop.elapsedDescription(at: date.addingTimeInterval(-90)) == "just now")
+        let restored = try JSONDecoder().decode(SidebarAgentStop.self, from: JSONEncoder().encode(stop))
+        #expect(restored == stop)
+        let row = WorktreePanes(path: "remote-route", displayName: "feature", repoDisplayName: "Repo", displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "w", projectID: "p", unseenAgentStop: stop))
+        #expect(SidebarInteractionPolicy.stoppedTurnAcknowledgement(for: row) == .acknowledgeOccurrence(worktreeID: row.path, paneID: nil, occurrence: stop.occurrence))
+        let item = try #require(SidebarProjection.activity([row]).first)
+        var history = SidebarRecentHistory()
+        history.open(item)
+        history.reconcile(worktrees: [row], availableProjectIDs: ["p"])
+        #expect(history.entries.first?.item.agentStop == stop)
+    }
+
     @Test("""
 @spec LAYOUT-2.50: While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 """)

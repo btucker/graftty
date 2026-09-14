@@ -4,9 +4,10 @@ import Testing
 @Suite("Agent hook attention classification")
 struct AgentHookAttentionClassifierTests {
     @Test("""
-    @spec AGENT-3.5: When a top-level provider hook reports a bare turn Stop, the application shall not create needs-input attention or post a waiting-for-you notification.
+    @spec AGENT-3.5: When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
     """)
-    func bareStopIsNotAttention() {
+    func bareStopRecordsUnseenTurn() {
+        #expect(AgentHookAttentionTransition.action(event: .stop, reason: nil) == .recordStoppedTurn)
         let payload: [String: Any] = [
             "session_id": "session-1",
             "hook_event_name": "Stop",
@@ -70,7 +71,7 @@ struct AgentHookAttentionClassifierTests {
     }
 
     @Test("Stop does not clear attention, while authoritative provider progress does", arguments: [
-        (TeamHookEvent.stop, AgentHookAttentionAction.none),
+        (TeamHookEvent.stop, AgentHookAttentionAction.recordStoppedTurn),
         (.sessionStart, .clear),
         (.userPromptSubmit, .clear),
         (.postToolUse, .clear),
