@@ -1248,11 +1248,10 @@ struct GrafttyApp: App {
         // the wrapper at request time.
         Self.installAgentHookAssets()
 
-        // Native integration no longer depends on the user discovering the
-        // Settings button. Offer the current bundled provider plugins once
-        // per integration revision after the main window exists. Provider
-        // configuration changes only if the user accepts the sheet.
-        DispatchQueue.main.async {
+        // Refresh previously installed plugins after app updates. First-time
+        // installation still requires the launch offer's explicit consent.
+        Task { @MainActor in
+            await AgentPluginAutomaticUpdate.shared.runAtLaunch()
             AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
         }
 

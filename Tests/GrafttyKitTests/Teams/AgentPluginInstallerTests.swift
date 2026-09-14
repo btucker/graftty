@@ -5,6 +5,76 @@ import Testing
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
     @Test("""
+    @spec AGENT-6.31: When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
+    """)
+    func appBuildVersionsInvalidateBothProviderCaches() throws {
+        #expect(AgentPluginInstaller.pluginVersion(forBuild: "100.60.00") == "100.60.0")
+        #expect(AgentPluginInstaller.pluginVersion(forBuild: "100.60.01") == "100.60.1")
+        #expect(AgentPluginInstaller.pluginVersion(forBuild: "7") == "7.0.0")
+        for invalid in ["", "dev", "1..2", "1.2.3.4", "-1.2.3"] {
+            #expect(AgentPluginInstaller.pluginVersion(forBuild: invalid) == nil)
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-versioned-plugin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        for version in ["100.60.0", "100.61.0"] {
+            _ = try AgentPluginInstaller(pluginVersion: version).prepare(destinationRoot: destination)
+            for provider in ["codex", "claude"] {
+                let data = try Data(contentsOf: destination.appendingPathComponent(
+                    "\(provider)/plugins/graftty-team/.\(provider)-plugin/plugin.json"
+                ))
+                let manifest = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                #expect(manifest["version"] as? String == version)
+                #expect(manifest["name"] as? String == "graftty-team")
+            }
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.32: When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
+    """)
+    func refreshPreservesProviderOptOutsAndReportsInventoryFailures() async throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-plugin-refresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller()
+        let plan = try installer.prepare(destinationRoot: destination)
+        let codex = #"{"installed":[{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+        let claude = #"[{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
+
+        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+        let report = await installer.refresh(plan, executor: executor)
+        #expect(report.succeeded)
+        #expect(report.results.count == 4)
+        #expect(await executor.mutations() == plan.installSteps.filter {
+            $0.arguments.prefix(2) != ["plugin", "install"]
+        }.map { Invocation(command: $0.executable, arguments: $0.arguments) })
+
+        for (codexInventory, claudeInventory) in [
+            (#"{"installed":[]}"#, "[]"),
+            (codex.replacingOccurrences(of: #""enabled":true"#, with: #""enabled":false"#),
+             claude.replacingOccurrences(of: #""enabled":true"#, with: #""enabled":false"#)),
+            (codex.replacingOccurrences(of: #""installed":true"#, with: #""installed":false"#),
+             claude.replacingOccurrences(of: #""scope":"user""#, with: #""scope":"project""#)),
+            (codex.replacingOccurrences(of: "graftty-team@graftty", with: "other@graftty"),
+             claude.replacingOccurrences(of: "graftty-team@graftty", with: "other@graftty")),
+        ] {
+            let optedOut = InventoryPluginCLIExecutor(codex: codexInventory, claude: claudeInventory)
+            #expect(await installer.refresh(plan, executor: optedOut).succeeded)
+            #expect(await optedOut.mutations().isEmpty)
+        }
+
+        for invalid in ["not JSON", "{}", #"{"installed":[{"pluginId":"graftty-team@graftty"}]}"#, "missing-cli"] {
+            let broken = InventoryPluginCLIExecutor(codex: invalid, claude: claude)
+            let failed = await installer.refresh(plan, executor: broken)
+            #expect(!failed.succeeded)
+            #expect(failed.results.first?.step.provider == .codex)
+            #expect(failed.results.first?.succeeded == false)
+            #expect(await broken.mutations().map(\.command) == ["claude", "claude"])
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.29: When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
     """)
     func sharedFilesSurviveIndependentPluginCaching() throws {
@@ -343,6 +413,31 @@ struct AgentPluginInstallerTests {
 private struct Invocation: Equatable, Sendable {
     let command: String
     let arguments: [String]
+}
+
+private actor InventoryPluginCLIExecutor: CLIExecutor {
+    let codex: String
+    let claude: String
+    private var recorded: [Invocation] = []
+
+    init(codex: String, claude: String) {
+        self.codex = codex
+        self.claude = claude
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        let listing = args.prefix(2) == ["plugin", "list"]
+        let output = command == "codex" ? codex : claude
+        if listing, output == "missing-cli" { throw CLIError.notFound(command: command) }
+        if !listing { recorded.append(Invocation(command: command, arguments: args)) }
+        return CLIOutput(stdout: listing ? output : "updated", stderr: "", exitCode: 0)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory)
+    }
+
+    func mutations() -> [Invocation] { recorded }
 }
 
 private actor RecordingPluginCLIExecutor: CLIExecutor {

@@ -7,10 +7,9 @@ enum AgentPluginInstallOfferPolicy {
         lastAcknowledgedRevision: Int?,
         installedRevision: Int?
     ) -> Bool {
-        guard agentTeamsEnabled else { return false }
+        guard agentTeamsEnabled, (installedRevision ?? 0) <= 0 else { return false }
         let current = AgentPluginInstaller.integrationRevision
         return (lastAcknowledgedRevision ?? 0) < current
-            && (installedRevision ?? 0) < current
     }
 
     static func shouldOffer(in defaults: UserDefaults) -> Bool {
@@ -44,11 +43,21 @@ enum AgentPluginInstallOfferPolicy {
         )
     }
 
-    static func recordInstalled(in defaults: UserDefaults) {
+    static var currentBuildVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    }
+
+    static func recordInstalled(
+        in defaults: UserDefaults,
+        buildVersion: String? = currentBuildVersion
+    ) {
         defaults.set(
             AgentPluginInstaller.integrationRevision,
             forKey: SettingsKeys.agentPluginInstalledRevision
         )
+        if let buildVersion, !buildVersion.isEmpty {
+            defaults.set(buildVersion, forKey: SettingsKeys.agentPluginInstalledBuildVersion)
+        }
         recordAcknowledged(in: defaults)
     }
 }

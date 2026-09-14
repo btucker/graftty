@@ -2504,7 +2504,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
 
-**AGENT-6.15** When Graftty launches with agent teams enabled and the current bundled provider integration has been neither installed nor acknowledged, the application shall prepare its app-owned snapshots and offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, an installation-only completion and an incomplete installation shall otherwise preserve the selected messaging mode, and acknowledging or completing that integration revision shall suppress repeat launch offers while a newer revision may offer again.
+**AGENT-6.15** When Graftty launches with agent teams enabled, no previously completed provider installation, and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
@@ -2531,6 +2531,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.28** When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
 
 **AGENT-6.29** When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
+
+**AGENT-6.30** When a new Graftty build launches with agent teams enabled and a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
+
+**AGENT-6.31** When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
+
+**AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
 ## CLI — CLI
 
