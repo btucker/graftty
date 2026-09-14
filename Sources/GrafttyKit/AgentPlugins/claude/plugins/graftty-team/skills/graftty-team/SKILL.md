@@ -11,7 +11,7 @@ Coordinate Codex and Claude agents through Graftty's durable inbox. Run team com
 
 Run `graftty team list --json` before choosing an agent. In `members[]`, use `name` and `worktree_path` to identify the worktree, then `agents[]` for each agent's `address`, `runtime`, and `is_reachable`. Worktree `is_running` alone does not establish agent reachability.
 
-To inspect another team, use `graftty team members --worktree '<path-or-name>' --json` or `--repo '<repo-path>'` instead of `--worktree`.
+To inspect another team, use `graftty team members --worktree '<absolute-worktree-path>' --json`. For roster and inbox diagnostics, `--repo` filters repositories but does not override a tracked caller; use `--worktree` to select a different repository's worktree.
 
 Treat canonical addresses as routing identities:
 
@@ -59,7 +59,7 @@ Save the returned `created worktree=... address=...`. Pause the delegated scope 
 
 After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
 
-For a running worktree with an existing pane but no suitable agent, launch one in a new pane. Open closed worktrees in Graftty first.
+Open and select the target worktree in Graftty first; a new pane's shell waits for its first visible layout. If it has no suitable agent and new panes have no automatic default command, launch one:
 
 ```sh
 graftty pane add '<worktree-name>' --command 'codex -- "Check Graftty messages, then report ready for a task."'
