@@ -3,7 +3,7 @@ import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec TEAM-14.33: When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, or other recipients' messages without sending or advancing the inbox.")
+@Suite("@spec TEAM-14.33: When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, other recipients' messages, or ambiguous local destinations without sending or advancing the inbox.")
 struct TeamReplyResolverTests {
     @Test func sameNamedWorktreesKeepTheirDeviceAndProvider() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -51,6 +51,42 @@ struct TeamReplyResolverTests {
         }
         #expect(try resolver.resolve(callerWorktree: "/repo", callerAgentID: agent, messageID: peer.id, fallback: false, text: "reply", priority: .normal, repos: [repo], teamsEnabled: true) == .teamSend(callerWorktree: "/repo", callerAgentID: agent, recipient: "/repo/.worktrees/runner#codex-abcdef012345", text: "reply", priority: .normal))
         #expect(try inbox.worktreePendingMessages(teamID: "/repo", recipientWorktree: "/repo").count == 2)
+    }
+
+    @Test func ambiguousLocalAddressCannotSelectAnotherWorktree() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "worker", "worker#codex", "worker#codex-abcdef012345"])
+        let message = try inbox.appendMessage(teamID: "/repo", teamName: "repo", repoPath: "/repo", from: .init(member: "worker", worktree: "/repo/.worktrees/worker", runtime: "codex", agentID: "codex-abcdef012345"), to: .init(member: "main", worktree: "/repo", runtime: "claude", agentID: "claude-012345abcdef"), priority: .normal, body: "reply")
+        let handler = TeamInboxRequestHandler(inbox: inbox, dispatcher: TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" }))
+        for fallback in [false, true] {
+            #expect(throws: (any Error).self) {
+                let request = try TeamReplyResolver(inbox: inbox).resolve(callerWorktree: "/repo", callerAgentID: "claude-012345abcdef", messageID: message.id, fallback: fallback, text: "result", priority: .normal, repos: [repo], teamsEnabled: true)
+                guard case .teamSend(let caller, let agent, let recipient, let text, let priority) = request else {
+                    Issue.record("Expected a send"); return
+                }
+                _ = try handler.send(callerWorktree: caller, callerAgentID: agent, recipient: recipient, text: text, priority: priority, repos: [repo], teamsEnabled: true)
+            }
+        }
+        #expect(try inbox.messages(teamID: "/repo").map(\.id) == [message.id])
+    }
+
+    @Test func removedEntityLookingSenderCannotResolveToDecodedPath() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "R&D"])
+        let message = try inbox.appendMessage(teamID: "/repo", teamName: "repo", repoPath: "/repo", from: .init(member: "R&amp;D", worktree: "/repo/.worktrees/R&amp;D", runtime: "codex"), to: .init(member: "main", worktree: "/repo", runtime: "claude", agentID: "claude-012345abcdef"), priority: .normal, body: "reply")
+        let handler = TeamInboxRequestHandler(inbox: inbox, dispatcher: TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" }))
+        #expect(throws: (any Error).self) {
+            let request = try TeamReplyResolver(inbox: inbox).resolve(callerWorktree: "/repo", callerAgentID: "claude-012345abcdef", messageID: message.id, fallback: false, text: "result", priority: .normal, repos: [repo], teamsEnabled: true)
+            guard case .teamSend(let caller, let agent, let recipient, let text, let priority) = request else {
+                Issue.record("Expected a send"); return
+            }
+            _ = try handler.send(callerWorktree: caller, callerAgentID: agent, recipient: recipient, text: text, priority: priority, repos: [repo], teamsEnabled: true)
+        }
+        #expect(try inbox.messages(teamID: "/repo").map(\.id) == [message.id])
     }
 
     @Test("@spec TEAM-14.34: When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.")

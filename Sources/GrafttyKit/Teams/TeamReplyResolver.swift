@@ -5,6 +5,7 @@ public enum TeamReplyError: Error, Equatable, CustomStringConvertible {
     case wrongRecipient
     case systemMessage
     case invalidSender
+    case ambiguousSender
     case noFallback
     case emptyMessage
 
@@ -14,6 +15,7 @@ public enum TeamReplyError: Error, Equatable, CustomStringConvertible {
         case .wrongRecipient: return "reply message belongs to another agent"
         case .systemMessage: return "system messages have no agent to reply to"
         case .invalidSender: return "stored message has an invalid sender address"
+        case .ambiguousSender: return "stored sender address conflicts with another local worktree; refusing to misroute the reply"
         case .noFallback: return "stored sender has no runtime fallback"
         case .emptyMessage: return "team reply must not be empty"
         }
@@ -67,7 +69,16 @@ public struct TeamReplyResolver {
             address = try RemoteTeamAddress(deviceID: remote.deviceID, worktreePath: remote.worktreePath, suffix: suffix).rawValue
         } else {
             guard RemoteTeamAddress.isAbsolutePath(sender.worktree) else { throw TeamReplyError.invalidSender }
+            // The legacy send parser accepts XML-escaped addresses and prefers
+            // literal worktree paths over agent suffixes. Require the stored
+            // path itself and reject a suffix that names a different worktree.
+            guard repo.worktrees.contains(where: { $0.path == sender.worktree }) else {
+                throw TeamInboxRequestError.recipientNotFound(name: sender.worktree, available: repo.worktrees.map(\.path))
+            }
             address = sender.worktree + (suffix.map { "#" + $0 } ?? "")
+            guard address == sender.worktree || !repo.worktrees.contains(where: { $0.path == address }) else {
+                throw TeamReplyError.ambiguousSender
+            }
         }
         return .teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address, text: text, priority: priority)
     }

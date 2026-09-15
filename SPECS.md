@@ -2082,7 +2082,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-14.32** When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.
 
-**TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, or other recipients' messages without sending or advancing the inbox.
+**TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, other recipients' messages, or ambiguous local destinations without sending or advancing the inbox.
 
 **TEAM-14.34** When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.
 
