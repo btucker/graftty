@@ -1650,7 +1650,7 @@ private struct WorktreeRowContent: View {
             }
             typeIcon
             if let badge = worktree.prBadge {
-                PRBadgeLabel(badge: badge)
+                SidebarPRBadge(badge: badge)
             }
             // IPAD-1.15: the branch label gets its own line beneath
             // the worktree's display name rather than running inline.
@@ -1842,55 +1842,6 @@ private struct AttentionCapsule: View {
                 .background(Color.red)
                 .foregroundStyle(.white)
                 .clipShape(Capsule())
-        }
-    }
-}
-
-/// Forge-native PR/MR reference badge tinted by `PRBadgeStyle.tone`. Tapping
-/// opens the PR URL; pulses while CI is pending.
-private struct PRBadgeLabel: View {
-    let badge: PRBadge
-    @Environment(\.openURL) private var openURL
-
-    var body: some View {
-        let tone = PRBadgeStyle.tone(
-            state: badge.state,
-            checks: badge.checks,
-            mergeable: badge.mergeable
-        )
-        Button {
-            openURL(badge.url)
-        } label: {
-            Text(verbatim: badge.referenceText)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(color(for: tone))
-                .padding(.horizontal, 3)
-                .overlay {
-                    if tone == .conflicting {
-                        Capsule().strokeBorder(color(for: tone), lineWidth: 1)
-                    }
-                }
-                .opacity(tone.pulses ? 0.5 : 1)
-                .animation(
-                    tone.pulses
-                        ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                        : .default,
-                    value: tone.pulses
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Pull request \(badge.number)")
-    }
-
-    private func color(for tone: PRBadgeStyle.Tone) -> Color {
-        switch tone {
-        case .open: return .green
-        case .merged: return .purple
-        case .closed: return .red
-        case .ciFailure: return .red
-        case .ciPending: return .yellow
-        case .conflicting: return .red
         }
     }
 }

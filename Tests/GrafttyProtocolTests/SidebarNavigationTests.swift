@@ -3,6 +3,35 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.68: While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.")
+    func attentionIncludesForgeBadge() throws {
+        let badge = PRBadge(number: 342, state: .open, checks: .pending,
+                            url: URL(string: "https://gitlab.example/team/project/-/merge_requests/342")!)
+        func worktree(_ badge: PRBadge?) -> WorktreePanes {
+            .init(path: "worktree", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature",
+                  state: .running, isMainCheckout: false, prBadge: badge, stats: nil,
+                  attentionText: "Review", layout: .leaf(sessionName: "pane", title: "Agent", attentionText: "Question", isBusy: false, attentionSource: .agentStop),
+                  sidebar: .init(id: "stable", projectID: "project", unseenAgentStop: .init(agentName: "Codex", stoppedAt: Date())))
+        }
+        let items = SidebarProjection.activity([worktree(badge)])
+        #expect(items.count == 3)
+        #expect(items.allSatisfy { $0.prBadge == badge })
+        #expect(items.first?.prBadge?.referenceText == "!342")
+        let item = try #require(items.first)
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as? [String: Any])
+        legacy.removeValue(forKey: "prBadge")
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONSerialization.data(withJSONObject: legacy)).prBadge == nil)
+        var history = SidebarRecentHistory()
+        history.open(item)
+        let merged = PRBadge(number: 342, state: .merged, checks: .success, url: badge.url)
+        history.reconcile(worktrees: [worktree(merged)], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item.prBadge == merged)
+        #expect(history.entries.first?.item.occurrence == item.occurrence)
+        history.reconcile(worktrees: [worktree(nil)], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item.prBadge == nil)
+    }
+
     @Test("@spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.")
     func activityCountsAgreeAcrossProjectsAndWorktrees() {
         let working = SidebarActivityItem(id: "busy", projectID: "p", worktreeID: "w1", paneID: "agent",

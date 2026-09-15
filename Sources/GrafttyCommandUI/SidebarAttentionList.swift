@@ -1,6 +1,13 @@
 import SwiftUI
 import GrafttyProtocol
 
+private struct AttentionPRBadgeAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 public struct SidebarAttentionList: View {
     @Bindable public var navigation: SidebarNavigationState
     public var items: [SidebarActivityItem]
@@ -67,7 +74,16 @@ public struct SidebarAttentionList: View {
                     Spacer()
                     if project?.isAvailable == false { Text("Offline").font(.caption2) }
                 }
-                Text(item.worktreeName).font(.callout).lineLimit(1)
+                HStack(spacing: 6) {
+                    if let badge = item.prBadge {
+                        // Reserve the badge's space inside the card button. Its
+                        // browser action is a sibling overlay, not a nested button.
+                        Text(verbatim: badge.referenceText).font(.caption).fontWeight(.medium)
+                            .padding(.horizontal, 3).fixedSize().hidden().accessibilityHidden(true)
+                            .anchorPreference(key: AttentionPRBadgeAnchor.self, value: .bounds) { $0 }
+                    }
+                    Text(item.worktreeName).font(.callout).lineLimit(1)
+                }
                 Text(item.title).font(.caption).foregroundStyle(viewed ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
                 if let stop = item.agentStop {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -84,6 +100,16 @@ public struct SidebarAttentionList: View {
             .accessibilityValue(viewed ? "Viewed" : "")
             .contextMenu {
                 if viewed { Button("Remove from History") { navigation.forget(item.id) } }
+            }
+            .overlayPreferenceValue(AttentionPRBadgeAnchor.self) { anchor in
+                if let anchor, let badge = item.prBadge {
+                    GeometryReader { geometry in
+                        let bounds = geometry[anchor]
+                        SidebarPRBadge(badge: badge)
+                            .frame(width: bounds.width, height: bounds.height)
+                            .position(x: bounds.midX, y: bounds.midY)
+                    }
+                }
             }
     }
 }

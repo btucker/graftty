@@ -70,6 +70,7 @@ public final class SidebarNavigationState {
             // A busy update after acknowledgement must not replace the viewed
             // occurrence. A fresh request at the same target takes its place.
             if item.occurrence != nil || retained[item.id] == nil { retained[item.id] = item }
+            retained[item.id]?.prBadge = item.prBadge
         }
         return filter.apply(to: retained.values.filter { projectIDs.contains($0.projectID) }, query: query)
     }

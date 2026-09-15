@@ -95,7 +95,7 @@ struct SidebarView: View {
         }.map(\.element)
     }
     private var activity: [SidebarActivityItem] {
-        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession)
+        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) })
             + remoteMacsModel.promotedWorktreesForRelay())
     }
     private var projectIcons: [String: Data] {
@@ -108,7 +108,7 @@ struct SidebarView: View {
         let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
         if projects != snapshot.projects { projects = snapshot.projects }
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession) + remote.worktrees, projects: projects)
+        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
         }

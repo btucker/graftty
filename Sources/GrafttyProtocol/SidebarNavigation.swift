@@ -174,12 +174,13 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var occurrence: SidebarAttentionOccurrence?
     public var isBusy: Bool
     public var agentStop: SidebarAgentStop?
+    public var prBadge: PRBadge?
     public init(id: String, projectID: String, worktreeID: String, paneID: String?,
                 projectName: String, worktreeName: String, title: String,
-                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil) {
+                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil) {
         self.id = id; self.projectID = projectID; self.worktreeID = worktreeID; self.paneID = paneID
         self.projectName = projectName; self.worktreeName = worktreeName; self.title = title
-        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop
+        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge
     }
     public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
 }
@@ -264,6 +265,7 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
             updated.item.paneID = pane ?? (worktree.state == .closed ? entry.item.paneID : nil)
             updated.item.projectName = worktree.repoDisplayName
             updated.item.worktreeName = worktree.displayBranch
+            updated.item.prBadge = worktree.prBadge
             return updated
         }
     }
@@ -322,7 +324,11 @@ public enum SidebarProjection {
                                    occurrence: leaf.attentionText.map { .init(timestamp: wt.sidebar?.attentionTimestamps?[wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName].map(Date.init(timeIntervalSinceReferenceDate:)) ?? leaf.attentionTimestamp, text: $0, source: leaf.attentionSource) },
                                    isBusy: leaf.isBusy))
             }
-            return items
+            return items.map { item in
+                var item = item
+                item.prBadge = wt.prBadge
+                return item
+            }
         }
     }
 }

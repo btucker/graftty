@@ -29,6 +29,15 @@ struct SidebarNavigationStateTests {
         navigation.finishOpening(opening, succeeded: true)
         #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
         #expect(navigation.hasViewed(selected))
+        var busy = selected
+        busy.occurrence = nil
+        busy.isBusy = true
+        busy.prBadge = .init(number: 342, state: .merged, checks: .success,
+                             url: URL(string: "https://github.com/btucker/graftty/pull/342")!)
+        let retained = navigation.attentionItems(live: [older, busy, latest], projects: [project])
+        #expect(retained.map(\.id) == ["latest", "selected", "older"])
+        #expect(retained[1].occurrence == selected.occurrence)
+        #expect(retained[1].prBadge == busy.prBadge)
         #expect(navigation.attentionItems(live: [older, latest, item("new", 4)], projects: [project]).map(\.id) == ["new", "latest", "selected", "older"])
         let reopen = navigation.beginOpening(selected)
         navigation.finishOpening(reopen, succeeded: true)
@@ -85,7 +94,9 @@ struct SidebarNavigationStateTests {
         let item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "w", paneID: nil,
             projectName: project.name, worktreeName: "deploy-to-cloudflare", title: "Claude stopped",
             occurrence: .init(timestamp: Date(), text: "Claude stopped", source: .agentStop), isBusy: false,
-            agentStop: SidebarAgentStop(agentName: "Claude", stoppedAt: Date().addingTimeInterval(-120)))
+            agentStop: SidebarAgentStop(agentName: "Claude", stoppedAt: Date().addingTimeInterval(-120)),
+            prBadge: .init(number: 5000, state: .open, checks: .failure,
+                           url: URL(string: "https://gitlab.example/team/project/-/merge_requests/5000")!))
         let visit = navigation.beginOpening(item)
         navigation.finishOpening(visit, succeeded: true)
         var incoming = item

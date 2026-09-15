@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import GrafttyCommandUI
 import Testing
 @testable import Graftty
 
@@ -22,30 +23,30 @@ struct WorktreeRowPRBadgeTests {
             url: "https://github.com/btucker/graftty/pull/5000"
         )
 
-        #expect(WorktreeRow.badgeTooltip(for: github) == "Open #5000 on github.com")
-        #expect(WorktreeRow.badgeTooltip(for: gitlab) == "Open !5000 on gitlab.corp.example")
+        #expect(SidebarPRBadge.badgeTooltip(for: github) == "Open #5000 on github.com")
+        #expect(SidebarPRBadge.badgeTooltip(for: gitlab) == "Open !5000 on gitlab.corp.example")
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: github, tone: .open)
+            SidebarPRBadge.badgeAccessibilityLabel(for: github, tone: .open)
                 == "Pull request 5000, open. Click to open in browser."
         )
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: gitlab, tone: .merged)
+            SidebarPRBadge.badgeAccessibilityLabel(for: gitlab, tone: .merged)
                 == "Pull request 5000, merged. Click to open in browser."
         )
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: github, tone: .ciFailure)
+            SidebarPRBadge.badgeAccessibilityLabel(for: github, tone: .ciFailure)
                 == "Pull request 5000, open, CI failing. Click to open in browser."
         )
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: github, tone: .ciPending)
+            SidebarPRBadge.badgeAccessibilityLabel(for: github, tone: .ciPending)
                 == "Pull request 5000, open, CI running. Click to open in browser."
         )
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: github, tone: .conflicting)
+            SidebarPRBadge.badgeAccessibilityLabel(for: github, tone: .conflicting)
                 == "Pull request 5000, open, merge conflict. Click to open in browser."
         )
         #expect(
-            WorktreeRow.badgeAccessibilityLabel(for: closed, tone: .closed)
+            SidebarPRBadge.badgeAccessibilityLabel(for: closed, tone: .closed)
                 == "Pull request 5000, closed. Click to open in browser."
         )
     }
