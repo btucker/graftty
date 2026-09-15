@@ -125,6 +125,12 @@ Use these files for durable role or workflow guidance:
 
 Always use `graftty team` across providers or worktrees. Do not create channel files.
 
+### Reconnect a paired Remote Mac
+
+For a disconnected or stale connection, run `graftty remote reconnect '<host-name-or-id>'` on the viewing Mac. From a shell on the host Mac, use `graftty remote reconnect-client '<viewer-name-or-id>'` instead; this requires a working control channel and support on both Macs. Use exact paired names or device IDs. Targeting errors list connected viewers.
+
+Graftty must be running; no current worktree is required. Success acknowledges the request; check the viewing Mac's Remote Macs sidebar for status. Pair again in the app if required. Reconnect does not resend messages; preserve queued messages and do not resend after uncertain delivery.
+
 ### Sandboxed control socket access
 
 If a sandboxed `graftty team` command reports `EPERM` or `errno 1`:

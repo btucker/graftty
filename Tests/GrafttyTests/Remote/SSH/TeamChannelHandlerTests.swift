@@ -83,8 +83,8 @@ struct TeamChannelHandlerTests {
         await #expect(throws: TeamRPCSession.SessionError.channelClosed) { try await session.send(Data()) }
     }
 
-    @Test("@spec TEAM-14.26: When a Mac opens an authenticated SSH team subsystem, the application shall exchange concurrent requests in both directions and notify both endpoints when the subsystem closes.")
-    func sshLoopback() async throws {
+    @Test("@spec TEAM-14.26: When a Mac opens an authenticated SSH team subsystem, the application shall exchange concurrent requests in both directions and notify both endpoints when the subsystem closes.", arguments: [false, true])
+    func sshLoopback(hostCloses: Bool) async throws {
         let box = TeamHostTestBox()
         let clientChannel = NIOAsyncTestingChannel()
         let serverChannel = NIOAsyncTestingChannel()
@@ -153,7 +153,11 @@ struct TeamChannelHandlerTests {
             async let reverse = reverseSession.send(Data("reverse".utf8))
             #expect(try await forward == Data("server:forward".utf8))
             #expect(try await reverse == Data("client:reverse".utf8))
-            client.close()
+            if hostCloses {
+                await reverseSession.close()
+            } else {
+                client.close()
+            }
             try await wait(serverChannel) { await box.bothClosed }
             #expect(await box.disconnectedID == reverseSession.id)
         } catch {

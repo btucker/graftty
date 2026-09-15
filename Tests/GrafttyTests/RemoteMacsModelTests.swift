@@ -64,6 +64,105 @@ struct RemoteMacsModelTests {
         RemoteMacsModel(store: store)
     }
 
+    @Test("A host reconnect request waits for channel close and cannot override a manual disconnect",
+          arguments: [false, true])
+    func hostRequestedReconnect(manualDisconnect: Bool) async throws {
+        let url = try tempStoreURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = RemoteMacStore(storeURL: url)
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(), identity: identity, remoteMac: remoteMac,
+                createdAt: Date(), connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let original = try await model.connect(to: remote)
+        registry.teamChannelClosed(original)
+        #expect(try await model.connect(to: remote).id == original.id)
+        let request = try JSONEncoder().encode(RemoteTeamRequest.prepareReconnect)
+        let response = await registry.handleTeamRequest(request, for: original)
+        #expect(try JSONDecoder().decode(RemoteTeamResponse.self, from: response) == .ok)
+        #expect(try await model.connect(to: remote).id == original.id)
+        if manualDisconnect { model.disconnect(identity: original.identity) }
+        registry.teamChannelClosed(original)
+        if manualDisconnect {
+            #expect(model.connectionState(for: original.identity) == .offline)
+            #expect(registry.activeConnectionCount == 0)
+        } else {
+            let replacement = try await model.connect(to: remote)
+            #expect(replacement.id != original.id)
+            let staleReply = await registry.handleTeamRequest(request, for: original)
+            guard case .error = try JSONDecoder().decode(RemoteTeamResponse.self, from: staleReply) else {
+                Issue.record("An obsolete channel may not request reconnect"); return
+            }
+            registry.teamChannelClosed(original)
+            #expect(try await model.connect(to: remote).id == replacement.id)
+            model.disconnect(identity: original.identity)
+        }
+    }
+
+    @Test("CLI reconnect resolves a saved name or ID and shares a pending attempt",
+          arguments: ["Studio Mac", "studio-mac"])
+    func cliReconnectResolvesSavedMac(target: String) async throws {
+        let url = try tempStoreURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let remote = try remoteMac()
+        try RemoteMacStore(storeURL: url).add(remote)
+        let gate = RemoteMacsModelConnectGate()
+        var dialed: [RemoteMac] = []
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            dialed.append(remoteMac)
+            await gate.wait()
+            return RemoteMacConnectionRegistry.Entry(
+                id: UUID(), identity: identity, remoteMac: remoteMac,
+                createdAt: Date(), connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: url), connectionRegistry: registry
+        )
+        // The reply must arrive while the connection factory is still blocked.
+        #expect(await model.reconnectRemoteMac(target: target) == .ok)
+        #expect(await model.reconnectRemoteMac(target: target) == .ok)
+        await gate.waitUntilStarted()
+        #expect(dialed == [remote])
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .connecting)
+        await gate.release()
+        _ = try await model.connect(to: remote)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .connected)
+        model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test("CLI reconnect rejects unknown and ambiguous targets without dialing")
+    func cliReconnectRejectsUnresolvedTargets() async throws {
+        let url = try tempStoreURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = RemoteMacStore(storeURL: url)
+        try store.add(try remoteMac())
+        try store.add(try remoteMac(id: RemoteDeviceID(value: "second-mac")))
+        let registry = RemoteMacConnectionRegistry { _, _ in
+            Issue.record("Unresolved targets must not dial")
+            throw CancellationError()
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        #expect(await model.reconnectRemoteMac(target: "unknown") == .error(
+            "Unknown Remote Mac 'unknown'. Use a saved name or device ID from the Remote Macs sidebar."
+        ))
+        guard case .error(let message) = await model.reconnectRemoteMac(target: "Studio Mac") else {
+            Issue.record("Expected ambiguous target error")
+            return
+        }
+        #expect(message.contains("Ambiguous"))
+        #expect(message.contains("studio-mac"))
+        #expect(message.contains("second-mac"))
+    }
+
     @Test("saved remotes load from RemoteMacStore")
     func savedRemotesLoadFromStore() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -670,6 +769,10 @@ struct RemoteMacsModelTests {
         }
 
         #expect(model.connectionState(for: identity) == .needsPairing)
+
+        #expect(await model.reconnectRemoteMac(target: remote.label) == .error(
+            "Pair \(remote.label) again on the connected Mac."
+        ))
 
         registry.onConnectionStateChange(
             identity,

@@ -2346,6 +2346,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
 
+**REMOTE-12.15** When `graftty remote reconnect <name-or-id>` identifies a saved Remote Mac by its exact name or device ID, the application shall request reconnect through its existing connection flow without requiring a current worktree, reject unknown or ambiguous targets and Macs needing pairing, and acknowledge the request without waiting for connection establishment.
+
+**REMOTE-12.16** When `graftty remote reconnect-client <name-or-id>` runs on a host Mac, the application shall target one authenticated connected viewing Mac by exact name or device ID, obtain its reconnect acknowledgement before closing that control channel, and have the viewer reconnect only that host through its existing connection flow; unknown, ambiguous, disconnected, or unsupported clients shall produce an error without disconnecting another peer.
+
 ### REMOTE-13.x
 
 **REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.

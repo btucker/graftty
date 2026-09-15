@@ -2,6 +2,8 @@ import Foundation
 import GrafttyProtocol
 
 public enum RemoteTeamRequest: Codable, Sendable, Equatable {
+    /// The viewing Mac arms reconnect for this authenticated channel's close.
+    case prepareReconnect
     case list
     case send(
         senderWorktree: String,
@@ -113,6 +115,8 @@ public final class RemoteTeamService {
         do {
             guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
             switch request {
+            case .prepareReconnect:
+                return .error("Reconnect requests must target the viewing Mac's connection")
             case .list:
                 return .members(members(repos: repos))
             case .send(let senderWorktree, let senderAgentID, let recipientWorktree, let recipientSuffix, let text, let priority):

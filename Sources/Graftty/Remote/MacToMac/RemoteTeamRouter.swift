@@ -14,17 +14,68 @@ final class RemoteTeamRouter {
         let label: String
         let order: UInt64
         let send: Sender
+        let closeForReconnect: (@Sendable () async -> Void)?
     }
 
     private var routes: [RemoteDeviceID: [UUID: Route]] = [:]
     private var sequence: UInt64 = 0
+    private var reconnectsInFlight: Set<UUID> = []
     var handler: Handler = { _, _ in
         (try? JSONEncoder().encode(RemoteTeamResponse.error("Team messaging is not ready"))) ?? Data()
     }
 
-    func register(deviceID: RemoteDeviceID, connectionID: UUID, label: String, send: @escaping Sender) {
+    func register(
+        deviceID: RemoteDeviceID, connectionID: UUID, label: String,
+        closeForReconnect: (@Sendable () async -> Void)? = nil,
+        send: @escaping Sender
+    ) {
         sequence &+= 1
-        routes[deviceID, default: [:]][connectionID] = Route(id: connectionID, label: label, order: sequence, send: send)
+        routes[deviceID, default: [:]][connectionID] = Route(
+            id: connectionID, label: label, order: sequence, send: send,
+            closeForReconnect: closeForReconnect
+        )
+    }
+
+    func reconnectClient(target: String) async -> ResponseMessage {
+        // Only host-side routes represent viewers. An outgoing connection
+        // to the same device must never substitute for a missing viewer.
+        let clients = routes.compactMap { device, connections -> (RemoteDeviceID, Route)? in
+            connections.values.filter { $0.closeForReconnect != nil }
+                .max { $0.order < $1.order }.map { (device, $0) }
+        }
+        let ids = clients.filter { $0.0.value == target }
+        let matches = ids.isEmpty ? clients.filter { $0.1.label == target } : ids
+        guard matches.count == 1 else {
+            let choices = clients.map { "\($0.1.label): \($0.0.value)" }.sorted().joined(separator: ", ")
+            let reason = matches.isEmpty ? "Unknown or disconnected" : "Ambiguous"
+            return .error("\(reason) viewing Mac '\(target)'. Connected clients: \(choices.isEmpty ? "none" : choices)")
+        }
+        let (device, route) = matches[0]
+        guard reconnectsInFlight.insert(route.id).inserted else {
+            return .error("A reconnect request for \(route.label) is already in progress")
+        }
+        defer { reconnectsInFlight.remove(route.id) }
+        do {
+            let data = try await route.send(JSONEncoder().encode(RemoteTeamRequest.prepareReconnect))
+            switch try JSONDecoder().decode(RemoteTeamResponse.self, from: data) {
+            case .ok:
+                guard routes[device]?[route.id] != nil else {
+                    return .error("The viewing Mac's connection changed during the reconnect request; check its status")
+                }
+                // The viewer has acknowledged and armed reconnect. Closing
+                // this exact subsystem is the commit signal, so teardown
+                // cannot consume the acknowledgement or close a replacement.
+                unregister(deviceID: device, connectionID: route.id)
+                await route.closeForReconnect?()
+                return .ok
+            case .error(let message):
+                return .error(message)
+            case .members:
+                return .error("Unexpected response to client reconnect; update Graftty on both Macs")
+            }
+        } catch {
+            return .error("Client reconnect was not acknowledged; the client may still reconnect. Check its status before retrying: \(error)")
+        }
     }
 
     func unregister(deviceID: RemoteDeviceID, connectionID: UUID) {

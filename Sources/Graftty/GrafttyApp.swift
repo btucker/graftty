@@ -1585,6 +1585,9 @@ struct GrafttyApp: App {
                     }
                 },
                 onAsyncRequest: { message in
+                    if case .reconnectRemoteClient(let target) = message {
+                        return await remoteTeamRouter.reconnectClient(target: target)
+                    }
                     if case .teamReply = message {
                         return await Self.handleTeamReply(
                             message, appState: binding, router: remoteTeamRouter,
@@ -1605,7 +1608,8 @@ struct GrafttyApp: App {
                         prStatusStore: services.prStatusStore,
                         worktreeCreations: services.cliWorktreeCreations,
                         worktreeRemovals: services.cliWorktreeRemovals,
-                        remoteBranchStore: services.remoteBranchStore
+                        remoteBranchStore: services.remoteBranchStore,
+                        remoteMacsModel: services.remoteMacsModel
                     )
                     return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
                 }
@@ -2874,10 +2878,12 @@ struct GrafttyApp: App {
                         await services.remoteTeamRouter.receive(from: deviceID, data: data)
                     },
                     onConnect: { deviceID, session in
+                        let label = (try? trustedPeerStore.get(id: deviceID))?.displayName ?? deviceID.value
                         await services.remoteTeamRouter.register(
                             deviceID: deviceID,
                             connectionID: session.id,
-                            label: deviceID.value
+                            label: label,
+                            closeForReconnect: { await session.close() }
                         ) { data in try await session.send(data) }
                     },
                     onDisconnect: { deviceID, connectionID in
@@ -3718,7 +3724,7 @@ struct GrafttyApp: App {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
-             .worktreeRemoveStatus:
+             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3741,9 +3747,14 @@ struct GrafttyApp: App {
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
+        case .reconnectRemoteMac(let target):
+            return await remoteMacsModel.reconnectRemoteMac(target: target)
+        case .reconnectRemoteClient:
+            return .error("Client reconnect routing is unavailable")
         case .listPanes(let path):
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
         case .teamReply:
