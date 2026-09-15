@@ -66,6 +66,26 @@ final class RemoteMacsModel: ObservableObject {
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
         self.relayRouter = relayRouter ?? RemoteWorktreeRelayRouter()
+        registry.canReconnectFromHost = { [weak self] identity in
+            guard let self else { return false }
+            return self.connectionState(for: identity) == .connected
+                && self.savedRemoteMacs.contains { RemoteMacIdentity($0) == identity }
+        }
+        registry.onReconnectFromHost = { [weak self] entry in
+            guard let self else { return }
+            let identity = entry.identity
+            // Ordinary pane actions also enter .connecting while checking
+            // a live entry. Let those checks finish without losing the
+            // accepted request, but stop if the user replaces or disconnects it.
+            while let pending = self.connectAttempts[identity] {
+                _ = try? await pending.task.value
+                guard self.connectionRegistry.isCurrentConnection(entry) else { return }
+            }
+            guard self.connectionRegistry.isCurrentConnection(entry),
+                  self.connectionState(for: identity) == .connected,
+                  let remoteMac = self.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else { return }
+            _ = self.beginReconnect(to: remoteMac)
+        }
         registry.onPaneSnapshot = { [weak self] identity, snapshot in
             self?.applyPaneSnapshot(snapshot, from: identity)
         }
@@ -151,6 +171,32 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
+    func reconnectRemoteMac(target: String) async -> ResponseMessage {
+        await loadSavedRemotes()
+        let idMatches = savedRemoteMacs.filter { $0.id.value == target }
+        let matches = idMatches.isEmpty
+            ? savedRemoteMacs.filter { $0.label == target }
+            : idMatches
+        guard !matches.isEmpty else {
+            return .error(
+                "Unknown Remote Mac '\(target)'. Use a saved name or device ID from the Remote Macs sidebar."
+            )
+        }
+        guard matches.count == 1 else {
+            let choices = matches.map { "\($0.label): \($0.id.value)" }.joined(separator: ", ")
+            return .error("Ambiguous Remote Mac '\(target)'; use a unique device ID or name: \(choices)")
+        }
+        let remoteMac = matches[0]
+        switch await reconnectRemoteMac(deviceID: remoteMac.id, fingerprint: remoteMac.fingerprint) {
+        case .ok:
+            return .ok
+        case .error(_, let message, _, _):
+            return .error(message)
+        default:
+            return .error("Unexpected response to Remote Mac reconnect")
+        }
+    }
+
     func reconnectRemoteMac(
         deviceID: RemoteDeviceID,
         fingerprint: RemoteIdentityFingerprint
@@ -167,6 +213,10 @@ final class RemoteMacsModel: ObservableObject {
             )
         }
 
+        return beginReconnect(to: remoteMac)
+    }
+
+    private func beginReconnect(to remoteMac: RemoteMac) -> WorktreeManagementResponse {
         let identity = RemoteMacIdentity(remoteMac)
         switch connectionState(for: identity) {
         case .connecting:
@@ -193,7 +243,7 @@ final class RemoteMacsModel: ObservableObject {
                 return
             } catch {
                 NSLog(
-                    "[Graftty] mobile-requested reconnect to %@ failed: %@",
+                    "[Graftty] requested reconnect to %@ failed: %@",
                     remoteMac.label,
                     String(describing: error)
                 )

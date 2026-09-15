@@ -64,6 +64,30 @@ with mutually authenticated SSH inside it. When several saved routes are
 available, Graftty probes them concurrently and uses the first route that
 proves possession of the paired host key.
 
+To request a reconnect from any directory, run:
+
+```sh
+graftty remote reconnect "Studio Mac"
+```
+
+Use the exact saved name from the **Remote Macs** sidebar or a device ID.
+Graftty must be running locally. The command confirms that the request was
+accepted; check the sidebar for connection status. If a name matches multiple
+Macs, the error lists their device IDs. Macs that need pairing must be paired
+again in the app.
+
+From a shell on the host Mac, ask a connected viewing Mac to reconnect:
+
+```sh
+graftty remote reconnect-client "Laptop"
+```
+
+Use the viewing Mac's paired name or device ID. A targeting error lists
+connected clients. Both Macs need this command's support, and the control
+channel must still work. If the connection is completely broken, run
+`graftty remote reconnect` on the viewing Mac instead. Neither command resends
+team messages.
+
 ### Trust, revocation, and recovery
 
 Bonjour discovery is only an address hint—it does not establish trust.

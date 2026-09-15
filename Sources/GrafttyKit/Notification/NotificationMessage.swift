@@ -83,6 +83,8 @@ public enum NotificationMessage: Sendable, Equatable {
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
+    case reconnectRemoteMac(target: String)
+    case reconnectRemoteClient(target: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
@@ -162,6 +164,7 @@ public extension NotificationMessage {
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
+        case target
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -204,6 +207,12 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .reconnectRemoteMac(let target):
+            try container.encode("reconnect_remote_mac", forKey: .type)
+            try container.encode(target, forKey: .target)
+        case .reconnectRemoteClient(let target):
+            try container.encode("reconnect_remote_client", forKey: .type)
+            try container.encode(target, forKey: .target)
         case .addPane(let path, let direction, let command):
             try container.encode("add_pane", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -356,6 +365,10 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "reconnect_remote_mac":
+            self = .reconnectRemoteMac(target: try container.decode(String.self, forKey: .target))
+        case "reconnect_remote_client":
+            self = .reconnectRemoteClient(target: try container.decode(String.self, forKey: .target))
         case "add_pane":
             let path = try container.decode(String.self, forKey: .path)
             let direction = try container.decode(PaneSplit.self, forKey: .direction)
