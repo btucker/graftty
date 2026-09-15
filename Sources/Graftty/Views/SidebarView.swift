@@ -6,6 +6,8 @@ import GrafttyProtocol
 import GrafttyCommandUI
 
 /// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
+
+/// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
 struct SidebarView: View {
     @Binding var appState: AppState
     /// Used to read pane titles. Title change invalidation is deliberately
@@ -198,9 +200,9 @@ struct SidebarView: View {
         Button(action: onAddRepo) {
             Image(systemName: "folder.badge.plus")
                 .frame(minWidth: 28, minHeight: 32).contentShape(Rectangle())
+                .help("Add Repository")
         }
         .buttonStyle(.plain)
-        .help("Add Repository")
         .accessibilityLabel("Add Repository")
     }
 
@@ -208,9 +210,9 @@ struct SidebarView: View {
         Button { showsRemoteManagement.toggle() } label: {
             Image(systemName: "desktopcomputer")
                 .frame(minWidth: 28, minHeight: 32).contentShape(Rectangle())
+                .help("View and manage remote Mac connections")
         }
         .buttonStyle(.plain)
-        .help("Manage Remote Macs")
         .accessibilityLabel("Manage Remote Macs")
         .popover(isPresented: $showsRemoteManagement) {
             RemoteMacConnectionsPopover(model: remoteMacsModel) {
