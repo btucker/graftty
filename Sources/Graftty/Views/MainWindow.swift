@@ -616,9 +616,12 @@ struct MainWindow: View {
             }
             guard generation == attentionOpenGeneration,
                   remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil else { return false }
-            _ = remoteMacsModel.promotedWorktreesForRelay()
-            if let paneID = item.paneID {
+            guard let current = remoteMacsModel.promotedWorktreesForRelay().first(where: { $0.path == item.worktreeID }) else { return false }
+            var resolvedItem = item
+            if item.paneID != nil {
+                guard let paneID = SidebarProjection.paneRoute(for: item, in: current) else { return false }
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
+                resolvedItem.paneID = paneID
                 selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
             } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
             if let stop = worktree.sidebar?.unseenAgentStop {
@@ -628,22 +631,27 @@ struct MainWindow: View {
             }
             let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-            if let request = SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: supportsExact) {
+            if let request = SidebarInteractionPolicy.acknowledgement(for: resolvedItem, supportsExactAcknowledgement: supportsExact) {
                 guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(request) else { return false }
                 if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
             }
             return true
         }
         guard let worktree = appState.worktree(forPath: item.worktreeID), worktree.state.hasOnDiskWorktree else { return false }
-        if let paneID = item.paneID {
-            guard let slot = worktree.paneSlot(forSessionName: paneID) else { return false }
+        var selectedSlot: PaneSlotID?
+        if item.paneID != nil {
+            let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: item.projectID, folders: [])
+            guard let slotID = SidebarProjection.paneSlotID(for: item, in: metadata),
+                  let slot = worktree.splitTree.allLeaves.first(where: { $0.id.uuidString == slotID }) else { return false }
+            selectedSlot = slot
             selectPane(worktree.path, slot, acknowledging: false)
         } else { selectWorktree(worktree.path, acknowledging: false) }
         guard appState.selectedWorktreePath == item.worktreeID,
               let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
               !active.splitTree.allLeaves.isEmpty else { return false }
         if let occurrence = item.occurrence {
-            SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
+            let paneID = selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
+            SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: paneID, occurrence: occurrence)
         }
         return true
     }

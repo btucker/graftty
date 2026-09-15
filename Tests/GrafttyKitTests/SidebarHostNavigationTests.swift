@@ -5,6 +5,72 @@ import GrafttyProtocol
 import Darwin
 
 struct SidebarHostNavigationTests {
+    @Test("@spec LAYOUT-2.60: When a worktree is stopped and reopened, the application shall retain recent Attention pane targets for saved layout slots and resolve them to their new sessions without following reused routes.")
+    func recentPaneSurvivesStop() throws {
+        let slot = PaneSlotID()
+        var worktree = WorktreeEntry(path: "/repo/w", branch: "feature", state: .running,
+                                    splitTree: SplitTree(root: .leaf(slot)))
+        let oldSession = worktree.ensurePaneSession(for: slot)
+        let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: [])
+        let item = SidebarActivityItem(id: metadata.id + ":" + slot.id.uuidString,
+            projectID: "project", worktreeID: worktree.path, paneID: ZmxLauncher.sessionName(for: oldSession),
+            projectName: "Repo", worktreeName: "feature", title: "Review", occurrence: nil, isBusy: false)
+        var history = SidebarRecentHistory()
+        history.open(item)
+
+        worktree.prepareForStop()
+        #expect(worktree.paneSessions.isEmpty)
+        func closedRow(_ worktree: WorktreeEntry) -> WorktreePanes {
+            WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+                displayBranch: "feature", state: .closed, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: nil, layout: nil,
+                sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: []))
+        }
+        let closed = try JSONDecoder().decode(WorktreePanes.self, from: JSONEncoder().encode(closedRow(worktree)))
+        #expect(SidebarProjection.paneSlotID(for: item, in: try #require(closed.sidebar)) == slot.id.uuidString)
+        #expect(SidebarProjection.paneRoute(for: item, in: closed) == nil)
+        history.reconcile(worktrees: [closed], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item == item)
+        let restored = try JSONDecoder().decode(SidebarRecentHistory.self, from: JSONEncoder().encode(history))
+        #expect(restored.entries.first?.item == item)
+
+        worktree.state = .running
+        let newSession = worktree.ensurePaneSession(for: slot)
+        #expect(newSession != oldSession)
+        let newRoute = ZmxLauncher.sessionName(for: newSession)
+        let reopened = WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+            displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: newRoute, title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+            sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: []))
+        #expect(SidebarProjection.paneRoute(for: item, in: reopened) == newRoute)
+        history.reconcile(worktrees: [reopened], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item.paneID == newRoute)
+        #expect(history.entries.first?.item.id == item.id)
+
+        worktree.prepareForStop()
+        worktree.splitTree = SplitTree(root: nil)
+        history.reconcile(worktrees: [closedRow(worktree)], availableProjectIDs: ["project"])
+        #expect(history.entries.isEmpty)
+    }
+
+    @Test("Pane history resolves stable slots without following a reused session route")
+    func recentPaneRejectsReusedRoute() {
+        let item = SidebarActivityItem(id: "worktree:original-slot", projectID: "project", worktreeID: "route", paneID: "old-session",
+            projectName: "Repo", worktreeName: "feature", title: "Review", occurrence: nil, isBusy: false)
+        let metadata = SidebarWorktreeMetadata(id: "worktree", projectID: "project",
+            paneIDs: ["old-session": "different-slot"], paneSlotIDs: ["different-slot"])
+        let row = WorktreePanes(path: "route", displayName: "feature", repoDisplayName: "Repo", displayBranch: "feature",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "old-session", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+            sidebar: metadata)
+        #expect(SidebarProjection.paneSlotID(for: item, in: metadata) == nil)
+        #expect(SidebarProjection.paneRoute(for: item, in: row) == nil)
+        let legacy = WorktreePanes(path: "route", displayName: "feature", repoDisplayName: "Repo", displayBranch: "feature",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: row.layout)
+        #expect(SidebarProjection.paneRoute(for: item, in: legacy) == "old-session")
+    }
+
     @Test("""
 @spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
 """)

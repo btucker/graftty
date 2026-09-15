@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Testing
+import Foundation
 import GrafttyProtocol
 @testable import GrafttyMobileKit
 
@@ -8,6 +9,7 @@ struct IPadWorktreeNavigationTests {
     private func wt(
         _ path: String,
         attention: Bool = false,
+        stopped: Bool = false,
         state: WorktreeWireState = .running
     ) -> WorktreePanes {
         WorktreePanes(
@@ -20,12 +22,13 @@ struct IPadWorktreeNavigationTests {
             prBadge: nil,
             stats: nil,
             attentionText: attention ? "needs input" : nil,
-            layout: nil
+            layout: nil,
+            sidebar: stopped ? .init(id: path, projectID: "repo", unseenAgentStop: .init(agentName: "Codex", stoppedAt: Date())) : nil
         )
     }
 
     @Test("""
-@spec IPAD-8.1: When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+@spec IPAD-8.1: When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention or an unseen agent stop, the application shall select the next attention-carrying worktree in cyclic sidebar order.
 """)
     func nextTabPrefersAttention() {
         #expect(IPadWorktreeNavigation.nextPath(
@@ -33,6 +36,9 @@ struct IPadWorktreeNavigationTests {
             selectedPath: "/a",
             forward: true
         ) == "/c")
+        let stoppedList = [wt("/a"), wt("/b"), wt("/c", stopped: true), wt("/d")]
+        #expect(IPadWorktreeNavigation.nextPath(in: stoppedList, selectedPath: "/a", forward: true) == "/c")
+        #expect(IPadWorktreeNavigation.nextPath(in: stoppedList, selectedPath: "/a", forward: false) == "/c")
     }
 
     @Test("""

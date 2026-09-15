@@ -99,10 +99,12 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var folders: [String]
     public var folderIDs: [String]?
     public var paneIDs: [String: String]?
+    /// Saved layout slots survive stopping a worktree and replacing its sessions.
+    public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop
     }
 
     public func folderID(at depth: Int) -> String? {
@@ -238,8 +240,9 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
         let targets = worktrees.flatMap { wt -> [(String, WorktreePanes, String?)] in
             let stable = wt.sidebar?.id ?? "\(SidebarProjection.projectID(wt)):\(wt.path)"
             let panes: [(String, WorktreePanes, String?)]
-            if wt.state == .closed, let identities = wt.sidebar?.paneIDs {
-                panes = identities.map { ("\(stable):\($0.value)", wt, $0.key) }
+            if wt.state == .closed, let metadata = wt.sidebar {
+                let routes = Dictionary((metadata.paneIDs ?? [:]).map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+                panes = (metadata.paneSlotIDs ?? Array(routes.keys)).map { ("\(stable):\($0)", wt, routes[$0]) }
             } else {
                 panes = (wt.layout?.leaves ?? []).map {
                     ("\(stable):\(wt.sidebar?.paneIDs?[$0.sessionName] ?? $0.sessionName)", wt, $0.sessionName)
@@ -254,7 +257,7 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
             }
             var updated = entry
             updated.item.worktreeID = worktree.path
-            updated.item.paneID = pane
+            updated.item.paneID = pane ?? (worktree.state == .closed ? entry.item.paneID : nil)
             updated.item.projectName = worktree.repoDisplayName
             updated.item.worktreeName = worktree.displayBranch
             return updated
@@ -264,6 +267,23 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
 }
 
 public enum SidebarProjection {
+    public static func paneSlotID(for item: SidebarActivityItem, in metadata: SidebarWorktreeMetadata) -> String? {
+        guard item.paneID != nil else { return nil }
+        let slots = metadata.paneSlotIDs ?? Array((metadata.paneIDs ?? [:]).values)
+        return slots.first { item.id == metadata.id + ":" + $0 }
+    }
+
+    /// Resolve a viewed pane after reopening, when its old session no longer exists.
+    public static func paneRoute(for item: SidebarActivityItem, in worktree: WorktreePanes) -> String? {
+        guard let previousRoute = item.paneID else { return nil }
+        let leaves = worktree.layout?.leaves ?? []
+        if let metadata = worktree.sidebar, metadata.paneIDs != nil || metadata.paneSlotIDs != nil {
+            guard let slot = paneSlotID(for: item, in: metadata) else { return nil }
+            return leaves.first { metadata.paneIDs?[$0.sessionName] == slot }?.sessionName
+        }
+        return leaves.first { $0.sessionName == previousRoute }?.sessionName
+    }
+
     public static func projectID(_ worktree: WorktreePanes) -> String {
         worktree.sidebar?.projectID ?? "\(worktree.origin?.deviceID.value ?? "connected"):\(worktree.repositoryID ?? worktree.repoDisplayName)"
     }

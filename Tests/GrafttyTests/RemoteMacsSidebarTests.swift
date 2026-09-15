@@ -13,6 +13,46 @@ import GrafttyCommandUI
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
+    @Test("@spec LAYOUT-2.59: When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.")
+    func remoteSelectionObservesOwningMac() async throws {
+        let first = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "first")))
+        let second = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "second")))
+        let path = "/repo/feature"
+        var selections: [RemoteMacSidebarSelection?] = []
+        func content(_ identity: RemoteMacIdentity?) -> some View {
+            Color.clear.onRemoteWorktreeSelectionChange(identity: identity, path: path) {
+                selections.append($0)
+            }
+        }
+        let hosting = NSHostingView(rootView: content(first))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 100, height: 100), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.rootView = content(second)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(selections == [RemoteMacSidebarSelection(identity: second, worktreePath: path)])
+        hosting.rootView = content(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(selections.count == 2)
+        #expect(selections.last == .some(nil))
+    }
+
+    @Test("@spec LAYOUT-2.61: When a remote worktree is dropped onto another worktree, the application shall reject the reorder if the source and destination belong to different Mac identities, including matching paths.")
+    func remoteWorktreeDropRetainsOwningMac() throws {
+        let first = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "first")))
+        let second = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "second")))
+        let replaced = RemoteMacIdentity(try makeRemoteMac(id: first.id, fingerprintByte: 0x33))
+        let worktree = makeWorktreePanes(path: "/repo/feature", displayName: "feature", layout: nil)
+        let payload = RemoteWorktreeDragPayload(identity: first, path: worktree.path)
+        let decoded = try JSONDecoder().decode(RemoteWorktreeDragPayload.self, from: JSONEncoder().encode(payload))
+        #expect(decoded.resolve(on: first, in: [worktree]) == worktree)
+        #expect(decoded.resolve(on: second, in: [worktree]) == nil)
+        #expect(decoded.resolve(on: replaced, in: [worktree]) == nil)
+        #expect(decoded.resolve(on: first, in: []) == nil)
+    }
+
     @Test("@spec LAYOUT-2.55: While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
     func machineStatusActions() {
         #expect(RemoteMacConnectionState.connected.statusText == "Connected")

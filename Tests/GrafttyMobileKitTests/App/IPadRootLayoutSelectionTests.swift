@@ -404,7 +404,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
+@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, any pane leaf with `attentionText`, or an unseen agent stop), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 """)
     func ipad_1_11_attentionDotWhenSidebarCollapsed() {
         let appState = freshAppState()
@@ -449,6 +449,17 @@ struct IPadRootLayoutSelectionTests {
         )
         #expect(appState2.anyWorktreeHasAttention == true)
 
+        let stoppedPanes = WorktreePanes(
+            path: "/repo/stopped", displayName: "stopped", repoDisplayName: "repo",
+            displayBranch: "stopped", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "stopped", projectID: "repo",
+                unseenAgentStop: .init(agentName: "Codex", stoppedAt: Date()))
+        )
+        let stoppedState = freshAppState()
+        IPadRootLayout.onWorktreeListChanged(appState: stoppedState, list: [stoppedPanes])
+        #expect(stoppedState.anyWorktreeHasAttention)
+
         // No attention anywhere → false.
         let cleanPanes = WorktreePanes(
             path: "/repo/clean",
@@ -469,6 +480,8 @@ struct IPadRootLayoutSelectionTests {
             list: [cleanPanes]
         )
         #expect(appState3.anyWorktreeHasAttention == false)
+        IPadRootLayout.onWorktreeListChanged(appState: stoppedState, list: [cleanPanes])
+        #expect(!stoppedState.anyWorktreeHasAttention)
     }
 
     @Test("""

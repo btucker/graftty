@@ -41,8 +41,8 @@ public enum IPadWorktreeNavigation {
         return forward ? Array(0..<count) : Array((0..<count).reversed())
     }
 
-    private static func hasAttention(_ wt: WorktreePanes) -> Bool {
-        if wt.attentionText != nil { return true }
+    static func hasAttention(_ wt: WorktreePanes) -> Bool {
+        if wt.attentionText != nil || wt.sidebar?.unseenAgentStop != nil { return true }
         return wt.layout?.leaves.contains { $0.attentionText != nil } ?? false
     }
 }

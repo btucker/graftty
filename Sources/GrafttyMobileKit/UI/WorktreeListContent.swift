@@ -436,7 +436,10 @@ public struct WorktreeListContent: View {
                 }
             }
         }
-        .onDisappear { errorToastTask?.cancel() }
+        .onDisappear {
+            selectionIntentGeneration &+= 1
+            errorToastTask?.cancel()
+        }
     }
 
     @ViewBuilder
@@ -684,17 +687,21 @@ public struct WorktreeListContent: View {
                 }
             }
             guard presentedHostID == requestHostID, generation == selectionIntentGeneration, target.layout != nil else { return false }
-            if let paneID = item.paneID {
-                guard let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) else {
+            var currentItem = item
+            currentItem.worktreeID = target.path
+            if item.paneID != nil {
+                guard let paneID = SidebarProjection.paneRoute(for: item, in: target),
+                      let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) else {
                     navigation.forget(item.id); showErrorToast("This pane is no longer available."); return false
                 }
+                currentItem.paneID = paneID
                 if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
             } else { onSelect(target) }
             acknowledgeViewedStop(target)
             let supportsExactAcknowledgement = projects(for: worktrees)
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
             if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
-                for: item, supportsExactAcknowledgement: supportsExactAcknowledgement
+                for: currentItem, supportsExactAcknowledgement: supportsExactAcknowledgement
             ) {
                 let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
                 guard presentedHostID == requestHostID else { return false }

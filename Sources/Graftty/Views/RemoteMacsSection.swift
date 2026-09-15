@@ -3,6 +3,30 @@ import AppKit
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
+import CoreTransferable
+import UniformTypeIdentifiers
+
+struct RemoteWorktreeDragPayload: Codable, Transferable {
+    static let contentType = UTType(exportedAs: "com.graftty.remote-worktree-move")
+    let deviceID: RemoteDeviceID
+    let fingerprint: RemoteIdentityFingerprint
+    let path: String
+
+    init(identity: RemoteMacIdentity, path: String) {
+        self.deviceID = identity.id
+        self.fingerprint = identity.fingerprint
+        self.path = path
+    }
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: contentType)
+    }
+
+    func resolve(on identity: RemoteMacIdentity, in worktrees: [WorktreePanes]) -> WorktreePanes? {
+        guard identity.id == deviceID, identity.fingerprint == fingerprint else { return nil }
+        return worktrees.first { $0.path == path }
+    }
+}
 
 enum RemoteWorktreeReorderPolicy {
     static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String) -> Bool {
@@ -12,10 +36,10 @@ enum RemoteWorktreeReorderPolicy {
 }
 
 private struct RemoteWorktreeDragSource: ViewModifier {
-    let route: String
+    let payload: RemoteWorktreeDragPayload
     let isEnabled: Bool
     @ViewBuilder func body(content: Content) -> some View {
-        if isEnabled { content.draggable("graftty-remote-worktree:" + route) }
+        if isEnabled { content.draggable(payload) }
         else { content }
     }
 }
@@ -454,15 +478,16 @@ struct RemoteMacsSection: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .id(worktree.path)
             .rightClickMenu {
                 remoteWorktreeMenu(worktree, remoteMac: remoteMac)
             }
-            .modifier(RemoteWorktreeDragSource(route: worktree.path, isEnabled: canReorder(worktree, on: remoteMac)))
-            .dropDestination(for: String.self) { values, location in
+            .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac)))
+            .dropDestination(for: RemoteWorktreeDragPayload.self) { values, location in
                 guard query.isEmpty, !worktree.state.isInFlight,
                       editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
-                      let value = values.first, value.hasPrefix("graftty-remote-worktree:"),
-                      let source = worktreePanesByRemote[identity]?.first(where: { $0.path == String(value.dropFirst("graftty-remote-worktree:".count)) }),
+                      let value = values.first,
+                      let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
                       canReorder(source, on: remoteMac), source.path != worktree.path,
                       source.repositoryID == worktree.repositoryID,
                       (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),

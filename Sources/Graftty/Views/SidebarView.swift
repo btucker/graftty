@@ -278,7 +278,7 @@ struct SidebarView: View {
                 navigation.rememberedWorktrees[localProjectID(repo)] = new
             }
         }
-        .onChange(of: selectedRemoteWorktreePath) { _, _ in
+        .onRemoteWorktreeSelectionChange(identity: selectedRemoteIdentity, path: selectedRemoteWorktreePath) { _ in
             rememberRemoteSelection()
             if !navigation.showsAttention, let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath,
                let row = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: { $0.path == path }) {
@@ -772,6 +772,19 @@ struct SidebarView: View {
             }
         }
         return true
+    }
+}
+
+extension View {
+    func onRemoteWorktreeSelectionChange(
+        identity: RemoteMacIdentity?,
+        path: String?,
+        perform action: @escaping (RemoteMacSidebarSelection?) -> Void
+    ) -> some View {
+        let selection = identity.map {
+            RemoteMacSidebarSelection(identity: $0, worktreePath: path)
+        }
+        return onChange(of: selection) { _, current in action(current) }
     }
 }
 

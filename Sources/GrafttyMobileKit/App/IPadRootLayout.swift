@@ -308,13 +308,10 @@ public struct IPadRootLayout: View {
             }
         }
         // IPAD-1.11: recompute the "anything needs attention?" flag from
-        // worktree-scoped and pane-scoped attention text. The detail-
-        // column toolbar reads this to decide whether to surface a
+        // worktree-scoped and pane-scoped attention, including unseen agent
+        // stops. The detail column toolbar reads this to decide whether to show a
         // collapsed-sidebar attention indicator.
-        appState.anyWorktreeHasAttention = list.contains { wt in
-            if wt.attentionText != nil { return true }
-            return wt.layout?.leaves.contains { $0.attentionText != nil } ?? false
-        }
+        appState.anyWorktreeHasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
     }
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {

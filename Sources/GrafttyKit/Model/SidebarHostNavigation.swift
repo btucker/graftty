@@ -37,6 +37,7 @@ public enum SidebarHostNavigation {
         times["worktree"] = worktree.attention?.timestamp.timeIntervalSinceReferenceDate
         return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
+                     paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop)
     }
 
