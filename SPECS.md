@@ -148,6 +148,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.66** When the macOS application is bundled, the application shall export its local worktree, remote worktree, and pane drag types as data so the system can recognize sidebar drag sessions.
 
+**LAYOUT-2.67** While dragging a worktree, the application shall preview its heading and visible pane rows together at the sidebar row width while retaining separate pane drag gestures.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

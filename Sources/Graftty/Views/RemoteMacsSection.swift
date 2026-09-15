@@ -38,8 +38,13 @@ enum RemoteWorktreeReorderPolicy {
 private struct RemoteWorktreeDragSource: ViewModifier {
     let payload: RemoteWorktreeDragPayload
     let isEnabled: Bool
+    let preview: AnyView
+    @State private var rowWidth: CGFloat = 280
     @ViewBuilder func body(content: Content) -> some View {
-        if isEnabled { content.draggable(payload) }
+        if isEnabled {
+            content.draggable(payload) { preview.frame(width: rowWidth).fixedSize(horizontal: false, vertical: true) }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
+        }
         else { content }
     }
 }
@@ -454,50 +459,26 @@ struct RemoteMacsSection: View {
             && selectedRemoteWorktreePath == worktree.path
         let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
         let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]))
-        VStack(spacing: 0) {
-            Button {
-                onSelectRemoteWorktree(remoteMac, worktree.path)
-            } label: {
-                WorktreeRow(
-                    entry: sidebarEntry(for: worktree),
-                    isActive: isActive,
-                    displayName: worktree.displayName,
-                    isMainCheckout: worktree.isMainCheckout,
-                    theme: theme,
-                    stats: sidebarStats(for: worktree),
-                    baseRef: worktree.stats?.baseRef,
-                    prBadge: worktree.prBadge,
-                    attentionStyle: worktree.attentionText.map {
-                        AttentionCapsuleStyle.from(
-                            text: $0,
-                            source: worktree.attentionSource
-                        )
-                    },
-                    attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0]
+        let heading = WorktreeRow(
+            entry: sidebarEntry(for: worktree),
+            isActive: isActive,
+            displayName: worktree.displayName,
+            isMainCheckout: worktree.isMainCheckout,
+            theme: theme,
+            stats: sidebarStats(for: worktree),
+            baseRef: worktree.stats?.baseRef,
+            prBadge: worktree.prBadge,
+            attentionStyle: worktree.attentionText.map {
+                AttentionCapsuleStyle.from(
+                    text: $0,
+                    source: worktree.attentionSource
                 )
-                .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .id(worktree.path)
-            .rightClickMenu {
-                remoteWorktreeMenu(worktree, remoteMac: remoteMac)
-            }
-            .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac)))
-            .dropDestination(for: RemoteWorktreeDragPayload.self) { values, location in
-                guard query.isEmpty, !worktree.state.isInFlight,
-                      editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
-                      let value = values.first,
-                      let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
-                      canReorder(source, on: remoteMac), source.path != worktree.path,
-                      source.repositoryID == worktree.repositoryID,
-                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
-                      !worktree.isMainCheckout || location.y > 14 else { return false }
-                moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
-                return true
-            }
-
-
+            },
+            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0]
+        )
+        .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
+        .contentShape(Rectangle())
+        let panes = Group {
             if let layout = worktree.layout {
                 ForEach(layout.leaves, id: \.sessionName) { leaf in
                     Button {
@@ -528,6 +509,43 @@ struct RemoteMacsSection: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+        let preview = AnyView(
+            VStack(spacing: 0) {
+                heading
+                panes
+            }
+            .padding(.vertical, groupsPanes ? 8 : 0)
+            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
+        )
+        VStack(spacing: 0) {
+            Button {
+                onSelectRemoteWorktree(remoteMac, worktree.path)
+            } label: {
+                heading
+            }
+            .buttonStyle(.plain)
+            .id(worktree.path)
+            .rightClickMenu {
+                remoteWorktreeMenu(worktree, remoteMac: remoteMac)
+            }
+            .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac), preview: preview))
+            .dropDestination(for: RemoteWorktreeDragPayload.self) { values, location in
+                guard query.isEmpty, !worktree.state.isInFlight,
+                      editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
+                      let value = values.first,
+                      let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
+                      canReorder(source, on: remoteMac), source.path != worktree.path,
+                      source.repositoryID == worktree.repositoryID,
+                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
+                      !worktree.isMainCheckout || location.y > 14 else { return false }
+                moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
+                return true
+            }
+
+
+            panes
         }
         .padding(.vertical, groupsPanes ? 8 : 0)
         .background(

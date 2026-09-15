@@ -528,52 +528,32 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
-        VStack(spacing: 0) {
-            Button {
-                onSelect(worktree.path)
-            } label: {
-                WorktreeRow(
-                    entry: worktree,
-                    isActive: isActive,
-                    displayName: displayName,
-                    isMainCheckout: worktree.path == repo.path,
-                    theme: theme,
-                    stats: statsStore.stats[worktree.path],
-                    baseRef: statsStore.baseRef(
-                        worktreePath: worktree.path,
-                        repoPath: repo.path
-                    ),
-                    prBadge: prStatusStore.infos[worktree.path].map {
-                        PRBadge(
-                            number: $0.number,
-                            state: $0.state,
-                            checks: $0.checks,
-                            mergeable: $0.mergeable,
-                            url: $0.url
-                        )
-                    },
-                    attentionStyle: attention.worktreeCapsule,
-                    attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
+        let heading = WorktreeRow(
+            entry: worktree,
+            isActive: isActive,
+            displayName: displayName,
+            isMainCheckout: worktree.path == repo.path,
+            theme: theme,
+            stats: statsStore.stats[worktree.path],
+            baseRef: statsStore.baseRef(
+                worktreePath: worktree.path,
+                repoPath: repo.path
+            ),
+            prBadge: prStatusStore.infos[worktree.path].map {
+                PRBadge(
+                    number: $0.number,
+                    state: $0.state,
+                    checks: $0.checks,
+                    mergeable: $0.mergeable,
+                    url: $0.url
                 )
-                .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .id(worktree.path)
-            .worktreeReorderTarget(
-                repoID: repo.id,
-                worktreeID: worktree.id,
-                appState: $appState, isEnabled: navigation.query.isEmpty,
-                onMovePane: onMovePane,
-                onPaneTargeted: { targeted in
-                    if targeted { dropTargetWorktreeID = worktree.id }
-                    else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-                }
-            )
-            .rightClickMenu {
-                buildWorktreeMenu(worktree, repo: repo)
-            }
-
+            },
+            attentionStyle: attention.worktreeCapsule,
+            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
+        )
+        .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
+        .contentShape(Rectangle())
+        let panes = Group {
             if worktree.state == .running {
                 ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
                     let sessionName = worktree.paneSessions[terminalID]
@@ -610,6 +590,40 @@ struct SidebarView: View {
                     }
                 }
             }
+        }
+        let preview = AnyView(
+            VStack(spacing: 0) {
+                heading
+                panes
+            }
+            .padding(.vertical, groupsPanes ? 8 : 0)
+            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
+        )
+        VStack(spacing: 0) {
+            Button {
+                onSelect(worktree.path)
+            } label: {
+                heading
+            }
+            .buttonStyle(.plain)
+            .id(worktree.path)
+            .worktreeReorderTarget(
+                repoID: repo.id,
+                worktreeID: worktree.id,
+                appState: $appState, isEnabled: navigation.query.isEmpty,
+                preview: preview,
+                onMovePane: onMovePane,
+                onPaneTargeted: { targeted in
+                    if targeted { dropTargetWorktreeID = worktree.id }
+                    else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
+                }
+            )
+            .rightClickMenu {
+                buildWorktreeMenu(worktree, repo: repo)
+            }
+
+            panes
         }
         .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
