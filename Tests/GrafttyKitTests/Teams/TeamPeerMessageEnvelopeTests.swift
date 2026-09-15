@@ -129,11 +129,11 @@ struct TeamPeerMessageEnvelopeTests {
         #expect(delivery.message.to.runtime == "claude")
         #expect(delivery.message.to.agentID == recipientID.rawValue)
         let rendered = TeamPeerMessageFormatter.context(messages: [delivery.message])
-        #expect(rendered == """
+        #expect(rendered.hasSuffix("""
         <graftty-peer-message agent="/repo/R&amp;D#\(senderID.rawValue)" fallback-agent="/repo/R&amp;D#codex">
         reply to me
         </graftty-peer-message>
-        """)
+        """))
 
         let reply = try handler.send(
             callerWorktree: recipientPath,
@@ -215,7 +215,7 @@ struct TeamPeerMessageEnvelopeTests {
 
         #expect(rendered.contains(#"<\graftty-peer-message agent="/repo/main#claude-abcdef012345">"#))
         #expect(rendered.components(separatedBy: "<graftty-peer-message agent=").count - 1 == 1)
-        #expect(rendered.hasPrefix(#"<graftty-peer-message agent="/repo/mallory">"#))
+        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/mallory">"#))
     }
 
     @Test("""

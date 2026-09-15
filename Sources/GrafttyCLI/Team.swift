@@ -8,6 +8,7 @@ struct Team: ParsableCommand {
         abstract: "Coordinate with teammates in a Graftty agent team",
         subcommands: [
             TeamSend.self,
+            TeamReply.self,
             TeamBroadcast.self,
             TeamMembers.self,
             TeamHook.self,
@@ -52,6 +53,55 @@ struct TeamSend: ParsableCommand {
                 priority: urgent ? .urgent : .normal
             )
         )
+        try CLIEnv.expectOk(response)
+    }
+}
+
+struct TeamReply: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "reply",
+        abstract: "Reply to a stored inbox message without looking up the sender's name"
+    )
+
+    @Argument(help: "Message ID from a delivered message or team inbox")
+    var messageID: String
+
+    @Argument(help: "Reply text")
+    var text: String?
+
+    @Flag(name: .long, help: "Read reply text from standard input")
+    var stdin = false
+
+    @Flag(name: .long, help: "Deliver at the next post-tool hook boundary when possible")
+    var urgent = false
+
+    @Flag(name: .long, help: "Queue for the original sender's provider on the same Mac instead of its exact agent")
+    var fallback = false
+
+    func run() throws {
+        let worktree = try CLIEnv.resolveWorktree()
+        try execute(
+            callerWorktree: worktree,
+            callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktree),
+            body: TeamMessageInput.resolve(text: text, stdin: stdin),
+            sendRequest: CLIEnv.sendRequest
+        )
+    }
+
+    func execute(
+        callerWorktree: String,
+        callerAgentID: String?,
+        body: String,
+        sendRequest: (NotificationMessage) throws -> ResponseMessage
+    ) throws {
+        let response = try sendRequest(.teamReply(
+            callerWorktree: callerWorktree,
+            callerAgentID: callerAgentID,
+            messageID: messageID,
+            text: body,
+            priority: urgent ? .urgent : .normal,
+            fallback: fallback
+        ))
         try CLIEnv.expectOk(response)
     }
 }

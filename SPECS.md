@@ -2082,6 +2082,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-14.32** When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.
 
+**TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, or other recipients' messages without sending or advancing the inbox.
+
+**TEAM-14.34** When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.
+
+**TEAM-14.35** When a Claude agent replies through its Graftty reply socket, the application shall forward the reply using the socket's original message and exact recipient identity, preserving the sender device even when worktree names match.
+
+**TEAM-14.36** If a native reply lacks the bound Claude socket sender address or a valid message ID, or repeats an accepted message ID, then the application shall not forward it, and native receipt envelopes shall not become replies.
+
+**TEAM-14.37** If native reply forwarding fails, then the application shall notify the bound Claude recipient through its native socket with an explicit message-ID retry command and no reply socket.
+
+**TEAM-14.38** While native reply sockets are available, the application shall bound their count and accepted frame size, omit system-message reply sockets, reuse an existing message binding, and reject new bindings after close.
+
 ## INSTR — Agent Instruction Files
 
 ### INSTR-1.x
@@ -2514,7 +2526,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 
-**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name and canonical sender endpoint per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
 
 **AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
 
