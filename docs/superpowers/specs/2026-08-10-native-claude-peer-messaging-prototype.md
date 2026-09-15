@@ -143,10 +143,25 @@ The bridge now:
 7. Leaves native subagents out of the address space and wraps every peer body
    in one compact `<graftty-peer-message agent="…">` provenance element.
 
-Reply sockets and native delivery receipts remain future work. Agent replies
-currently use the skill's exact `graftty team send --stdin` path, which keeps
-identity in the durable inbox address and lets each provider apply its normal
-permission classification to the peer body.
+Graftty now supplies a private native reply socket for each delivered sender
+binding. `ClaudePeerReplyBridge` binds the original inbox message and exact
+Claude recipient to that socket. It validates the replying socket address,
+ignores native control receipts, and forwards user replies through the same
+stored-message resolver as `graftty team reply <message-id> --stdin`.
+
+Each delivered agent message includes the CLI reply command. Cross-Mac messages
+also explain that the stored sender takes precedence over reply paths in the
+body. The explicit `--fallback` option queues for the original sender's provider
+on the same Mac. An uncertain send is never retried automatically.
+
+Native reply sockets are bounded and expire after inactivity or application
+shutdown. If a socket is unavailable, the CLI command still resolves the stored
+message. Forwarding failures produce a best-effort native error message to the
+replying agent. Native delivery receipts remain unsupported: a native socket
+write alone does not confirm that the destination inbox accepted the reply.
+The private reply directory also falls outside Claude's receipt namespace rule.
+The bridge has real Unix-socket tests using the captured protocol-v1 frame;
+compatibility with a running Claude release still requires a live smoke test.
 
 ## Wrapper-removal boundary
 

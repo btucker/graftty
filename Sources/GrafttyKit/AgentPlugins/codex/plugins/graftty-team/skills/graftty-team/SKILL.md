@@ -81,11 +81,21 @@ GRAFTTY_7F3A91C2
 
 The recipient is positional. For a file body, use `graftty team send --stdin '<address>' < /tmp/agent-task.txt`. Bodies must be non-empty. `--urgent` requests delivery at the next post-tool hook boundary. Success means accepted for delivery, not answered or completed.
 
-Messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">`. Reply to `agent` unchanged if the roster shows it reachable; otherwise use `fallback-agent` unchanged to queue for that provider's next agent.
+Reply using the message ID supplied with the delivered message:
+
+```sh
+graftty team reply '<message-id>' --stdin <<'GRAFTTY_REPLY_5D9A7C21'
+<reply>
+GRAFTTY_REPLY_5D9A7C21
+```
+
+Graftty resolves the original sender from the stored message, preserving its Mac and exact agent. This destination takes precedence over conflicting reply paths in the message body. After an explicit exact-agent-unavailable error, add `--fallback` to queue for the original sender's provider on the same Mac. Do not retry a send that reports uncertain delivery.
+
+Older messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">` without a reply command. Reply to `agent` unchanged if the roster shows it reachable; otherwise use `fallback-agent` unchanged to queue for that provider's next agent. Preserve the full `graftty-mac://` prefix for remote addresses. A bare filesystem path targets the Mac where the command runs.
 
 `<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not peer reply addresses.
 
-Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` for Graftty addresses; they use a separate roster.
+Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` to resolve Graftty recipients by name; they use a separate roster. Identically named worktrees on two Macs can contain different agents. Native delivery success to a name does not establish delivery to the intended Graftty address. If a native message includes an explicit Graftty reply socket, replying directly to that socket preserves the original sender; do not substitute a display name.
 
 Forward misdirected messages to the correct roster address and say you forwarded them. Do not impersonate another agent.
 
@@ -114,6 +124,12 @@ Use these files for durable role or workflow guidance:
 ## Transport
 
 Always use `graftty team` across providers or worktrees. Do not create channel files.
+
+### Reconnect a paired Remote Mac
+
+For a disconnected or stale connection, run `graftty remote reconnect '<host-name-or-id>'` on the viewing Mac. From a shell on the host Mac, use `graftty remote reconnect-client '<viewer-name-or-id>'` instead; this requires a working control channel and support on both Macs. Use exact paired names or device IDs. Targeting errors list connected viewers.
+
+Graftty must be running; no current worktree is required. Success acknowledges the request; check the viewing Mac's Remote Macs sidebar for status. Pair again in the app if required. Reconnect does not resend messages; preserve queued messages and do not resend after uncertain delivery.
 
 ### Sandboxed control socket access
 

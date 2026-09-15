@@ -1634,7 +1634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.13** GrafttyMobile shall expose software-keyboard chrome and keyboard responder wiring only while the mobile client is the current display owner. Followers and ownerless clients can take control, but showing a keyboard before ownership is confirmed sends no useful input and implies authority the client does not have.
 
-**IOS-6.14** The owner shall install committed-software-input handlers on the sole `UITerminalView` responder. A non-owner shall disable terminal keyboard eligibility without blocking Ghostty gestures.
+**IOS-6.14** While the mobile client is the display owner, its pane is focused, and the user allows the keyboard, the application shall install committed-software-input handlers on the sole `UITerminalView` responder; otherwise it shall disable keyboard eligibility without blocking Ghostty gestures.
 
 **IOS-6.15** When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
 
@@ -1651,6 +1651,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.21** When the user pinch-zooms an owner terminal, the application shall persist the resulting font size by host and worktree path, use it as the live base through ownership changes, and restore it for every terminal in that worktree when the worktree is reopened.
 
 **IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
+
+**IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
 
 ### IOS-7.x — Lifecycle
 
@@ -2142,6 +2144,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-14.32** When a team member query specifies a repository or worktree, the application shall preserve that scope and fetch remote members only for unscoped roster queries.
 
+**TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, other recipients' messages, or ambiguous local destinations without sending or advancing the inbox.
+
+**TEAM-14.34** When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.
+
+**TEAM-14.35** When a Claude agent replies through its Graftty reply socket, the application shall forward the reply using the socket's original message and exact recipient identity, preserving the sender device even when worktree names match.
+
+**TEAM-14.36** If a native reply lacks the bound Claude socket sender address or a valid message ID, or repeats an accepted message ID, then the application shall not forward it, and native receipt envelopes shall not become replies.
+
+**TEAM-14.37** If native reply forwarding fails, then the application shall notify the bound Claude recipient through its native socket with an explicit message-ID retry command and no reply socket.
+
+**TEAM-14.38** While native reply sockets are available, the application shall bound their count and accepted frame size, omit system-message reply sockets, reuse an existing message binding, and reject new bindings after close.
+
 ## INSTR — Agent Instruction Files
 
 ### INSTR-1.x
@@ -2394,6 +2408,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.14** If a saved Remote Mac presents a host key that does not match its pinned fingerprint, the application shall fail closed, transition the Mac to needs pairing, and preserve that state through connection failure callbacks and rediscovery rather than treating reachability as renewed trust.
 
+**REMOTE-12.15** When `graftty remote reconnect <name-or-id>` identifies a saved Remote Mac by its exact name or device ID, the application shall request reconnect through its existing connection flow without requiring a current worktree, reject unknown or ambiguous targets and Macs needing pairing, and acknowledge the request without waiting for connection establishment.
+
+**REMOTE-12.16** When `graftty remote reconnect-client <name-or-id>` runs on a host Mac, the application shall target one authenticated connected viewing Mac by exact name or device ID, obtain its reconnect acknowledgement before closing that control channel, and have the viewer reconnect only that host through its existing connection flow; unknown, ambiguous, disconnected, or unsupported clients shall produce an error without disconnecting another peer.
+
 ### REMOTE-13.x
 
 **REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.
@@ -2598,7 +2616,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 
-**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
+**AGENT-6.19** When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name and canonical sender endpoint per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
 
 **AGENT-6.20** When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
 

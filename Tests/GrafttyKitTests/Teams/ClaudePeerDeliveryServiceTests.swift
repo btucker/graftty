@@ -154,7 +154,7 @@ struct ClaudePeerDeliveryServiceTests {
     }
 
     @Test("""
-    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
+    @spec AGENT-6.19: When pending deliverable rows are sent through Claude's native peer socket, the application shall send only the leading run of rows sharing one derived display name and canonical sender endpoint per frame, wrap every row in the provenance envelope for its agent, forge, or Graftty-system origin, join the envelopes with a blank line, and leave later runs for subsequent frames.
     """)
     func mixedSendersSplitIntoPerSenderFrames() async throws {
         let fixture = try Fixture()
@@ -289,6 +289,51 @@ struct ClaudePeerDeliveryServiceTests {
         ).map(\.id) == [codex.id])
     }
 
+    @Test("Native reply sockets preserve separate origins when two Macs have identical sender display names")
+    func nativeRepliesKeepSameNamedRemoteOriginsSeparate() async throws {
+        let recorder = ReplyRecorder()
+        let bridge = ClaudePeerReplyBridge { message, _, _ in
+            await recorder.append(message.from.worktree)
+            return .ok
+        }
+        let fixture = try Fixture(replyBridge: bridge)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        for device in ["mac-a", "mac-b"] {
+            _ = try fixture.append(body: device, from: .init(member: "main", worktree: "graftty-mac://\(device)/repo", runtime: "codex", agentID: "codex-0123456789ab"))
+        }
+        await fixture.service.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
+        let calls = await fixture.client.calls
+        #expect(calls.count == 2)
+        #expect(calls[0].senderName == calls[1].senderName)
+        let first = try #require(calls[0].replySocketPath)
+        let second = try #require(calls[1].replySocketPath)
+        #expect(first != second)
+        for path in [first, second] {
+            await bridge.receive(try ClaudePeerProtocol.encodeUserMessage(body: "reply", replySocketPath: fixture.socketPath), socketPath: path)
+        }
+        #expect(await recorder.origins == ["graftty-mac://mac-a/repo", "graftty-mac://mac-b/repo"])
+        await bridge.close()
+    }
+
+    @Test("Native reply listener failure preserves delivery with the message-ID reply command")
+    func unavailableNativeBridgeKeepsCLIReply() async throws {
+        let bridge = ClaudePeerReplyBridge { _, _, _ in .ok }
+        await bridge.close()
+        let fixture = try Fixture(replyBridge: bridge)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let message = try fixture.append(body: "hello")
+        await fixture.service.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
+        let call = try #require(await fixture.client.calls.first)
+        #expect(call.replySocketPath == nil)
+        #expect(call.body.contains(TeamReplyResolver.command(messageID: message.id)))
+        #expect(try fixture.inbox.worktreePendingMessages(teamID: fixture.teamID, recipientWorktree: fixture.worktree).isEmpty)
+    }
+
+    private actor ReplyRecorder {
+        var origins: [String] = []
+        func append(_ origin: String) { origins.append(origin) }
+    }
+
     private struct Fixture {
         let teamID = "/repo"
         let worktree = "/repo/feature"
@@ -302,7 +347,8 @@ struct ClaudePeerDeliveryServiceTests {
         init(
             error: Error? = nil,
             includeEarlierCodex: Bool = false,
-            errorForBody: (@Sendable (String) -> Error?)? = nil
+            errorForBody: (@Sendable (String) -> Error?)? = nil,
+            replyBridge: ClaudePeerReplyBridge? = nil
         ) throws {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
@@ -343,7 +389,8 @@ struct ClaudePeerDeliveryServiceTests {
                 presenceRecords: { records },
                 agentReachability: { _ in true },
                 client: client,
-                eventLog: TeamEventLog(rootDirectory: root)
+                eventLog: TeamEventLog(rootDirectory: root),
+                replyBridge: replyBridge
             )
         }
 

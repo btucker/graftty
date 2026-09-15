@@ -131,6 +131,9 @@ final class RemoteMacConnectionRegistry {
 
     private var entries: [RemoteMacIdentity: Entry] = [:]
     private var teamClients: [UUID: TeamChannelClient] = [:]
+    private var reconnectOnTeamClose: Set<UUID> = []
+    var canReconnectFromHost: @MainActor (RemoteMacIdentity) -> Bool = { _ in false }
+    var onReconnectFromHost: @MainActor (Entry) async -> Void = { _ in }
     weak var teamRouter: RemoteTeamRouter?
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
     private let legacyFactory: ConnectionFactory?
@@ -205,6 +208,7 @@ final class RemoteMacConnectionRegistry {
     }
 
     func connect(to remoteMac: RemoteMac) async throws -> Entry {
+        try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
             let state = await existing.connection.currentState()
@@ -231,6 +235,7 @@ final class RemoteMacConnectionRegistry {
             return current
         }
 
+        try Task.checkCancellation()
         let attemptID = UUID()
         let task = Task { @MainActor in
             let entry: Entry
@@ -510,18 +515,39 @@ final class RemoteMacConnectionRegistry {
         onPaneSnapshot(identity, snapshot)
     }
 
-    private func teamChannelClosed(_ entry: Entry) {
+    func isCurrentConnection(_ entry: Entry) -> Bool {
+        entries[entry.identity]?.id == entry.id
+    }
+
+    func teamChannelClosed(_ entry: Entry) async {
+        let reconnect = reconnectOnTeamClose.remove(entry.id) != nil
         teamClients[entry.id] = nil
         teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
+        guard reconnect, isCurrentConnection(entry) else { return }
+        await onReconnectFromHost(entry)
+    }
+
+    func handleTeamRequest(_ data: Data, for entry: Entry) async -> Data {
+        if let request = try? JSONDecoder().decode(RemoteTeamRequest.self, from: data),
+           request == .prepareReconnect {
+            let response: RemoteTeamResponse
+            if entries[entry.identity]?.id == entry.id, canReconnectFromHost(entry.identity) {
+                reconnectOnTeamClose.insert(entry.id)
+                response = .ok
+            } else {
+                response = .error("This host connection is no longer ready to reconnect; check the Remote Macs sidebar")
+            }
+            return (try? JSONEncoder().encode(response)) ?? Data()
+        }
+        return await teamRouter?.receive(from: entry.identity.id, data: data) ?? Data()
     }
 
     private func openTeamChannel(for entry: Entry) async {
         guard let router = teamRouter else { return }
         do {
             let client = try await entry.connection.makeTeamClient(
-                handler: { [weak router] data in
-                    guard let router else { return Data() }
-                    return await router.receive(from: entry.identity.id, data: data)
+                handler: { [weak self] data in
+                    await self?.handleTeamRequest(data, for: entry) ?? Data()
                 },
                 onClose: { [weak self] in
                     await self?.teamChannelClosed(entry)
@@ -551,6 +577,7 @@ final class RemoteMacConnectionRegistry {
     }
 
     private func close(_ entry: Entry) async {
+        reconnectOnTeamClose.remove(entry.id)
         teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
         teamClients.removeValue(forKey: entry.id)?.close()
         await entry.connection.setOnStateChange(nil)

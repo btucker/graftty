@@ -392,9 +392,8 @@ struct SingleSessionView: View {
     /// once the fetch lands.
     @State private var controller: TerminalController?
     @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
-    /// User-controlled: false after the user taps "Hide keyboard". A
-    /// stray tap that tries to re-summon the keyboard is immediately
-    /// dismissed; the only way back on is the "Show keyboard" button.
+    /// False after "Hide keyboard" so terminal touches cannot regain keyboard
+    /// focus. "Show keyboard" restores eligibility before requesting focus.
     @State private var keyboardAllowed: Bool = true
     /// Monotonic counter: bumping it makes TerminalPaneView call
     /// becomeFirstResponder() on next update. Used to summon the
@@ -450,9 +449,10 @@ struct SingleSessionView: View {
 
     static func isTerminalKeyboardEligible(
         clientIsOwner: Bool,
-        isPaneFocused: Bool = true
+        isPaneFocused: Bool = true,
+        keyboardAllowed: Bool = true
     ) -> Bool {
-        clientIsOwner && isPaneFocused
+        clientIsOwner && isPaneFocused && keyboardAllowed
     }
 
     static func shouldDismissKeyboard(
@@ -697,10 +697,8 @@ struct SingleSessionView: View {
                 if newInset != keyboardBottomInset {
                     keyboardBottomInset = newInset
                 }
-                // If the user had explicitly hidden the keyboard, a stray
-                // tap on the terminal can make UITerminalView ask for
-                // first-responder again. Immediately dismiss — brief
-                // flicker (one frame) but honours the user's intent.
+                // Also dismiss an in-flight keyboard presentation if Hide
+                // keyboard was chosen before its frame notification arrived.
                 if Self.shouldDismissKeyboard(
                     isKeyboardVisible: isKeyboardVisible,
                     keyboardAllowed: keyboardAllowed,
@@ -1169,7 +1167,8 @@ struct SingleSessionView: View {
             },
             committedSoftwareInput: Self.isTerminalKeyboardEligible(
                 clientIsOwner: client.isOwner,
-                isPaneFocused: isPaneFocused
+                isPaneFocused: isPaneFocused,
+                keyboardAllowed: keyboardAllowed
             ) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 insertControlByte: { byte in client.sendControlByte(byte) },
