@@ -95,6 +95,14 @@ public enum NotificationMessage: Sendable, Equatable {
         text: String,
         priority: TeamInboxPriority
     )
+    case teamReply(
+        callerWorktree: String,
+        callerAgentID: String? = nil,
+        messageID: String,
+        text: String,
+        priority: TeamInboxPriority,
+        fallback: Bool = false
+    )
     case teamBroadcast(
         callerWorktree: String,
         callerAgentID: String? = nil,
@@ -156,6 +164,8 @@ extension NotificationMessage: Codable {
         case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
+        case messageID = "message_id"
+        case fallback
         case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit, consuming
         case beforeID = "before_id"
         case afterID = "after_id"
@@ -226,6 +236,14 @@ extension NotificationMessage: Codable {
             try container.encode(recipient, forKey: .recipient)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
+        case .teamReply(let path, let callerAgentID, let messageID, let text, let priority, let fallback):
+            try container.encode("team_reply", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
+            try container.encode(messageID, forKey: .messageID)
+            try container.encode(text, forKey: .text)
+            try container.encode(priority, forKey: .priority)
+            try container.encode(fallback, forKey: .fallback)
         case .teamBroadcast(let path, let callerAgentID, let text, let priority):
             try container.encode("team_broadcast", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -375,6 +393,15 @@ extension NotificationMessage: Codable {
                 recipient: recipient,
                 text: text,
                 priority: priority
+            )
+        case "team_reply":
+            self = .teamReply(
+                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                callerAgentID: try container.decodeIfPresent(String.self, forKey: .callerAgentID),
+                messageID: try container.decode(String.self, forKey: .messageID),
+                text: try container.decode(String.self, forKey: .text),
+                priority: try container.decode(TeamInboxPriority.self, forKey: .priority),
+                fallback: try container.decodeIfPresent(Bool.self, forKey: .fallback) ?? false
             )
         case "team_broadcast":
             let path = try container.decode(String.self, forKey: .callerWorktree)

@@ -133,7 +133,7 @@ struct TeamHookRendererTests {
         #expect(rendered.contains("RAW-EVENT"))
     }
 
-    @Test("A normal worktree message has a compact canonical attribution and no internal event metadata.")
+    @Test("A normal worktree message includes a reply command, canonical attribution, and no event template.")
     func formatWorktreeMessage() {
         let msg = message(
             id: "opaque-id",
@@ -144,12 +144,12 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == """
+        #expect(rendered.hasSuffix("""
         <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude">
         Please check the parser.
         </graftty-peer-message>
-        """)
-        #expect(!rendered.contains("opaque-id"))
+        """))
+        #expect(rendered.contains("graftty team reply 'opaque-id' --stdin"))
         #expect(!rendered.contains("runtime="))
         #expect(!rendered.contains("automated team event"))
     }
@@ -160,11 +160,11 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == """
+        #expect(rendered.hasSuffix("""
         <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" priority="urgent">
         This blocks the merge.
         </graftty-peer-message>
-        """)
+        """))
     }
 
     private func message(

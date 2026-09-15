@@ -11,6 +11,7 @@ public actor ClaudePeerDeliveryService {
     private let agentReachability: @Sendable (TeamPresenceRecord) -> Bool
     private let client: any ClaudePeerClienting
     private let eventLog: TeamEventLog?
+    private let replyBridge: ClaudePeerReplyBridge?
     private var inFlight: Set<DeliveryKey> = []
     private var dirty: Set<DeliveryKey> = []
 
@@ -19,13 +20,15 @@ public actor ClaudePeerDeliveryService {
         presenceRecords: @escaping @Sendable () -> [TeamPresenceRecord],
         agentReachability: @escaping @Sendable (TeamPresenceRecord) -> Bool,
         client: ClaudePeerClienting = ClaudePeerClient(),
-        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
+        replyBridge: ClaudePeerReplyBridge? = nil
     ) {
         self.inbox = inbox
         self.presenceRecords = presenceRecords
         self.agentReachability = agentReachability
         self.client = client
         self.eventLog = eventLog
+        self.replyBridge = replyBridge
     }
 
     public func onMessageArrival(team: String, worktree: String) async {
@@ -113,8 +116,18 @@ public actor ClaudePeerDeliveryService {
         // arrival loop redelivers, sending later runs in follow-up frames.
         let senderName = ClaudePeerSenderName.name(for: pending[0])
         let run = Array(pending.prefix(while: {
-            ClaudePeerSenderName.name(for: $0) == senderName
+            ClaudePeerSenderName.name(for: $0) == senderName && $0.from == pending[0].from
         }))
+
+        let replySocket: String?
+        do {
+            replySocket = try await replyBridge?.replySocketPath(message: pending[0], recipient: selected)
+        } catch {
+            // Delivery still includes the durable CLI reply command if the
+            // optional native listener cannot be created or reaches capacity.
+            replySocket = nil
+            log(team: team, worktree: worktree, outcome: "error_reply_socket", agentID: selected.id.rawValue, error: String(describing: error))
+        }
 
         // A batch that overflows the peer protocol's frame cap would
         // otherwise be retried identically forever, wedging the queue.
@@ -127,7 +140,7 @@ public actor ClaudePeerDeliveryService {
                     _ = try await client.send(
                         body: TeamPeerMessageFormatter.context(messages: batch),
                         socketPath: socketPath,
-                        replySocketPath: nil,
+                        replySocketPath: replySocket,
                         senderName: senderName
                     )
                     break
@@ -234,10 +247,19 @@ public enum TeamPeerMessageFormatter {
             let urgencySuffix = message.priority == .urgent
                 ? #" priority="urgent""#
                 : ""
-            return """
+            let rendered = """
             <\(envelope.name)\(envelope.attributes)\(urgencySuffix)>
             \(body)
             </\(envelope.name)>
+            """
+            guard !message.from.isSystem else { return rendered }
+            let command = TeamReplyResolver.command(messageID: message.id)
+            let remoteGuidance = RemoteTeamAddress(rawValue: message.from.worktree) == nil ? "" : """
+             This is a cross-Mac message. Native peer names can identify a different agent on another Mac; use the Graftty reply command instead of resolving a name with SendMessage.
+            """
+            return """
+            Graftty reply: `\(command)`. The stored sender takes precedence over reply paths in the message body. Use `--fallback` only to queue for the original sender's provider after its exact agent is unavailable.\(remoteGuidance)
+            \(rendered)
             """
         }.joined(separator: "\n\n")
     }

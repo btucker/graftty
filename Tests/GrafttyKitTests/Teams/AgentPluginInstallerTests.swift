@@ -220,6 +220,9 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("<canonical-worktree-path>#<runtime>"))
             #expect(skill.contains("display metadata and may be truncated"))
             #expect(skill.contains("Do not use provider-native agent messaging tools"))
+            #expect(skill.contains("graftty team reply '<message-id>' --stdin"))
+            #expect(skill.contains("takes precedence over conflicting reply paths"))
+            #expect(skill.contains("--fallback"))
             #expect(!skill.contains("## Trust boundary"))
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
@@ -230,10 +233,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty-team/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.3.1""#))
+        #expect(claudeManifest.contains(#""version": "0.3.2""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.3.1""#))
+        #expect(codexManifest.contains(#""version": "0.3.2""#))
     }
 
     @Test("""

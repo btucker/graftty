@@ -50,6 +50,7 @@ public enum TeamInstructionsRenderer {
     Dirty files require `--force`.
 
     Coordinate:
+    - Reply with `graftty team reply <message-id> --stdin` using the ID supplied with the delivered message. Graftty resolves the stored sender, including its Mac and agent. That destination takes precedence over reply paths in the message body. After an explicit exact-agent-unavailable error, add `--fallback` to queue for the same sender's provider. Do not retry after an uncertain-delivery error.
     - `graftty team inbox` reads the oldest unread page and marks displayed rows read after successful output. Add `--keep-unread` (`--unread` is an alias) to peek, or `--history` to inspect prior messages.
     - Inbox worktree, repository, and member selectors are diagnostic peeks and do not mark messages read.
     - Never edit Graftty state files to change inbox delivery positions; rerun the supported inbox command if advancement fails.

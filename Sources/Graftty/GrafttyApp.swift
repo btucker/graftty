@@ -1585,6 +1585,12 @@ struct GrafttyApp: App {
                     }
                 },
                 onAsyncRequest: { message in
+                    if case .teamReply = message {
+                        return await Self.handleTeamReply(
+                            message, appState: binding, router: remoteTeamRouter,
+                            inbox: teamInbox, dispatcher: teamEventDispatcher
+                        )
+                    }
                     if let response = await Self.handleRemoteTeamSend(
                         message, appState: binding, router: remoteTeamRouter
                     ) { return response }
@@ -1798,6 +1804,29 @@ struct GrafttyApp: App {
         // relaunch. Every use site live-reads the setting instead
         // (`Self.nativeAgentMessagingEnabled()`), so toggling it off also
         // stops delivery immediately.
+        let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
+            guard Self.nativeAgentMessagingEnabled() else {
+                return .error("Native agent messaging is disabled")
+            }
+            // The bridge binds a socket to the recipient that received the
+            // original row. Refuse a reply after that exact session disappears.
+            let reachable = await OffMainIO.run {
+                let records = (try? presenceStorage.listAll()) ?? []
+                return records.contains {
+                    TeamAgentDirectory.identity(for: $0) == recipient.id && $0.worktree == recipient.worktreePath
+                        && $0.transport == recipient.transport
+                        && TeamAgentReachability.isReachable($0)
+                }
+            }
+            guard reachable else { return .error("The replying Claude agent is no longer reachable") }
+            return await Self.handleTeamReply(
+                .teamReply(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
+                           messageID: original.id, text: reply.body,
+                           priority: reply.priority == .now ? .urgent : .normal),
+                appState: binding, router: remoteTeamRouter, inbox: teamInbox,
+                dispatcher: teamEventDispatcher
+            )
+        }
         let claudePeerDeliveryService = ClaudePeerDeliveryService(
             inbox: services.teamInbox,
             presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
@@ -1810,7 +1839,8 @@ struct GrafttyApp: App {
                     record,
                     liveness: deliveryLiveness
                 )
-            }
+            },
+            replyBridge: claudeReplyBridge
         )
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
@@ -3683,7 +3713,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
+        case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability,
@@ -3716,6 +3746,10 @@ struct GrafttyApp: App {
         switch message {
         case .listPanes(let path):
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
+        case .teamReply:
+            // The socket dispatcher routes replies through the local and
+            // remote team handlers before entering pane dispatch.
+            return .error("Team reply routing is unavailable")
         case .addPane(let path, let direction, let command):
             return addPane(path: path, direction: direction, command: command,
                            appState: appState, terminalManager: terminalManager)
@@ -4098,6 +4132,43 @@ struct GrafttyApp: App {
             }
         }
         return .worktreeCreate(status)
+    }
+
+    @MainActor
+    private static func handleTeamReply(
+        _ message: NotificationMessage,
+        appState: Binding<AppState>,
+        router: RemoteTeamRouter,
+        inbox: TeamInbox,
+        dispatcher: TeamEventDispatcher
+    ) async -> ResponseMessage {
+        guard case .teamReply(let caller, let agent, let id, let text, let priority, let fallback) = message else {
+            return .error("Expected a team reply")
+        }
+        let repos = appState.wrappedValue.repos
+        let enabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        do {
+            let request = try await OffMainIO.run {
+                try TeamReplyResolver(inbox: inbox).resolve(
+                    callerWorktree: caller, callerAgentID: agent, messageID: id,
+                    fallback: fallback, text: text, priority: priority,
+                    repos: repos, teamsEnabled: enabled
+                )
+            }
+            if let response = await handleRemoteTeamSend(request, appState: appState, router: router) {
+                return response
+            }
+            guard case .teamSend(_, _, let recipient, _, _) = request else {
+                return .error("Invalid reply destination")
+            }
+            return await handleTeamSend(
+                callerPath: caller, callerAgentID: agent, recipient: recipient,
+                text: text, priority: priority, appState: appState,
+                teamInbox: inbox, teamEventDispatcher: dispatcher
+            )
+        } catch {
+            return .error(String(describing: error))
+        }
     }
 
     @MainActor
