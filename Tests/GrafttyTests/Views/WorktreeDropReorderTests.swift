@@ -1,11 +1,45 @@
 import CoreGraphics
 import Foundation
 import Testing
+import CoreTransferable
 @testable import Graftty
 import GrafttyKit
 
 @Suite("Worktree drop reorder tests")
 struct WorktreeDropReorderTests {
+    @Test("@spec LAYOUT-2.65: When a user drops a worktree or pane on a worktree row, the application shall accept both drag types through one destination, reorder eligible worktree siblings, and move panes only within their repository.")
+    func sharedDestinationAcceptsBothDragTypes() async throws {
+        let slot = PaneSlotID()
+        var first = WorktreeEntry(path: "/repo/.worktrees/a", branch: "a", state: .running,
+                                  splitTree: SplitTree(root: .leaf(slot)))
+        _ = first.ensurePaneSession(for: slot)
+        let second = WorktreeEntry(path: "/repo/.worktrees/b", branch: "b")
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [first, second])
+        var state = AppState(repos: [repo])
+        let worktreeProvider = NSItemProvider()
+        worktreeProvider.register(TransferableWorktreeMove(repoID: repo.id, worktreeID: second.id))
+        let worktreeDrop: WorktreeRowDrop = try await withCheckedThrowingContinuation { continuation in
+            _ = worktreeProvider.loadTransferable(type: WorktreeRowDrop.self) { continuation.resume(with: $0) }
+        }
+        #expect(worktreeDrop.apply(repoID: repo.id, targetWorktreeID: first.id, placement: .before,
+                                  allowsReordering: true, to: &state) == .reordered)
+        #expect(state.repos[0].worktrees.map(\.id) == [second.id, first.id])
+
+        let paneProvider = NSItemProvider()
+        paneProvider.register(TransferablePaneSlotID(id: slot.id))
+        let paneDrop: WorktreeRowDrop = try await withCheckedThrowingContinuation { continuation in
+            _ = paneProvider.loadTransferable(type: WorktreeRowDrop.self) { continuation.resume(with: $0) }
+        }
+        #expect(paneDrop.apply(repoID: repo.id, targetWorktreeID: second.id, placement: .after,
+                              allowsReordering: false, to: &state) == .movePane(slot, second.path))
+        #expect(worktreeDrop.apply(repoID: repo.id, targetWorktreeID: first.id, placement: .after,
+                                   allowsReordering: false, to: &state) == .rejected)
+        let other = RepoEntry(path: "/other", displayName: "Other", worktrees: [.init(path: "/other", branch: "main")])
+        state.repos.append(other)
+        #expect(paneDrop.apply(repoID: other.id, targetWorktreeID: other.worktrees[0].id, placement: .after,
+                               allowsReordering: true, to: &state) == .rejected)
+    }
+
     @Test("Pane and worktree drags advertise distinct content types")
     func paneAndWorktreeDragPayloadsUseDistinctContentTypes() {
         #expect(TransferablePaneSlotID.contentType != TransferableWorktreeMove.contentType)

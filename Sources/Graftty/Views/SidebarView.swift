@@ -563,35 +563,13 @@ struct SidebarView: View {
             .worktreeReorderTarget(
                 repoID: repo.id,
                 worktreeID: worktree.id,
-                appState: $appState, isEnabled: navigation.query.isEmpty
-            )
-            // PWD-1.4: same-repo drop target. Sources are sidebar pane
-            // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
-            // are rejected so a user can't accidentally hop a pane
-            // across repos (out of scope, matches PWD-1.3).
-            .dropDestination(for: TransferablePaneSlotID.self) { items, _ in
-                guard let item = items.first else { return false }
-                let sourceID = PaneSlotID(id: item.id)
-                // In-flight rows are about to materialize or vanish —
-                // a drop here would land on a worktree that won't exist
-                // (or might revert) by the time the move completes.
-                guard !worktree.state.isInFlight else { return false }
-                guard let indices =
-                        appState.indicesOfWorktreeContaining(terminalID: sourceID),
-                      appState.repos[indices.repo].id == repo.id
-                else { return false }
-                onMovePane(sourceID, worktree.path)
-                return true
-            } isTargeted: { targeted in
-                // PWD-1.5: `isTargeted` can't see the payload, so cross-
-                // repo rejection happens at drop time and every hovered
-                // row highlights optimistically.
-                if targeted {
-                    dropTargetWorktreeID = worktree.id
-                } else if dropTargetWorktreeID == worktree.id {
-                    dropTargetWorktreeID = nil
+                appState: $appState, isEnabled: navigation.query.isEmpty,
+                onMovePane: onMovePane,
+                onPaneTargeted: { targeted in
+                    if targeted { dropTargetWorktreeID = worktree.id }
+                    else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
                 }
-            }
+            )
             .rightClickMenu {
                 buildWorktreeMenu(worktree, repo: repo)
             }

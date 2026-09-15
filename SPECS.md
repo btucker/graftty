@@ -144,6 +144,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.64** When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
 
+**LAYOUT-2.65** When a user drops a worktree or pane on a worktree row, the application shall accept both drag types through one destination, reorder eligible worktree siblings, and move panes only within their repository.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2759,6 +2761,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-3.2** When a project icon override or manual project order is saved, the application shall retain it across relaunches and decode older application state without those settings.
 
 **PROJECT-3.3** When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.
+
+**PROJECT-3.4** When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.
 
 ## SSH — SSH
 
