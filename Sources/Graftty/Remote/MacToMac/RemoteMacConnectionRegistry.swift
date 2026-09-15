@@ -133,7 +133,7 @@ final class RemoteMacConnectionRegistry {
     private var teamClients: [UUID: TeamChannelClient] = [:]
     private var reconnectOnTeamClose: Set<UUID> = []
     var canReconnectFromHost: @MainActor (RemoteMacIdentity) -> Bool = { _ in false }
-    var onReconnectFromHost: @MainActor (RemoteMacIdentity) -> Void = { _ in }
+    var onReconnectFromHost: @MainActor (Entry) async -> Void = { _ in }
     weak var teamRouter: RemoteTeamRouter?
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
     private let legacyFactory: ConnectionFactory?
@@ -208,6 +208,7 @@ final class RemoteMacConnectionRegistry {
     }
 
     func connect(to remoteMac: RemoteMac) async throws -> Entry {
+        try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
             let state = await existing.connection.currentState()
@@ -234,6 +235,7 @@ final class RemoteMacConnectionRegistry {
             return current
         }
 
+        try Task.checkCancellation()
         let attemptID = UUID()
         let task = Task { @MainActor in
             let entry: Entry
@@ -501,13 +503,16 @@ final class RemoteMacConnectionRegistry {
         onPaneSnapshot(identity, snapshot)
     }
 
-    func teamChannelClosed(_ entry: Entry) {
+    func isCurrentConnection(_ entry: Entry) -> Bool {
+        entries[entry.identity]?.id == entry.id
+    }
+
+    func teamChannelClosed(_ entry: Entry) async {
         let reconnect = reconnectOnTeamClose.remove(entry.id) != nil
         teamClients[entry.id] = nil
         teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
-        guard reconnect, entries[entry.identity]?.id == entry.id,
-              canReconnectFromHost(entry.identity) else { return }
-        onReconnectFromHost(entry.identity)
+        guard reconnect, isCurrentConnection(entry) else { return }
+        await onReconnectFromHost(entry)
     }
 
     func handleTeamRequest(_ data: Data, for entry: Entry) async -> Data {

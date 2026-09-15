@@ -71,8 +71,18 @@ final class RemoteMacsModel: ObservableObject {
             return self.connectionState(for: identity) == .connected
                 && self.savedRemoteMacs.contains { RemoteMacIdentity($0) == identity }
         }
-        registry.onReconnectFromHost = { [weak self] identity in
-            guard let self,
+        registry.onReconnectFromHost = { [weak self] entry in
+            guard let self else { return }
+            let identity = entry.identity
+            // Ordinary pane actions also enter .connecting while checking
+            // a live entry. Let those checks finish without losing the
+            // accepted request, but stop if the user replaces or disconnects it.
+            while let pending = self.connectAttempts[identity] {
+                _ = try? await pending.task.value
+                guard self.connectionRegistry.isCurrentConnection(entry) else { return }
+            }
+            guard self.connectionRegistry.isCurrentConnection(entry),
+                  self.connectionState(for: identity) == .connected,
                   let remoteMac = self.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else { return }
             _ = self.beginReconnect(to: remoteMac)
         }
