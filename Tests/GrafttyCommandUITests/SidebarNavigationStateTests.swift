@@ -146,7 +146,14 @@ struct SidebarNavigationStateTests {
         for (collapsed, expandedWidth) in [(true, 196.0), (false, 196.0), (false, 128.0)] {
             let rail = ProjectNavigationRail(projects: projects, counts: ["project-1": 3, "project-4": 102],
                                              workingCounts: ["project-1": 2, "project-3": 1, "project-4": 101], icons: [:], selectedID: "project-3", showsAttention: false,
-                                             collapsed: .constant(collapsed), expandedWidth: .constant(expandedWidth), onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
+                                             collapsed: .constant(collapsed), expandedWidth: .constant(expandedWidth), onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in },
+                                             management: { AnyView(HStack(spacing: 0) {
+                                                 ForEach(["folder.badge.plus", "desktopcomputer"], id: \.self) { icon in
+                                                     Button {} label: {
+                                                         Image(systemName: icon).frame(minWidth: 28, minHeight: 32)
+                                                     }.buttonStyle(.plain)
+                                                 }
+                                             }) })
                 .frame(height: 760).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
             let width = collapsed ? 64 : expandedWidth
             let hosting = NSHostingView(rootView: rail)

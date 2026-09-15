@@ -5,6 +5,7 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+/// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 struct SidebarView: View {
     @Binding var appState: AppState
     /// Used to read pane titles. Title change invalidation is deliberately
@@ -193,6 +194,16 @@ struct SidebarView: View {
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
     }
 
+    private var addRepositoryIconButton: some View {
+        Button(action: onAddRepo) {
+            Image(systemName: "folder.badge.plus")
+                .frame(minWidth: 28, minHeight: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Add Repository")
+        .accessibilityLabel("Add Repository")
+    }
+
     private var remoteManagementButton: some View {
         Button { showsRemoteManagement.toggle() } label: {
             Image(systemName: "desktopcomputer")
@@ -221,7 +232,10 @@ struct SidebarView: View {
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
                                       onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
                                       onMove: moveProject, localDeviceID: owner.deviceID,
-                                      management: { AnyView(remoteManagementButton) }, menu: projectMenu)
+                                      management: { AnyView(HStack(spacing: 0) {
+                                          addRepositoryIconButton
+                                          remoteManagementButton
+                                      }) }, menu: projectMenu)
                 Divider()
             }
             VStack(spacing: 0) {
@@ -251,17 +265,17 @@ struct SidebarView: View {
                         }
                     }
                 }
-                Divider()
-                HStack {
-                    Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
-                    Spacer()
-                    if !showsProjectRail {
+                if !showsProjectRail {
+                    Divider()
+                    HStack {
+                        Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
+                        Spacer()
                         Button(navigation.showsAttention ? "Projects" : "Attention") {
                             onNavigationIntent(); navigation.showsAttention.toggle(); navigation.query = ""
                         }
-                    }
-                    if !showsProjectRail { remoteManagementButton }
-                }.buttonStyle(.plain).font(.caption).padding(10)
+                        remoteManagementButton
+                    }.buttonStyle(.plain).font(.caption).padding(10)
+                }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
         .task {
