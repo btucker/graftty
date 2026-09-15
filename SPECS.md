@@ -140,6 +140,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
+**LAYOUT-2.63** While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2494,11 +2496,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.1** While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
 
-**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
+**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy agent session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 
-**AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
+**AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty Claude polling result without crashing.
 
 **AGENT-2.4** When a slow poll is superseded by a newer refresh, the application shall drop the stale poll's late write so the newer result wins.
+
+**AGENT-2.5** When Codex or Claude hooks report turn activity, the application shall include their working panes in Running and project working counts, remove stopped or waiting panes, and clear activity when the pane's command ends.
 
 ### AGENT-3.x
 

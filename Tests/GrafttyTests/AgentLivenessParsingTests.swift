@@ -46,7 +46,7 @@ struct AgentLivenessParsingTests {
     }
 
     @Test("""
-@spec AGENT-2.3: If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
+@spec AGENT-2.3: If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty Claude polling result without crashing.
 """)
     func malformedJsonIsEmpty() {
         #expect(AgentLivenessParsing.liveness(agentsJSON: "not json", psOutput: ps).isEmpty)

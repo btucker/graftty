@@ -209,6 +209,8 @@ public struct SidebarActivityCounts: Sendable {
     public private(set) var workingByProject: [String: Int] = [:]
     public private(set) var attentionByProject: [String: Int] = [:]
     public private(set) var attentionByWorktree: [String: Int] = [:]
+    public private(set) var attentionByPane: [String: Int] = [:]
+    public private(set) var unassignedAttentionByWorktree: [String: Int] = [:]
 
     public init(items: [SidebarActivityItem]) {
         var seen: Set<String> = []
@@ -217,6 +219,8 @@ public struct SidebarActivityCounts: Sendable {
             if item.needsAttention {
                 attentionByProject[item.projectID, default: 0] += 1
                 attentionByWorktree[item.worktreeID, default: 0] += 1
+                if let pane = item.paneID { attentionByPane[pane, default: 0] += 1 }
+                else { unassignedAttentionByWorktree[item.worktreeID, default: 0] += 1 }
             }
         }
     }

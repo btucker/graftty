@@ -43,6 +43,7 @@ struct AttentionCapsule: View {
 /// worktree has multiple panes. The row has no background — the enclosing
 /// worktree block draws one unified highlight across both row types.
 /// Focus within that block is indicated by text emphasis instead.
+/// @spec LAYOUT-2.63: While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
 struct PaneTitleRow: View {
     let title: String
     /// True when this row's worktree is the currently-selected one. Drives
@@ -69,6 +70,7 @@ struct PaneTitleRow: View {
     /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
+    var attentionCount: Int = 0
 
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
@@ -118,6 +120,7 @@ struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 ))
+            SidebarActivityBadge(attentionCount)
             if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
                 // intrinsic width) on one line. A plain HStack — NOT
@@ -252,6 +255,7 @@ struct WorktreeRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            SidebarActivityBadge(attentionCount)
             typeIcon
             if let prBadge {
                 prBadgeLabel(prBadge)
@@ -262,7 +266,6 @@ struct WorktreeRow: View {
                 AttentionCapsule(style: attentionStyle)
             }
             Spacer()
-            SidebarActivityBadge(attentionCount)
             WorktreeRowGutter(
                 stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,

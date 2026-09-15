@@ -1568,6 +1568,7 @@ private struct WorktreeBlock: View {
     @ViewBuilder
     private var paneRows: some View {
         if let layout = worktree.layout {
+            let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]))
             // IOS-4.21: pane child rows beneath multi-leaf worktrees
             // are tappable and route straight to the fullscreen
             // terminal, skipping the worktree-detail preview screen.
@@ -1591,6 +1592,8 @@ private struct WorktreeBlock: View {
                             : worktree.attentionSource
                     )
                 }
+                let attentionCount = counts.attentionByPane[leaf.sessionName, default: 0]
+                    + (index == 0 ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                 let isFocused = leaf.sessionName == focusedPaneId
                 if layout.isLeaf {
                     PaneTitleRow(
@@ -1598,7 +1601,8 @@ private struct WorktreeBlock: View {
                         theme: theme,
                         attentionStyle: style,
                         isFocusedPane: isFocused,
-                        isActiveWorktree: isActive
+                        isActiveWorktree: isActive,
+                        attentionCount: attentionCount
                     )
                 } else {
                     Button { onSelectPane(leaf) } label: {
@@ -1607,7 +1611,8 @@ private struct WorktreeBlock: View {
                             theme: theme,
                             attentionStyle: style,
                             isFocusedPane: isFocused,
-                            isActiveWorktree: isActive
+                            isActiveWorktree: isActive,
+                            attentionCount: attentionCount
                         )
                     }
                     .buttonStyle(.plain)
@@ -1640,6 +1645,9 @@ private struct WorktreeRowContent: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if worktree.layout?.leaves.isEmpty != false {
+                SidebarActivityBadge(SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0])
+            }
             typeIcon
             if let badge = worktree.prBadge {
                 PRBadgeLabel(badge: badge)
@@ -1663,7 +1671,6 @@ private struct WorktreeRowContent: View {
             // the first pane row (see WorktreeBlock.paneRows), not
             // here — "needs input" pills always sit on pane rows.
             Spacer()
-            SidebarActivityBadge(SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0])
             DivergenceGutter(stats: worktree.stats, theme: theme)
         }
         .padding(.vertical, 4)
@@ -1756,6 +1763,7 @@ private struct PaneTitleRow: View {
     /// inside the active worktree still read brighter than panes in
     /// other worktrees.
     let isActiveWorktree: Bool
+    var attentionCount: Int = 0
 
     var body: some View {
         // Busy style applies only when no capsule is shown — a needs-input
@@ -1777,6 +1785,7 @@ private struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 )))
+            SidebarActivityBadge(attentionCount)
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
             // AGENT-2.2: a busy pane renders its title in italic. Apply it
             // at the Text level (Text.italic()) so it composes with the

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyProtocol
 
 private struct FakeExecutor: CLIExecutor {
     let outputs: [String: CLIOutput]   // keyed by command basename
@@ -15,6 +16,49 @@ private struct FakeExecutor: CLIExecutor {
 @MainActor
 @Suite("ClaudeSessionRegistry refresh populates liveness and survives failure (AGENT-2.3 refresh-level).")
 struct ClaudeSessionRegistryTests {
+    @Test("@spec AGENT-2.5: When Codex or Claude hooks report turn activity, the application shall include their working panes in Running and project working counts, remove stopped or waiting panes, and clear activity when the pane's command ends.")
+    func providerHooksPopulateRunningActivity() async {
+        let r = registry(json: "[]", ps: "")
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let pane = "pane-" + runtime.rawValue
+            r.recordHook(runtime: runtime, event: .userPromptSubmit, sessionID: "session", paneSessionName: pane, attentionReason: nil)
+            await r.refresh()
+            #expect(r.livenessBySession[pane] == .busy)
+            let row = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "Repo", displayBranch: "main",
+                state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: pane, title: runtime.rawValue, attentionText: nil,
+                    isBusy: AgentLivenessMerge.isPaneBusy(sessionName: pane, liveness: r.livenessBySession), attentionSource: nil))
+            let items = SidebarProjection.activity([row])
+            #expect(SidebarActivityFilter.running.apply(to: items).count == 1)
+            #expect(SidebarActivityCounts(items: items).workingByProject.values.first == 1)
+            r.recordHook(runtime: runtime, event: .preToolUse, sessionID: "session", paneSessionName: pane, attentionReason: .question)
+            #expect(r.livenessBySession[pane] == .idle)
+            r.recordHook(runtime: runtime, event: .postToolUse, sessionID: "session", paneSessionName: pane, attentionReason: nil)
+            #expect(r.livenessBySession[pane] == .busy)
+            r.recordHook(runtime: runtime, event: .stop, sessionID: "session", paneSessionName: pane, attentionReason: nil)
+            #expect(r.livenessBySession[pane] == .idle)
+            r.recordHook(runtime: runtime, event: .userPromptSubmit, sessionID: "session", paneSessionName: pane, attentionReason: nil)
+            r.removePane(pane)
+            #expect(r.livenessBySession[pane] == nil)
+            await r.refresh()
+            #expect(r.livenessBySession[pane] == nil)
+        }
+    }
+
+    @Test("Hook activity survives failed Claude polling and respects separate provider sessions")
+    func hookActivitySurvivesPolling() async {
+        let r = registry(json: "invalid", ps: "")
+        r.recordHook(runtime: .codex, event: .preToolUse, sessionID: "one", paneSessionName: "pane", attentionReason: nil)
+        r.recordHook(runtime: .codex, event: .preToolUse, sessionID: "two", paneSessionName: "pane", attentionReason: nil)
+        r.recordHook(runtime: .codex, event: .stop, sessionID: "one", paneSessionName: "pane", attentionReason: nil)
+        await r.refresh()
+        #expect(r.livenessBySession["pane"] == .busy)
+        r.recordHook(runtime: .codex, event: .permissionRequest, sessionID: "two", paneSessionName: "pane", attentionReason: nil)
+        #expect(r.livenessBySession["pane"] == .busy)
+        r.recordHook(runtime: .codex, event: .stop, sessionID: "two", paneSessionName: "pane", attentionReason: nil)
+        #expect(r.livenessBySession["pane"] == .idle)
+    }
+
     private func registry(json: String, ps: String, claudeCmd: String = "claude")
         -> ClaudeSessionRegistry {
         let exec = FakeExecutor(outputs: [
@@ -55,17 +99,20 @@ struct ClaudeSessionRegistryTests {
         // Kick off the slow refresh (generation 1); it parks inside `claude agents`.
         async let slow: Void = r.refresh()
         await exec.waitUntilSlowEntered()
+        r.recordHook(runtime: .codex, event: .userPromptSubmit, sessionID: "codex", paneSessionName: "codex-pane", attentionReason: nil)
 
         // A fresh refresh (generation 2) runs fully while the slow one is parked.
         await r.refresh()
         #expect(r.generation == 2)
         #expect(r.livenessBySession["graftty-aaaa1111"] == .idle)
+        #expect(r.livenessBySession["codex-pane"] == .busy)
 
         // Release the slow poll; its late write must be dropped by the guard.
         exec.releaseSlow()
         await slow
         #expect(r.generation == 2)
         #expect(r.livenessBySession["graftty-aaaa1111"] == .idle)
+        #expect(r.livenessBySession["codex-pane"] == .busy)
     }
 }
 

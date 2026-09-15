@@ -14,6 +14,7 @@ struct SidebarNavigationTests {
         var stopped = request
         stopped.id = "stop"
         stopped.worktreeID = "w2"
+        stopped.paneID = nil
         var command = request
         command.id = "command"
         command.occurrence?.source = .commandFinished
@@ -21,6 +22,8 @@ struct SidebarNavigationTests {
         #expect(counts.workingByProject == ["p": 1])
         #expect(counts.attentionByProject == ["p": 2])
         #expect(counts.attentionByWorktree == ["w1": 1, "w2": 1])
+        #expect(counts.attentionByPane == ["agent": 1])
+        #expect(counts.unassignedAttentionByWorktree == ["w2": 1])
         #expect(SidebarActivityCounts(items: []).attentionByProject.isEmpty)
     }
 

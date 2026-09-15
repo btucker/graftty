@@ -347,7 +347,7 @@ struct SidebarView: View {
 
     @ViewBuilder
     private var worktreeRows: some View {
-        let counts = SidebarActivityCounts(items: activity).attentionByWorktree
+        let counts = SidebarActivityCounts(items: activity)
         if navigation.query.isEmpty {
             let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
             ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
@@ -363,7 +363,7 @@ struct SidebarView: View {
                     SidebarInteractionPolicy.matches(query: navigation.query, projectName: repo.displayName,
                         worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
                 }) { worktree in
-                    worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)", attentionCount: counts[worktree.path, default: 0])
+                    worktreeBlock(worktree, repo: repo, displayName: "\(repo.displayName) / \(labels[worktree.id] ?? worktree.branch)", activityCounts: counts)
                 }
             }
         }
@@ -422,7 +422,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func repoSection(_ repo: RepoEntry, attentionCounts: [String: Int]) -> some View {
+    private func repoSection(_ repo: RepoEntry, attentionCounts: SidebarActivityCounts) -> some View {
         let forgeLink = forgeLink(for: repo)
         let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
             forRepoAt: repo.path,
@@ -448,7 +448,7 @@ struct SidebarView: View {
                         worktree,
                         repo: repo,
                         displayName: displayName,
-                        attentionCount: attentionCounts[worktree.path, default: 0]
+                        activityCounts: attentionCounts
                     )
                 }
                 .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
@@ -520,7 +520,7 @@ struct SidebarView: View {
         _ worktree: WorktreeEntry,
         repo: RepoEntry,
         displayName: String,
-        attentionCount: Int
+        activityCounts: SidebarActivityCounts
     ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let attention = SidebarAttentionLayout.layout(for: worktree)
@@ -551,7 +551,7 @@ struct SidebarView: View {
                         )
                     },
                     attentionStyle: attention.worktreeCapsule,
-                    attentionCount: attentionCount
+                    attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
                 )
                 .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
                 .contentShape(Rectangle())
@@ -614,7 +614,9 @@ struct SidebarView: View {
                             // notify/✓! text) renders directly; busy/idle no
                             // longer feed it.
                             attentionStyle: attention.paneCapsules[terminalID],
-                            portBindings: portBindings.bindings[terminalID] ?? []
+                            portBindings: portBindings.bindings[terminalID] ?? [],
+                            attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
+                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                         )
                     }
                     .buttonStyle(.plain)

@@ -1508,8 +1508,12 @@ struct GrafttyApp: App {
         // dismiss. Non-zero exit codes get a longer (8s) dwell so the
         // user has a chance to notice errors across a worktree they're
         // not currently viewing.
-        terminalManager.onCommandFinished = { [appState = $appState] terminalID, exitCode, _ in
+        terminalManager.onCommandFinished = { [appState = $appState, registry = services.claudeSessionRegistry] terminalID, exitCode, _ in
             MainActor.assumeIsolated {
+                if let indices = appState.wrappedValue.indicesOfWorktreeContaining(terminalID: terminalID),
+                   let session = appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
+                    registry.removePane(ZmxLauncher.sessionName(for: session))
+                }
                 Self.setAttentionForTerminal(
                     appState: appState,
                     terminalID: terminalID,
@@ -1599,7 +1603,8 @@ struct GrafttyApp: App {
                         prStatusStore: services.prStatusStore,
                         worktreeCreations: services.cliWorktreeCreations,
                         worktreeRemovals: services.cliWorktreeRemovals,
-                        remoteBranchStore: services.remoteBranchStore
+                        remoteBranchStore: services.remoteBranchStore,
+                        agentRegistry: services.claudeSessionRegistry
                     )
                     return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
                 }
@@ -1893,6 +1898,7 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         tm.paneClosed = { [presenceStorage] _, sessionName in
             guard let sessionName else { return }
+            services.claudeSessionRegistry.removePane(sessionName)
             _ = refreshPresenceIndex()
             for record in presenceIndex.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
@@ -3760,7 +3766,8 @@ struct GrafttyApp: App {
         prStatusStore: PRStatusStore,
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        agentRegistry: ClaudeSessionRegistry
     ) async -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -3857,7 +3864,8 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
                 terminalManager: terminalManager,
-                remoteBranchStore: remoteBranchStore
+                remoteBranchStore: remoteBranchStore,
+                agentRegistry: agentRegistry
             )
         case .teamInbox(let request):
             return await handleTeamInbox(
@@ -4260,8 +4268,14 @@ struct GrafttyApp: App {
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         terminalManager: TerminalManager,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        agentRegistry: ClaudeSessionRegistry
     ) async -> ResponseMessage {
+        if let paneSessionName,
+           appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: paneSessionName) != nil {
+            agentRegistry.recordHook(runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
+                                     paneSessionName: paneSessionName, attentionReason: attentionReason)
+        }
         switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
         case .recordStoppedTurn:
             let stop = SidebarAgentStop(agentName: AgentStopNotification.displayName(runtime), stoppedAt: Date())

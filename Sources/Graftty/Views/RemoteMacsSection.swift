@@ -453,6 +453,7 @@ struct RemoteMacsSection: View {
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
         let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
+        let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]))
         VStack(spacing: 0) {
             Button {
                 onSelectRemoteWorktree(remoteMac, worktree.path)
@@ -472,7 +473,7 @@ struct RemoteMacsSection: View {
                             source: worktree.attentionSource
                         )
                     },
-                    attentionCount: SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0]
+                    attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0]
                 )
                 .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
                 .contentShape(Rectangle())
@@ -519,7 +520,9 @@ struct RemoteMacsSection: View {
                                     source: leaf.attentionSource
                                 )
                             },
-                            portBindings: []
+                            portBindings: [],
+                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
+                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                         )
                     }
                     .buttonStyle(.plain)
