@@ -10,6 +10,52 @@ import SwiftUI
 struct RootViewSizeClassTests {
 
     @Test("""
+@spec IPAD-7.2: When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
+""")
+    func preservesEquivalentLeafAcrossLayouts() {
+        let defaults = UserDefaults(suiteName: "adaptive-\(UUID())")!
+        let state = IPadAppState(defaults: defaults)
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let worktree = WorktreePanes(path: "worktree", displayName: "Feature", repoDisplayName: "Repo", displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: .split(direction: .horizontal, ratio: 0.5, left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil), right: .leaf(sessionName: "second", title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)))
+        state.latestWorktrees = [worktree]
+        state.selectedHostId = host.id
+        state.selectedWorktreePath = worktree.path
+        state.focusedPaneId = "second"
+        let projection = RootView.compactSelection(appState: state, hosts: [host])
+        #expect(projection?.host == host)
+        #expect(projection?.session?.sessionName == "second")
+        #expect(projection?.session?.worktreePath == "worktree")
+        RootView.applyCompactSession(SessionStep(host: host, worktreePath: "other", sessionName: "third", title: "Third"), to: state)
+        #expect(state.selectedHostId == host.id)
+        #expect(state.selectedWorktreePath == "other")
+        #expect(state.focusedPaneId == "third")
+        #expect(RootView.compactSelection(appState: state, hosts: []) == nil)
+        RootView.applyCompactHost(host, to: state)
+        #expect(state.selectedWorktreePath == "other")
+        #expect(state.focusedPaneId == "third")
+        let secondHost = Host(label: "Other Mac", baseURL: URL(string: "https://other.local")!)
+        RootView.applyCompactHost(secondHost, to: state)
+        #expect(state.selectedHostId == secondHost.id)
+        #expect(state.selectedWorktreePath == nil)
+        #expect(state.focusedPaneId == nil)
+        #expect(state.latestWorktrees.isEmpty)
+        let hostOnly = RootView.compactSelection(appState: state, hosts: [host, secondHost])
+        #expect(hostOnly?.host == secondHost)
+        #expect(hostOnly?.session == nil)
+    }
+
+    @Test("""
+@spec LAYOUT-2.47: When the user returns to a project on mobile, the application shall restore that project's previously visible worktree independently of other projects and search results.
+""")
+    func projectScrollAnchorsTrackViewport() {
+        let rows = [SidebarWorktreeViewportRow(id: "above", minY: -70, maxY: -1),
+                    SidebarWorktreeViewportRow(id: "visible", minY: -10, maxY: 40),
+                    SidebarWorktreeViewportRow(id: "next", minY: 40, maxY: 100)]
+        #expect(SidebarWorktreeViewportRow.topVisible(in: rows) == "visible")
+        #expect(SidebarWorktreeViewportRow.topVisible(in: []) == nil)
+    }
+
+    @Test("""
 @spec IPAD-1.1: When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 """)
     func ipad_1_1_regularRendersIPadRootLayout() {

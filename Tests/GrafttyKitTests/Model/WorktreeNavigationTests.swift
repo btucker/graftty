@@ -44,6 +44,30 @@ struct WorktreeNavigationTests {
 
         let wrap = state([wt("/a"), wt("/b"), wt("/c")], selected: "/c")
         #expect(wrap.nextWorktreePath(forward: true) == "/a")
+
+        let repos = ["a", "b", "c"].map { name in
+            RepoEntry(path: "/" + name, displayName: name, worktrees: [wt("/" + name)])
+        }
+        var reordered = AppState(repos: repos, selectedWorktreePath: "/a")
+        let projects = repos.map { SidebarProject(id: "local:\($0.id)", repositoryID: $0.path, name: $0.displayName,
+            owner: .init(deviceID: .init(value: "local"), deviceLabel: "Local", relayDepth: 0)) }
+        // Include an offline remote with the same repository path: routes alone
+        // do not identify which project's ordering belongs to this Mac.
+        let remote = SidebarProject(id: "remote:a", repositoryID: "/a", name: "Remote A",
+            owner: .init(deviceID: .init(value: "remote"), deviceLabel: "Remote", relayDepth: 1), isAvailable: false)
+        reordered.sidebarNavigation = .init(order: .init(ids: [remote.id, projects[0].id, projects[2].id, projects[1].id]),
+            cachedProjects: [projects[0], projects[1], projects[2], remote])
+        #expect(reordered.nextWorktreePath(forward: true) == "/c")
+        #expect(reordered.nextWorktreePath(forward: false) == "/b")
+        reordered.repos[1].worktrees[0].attention = att()
+        reordered.repos[2].worktrees[0].attention = att()
+        #expect(reordered.nextWorktreePath(forward: true) == "/c")
+        // Repositories discovered after the last sidebar snapshot remain reachable.
+        reordered.repos.append(.init(path: "/d", displayName: "d", worktrees: [wt("/d")]))
+        reordered.repos[1].worktrees[0].attention = nil
+        reordered.repos[2].worktrees[0].attention = nil
+        reordered.selectedWorktreePath = "/b"
+        #expect(reordered.nextWorktreePath(forward: true) == "/d")
     }
 
     @Test("@spec KBD-5.3: When the user presses Ctrl+Option+Shift+Tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.")

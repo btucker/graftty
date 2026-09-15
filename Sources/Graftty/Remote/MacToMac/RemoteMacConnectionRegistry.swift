@@ -492,6 +492,18 @@ final class RemoteMacConnectionRegistry {
         )
     }
 
+    func sidebarSnapshot(for identity: RemoteMacIdentity) async -> SidebarSnapshot? {
+        guard case .snapshot(_, let sidebar) = await panesSnapshot(for: identity) else { return nil }
+        return sidebar
+    }
+
+    func panesSnapshot(for identity: RemoteMacIdentity) async -> PanesStateMessage? {
+        guard let entry = entries[identity], let store = entry.paneEnvironment.worktreePanesStore else { return nil }
+        let snapshot = await store.currentSnapshot
+        guard entries[identity]?.id == entry.id else { return nil }
+        return snapshot
+    }
+
     private func publishPaneSnapshot(
         _ snapshot: [WorktreePanes],
         identity: RemoteMacIdentity,
@@ -710,6 +722,7 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
 /// the V1 channel. V1 rows are treated as direct rows by the relay layer.
 private final class NegotiatingPanesStateDriver:
     PanesStateChannelDriver,
+    SidebarSnapshotProviding,
     PanesStateCallbacksConfigurable,
     @unchecked Sendable
 {
@@ -721,6 +734,7 @@ private final class NegotiatingPanesStateDriver:
     private let lock = NSLock()
     private var onSnapshot: PanesStateChannelClient.OnSnapshot
     private var onClosed: PanesStateChannelClient.OnClosed
+    var sidebarSnapshot: SidebarSnapshot? { lock.withLock { (activeClient ?? openingClient)?.sidebarSnapshot } }
     private var activeClient: PanesStateChannelClient?
     private var openingClient: PanesStateChannelClient?
     private var openingToken: UUID?

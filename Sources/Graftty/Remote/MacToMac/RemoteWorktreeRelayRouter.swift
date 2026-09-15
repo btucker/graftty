@@ -49,6 +49,21 @@ final class RemoteWorktreeRelayRouter {
         self.pendingRouteLifetime = pendingRouteLifetime
     }
 
+    /// Assign presentation identity before replacing routes. Older peers do not
+    /// publish sidebar metadata, and their paths may match paths on another Mac.
+    static func normalizingSidebarIdentity(_ worktree: WorktreePanes, ownerID: RemoteDeviceID, ownerLabel: String) -> WorktreePanes {
+        guard worktree.sidebar == nil, (worktree.origin?.relayDepth ?? 0) == 0 else { return worktree }
+        let projectID = "\(ownerID.value):\(worktree.repositoryID ?? worktree.repoDisplayName)"
+        return WorktreePanes(
+            path: worktree.path, displayName: worktree.displayName, repoDisplayName: worktree.repoDisplayName,
+            repositoryID: worktree.repositoryID, displayBranch: worktree.displayBranch, state: worktree.state,
+            isMainCheckout: worktree.isMainCheckout, prBadge: worktree.prBadge, stats: worktree.stats,
+            attentionText: worktree.attentionText, attentionSource: worktree.attentionSource,
+            attentionTimestamp: worktree.attentionTimestamp, layout: worktree.layout,
+            origin: worktree.origin ?? WorktreeOrigin(deviceID: ownerID, deviceLabel: ownerLabel, relayDepth: 0),
+            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID))
+    }
+
     func promotedWorktrees(
         snapshots: [RemoteMacIdentity: [WorktreePanes]],
         remoteMacs: [RemoteMac]
@@ -77,7 +92,8 @@ final class RemoteWorktreeRelayRouter {
 
         for remoteMac in remoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
-            for worktree in snapshots[identity] ?? [] {
+            for original in snapshots[identity] ?? [] {
+                let worktree = Self.normalizingSidebarIdentity(original, ownerID: remoteMac.id, ownerLabel: remoteMac.label)
                 // A V2 peer may itself publish one-hop rows. Only its local
                 // rows become our direct rows; promoting a depth-1 row would
                 // create remote-of-remote traversal and A↔B loops.
@@ -107,6 +123,8 @@ final class RemoteWorktreeRelayRouter {
                         nextPanes: &nextPanes
                     )
                 }
+                var sidebar = worktree.sidebar
+                sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.alias(kind: "pane", identity: identity, value: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
                 promoted.append(WorktreePanes(
                     path: worktreeAlias,
                     displayName: worktree.displayName,
@@ -129,7 +147,8 @@ final class RemoteWorktreeRelayRouter {
                     route: WorktreeRoute(
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
-                    )
+                    ),
+                    sidebar: sidebar
                 ))
             }
         }
@@ -137,6 +156,18 @@ final class RemoteWorktreeRelayRouter {
         panesByAlias = nextPanes
         worktreesByAlias = nextWorktrees
         return promoted
+    }
+
+    func promoteProjects(_ projects: [SidebarProject], from remoteMac: RemoteMac) -> [SidebarProject] {
+        let identity = RemoteMacIdentity(remoteMac)
+        return projects.filter { ($0.owner?.relayDepth ?? 0) == 0 }.map { project in
+            var result = project
+            let alias = Self.alias(kind: "repository", identity: identity, value: project.repositoryID)
+            repositoriesByAlias[alias] = .init(identity: identity, repositoryID: project.repositoryID)
+            result.repositoryID = alias
+            result.owner = WorktreeOrigin(deviceID: remoteMac.id, deviceLabel: remoteMac.label, relayDepth: 1)
+            return result
+        }
     }
 
     func removeAllRoutes() {

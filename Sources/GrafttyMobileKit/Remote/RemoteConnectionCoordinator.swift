@@ -386,6 +386,14 @@ public final class RemoteConnectionCoordinator {
         )
     }
 
+    /// Returns metadata only when the applied frame matches the fetched rows.
+    public func navigationSnapshot(for host: Host, matching worktrees: [WorktreePanes]) async -> PanesStateMessage? {
+        guard let store = panesStores[host.id] else { return nil }
+        let snapshot = await store.navigationSnapshot(matching: worktrees)
+        guard panesStores[host.id] === store else { return nil }
+        return snapshot
+    }
+
     /// Returns the latest authenticated worktree snapshot, establishing one
     /// long-lived panes-state-v2 subscription on first use. V2 includes the
     /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.

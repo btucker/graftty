@@ -10,6 +10,44 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("@spec REMOTE-14.7: When remote project metadata arrives during refresh, the application shall derive project contents and removal authority from the same per-owner snapshot.")
+    func sidebarAuthorityUsesOneSnapshot() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let project = SidebarProject(id: "remote-project", repositoryID: "/repo", name: "Project")
+        let driver = SidebarSnapshotSequenceDriver(next: .init(projects: [project]))
+        let paneStore = WorktreePanesStore(driver: driver)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .init(worktreePanesStore: paneStore, paneControlClient: nil))
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        let first = await model.sidebarRelaySnapshot()
+        #expect(first.projects.isEmpty)
+        #expect(first.authoritativeOwnerIDs.isEmpty)
+        #expect(driver.readCount == 0)
+        await paneStore.applySnapshot([])
+        let second = await model.sidebarRelaySnapshot()
+        #expect(second.projects.isEmpty)
+        #expect(second.authoritativeOwnerIDs.isEmpty)
+        #expect(driver.readCount == 1)
+        let row = WorktreePanes(path: "/repo/worktree", displayName: "branch", repoDisplayName: "Project", repositoryID: "/repo", displayBranch: "branch", state: .closed, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "stable-worktree", projectID: project.id))
+        await paneStore.applySnapshot([row])
+        // The model callback has not published this frame yet. Relayed
+        // navigation must still use its metadata and rows together.
+        #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == nil)
+        let third = await model.sidebarRelaySnapshot()
+        #expect(third.projects.map(\.id) == [project.id])
+        #expect(third.authoritativeOwnerIDs == [remote.id])
+        #expect(third.worktrees.compactMap { $0.sidebar?.id } == ["stable-worktree"])
+        #expect(driver.readCount == 2)
+        model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
     private func tempStoreURL() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -917,7 +955,14 @@ struct RemoteMacsModelTests {
 
         registry.onPaneSnapshot(RemoteMacIdentity(remote), snapshot)
 
-        #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == snapshot)
+        let rows = try #require(model.worktreePanesByRemote[RemoteMacIdentity(remote)])
+        #expect(rows.count == snapshot.count)
+        let row = try #require(rows.first)
+        #expect(row.path == snapshot[0].path)
+        #expect(row.displayBranch == snapshot[0].displayBranch)
+        #expect(row.layout == snapshot[0].layout)
+        #expect(row.origin?.deviceID == remote.id)
+        #expect(row.sidebar?.projectID == "\(remote.id.value):project")
     }
 
     @Test("""
@@ -1603,6 +1648,22 @@ private actor RemoteMacsModelManagementRecorder:
     func requests() -> [WorktreeManagementRequest] {
         recordedRequests
     }
+}
+
+private final class SidebarSnapshotSequenceDriver: PanesStateChannelDriver, SidebarSnapshotProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    private let next: SidebarSnapshot
+    init(next: SidebarSnapshot) { self.next = next }
+    var readCount: Int { lock.withLock { reads } }
+    var sidebarSnapshot: SidebarSnapshot? {
+        lock.withLock {
+            reads += 1
+            return reads == 1 ? nil : next
+        }
+    }
+    func open() async throws {}
+    func close() {}
 }
 
 private struct RemoteMacsModelTestPanesStateDriver: PanesStateChannelDriver {

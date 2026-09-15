@@ -24,7 +24,7 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
     public typealias OutboundOut = ByteBuffer
 
     public typealias Subscribe = @Sendable (
-        @escaping @Sendable ([WorktreePanes]) async -> Void
+        @escaping @Sendable (PanesStateMessage) async -> Void
     ) async -> Cancellable
 
     public struct Cancellable: Sendable {
@@ -88,7 +88,7 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
         Task { [storeCancellable] in
             let cancellable = await subscribe { snapshot in
                 guard
-                    let body = try? JSONEncoder().encode(PanesStateMessage.snapshot(snapshot))
+                    let body = try? JSONEncoder().encode(snapshot)
                 else { return }
                 let buf = allocator.buffer(bytes: body)
                 // Marshal back to the event loop before writing — NIO requires

@@ -18,9 +18,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
-**LAYOUT-2.1** The sidebar shall display an ordered list of repositories, each expandable to show its worktrees.
+**LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
 
-**LAYOUT-2.2** Each repository entry shall be collapsible and expandable by clicking its disclosure indicator.
+**LAYOUT-2.2** When the project rail is collapsed, the application shall retain project icons and attention badges in a 64-point rail and persist the collapse preference independently of recent history.
 
 **LAYOUT-2.3** When a repository is expanded, the sidebar shall display the repository's own working directory as the first child entry, labeled by its current branch name.
 
@@ -91,6 +91,66 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.36** When a virtual worktree folder first appears, the sidebar shall render it expanded at the normal repository-child indentation. While the folder is collapsed, the sidebar shall show the sums of its descendants' available Git statistics and mark the aggregate dirty if any descendant has uncommitted changes.
 
 **LAYOUT-2.37** When virtual folders coexist with ungrouped worktrees, the sidebar shall apply the established compact worktree-row inset to both top-level and nested worktrees while reserving native disclosure indentation for folder rows.
+
+**LAYOUT-2.38** When projects are reordered, the application shall preserve their manual order across refreshes, retain unavailable projects, and append newly discovered projects.
+
+**LAYOUT-2.39** When an attention target is opened, the application shall retain the last 20 distinct recently viewed targets locally across relaunches, newest first, without counting them as pending requests.
+
+**LAYOUT-2.40** While the attention queue displays Needs you, the application shall include explicit agent and user requests, exclude command-finished markers, and order requests by occurrence time with newest first.
+
+**LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
+
+**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.
+
+**LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
+
+**LAYOUT-2.44** If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.
+
+**LAYOUT-2.46** When a user searches worktrees, the application shall match the displayed worktree name, repository name, or branch, including snapshots without branch metadata.
+
+**LAYOUT-2.47** When the user returns to a project on mobile, the application shall restore that project's previously visible worktree independently of other projects and search results.
+
+**LAYOUT-2.48** When the user drags the project rail edge, the application shall resize the rail, collapse it to icons below the collapse threshold, and retain the last expanded width across relaunches.
+
+**LAYOUT-2.49** While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column and omit the visible filter label.
+
+**LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
+
+**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+
+**LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
+
+**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.
+
+**LAYOUT-2.54** While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.
+
+**LAYOUT-2.55** While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
+
+**LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
+
+**LAYOUT-2.57** When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.
+
+**LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
+
+**LAYOUT-2.59** When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.
+
+**LAYOUT-2.60** When a worktree is stopped and reopened, the application shall retain recent Attention pane targets for saved layout slots and resolve them to their new sessions without following reused routes.
+
+**LAYOUT-2.61** When a remote worktree is dropped onto another worktree, the application shall reject the reorder if the source and destination belong to different Mac identities, including matching paths.
+
+**LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
+
+**LAYOUT-2.63** While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
+
+**LAYOUT-2.64** When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
+
+**LAYOUT-2.65** When a user drops a worktree or pane on a worktree row, the application shall accept both drag types through one destination, reorder eligible worktree siblings, and move panes only within their repository.
+
+**LAYOUT-2.66** When the macOS application is bundled, the application shall export its local worktree, remote worktree, and pane drag types as data so the system can recognize sidebar drag sessions.
+
+**LAYOUT-2.67** While dragging a worktree, the application shall preview its heading and visible pane rows together at the sidebar row width while retaining separate pane drag gestures.
+
+**LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1724,7 +1784,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.10** While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
 
-**IPAD-1.11** When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
+**IPAD-1.11** When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, any pane leaf with `attentionText`, or an unseen agent stop), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 
 **IPAD-1.12** While `IPadRootLayout` is presented, the sidebar shall render a 1pt trailing border at `appState.theme.foreground.opacity(0.15)` along its leading-of-detail edge so the column boundary reads as a thin divider, matching the Mac sidebar's automatic `NSSplitView` divider. The overlay ignores safe areas so the border runs the full sidebar height including under the nav bar and home indicator.
 
@@ -1743,6 +1803,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.19** While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
 
 **IPAD-1.20** While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
+
+**IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -1814,7 +1876,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-8.x
 
-**IPAD-8.1** When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+**IPAD-8.1** When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention or an unseen agent stop, the application shall select the next attention-carrying worktree in cyclic sidebar order.
 
 **IPAD-8.2** When no other iPad worktree has attention, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall cycle through selectable worktrees in sidebar order.
 
@@ -2366,7 +2428,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.7** When a paired client opens the authenticated worktree-management subsystem, the host shall install the management handler only if that peer has worktree-management permission and shall reject and close the channel otherwise.
 
-**REMOTE-13.8** While a Remote Mac is connected, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
+**REMOTE-13.8** While a Remote Mac is connected and the project column is disabled, the sidebar shall render Mac → repository → worktree → pane hierarchy using the same WorktreeRow and PaneTitleRow presentation components as local worktrees.
 
 **REMOTE-13.9** When a Remote Mac connection becomes unavailable, the application shall remove its cached worktree and repository rows so offline remote worktrees are not displayed or relayed.
 
@@ -2399,6 +2461,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
 
 **REMOTE-13.24** While GrafttyMobile views a paired Mac, the application shall show each saved downstream Mac's connection state and allow an unavailable downstream Mac to reconnect from the mobile list.
+
+### REMOTE-14.x — Shared project navigation
+
+**REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
+
+**REMOTE-14.2** When a client requests a project move, worktree move, icon, or occurrence acknowledgement, the application shall round-trip stable ordering identities separately from opaque resource routes.
+
+**REMOTE-14.3** When a snapshot supplies folder ancestry, the client shall preserve nested folders and sibling order without interpreting opaque worktree routes as filesystem paths.
+
+**REMOTE-14.4** When attention crosses the authenticated wire, the application shall preserve subsecond occurrence identity so identical requests within one second cannot acknowledge each other.
+
+**REMOTE-14.5** When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.
+
+**REMOTE-14.6** When folder metadata is published, the application shall retain native virtual-folder labels and identities, including separate folders with the same display name.
+
+**REMOTE-14.7** When remote project metadata arrives during refresh, the application shall derive project contents and removal authority from the same per-owner snapshot.
+
+**REMOTE-14.8** When sidebar metadata arrives before its worktree callback is applied, the application shall retain the previous complete snapshot and reject navigation reconciliation against rows from a different snapshot.
+
+**REMOTE-14.10** When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.
+
+**REMOTE-14.11** When a viewed agent stop is acknowledged remotely, the application shall clear only that stop occurrence and preserve newer stops and unrelated prompts.
 
 ## URL — Worktree URL Handler
 
@@ -2440,11 +2524,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.1** While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
 
-**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
+**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy agent session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 
-**AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
+**AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty Claude polling result without crashing.
 
 **AGENT-2.4** When a slow poll is superseded by a newer refresh, the application shall drop the stale poll's late write so the newer result wins.
+
+**AGENT-2.5** When Codex or Claude hooks report turn activity, the application shall include their working panes in Running and project working counts, remove stopped or waiting panes, and clear activity when the pane's command ends.
 
 ### AGENT-3.x
 
@@ -2456,7 +2542,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
 
-**AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall not create needs-input attention or post a waiting-for-you notification.
+**AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 
 **AGENT-3.6** When a provider hook explicitly reports a surfaced permission request, user question, or plan-review prompt, the application shall create the corresponding needs-input attention for that agent.
 
@@ -2691,6 +2777,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-2.3** While a repo's origin resolves to a supported forge, the repo context menu shall include an Open on GitHub…/Open on GitLab… item opening the project URL.
 
 **PROJECT-2.4** When origin detection resolves a repo's origin remote, the application shall publish the resolved HostingOrigin in PRStatusStore.originByRepo, omit repos whose detection returns nil, and prune entries for repos removed from the model.
+
+### PROJECT-3.x — Project icons and navigation preferences
+
+**PROJECT-3.1** When a project has no valid supported icon, the application shall fall back to stable initials without accepting malformed image data.
+
+**PROJECT-3.2** When a project icon override or manual project order is saved, the application shall retain it across relaunches and decode older application state without those settings.
+
+**PROJECT-3.3** When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.
+
+**PROJECT-3.4** When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.
 
 ## SSH — SSH
 

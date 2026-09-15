@@ -42,6 +42,10 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .onChange(of: horizontalSizeClass) { previous, current in
+            guard previous == .regular, current != .regular else { return }
+            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts)?.path ?? NavigationPath()
+        }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
         }
@@ -103,6 +107,9 @@ public struct RootView: View {
                         host: host,
                         coordinator: coordinator,
                         onSelect: { wt in
+                            iPadAppState.selectedHostId = host.id
+                            iPadAppState.selectedWorktreePath = wt.path
+                            iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
                             switch MobileNavigationDecision.decide(layout: wt.layout) {
                             case let .session(sessionName, title):
                                 navigationPath.append(SessionStep(
@@ -116,6 +123,9 @@ public struct RootView: View {
                             }
                         },
                         onSelectPaneWithWorktree: { worktree, leaf in
+                            iPadAppState.selectedHostId = host.id
+                            iPadAppState.selectedWorktreePath = worktree.path
+                            iPadAppState.focusedPaneId = leaf.sessionName
                             if case let .session(sessionName, title) =
                                 MobileNavigationDecision.decide(paneRow: leaf) {
                                 navigationPath.append(SessionStep(
@@ -125,8 +135,10 @@ public struct RootView: View {
                                     title: title
                                 ))
                             }
-                        }
+                        },
+                        navigation: iPadAppState.sidebarNavigation
                     )
+                    .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
                 }
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
@@ -134,6 +146,8 @@ public struct RootView: View {
                         worktree: step.worktree,
                         coordinator: coordinator
                     ) { sessionName in
+                        Self.applyCompactSession(SessionStep(host: step.host, worktreePath: step.worktree.path,
+                            sessionName: sessionName, title: step.worktree.layout?.title(for: sessionName) ?? sessionName), to: iPadAppState)
                         navigationPath.append(SessionStep(
                             host: step.host,
                             worktreePath: step.worktree.path,
@@ -144,8 +158,46 @@ public struct RootView: View {
                 }
                 .navigationDestination(for: SessionStep.self) { step in
                     SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator)
+                        .onAppear {
+                            guard horizontalSizeClass != .regular else { return }
+                            Self.applyCompactSession(step, to: iPadAppState)
+                        }
                 }
         }
+    }
+
+    struct CompactSelection: Equatable {
+        let host: Host
+        let worktree: WorktreePanes?
+        let session: SessionStep?
+        var path: NavigationPath {
+            var result = NavigationPath()
+            result.append(host)
+            if let session { result.append(session) }
+            else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree)) }
+            return result
+        }
+    }
+
+    static func compactSelection(appState: IPadAppState, hosts: [Host]) -> CompactSelection? {
+        guard let host = hosts.first(where: { $0.id == appState.selectedHostId }) else { return nil }
+        let worktree = appState.latestWorktrees.first { $0.path == appState.selectedWorktreePath }
+        let leaf = worktree?.layout?.leaves.first { $0.sessionName == appState.focusedPaneId }
+            ?? worktree?.layout?.leaves.first
+        let session = leaf.map { SessionStep(host: host, worktreePath: worktree?.path,
+            sessionName: $0.sessionName, title: $0.displayTitle) }
+        return CompactSelection(host: host, worktree: worktree, session: session)
+    }
+
+    static func applyCompactHost(_ host: Host, to appState: IPadAppState) {
+        guard appState.selectedHostId != host.id else { return }
+        IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
+    }
+
+    static func applyCompactSession(_ step: SessionStep, to appState: IPadAppState) {
+        appState.selectedHostId = step.host.id
+        appState.selectedWorktreePath = step.worktreePath
+        appState.focusedPaneId = step.sessionName
     }
 
     private var lockOverlay: some View {

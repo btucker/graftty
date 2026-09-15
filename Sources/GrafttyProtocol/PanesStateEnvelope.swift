@@ -5,18 +5,19 @@ import Foundation
 /// Tagged-union JSON so future message types (deltas, presence pings)
 /// can extend without breaking compatibility.
 public enum PanesStateMessage: Sendable, Equatable {
-    case snapshot([WorktreePanes])
+    case snapshot([WorktreePanes], sidebar: SidebarSnapshot? = nil)
 }
 
 extension PanesStateMessage: Codable {
-    private enum CodingKeys: String, CodingKey { case type, worktrees }
+    private enum CodingKeys: String, CodingKey { case type, worktrees, sidebar }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .snapshot(let worktrees):
+        case .snapshot(let worktrees, let sidebar):
             try c.encode("snapshot", forKey: .type)
             try c.encode(worktrees, forKey: .worktrees)
+            try c.encodeIfPresent(sidebar, forKey: .sidebar)
         }
     }
 
@@ -26,7 +27,7 @@ extension PanesStateMessage: Codable {
         switch type {
         case "snapshot":
             let worktrees = try c.decode([WorktreePanes].self, forKey: .worktrees)
-            self = .snapshot(worktrees)
+            self = .snapshot(worktrees, sidebar: try c.decodeIfPresent(SidebarSnapshot.self, forKey: .sidebar))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,

@@ -134,7 +134,7 @@ public struct ProportionalSplitView<First: View, Second: View>: View {
     }
 }
 
-private struct ResizeCursorModifier: ViewModifier {
+struct ResizeCursorModifier: ViewModifier {
     let isHorizontal: Bool
 
     func body(content: Content) -> some View {

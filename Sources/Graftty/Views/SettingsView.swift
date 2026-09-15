@@ -1,6 +1,7 @@
 // Sources/Graftty/Views/SettingsView.swift
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 import SwiftUI
 
 /// Preferences pane for Graftty — the "General" tab inside the SwiftUI
@@ -20,6 +21,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.editorAppBundleID) private var editorAppBundleID: String = ""
     @AppStorage(SettingsKeys.editorCliCommand) private var editorCliCommand: String = ""
 
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+
     @State private var resolvedShellEditor: String = ""
     @State private var availableApps: [TextEditorApp] = []
 
@@ -33,6 +36,11 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Toggle("Show project rail", isOn: $showsProjectRail)
+            Text("Turn off to group all projects and worktrees in one sidebar.")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("Default command:")
                 TextField("", text: $defaultCommand, prompt: Text("e.g., claude"))

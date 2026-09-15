@@ -1,7 +1,9 @@
 #if canImport(UIKit)
 import SwiftUI
+import GrafttyProtocol
 
 public struct HostPickerView: View {
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @Bindable var store: HostStore
     @Bindable var browser: NearbyMacBrowser
     @State private var showingAdd = false
@@ -76,6 +78,12 @@ public struct HostPickerView: View {
         }
         .navigationTitle("Graftty")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    Toggle("Show project rail", isOn: $showsProjectRail)
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("Display options")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { showingAdd = true } label: {
                     Image(systemName: "plus")

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
 /// `PaneTitleRow` (pane-scoped shell-integration pings). Centralized so
@@ -42,6 +43,7 @@ struct AttentionCapsule: View {
 /// worktree has multiple panes. The row has no background — the enclosing
 /// worktree block draws one unified highlight across both row types.
 /// Focus within that block is indicated by text emphasis instead.
+/// @spec LAYOUT-2.63: While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
 struct PaneTitleRow: View {
     let title: String
     /// True when this row's worktree is the currently-selected one. Drives
@@ -68,6 +70,7 @@ struct PaneTitleRow: View {
     /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
+    var attentionCount: Int = 0
 
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
@@ -117,6 +120,7 @@ struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 ))
+            SidebarActivityBadge(attentionCount)
             if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
                 // intrinsic width) on one line. A plain HStack — NOT
@@ -247,12 +251,15 @@ struct WorktreeRow: View {
     /// worktree's running state so a ping set on a closed worktree stays
     /// reachable.
     let attentionStyle: AttentionCapsuleStyle?
+    var attentionCount: Int = 0
 
     var body: some View {
         HStack(spacing: 6) {
+            SidebarActivityBadge(attentionCount)
             typeIcon
             if let prBadge {
-                prBadgeLabel(prBadge)
+                SidebarPRBadge(badge: prBadge)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             branchLabel
             if let attentionStyle {
@@ -300,73 +307,6 @@ struct WorktreeRow: View {
         theme.core.worktreeStateIcon(entry.state.wireState)
     }
 
-    @ViewBuilder
-    private func prBadgeLabel(_ badge: PRBadge) -> some View {
-        let tone = PRBadgeStyle.tone(
-            state: badge.state,
-            checks: badge.checks,
-            mergeable: badge.mergeable
-        )
-        Button {
-            NSWorkspace.shared.open(badge.url)
-        } label: {
-            Text(verbatim: badge.referenceText)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(color(for: tone))
-                .padding(.horizontal, 3)
-                .overlay {
-                    if tone == .conflicting {
-                        // Outline ring on conflict — pairs with the
-                        // breadcrumb's "merge conflict" pill so both
-                        // surfaces share the same visual language.
-                        // PR-8.20.
-                        Capsule()
-                            .strokeBorder(color(for: tone), lineWidth: 1)
-                    }
-                }
-                .modifier(PulseIfPending(isPending: tone.pulses))
-        }
-        .buttonStyle(.plain)
-        .help(Self.badgeTooltip(for: badge))
-        .accessibilityLabel(Self.badgeAccessibilityLabel(for: badge, tone: tone))
-    }
-
-    private func color(for tone: PRBadgeStyle.Tone) -> Color {
-        switch tone {
-        case .open:        return PRInfo.State.open.statusColor
-        case .merged:      return PRInfo.State.merged.statusColor
-        case .closed:      return PRInfo.State.closed.statusColor
-        case .ciFailure:   return PRInfo.Checks.failure.statusColor
-        case .ciPending:   return PRInfo.Checks.pending.statusColor
-        case .conflicting: return PRInfo.Mergeable.conflicting.statusColor
-        }
-    }
-
-    static func badgeTooltip(for badge: PRBadge) -> String {
-        "Open \(badge.referenceText) on \(badge.url.host ?? "")"
-    }
-
-    static func badgeAccessibilityLabel(
-        for badge: PRBadge,
-        tone: PRBadgeStyle.Tone
-    ) -> String {
-        let stateWord: String
-        switch badge.state {
-        case .open:   stateWord = "open"
-        case .merged: stateWord = "merged"
-        case .closed: stateWord = "closed"
-        }
-        let suffix: String
-        switch tone {
-        case .ciFailure:   suffix = ", CI failing"
-        case .ciPending:   suffix = ", CI running"
-        case .conflicting: suffix = ", merge conflict"
-        case .open, .merged, .closed: suffix = ""
-        }
-        return "Pull request \(badge.number), \(stateWord)\(suffix). Click to open in browser."
-    }
-
     /// @spec LAYOUT-2.26
     /// When the main-checkout worktree's current branch differs from
     /// the repository's resolved default branch, the sidebar row shall
@@ -406,6 +346,9 @@ struct WorktreeRow: View {
                     .foregroundColor(theme.sidebarSecondaryText)
             }
         }
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .help(entry.displayBranch == displayName ? displayName : "\(displayName)\n\(entry.displayBranch)")
     }
 
 }

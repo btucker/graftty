@@ -161,17 +161,41 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case open(worktreeID: String)
     case delete(worktreeID: String, force: Bool)
     case acknowledge(worktreeID: String, paneID: String?)
+    case moveProject(id: String, relativeTo: String, after: Bool)
+    case moveWorktree(repositoryID: String, worktreeID: String, relativeTo: String, after: Bool)
+    case projectIcon(repositoryID: String, revision: String)
+    case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
 }
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID, deviceID, fingerprint
+             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .moveProject(id, relativeTo, after):
+            try c.encode("move_project", forKey: .type)
+            try c.encode(id, forKey: .id)
+            try c.encode(relativeTo, forKey: .relativeTo)
+            try c.encode(after, forKey: .after)
+        case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
+            try c.encode("move_worktree", forKey: .type)
+            try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(relativeTo, forKey: .relativeTo)
+            try c.encode(after, forKey: .after)
+        case let .projectIcon(repositoryID, revision):
+            try c.encode("project_icon", forKey: .type)
+            try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(revision, forKey: .revision)
+        case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
+            try c.encode("acknowledge_occurrence", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encodeIfPresent(paneID, forKey: .paneID)
+            try c.encode(occurrence, forKey: .occurrence)
         case .hostPresentation:
             try c.encode("host_presentation", forKey: .type)
         case .listRepositories:
@@ -208,6 +232,14 @@ extension WorktreeManagementRequest: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "move_project":
+            self = .moveProject(id: try c.decode(String.self, forKey: .id), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
+        case "move_worktree":
+            self = .moveWorktree(repositoryID: try c.decode(String.self, forKey: .repositoryID), worktreeID: try c.decode(String.self, forKey: .worktreeID), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
+        case "project_icon":
+            self = .projectIcon(repositoryID: try c.decode(String.self, forKey: .repositoryID), revision: try c.decode(String.self, forKey: .revision))
+        case "acknowledge_occurrence":
+            self = .acknowledgeOccurrence(worktreeID: try c.decode(String.self, forKey: .worktreeID), paneID: try c.decodeIfPresent(String.self, forKey: .paneID), occurrence: try c.decode(SidebarAttentionOccurrence.self, forKey: .occurrence))
         case "host_presentation":
             self = .hostPresentation
         case "list_repositories":
@@ -266,6 +298,7 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
     case remoteMacConnections([RemoteMacConnectionSummary])
     case created(worktreeID: String, paneID: String)
     case deleted(dismissed: Bool)
+    case icon(Data?)
     case ok
     case error(code: String, message: String, forceAllowed: Bool, shortStatus: String?)
 }
@@ -274,7 +307,7 @@ extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, presentation, repositories, remoteMacConnections,
              worktreeID, paneID, dismissed, code, message, forceAllowed,
-             shortStatus
+             shortStatus, imageData
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -296,6 +329,9 @@ extension WorktreeManagementResponse: Codable {
         case .deleted(let dismissed):
             try c.encode("deleted", forKey: .type)
             try c.encode(dismissed, forKey: .dismissed)
+        case .icon(let data):
+            try c.encode("icon", forKey: .type)
+            try c.encodeIfPresent(data, forKey: .imageData)
         case .ok:
             try c.encode("ok", forKey: .type)
         case let .error(code, message, forceAllowed, shortStatus):
@@ -337,6 +373,8 @@ extension WorktreeManagementResponse: Codable {
             self = .deleted(
                 dismissed: try c.decodeIfPresent(Bool.self, forKey: .dismissed) ?? false
             )
+        case "icon":
+            self = .icon(try c.decodeIfPresent(Data.self, forKey: .imageData))
         case "ok":
             self = .ok
         case "error":

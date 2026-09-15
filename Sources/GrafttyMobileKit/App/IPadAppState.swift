@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import SwiftUI
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyRemoteClient
 
 /// Observable selection state for the iPad regular-width layout.
@@ -40,6 +41,8 @@ public final class IPadAppState {
         }
     }
 
+    public var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
+    public var navigationWindowWidth: Double = 1100
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
     public var latestWorktrees: [WorktreePanes] = []

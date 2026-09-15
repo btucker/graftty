@@ -3,6 +3,9 @@ import Foundation
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+import SwiftUI
+import AppKit
+import GrafttyCommandUI
 
 @testable import Graftty
 @testable import GrafttyKit
@@ -10,6 +13,158 @@ import Testing
 @Suite("Remote Macs sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
+    @Test("@spec LAYOUT-2.59: When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.")
+    func remoteSelectionObservesOwningMac() async throws {
+        let first = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "first")))
+        let second = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "second")))
+        let path = "/repo/feature"
+        var selections: [RemoteMacSidebarSelection?] = []
+        func content(_ identity: RemoteMacIdentity?) -> some View {
+            Color.clear.onRemoteWorktreeSelectionChange(identity: identity, path: path) {
+                selections.append($0)
+            }
+        }
+        let hosting = NSHostingView(rootView: content(first))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 100, height: 100), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.rootView = content(second)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(selections == [RemoteMacSidebarSelection(identity: second, worktreePath: path)])
+        hosting.rootView = content(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(selections.count == 2)
+        #expect(selections.last == .some(nil))
+    }
+
+    @Test("@spec LAYOUT-2.61: When a remote worktree is dropped onto another worktree, the application shall reject the reorder if the source and destination belong to different Mac identities, including matching paths.")
+    func remoteWorktreeDropRetainsOwningMac() throws {
+        let first = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "first")))
+        let second = RemoteMacIdentity(try makeRemoteMac(id: .init(value: "second")))
+        let replaced = RemoteMacIdentity(try makeRemoteMac(id: first.id, fingerprintByte: 0x33))
+        let worktree = makeWorktreePanes(path: "/repo/feature", displayName: "feature", layout: nil)
+        let payload = RemoteWorktreeDragPayload(identity: first, path: worktree.path)
+        let decoded = try JSONDecoder().decode(RemoteWorktreeDragPayload.self, from: JSONEncoder().encode(payload))
+        #expect(decoded.resolve(on: first, in: [worktree]) == worktree)
+        #expect(decoded.resolve(on: second, in: [worktree]) == nil)
+        #expect(decoded.resolve(on: replaced, in: [worktree]) == nil)
+        #expect(decoded.resolve(on: first, in: []) == nil)
+    }
+
+    @Test("@spec LAYOUT-2.55: While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
+    func machineStatusActions() {
+        #expect(RemoteMacConnectionState.connected.statusText == "Connected")
+        #expect(RemoteMacConnectionState.connected.connectionActionTitle == nil)
+        #expect(RemoteMacConnectionState.connecting.statusText == "Connecting…")
+        #expect(RemoteMacConnectionState.connecting.connectionActionTitle == nil)
+        #expect(RemoteMacConnectionState.offline.connectionActionTitle == "Connect")
+        #expect(RemoteMacConnectionState.discovered.connectionActionTitle == "Connect")
+        #expect(RemoteMacConnectionState.failed.connectionActionTitle == "Retry")
+        #expect(RemoteMacConnectionState.needsPairing.connectionActionTitle == "Pair…")
+    }
+
+    @Test("@spec LAYOUT-2.54: While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.")
+    func projectColumnRemovesRemoteHierarchy() async throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RemoteMacStore(storeURL: directory.appendingPathComponent("remotes.json"))
+        let remote = try makeRemoteMac(label: "Studio Mac")
+        try store.add(remote)
+        let model = RemoteMacsModel(store: store)
+        await model.loadSavedRemotes()
+        let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature",
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil),
+                right: .leaf(sessionName: "claude", title: "Claude", attentionText: "Claude needs input", isBusy: false, attentionSource: .agentStop)))
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
+            owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
+        let content = HStack(spacing: 0) {
+            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p", showsAttention: false,
+                collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
+                onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
+            Divider()
+            ProjectWorktreeColumn {
+                RemoteMacsSection(model: model, worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
+                    selectedRemoteIdentity: RemoteMacIdentity(remote), selectedRemoteWorktreePath: row.path,
+                    theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
+                    showsMacHierarchy: false, showsRepositoryHeaders: false)
+            }.frame(width: 260)
+            Divider()
+            ProjectWorktreeColumn {
+                let entry = WorktreeEntry(path: "/local/feature", branch: "feature")
+                let node = SidebarWorktreeNode.worktree(entry, displayName: "feature")
+                SidebarWorktreeNodeRow(node: node, depth: 0, repositoryID: UUID(), expansion: .constant(.init()),
+                    statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
+                    WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil, attentionCount: 1)
+                        .frame(minHeight: 44)
+                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+                }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))
+                SidebarWorktreeNodeRow(node: .folder(path: "topic", name: "topic", children: [node]), depth: 0,
+                    repositoryID: UUID(), expansion: .constant(.init()), statsByWorktreePath: [:], theme: .fallback,
+                    projectColumn: true) { entry, name in
+                    WorktreeRow(entry: entry, isActive: false, displayName: name, isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+                        .frame(minHeight: 44)
+                }
+            }.frame(width: 260)
+        }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
+        let hosting = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 718, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        func table(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { table(in: $0) }.first
+        }
+        #expect(table(in: hosting) == nil)
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        for columnStart in [197, 458] {
+            let firstHighlight = try #require((0..<260).first { x in
+                let color = bitmap.colorAt(x: Int(CGFloat(columnStart + x) * scale), y: Int(23 * scale))?.usingColorSpace(.deviceRGB)
+                return (color?.redComponent ?? 0) > 0.2
+            })
+            #expect(abs(firstHighlight - 6) <= 1)
+        }
+        if let path = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("project-worktree-spacing.png"))
+            let menuHost = NSHostingView(rootView: RemoteMacConnectionsPopover(model: model, onAddRemoteMac: {})
+                .background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark))
+            let menuWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: 165), styleMask: .borderless, backing: .buffered, defer: false)
+            menuWindow.contentView = menuHost
+            menuWindow.orderFront(nil)
+            defer { menuWindow.orderOut(nil) }
+            try await Task.sleep(for: .milliseconds(100))
+            menuHost.layoutSubtreeIfNeeded()
+            let menuBitmap = try #require(menuHost.bitmapImageRepForCachingDisplay(in: menuHost.bounds))
+            menuHost.cacheDisplay(in: menuHost.bounds, to: menuBitmap)
+            try menuBitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("remote-mac-menu.png"))
+        }
+    }
+
+    @Test("@spec LAYOUT-2.44: If the owning Mac does not advertise worktree editing, then the application shall disable remote worktree reorder actions.")
+    func reorderRequiresOwningHostCapability() {
+        let row = WorktreePanes(path: "/feature", displayName: "feature", repoDisplayName: "Project", displayBranch: "feature", state: .closed,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "worktree", projectID: "project"))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: [], query: ""))
+        #expect(RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["other"], query: ""))
+        #expect(!RemoteWorktreeReorderPolicy.allows(row, editableProjectIDs: ["project"], query: "feature"))
+        let main = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "Project", displayBranch: "main", state: .closed,
+            isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "main", projectID: "project"))
+        #expect(!RemoteWorktreeReorderPolicy.allows(main, editableProjectIDs: ["project"], query: ""))
+    }
+
     @Test("empty sidebar projection still exposes Add Remote Mac")
     func emptyProjectionShowsAddRemoteMacAction() throws {
         let projection = RemoteMacsSidebarProjection.make(

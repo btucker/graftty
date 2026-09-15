@@ -11,6 +11,14 @@ import SwiftUI
 /// split tree supplied by the Mac.
 public struct IPadRootLayout: View {
     public static let paintsTerminalBackgroundBehindSidebar = true
+    private var railIsCollapsed: Bool {
+        SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
+    }
+
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+    private var projectRailWidth: Double {
+        showsProjectRail ? SidebarLayoutPolicy.railWidth(collapsed: railIsCollapsed, expandedWidth: appState.sidebarNavigation.railExpandedWidth) + 1 : 0
+    }
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
@@ -127,7 +135,10 @@ public struct IPadRootLayout: View {
                                     host: host
                                 ),
                             onSelect: { wt in selectWorktree(wt) },
-                            onSelectPane: { leaf in selectPane(leaf) },
+                            onSelectPaneWithWorktree: { worktree, leaf in
+                                selectWorktree(worktree)
+                                selectPane(leaf)
+                            },
                             onListChanged: { list in
                                 Self.onWorktreeListChanged(
                                     appState: appState,
@@ -137,7 +148,13 @@ public struct IPadRootLayout: View {
                                 resolveLegacyMobileSplit(in: list)
                                 applyPendingMobileCreatedFocus(in: list)
                             },
-                            externalRefreshToken: worktreeListRefreshToken
+                            externalRefreshToken: worktreeListRefreshToken,
+                            navigation: appState.sidebarNavigation,
+                            navigationWindowWidth: appState.navigationWindowWidth,
+                            remoteSidebarProvider: { rows in
+                                guard coordinator.isPaired(host) else { return .snapshot(rows) }
+                                return await coordinator.navigationSnapshot(for: host, matching: rows)
+                            }
                         )
                     } else {
                         Spacer()
@@ -172,9 +189,9 @@ public struct IPadRootLayout: View {
                 }
                 .publishSidebarWidth()
                 .navigationSplitViewColumnWidth(
-                    min: 220,
-                    ideal: appState.sidebarWidth,
-                    max: 480
+                    min: projectRailWidth + 220,
+                    ideal: max(projectRailWidth + 280, appState.sidebarWidth),
+                    max: 676
                 )
             } detail: {
                 IPadDetailColumn(
@@ -199,6 +216,10 @@ public struct IPadRootLayout: View {
         // (and other built-in chrome) picks contrast that matches the
         // sidebar text color rather than the OS-level appearance.
         .preferredColorScheme(appState.theme.isDark ? .dark : .light)
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear { appState.navigationWindowWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, width in appState.navigationWindowWidth = width }
+        })
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
@@ -287,13 +308,10 @@ public struct IPadRootLayout: View {
             }
         }
         // IPAD-1.11: recompute the "anything needs attention?" flag from
-        // worktree-scoped and pane-scoped attention text. The detail-
-        // column toolbar reads this to decide whether to surface a
+        // worktree-scoped and pane-scoped attention, including unseen agent
+        // stops. The detail column toolbar reads this to decide whether to show a
         // collapsed-sidebar attention indicator.
-        appState.anyWorktreeHasAttention = list.contains { wt in
-            if wt.attentionText != nil { return true }
-            return wt.layout?.leaves.contains { $0.attentionText != nil } ?? false
-        }
+        appState.anyWorktreeHasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
     }
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
@@ -1229,6 +1247,7 @@ private struct HostPresentationRefreshKey: Hashable {
 
 /// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 private struct HostMenu: View {
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     let selectedHost: Host?
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
@@ -1262,6 +1281,8 @@ private struct HostMenu: View {
             } label: {
                 Label("Add Host…", systemImage: "plus")
             }
+            Divider()
+            Toggle("Show project rail", isOn: $showsProjectRail)
         } label: {
             HStack(spacing: 4) {
                 Text(selectedHost?.label ?? "No host")

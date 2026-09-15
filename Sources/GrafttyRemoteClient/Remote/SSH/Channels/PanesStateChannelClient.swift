@@ -41,6 +41,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     /// backfill the closures pointing at the store. Production wiring
     /// (`buildPaneEnvironment`) uses that flow to break the
     /// store↔driver chicken-and-egg without a placeholder driver swap.
+    private var navigationSnapshot: SidebarSnapshot?
+    public var sidebarSnapshot: SidebarSnapshot? { lock.withLock { navigationSnapshot } }
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
     private var childChannel: Channel?
@@ -158,7 +160,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                         let message = try? JSONDecoder().decode(PanesStateMessage.self, from: bytes)
                     else { continue }
                     switch message {
-                    case .snapshot(let worktrees):
+                    case .snapshot(let worktrees, let sidebar):
+                        self.lock.withLock { self.navigationSnapshot = sidebar }
                         await onSnapshot(worktrees)
                     }
                 }

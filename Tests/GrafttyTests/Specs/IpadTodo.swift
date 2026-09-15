@@ -72,9 +72,4 @@ struct IpadTodo {
 @spec IPAD-5.4: When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
 """, .disabled("not yet implemented"))
     func ipad_5_4() async throws { }
-
-    @Test("""
-@spec IPAD-7.2: When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
-""", .disabled("not yet implemented"))
-    func ipad_7_2() async throws { }
 }

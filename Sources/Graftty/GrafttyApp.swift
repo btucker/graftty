@@ -694,7 +694,7 @@ final class AppServices {
         return "\(hostName).local"
     }
 
-    fileprivate static func localRemoteDeviceID() -> RemoteDeviceID {
+    static func localRemoteDeviceID() -> RemoteDeviceID {
         do {
             return try HostDeviceIDStore.shared.loadOrGenerateAndPersist()
         } catch {
@@ -703,7 +703,7 @@ final class AppServices {
         }
     }
 
-    fileprivate static func localHostDisplayName() -> String {
+    static func localHostDisplayName() -> String {
         let localizedName = Host.current().localizedName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let localizedName, !localizedName.isEmpty {
@@ -1508,8 +1508,12 @@ struct GrafttyApp: App {
         // dismiss. Non-zero exit codes get a longer (8s) dwell so the
         // user has a chance to notice errors across a worktree they're
         // not currently viewing.
-        terminalManager.onCommandFinished = { [appState = $appState] terminalID, exitCode, _ in
+        terminalManager.onCommandFinished = { [appState = $appState, registry = services.claudeSessionRegistry] terminalID, exitCode, _ in
             MainActor.assumeIsolated {
+                if let indices = appState.wrappedValue.indicesOfWorktreeContaining(terminalID: terminalID),
+                   let session = appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
+                    registry.removePane(ZmxLauncher.sessionName(for: session))
+                }
                 Self.setAttentionForTerminal(
                     appState: appState,
                     terminalID: terminalID,
@@ -1609,6 +1613,7 @@ struct GrafttyApp: App {
                         worktreeCreations: services.cliWorktreeCreations,
                         worktreeRemovals: services.cliWorktreeRemovals,
                         remoteBranchStore: services.remoteBranchStore,
+                        agentRegistry: services.claudeSessionRegistry,
                         remoteMacsModel: services.remoteMacsModel
                     )
                     return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
@@ -1927,6 +1932,7 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         tm.paneClosed = { [presenceStorage] _, sessionName in
             guard let sessionName else { return }
+            services.claudeSessionRegistry.removePane(sessionName)
             _ = refreshPresenceIndex()
             for record in presenceIndex.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
@@ -2069,6 +2075,8 @@ struct GrafttyApp: App {
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
+                let projectID = "\(localWorktreeOrigin.deviceID.value):\(repo.id.uuidString)"
+                let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
                 let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
                     forRepoAt: repo.path,
                     hint: repo.defaultBranchHint
@@ -2078,7 +2086,7 @@ struct GrafttyApp: App {
                     inRepoAtPath: repo.path,
                     defaultBranch: defaultBranch
                 )
-                for wt in repo.worktrees {
+                for wt in SidebarHostNavigation.canonicalWorktrees(in: repo) {
                     let stats = wt.state.hasOnDiskWorktree
                         ? panesStatsStore.stats[wt.path]
                         : nil
@@ -2105,7 +2113,9 @@ struct GrafttyApp: App {
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
                             },
-                        origin: localWorktreeOrigin
+                        origin: localWorktreeOrigin,
+                        sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
                     ))
                 }
             }
@@ -2292,7 +2302,12 @@ struct GrafttyApp: App {
             let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
                 // Initial snapshot fires synchronously so the first frame
                 // hits the wire before the polling loop's first sleep.
-                let initial = await MainActor.run { buildWorktreePanesSnapshot() }
+                let snapshot: @MainActor () -> PanesStateMessage = {
+                    let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
+                    let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
+                    return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
+                }
+                let initial = await MainActor.run { snapshot() }
                 await onChange(initial)
 
                 let task = Task {
@@ -2300,7 +2315,7 @@ struct GrafttyApp: App {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .seconds(1))
                         if Task.isCancelled { return }
-                        let next = await MainActor.run { buildWorktreePanesSnapshot() }
+                        let next = await MainActor.run { snapshot() }
                         if next != last {
                             last = next
                             await onChange(next)
@@ -2314,11 +2329,20 @@ struct GrafttyApp: App {
 
             let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
                 onChange in
-                let snapshot: @MainActor () -> [WorktreePanes] = {
-                    buildWorktreePanesSnapshot()
-                        + services.remoteMacsModel.promotedWorktreesForRelay()
+                let snapshot: @MainActor () async -> PanesStateMessage = {
+                    let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
+                    let navigation = SidebarHostController.shared.snapshot(state: &appStateBinding.wrappedValue, owner: localWorktreeOrigin, remote: remote.projects,
+                        authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
+                    let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
+                    let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
+                    let sorted = worktrees.enumerated().sorted {
+                        let a = order[SidebarProjection.projectID($0.element), default: .max]
+                        let b = order[SidebarProjection.projectID($1.element), default: .max]
+                        return a == b ? $0.offset < $1.offset : a < b
+                    }.map(\.element)
+                    return .snapshot(sorted, sidebar: navigation)
                 }
-                let initial = await MainActor.run { snapshot() }
+                let initial = await snapshot()
                 await onChange(initial)
 
                 let task = Task {
@@ -2326,7 +2350,7 @@ struct GrafttyApp: App {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .seconds(1))
                         if Task.isCancelled { return }
-                        let next = await MainActor.run { snapshot() }
+                        let next = await snapshot()
                         if next != last {
                             last = next
                             await onChange(next)
@@ -2589,6 +2613,37 @@ struct GrafttyApp: App {
                 }
 
                 switch request {
+                case let .moveProject(id, relativeTo, after):
+                    return await MainActor.run {
+                        var navigation = appStateBinding.wrappedValue.sidebarNavigation ?? .init()
+                        navigation.order.discover(SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin).map(\.id))
+                        guard navigation.order.move(id, relativeTo: relativeTo, after: after) else {
+                            return .error(code: "invalid-move", message: "Project order changed; refresh and try again.", forceAllowed: false, shortStatus: nil)
+                        }
+                        appStateBinding.wrappedValue.sidebarNavigation = navigation
+                        return .ok
+                    }
+                case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
+                    return await MainActor.run {
+                        guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
+                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout.", forceAllowed: false, shortStatus: nil)
+                        }
+                        return .ok
+                    }
+                case let .projectIcon(repositoryID, revision):
+                    return await MainActor.run {
+                        guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == repositoryID }),
+                              let data = SidebarHostController.shared.icons[repo.id.uuidString],
+                              ProjectIconDiscovery.revision(data) == revision else { return .icon(nil) }
+                        return .icon(data)
+                    }
+                case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
+                    return await MainActor.run {
+                        guard SidebarHostNavigation.acknowledge(in: &appStateBinding.wrappedValue, worktreeID: worktreeID, paneID: paneID, occurrence: occurrence) else {
+                            return .error(code: "occurrence-changed", message: "This request has changed or already cleared.", forceAllowed: false, shortStatus: nil)
+                        }
+                        return .ok
+                    }
                 case .hostPresentation:
                     let presentation = await MainActor.run {
                         RemoteHostPresentation(
@@ -2844,7 +2899,7 @@ struct GrafttyApp: App {
                                     }
                                     appStateBinding.wrappedValue.repos[repoIndex]
                                         .worktrees[worktreeIndex]
-                                        .paneAttention[slot] = nil
+                                        .acknowledgePaneAttention(slot)
                                 } else {
                                     appStateBinding.wrappedValue.repos[repoIndex]
                                         .worktrees[worktreeIndex]
@@ -3748,6 +3803,7 @@ struct GrafttyApp: App {
         worktreeCreations: CLIWorktreeCreationStore,
         worktreeRemovals: CLIWorktreeRemovalStore,
         remoteBranchStore: RemoteBranchStore,
+        agentRegistry: ClaudeSessionRegistry,
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
@@ -3853,7 +3909,8 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
                 terminalManager: terminalManager,
-                remoteBranchStore: remoteBranchStore
+                remoteBranchStore: remoteBranchStore,
+                agentRegistry: agentRegistry
             )
         case .teamInbox(let request):
             return await handleTeamInbox(
@@ -4293,9 +4350,23 @@ struct GrafttyApp: App {
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         terminalManager: TerminalManager,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        agentRegistry: ClaudeSessionRegistry
     ) async -> ResponseMessage {
+        if let paneSessionName,
+           appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: paneSessionName) != nil {
+            agentRegistry.recordHook(runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
+                                     paneSessionName: paneSessionName, attentionReason: attentionReason)
+        }
         switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
+        case .recordStoppedTurn:
+            let stop = SidebarAgentStop(agentName: AgentStopNotification.displayName(runtime), stoppedAt: Date())
+            for ri in appState.wrappedValue.repos.indices {
+                if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
+                    appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
+                    break
+                }
+            }
         case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,
@@ -5909,15 +5980,16 @@ struct GrafttyApp: App {
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .hostPresentation, .listRepositories,
+        case .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _),
-             .pullDefaultBranch(let repositoryID):
+             .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
+             .moveWorktree(let repositoryID, _, _, _):
             return repositoryID.hasPrefix("relay-repository-")
         case .open(let worktreeID),
              .delete(let worktreeID, _),
-             .acknowledge(let worktreeID, _):
+             .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")
         }
     }
@@ -6211,7 +6283,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 /// one yet), and the pane-scoped attention text from the worktree's
 /// `paneAttention`.
 @MainActor
-private func paneLayoutNode(
+func paneLayoutNode(
     from node: SplitTree.Node,
     paneSessions: [PaneSlotID: PaneSessionID],
     titles: [PaneSlotID: String],

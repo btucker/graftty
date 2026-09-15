@@ -23,6 +23,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// when `RemoteBranchSnapshot.defaultBranch` is not yet resolved
     /// (no remote, network failure, fresh launch before first poll).
     public var defaultBranchHint: String?
+    public var iconOverride: ProjectIconOverride? = nil
 
     public init(
         path: String,
@@ -49,7 +50,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
-        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint
+        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint, iconOverride
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +63,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
         self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
         self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
+        self.iconOverride = try container.decodeIfPresent(ProjectIconOverride.self, forKey: .iconOverride)
     }
 }
 

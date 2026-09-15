@@ -1,6 +1,53 @@
 import SwiftUI
+import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
+import CoreTransferable
+import UniformTypeIdentifiers
+
+struct RemoteWorktreeDragPayload: Codable, Transferable {
+    static let contentType = UTType(exportedAs: "com.graftty.remote-worktree-move", conformingTo: .data)
+    let deviceID: RemoteDeviceID
+    let fingerprint: RemoteIdentityFingerprint
+    let path: String
+
+    init(identity: RemoteMacIdentity, path: String) {
+        self.deviceID = identity.id
+        self.fingerprint = identity.fingerprint
+        self.path = path
+    }
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: contentType)
+    }
+
+    func resolve(on identity: RemoteMacIdentity, in worktrees: [WorktreePanes]) -> WorktreePanes? {
+        guard identity.id == deviceID, identity.fingerprint == fingerprint else { return nil }
+        return worktrees.first { $0.path == path }
+    }
+}
+
+enum RemoteWorktreeReorderPolicy {
+    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String) -> Bool {
+        query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
+            && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
+    }
+}
+
+private struct RemoteWorktreeDragSource: ViewModifier {
+    let payload: RemoteWorktreeDragPayload
+    let isEnabled: Bool
+    let preview: AnyView
+    @State private var rowWidth: CGFloat = 280
+    @ViewBuilder func body(content: Content) -> some View {
+        if isEnabled {
+            content.draggable(payload) { preview.frame(width: rowWidth).fixedSize(horizontal: false, vertical: true) }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
+        }
+        else { content }
+    }
+}
 
 struct RemoteMacsSidebarProjection: Equatable {
     enum Action: Equatable {
@@ -195,7 +242,7 @@ enum RemoteMacSidebarSelectionReducer {
     }
 }
 
-/// @spec REMOTE-13.8: While a Remote Mac is connected, the sidebar shall
+/// @spec REMOTE-13.8: While a Remote Mac is connected and the project column is disabled, the sidebar shall
 /// render Mac → repository → worktree → pane hierarchy using the same
 /// WorktreeRow and PaneTitleRow presentation components as local worktrees.
 struct RemoteMacsSection: View {
@@ -235,22 +282,44 @@ struct RemoteMacsSection: View {
         )
     }
 
-    var body: some View {
-        Section {
-            ForEach(model.savedRemoteMacs) { remoteMac in
-                remoteMacGroup(remoteMac)
-            }
+    var projectFilter: String? = nil
+    var query: String = ""
+    var showsMacHierarchy = true
+    var showsRepositoryHeaders = true
+    var editableProjectIDs: Set<String> = []
 
+    @ViewBuilder
+    var body: some View {
+        if showsMacHierarchy {
+            Section {
+                remoteContents
+            } header: {
+                Text(projection.title).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            remoteContents
+        }
+    }
+
+    @ViewBuilder
+    private var remoteContents: some View {
+        ForEach(model.savedRemoteMacs.filter { mac in
+            (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && SidebarInteractionPolicy.matches($0, query: query)
+            }
+        }) { remoteMac in
+            if showsMacHierarchy { remoteMacGroup(remoteMac) }
+            else { repositories(for: remoteMac) }
+        }
+
+        if showsMacHierarchy {
             Button(action: onAddRemoteMac) {
                 Label("Add Remote Mac...", systemImage: "plus")
                     .foregroundColor(theme.sidebarPrimaryText(isActive: false))
             }
             .buttonStyle(.plain)
             .help("Add Remote Mac")
-        } header: {
-            Text(projection.title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -269,13 +338,7 @@ struct RemoteMacsSection: View {
                 }
             )
         ) {
-            ForEach(groupedRepositories(for: identity), id: \.id) { repository in
-                repositoryGroup(
-                    repository,
-                    worktrees: repository.worktrees,
-                    remoteMac: remoteMac
-                )
-            }
+            repositories(for: remoteMac)
         } label: {
             Button {
                 onSelectRemoteMac(remoteMac)
@@ -305,6 +368,21 @@ struct RemoteMacsSection: View {
         }
     }
 
+    private func repositories(for remoteMac: RemoteMac) -> some View {
+        ForEach(groupedRepositories(for: RemoteMacIdentity(remoteMac)).filter { repository in
+            repository.worktrees.contains {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && SidebarInteractionPolicy.matches($0, query: query)
+            }
+        }, id: \.id) { repository in
+            repositoryGroup(
+                repository,
+                worktrees: repository.worktrees,
+                remoteMac: remoteMac
+            )
+        }
+    }
+
     @ViewBuilder
     private func repositoryGroup(
         _ repositoryGroup: RemoteRepositoryGroup,
@@ -316,47 +394,58 @@ struct RemoteMacsSection: View {
             identity: identity,
             id: repositoryGroup.id
         )
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { !collapsedRepositories.contains(key) },
-                set: { expanded in
-                    if expanded {
-                        collapsedRepositories.remove(key)
-                    } else {
-                        collapsedRepositories.insert(key)
-                    }
-                }
-            )
-        ) {
-            ForEach(worktrees, id: \.path) { worktree in
+        let rows = Group {
+            SidebarWorktreeRows(worktrees: worktrees.filter {
+                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                    && SidebarInteractionPolicy.matches($0, query: query)
+            }, folderIndent: showsMacHierarchy ? 0 : 16) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
-                        EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0)
+                        showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil
                     )
+                    .listRowSeparator(.hidden)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Text(repositoryGroup.displayName)
-                    .foregroundColor(theme.foreground)
-                    .fontWeight(.semibold)
-                Spacer()
-                if let repository = model.repositoriesByRemote[identity]?
-                    .first(where: { $0.id == repositoryGroup.id }) {
-                    Button {
-                        onAddRemoteWorktree(remoteMac, repository)
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.sidebarDimIcon)
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(
-                        "Add worktree to \(repositoryGroup.displayName) on \(remoteMac.label)"
-                    )
+        }
+        if showsRepositoryHeaders {
+            DisclosureGroup(isExpanded: Binding(
+                get: { !collapsedRepositories.contains(key) },
+                set: { expanded in
+                    if expanded { collapsedRepositories.remove(key) }
+                    else { collapsedRepositories.insert(key) }
+                }
+            )) {
+                rows
+            } label: {
+                HStack(spacing: 6) {
+                    Text(repositoryGroup.displayName).foregroundColor(theme.foreground).fontWeight(.semibold)
+                    Spacer()
+                    addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: false)
                 }
             }
+        } else {
+            if model.repositoriesByRemote[identity]?.contains(where: { $0.id == repositoryGroup.id }) == true {
+                HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
+                    .frame(height: 44)
+            }
+            rows
+        }
+    }
+
+    @ViewBuilder
+    private func addWorktreeButton(_ group: RemoteRepositoryGroup, remoteMac: RemoteMac, showsLabel: Bool) -> some View {
+        if let repository = model.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?.first(where: { $0.id == group.id }) {
+            Button { onAddRemoteWorktree(remoteMac, repository) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                    if showsLabel { Text("Add worktree") }
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.sidebarDimIcon)
+                .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Add worktree to \(group.displayName) on \(remoteMac.label)")
+            .accessibilityLabel("Add worktree to \(group.displayName) on \(remoteMac.label)")
         }
     }
 
@@ -368,32 +457,28 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
-        VStack(spacing: 0) {
-            Button {
-                onSelectRemoteWorktree(remoteMac, worktree.path)
-            } label: {
-                WorktreeRow(
-                    entry: sidebarEntry(for: worktree),
-                    isActive: isActive,
-                    displayName: worktree.displayName,
-                    isMainCheckout: worktree.isMainCheckout,
-                    theme: theme,
-                    stats: sidebarStats(for: worktree),
-                    baseRef: worktree.stats?.baseRef,
-                    prBadge: worktree.prBadge,
-                    attentionStyle: worktree.attentionText.map {
-                        AttentionCapsuleStyle.from(
-                            text: $0,
-                            source: worktree.attentionSource
-                        )
-                    }
+        let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
+        let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]))
+        let heading = WorktreeRow(
+            entry: sidebarEntry(for: worktree),
+            isActive: isActive,
+            displayName: worktree.displayName,
+            isMainCheckout: worktree.isMainCheckout,
+            theme: theme,
+            stats: sidebarStats(for: worktree),
+            baseRef: worktree.stats?.baseRef,
+            prBadge: worktree.prBadge,
+            attentionStyle: worktree.attentionText.map {
+                AttentionCapsuleStyle.from(
+                    text: $0,
+                    source: worktree.attentionSource
                 )
-            }
-            .buttonStyle(.plain)
-            .rightClickMenu {
-                remoteWorktreeMenu(worktree, remoteMac: remoteMac)
-            }
-
+            },
+            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0]
+        )
+        .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
+        .contentShape(Rectangle())
+        let panes = Group {
             if let layout = worktree.layout {
                 ForEach(layout.leaves, id: \.sessionName) { leaf in
                     Button {
@@ -416,13 +501,53 @@ struct RemoteMacsSection: View {
                                     source: leaf.attentionSource
                                 )
                             },
-                            portBindings: []
+                            portBindings: [],
+                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
+                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                         )
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
+        let preview = AnyView(
+            VStack(spacing: 0) {
+                heading
+                panes
+            }
+            .padding(.vertical, groupsPanes ? 8 : 0)
+            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
+        )
+        VStack(spacing: 0) {
+            Button {
+                onSelectRemoteWorktree(remoteMac, worktree.path)
+            } label: {
+                heading
+            }
+            .buttonStyle(.plain)
+            .id(worktree.path)
+            .rightClickMenu {
+                remoteWorktreeMenu(worktree, remoteMac: remoteMac)
+            }
+            .modifier(RemoteWorktreeDragSource(payload: .init(identity: identity, path: worktree.path), isEnabled: canReorder(worktree, on: remoteMac), preview: preview))
+            .dropDestination(for: RemoteWorktreeDragPayload.self) { values, location in
+                guard query.isEmpty, !worktree.state.isInFlight,
+                      editableProjectIDs.contains(SidebarProjection.projectID(worktree)),
+                      let value = values.first,
+                      let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
+                      canReorder(source, on: remoteMac), source.path != worktree.path,
+                      source.repositoryID == worktree.repositoryID,
+                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
+                      !worktree.isMainCheckout || location.y > 14 else { return false }
+                moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
+                return true
+            }
+
+
+            panes
+        }
+        .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
@@ -483,11 +608,52 @@ struct RemoteMacsSection: View {
         }
     }
 
+    private func canReorder(_ worktree: WorktreePanes, on remoteMac: RemoteMac) -> Bool {
+        model.connectionState(for: RemoteMacIdentity(remoteMac)) == .connected
+            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query)
+    }
+
+    private func moveRemoteWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, remoteMac: RemoteMac) {
+        guard canReorder(source, on: remoteMac), !target.state.isInFlight,
+              let repositoryID = source.repositoryID else { return }
+        Task {
+            guard await model.sidebarSnapshot(for: remoteMac)?.supportsNavigationEditing == true else {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't reorder worktrees"
+                alert.informativeText = "The owning Mac no longer advertises worktree editing. Reconnect to a supported version of Graftty."
+                alert.runModal()
+                return
+            }
+            do {
+                let response = try await model.sendWorktreeManagement(identity: RemoteMacIdentity(remoteMac),
+                    request: .moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
+                if case .error(_, let message, _, _) = response {
+                    let alert = NSAlert(); alert.messageText = "Couldn't reorder worktrees"; alert.informativeText = message; alert.runModal()
+                }
+            } catch {
+                let alert = NSAlert(); alert.messageText = "Couldn't reach the owning Mac"; alert.informativeText = error.localizedDescription; alert.runModal()
+            }
+        }
+    }
+
     private func remoteWorktreeMenu(
         _ worktree: WorktreePanes,
         remoteMac: RemoteMac
     ) -> NSMenu {
         let menu = NSMenu()
+        let siblings = (worktreePanesByRemote[RemoteMacIdentity(remoteMac)] ?? []).filter {
+            $0.repositoryID == worktree.repositoryID && ($0.sidebar?.folderIDs ?? $0.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders)
+        }
+        if canReorder(worktree, on: remoteMac),
+           let index = siblings.firstIndex(where: { $0.path == worktree.path }) {
+            if index > 0, !siblings[index - 1].isMainCheckout, !siblings[index - 1].state.isInFlight {
+                menu.addItem(ClosureMenuItem(title: "Move Up") { moveRemoteWorktree(worktree, relativeTo: siblings[index - 1], after: false, remoteMac: remoteMac) })
+            }
+            if index + 1 < siblings.count, !siblings[index + 1].state.isInFlight {
+                menu.addItem(ClosureMenuItem(title: "Move Down") { moveRemoteWorktree(worktree, relativeTo: siblings[index + 1], after: true, remoteMac: remoteMac) })
+            }
+        }
+
         guard !worktree.isMainCheckout, !worktree.state.isInFlight else {
             return menu
         }

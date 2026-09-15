@@ -44,12 +44,13 @@ public enum AgentHookAttentionClassifier {
 
 public enum AgentHookAttentionAction: Sendable, Equatable {
     case record(AgentHookAttentionReason)
+    case recordStoppedTurn
     case clear
     case none
 }
 
 /// Converts provider hook semantics into one small, testable attention state
-/// transition. A bare Stop is intentionally only a lifecycle signal.
+/// transition. Completed turns are tracked separately from blocking prompts.
 public enum AgentHookAttentionTransition {
     public static func action(
         event: TeamHookEvent,
@@ -61,7 +62,9 @@ public enum AgentHookAttentionTransition {
         switch event {
         case .sessionStart, .userPromptSubmit, .postToolUse, .postToolUseFailure:
             return .clear
-        case .preToolUse, .permissionRequest, .stop:
+        case .stop:
+            return .recordStoppedTurn
+        case .preToolUse, .permissionRequest:
             return .none
         }
     }
