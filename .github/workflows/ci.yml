@@ -78,7 +78,11 @@ jobs:
         run: swift build --build-tests -Xswiftc -warnings-as-errors
 
       - name: Test package targets in isolated processes
-        timeout-minutes: 5
+        # The complete serial suite, test discovery, and process startup can
+        # exceed five minutes on hosted runners even when every test passes.
+        # Keep a finite limit with room for runner variance; the ownership
+        # corpus below retains its separate five-minute performance gate.
+        timeout-minutes: 10
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
         # A package-wide invocation intermittently stalls while the many async,
