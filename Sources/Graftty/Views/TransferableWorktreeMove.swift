@@ -9,7 +9,7 @@ import GrafttyKit
 /// section. Kept separate from `TransferablePaneSlotID` so pane moves
 /// and worktree moves cannot share a decoded payload.
 struct TransferableWorktreeMove: Codable, Transferable {
-    static let contentType = UTType(exportedAs: "com.graftty.sidebar-worktree-move")
+    static let contentType = UTType(exportedAs: "com.graftty.sidebar-worktree-move", conformingTo: .data)
 
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID

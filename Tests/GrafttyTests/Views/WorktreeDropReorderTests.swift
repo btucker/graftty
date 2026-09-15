@@ -2,11 +2,27 @@ import CoreGraphics
 import Foundation
 import Testing
 import CoreTransferable
+import UniformTypeIdentifiers
 @testable import Graftty
 import GrafttyKit
 
 @Suite("Worktree drop reorder tests")
 struct WorktreeDropReorderTests {
+    @Test("@spec LAYOUT-2.66: When the macOS application is bundled, the application shall export its local worktree, remote worktree, and pane drag types as data so the system can recognize sidebar drag sessions.")
+    func bundledAppDeclaresSidebarDragTypes() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let script = try String(contentsOf: root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
+        let start = try #require(script.range(of: "cat > \"$APP/Contents/Info.plist\" <<PLIST\n")?.upperBound)
+        let end = try #require(script.range(of: "\nPLIST", range: start..<script.endIndex)?.lowerBound)
+        let plist = try #require(PropertyListSerialization.propertyList(from: Data(script[start..<end].utf8), format: nil) as? [String: Any])
+        let declarations = try #require(plist["UTExportedTypeDeclarations"] as? [[String: Any]])
+        for type in [TransferableWorktreeMove.contentType, TransferablePaneSlotID.contentType, RemoteWorktreeDragPayload.contentType] {
+            let declaration = try #require(declarations.first { $0["UTTypeIdentifier"] as? String == type.identifier })
+            #expect((declaration["UTTypeConformsTo"] as? [String])?.contains(UTType.data.identifier) == true)
+        }
+    }
+
     @Test("@spec LAYOUT-2.65: When a user drops a worktree or pane on a worktree row, the application shall accept both drag types through one destination, reorder eligible worktree siblings, and move panes only within their repository.")
     func sharedDestinationAcceptsBothDragTypes() async throws {
         let slot = PaneSlotID()

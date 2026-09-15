@@ -7,7 +7,7 @@ import CoreTransferable
 import UniformTypeIdentifiers
 
 struct RemoteWorktreeDragPayload: Codable, Transferable {
-    static let contentType = UTType(exportedAs: "com.graftty.remote-worktree-move")
+    static let contentType = UTType(exportedAs: "com.graftty.remote-worktree-move", conformingTo: .data)
     let deviceID: RemoteDeviceID
     let fingerprint: RemoteIdentityFingerprint
     let path: String

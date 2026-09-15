@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// reorder drops and pane move drops never compete for the same generic
 /// `public.data` provider.
 struct TransferablePaneSlotID: Codable, Transferable {
-    static let contentType = UTType(exportedAs: "com.graftty.sidebar-pane-slot-id")
+    static let contentType = UTType(exportedAs: "com.graftty.sidebar-pane-slot-id", conformingTo: .data)
 
     let id: UUID
 

@@ -202,6 +202,33 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+      <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.graftty.sidebar-worktree-move</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty worktree reorder</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.graftty.sidebar-pane-slot-id</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty pane move</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.graftty.remote-worktree-move</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty remote worktree reorder</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
+    </array>
 </dict>
 </plist>
 PLIST
