@@ -5,6 +5,37 @@ import Testing
 
 @MainActor
 struct PagedTerminalCoordinatorTests {
+    @Test("@spec TERM-12.23: When a Mac attachment prefetches older history, the application shall install the current screen first and fetch at most one bounded history page at a time, including history on the inactive screen.")
+    func backgroundHistoryFollowsScreen() async throws {
+        let surface = Surface()
+        surface.nearTop = false
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        await coordinator.loadIfNeeded(prefetch: true)
+        #expect(requests.isEmpty)
+        try await coordinator.handle(.checkpoint(.init(
+            incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
+            hasPrimaryHistory: true, hasAlternateHistory: true
+        )))
+        #expect(surface.installed == [1])
+        #expect(requests.isEmpty)
+        await coordinator.loadIfNeeded(prefetch: true)
+        await coordinator.loadIfNeeded(prefetch: true)
+        #expect(requests.count == 1)
+        guard case .history(let first) = try #require(requests.first) else { return }
+        #expect(first.screen == 0)
+        try await coordinator.handle(.page(.init(
+            incarnation: first.incarnation, checkpointID: first.checkpointID,
+            requestID: first.requestID, ordinal: first.ordinal, screen: first.screen,
+            data: Data([1]), complete: true
+        )))
+        await coordinator.loadIfNeeded(prefetch: true)
+        guard case .history(let second) = try #require(requests.last) else { return }
+        #expect(second.screen == 1)
+        #expect(second.ordinal == 0)
+        coordinator.disconnect()
+    }
+
     @Test("Retry accepts a delayed response to the original timed-out page request")
     func retryPreservesRequestIdentity() async throws {
         let surface = Surface()

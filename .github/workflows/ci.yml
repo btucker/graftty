@@ -66,11 +66,13 @@ jobs:
         timeout-minutes: 2
         run: scripts/test-swiftpm-shared.sh
 
+      - uses: ./.github/actions/paging-renderer
+
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 

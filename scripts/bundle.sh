@@ -70,6 +70,11 @@ fi
 
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
+PAGING_PACKAGE_PATH="${GRAFTTY_GHOSTTY_PACKAGE_PATH-$REPO/.dependencies/libghostty-spm}"
+if [[ "$CONFIGURATION" == "release" && ! -f "$PAGING_PACKAGE_PATH/PAGING-BUILD.txt" ]]; then
+  echo "Release builds require the paging renderer. Run scripts/ghostty-paging/build-package.sh first." >&2
+  exit 1
+fi
 echo "→ swift build --configuration $CONFIGURATION"
 swift build --configuration "$CONFIGURATION"
 

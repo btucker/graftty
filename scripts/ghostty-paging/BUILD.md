@@ -2,10 +2,19 @@
 
 Build the local `libghostty-spm` dependency before building the Mac or iOS app.
 The package includes the current-screen restore, scrollback-page, and read-only
-history APIs used by the Mac and iOS apps. The history API lets followers fill spare
+history APIs used by the Mac and iOS apps. CI and release builds create this package
+through `.github/actions/paging-renderer`; release bundling fails if it is missing.
+The history API lets followers fill spare
 vertical space above the live grid with earlier rows. The published dependency
 does not yet include these APIs. Without the local package, builds continue using
 the legacy attachment path and show only the fitted live grid.
+
+Mac attachments restore the current screen first, then import one older history
+page at a time in the background. Local panes negotiate directly with zmx; remote
+Mac panes request the paged SSH subsystem. New sessions and daemons without paging
+support still use the legacy attachment path. Existing daemons keep running across
+app upgrades, so an older daemon continues to use that fallback until its session
+is restarted.
 
 Use macOS with Xcode, the iOS SDK, and Zig 0.16.0. The first build downloads the
 pinned source repositories and their Zig dependencies. Build all five architecture

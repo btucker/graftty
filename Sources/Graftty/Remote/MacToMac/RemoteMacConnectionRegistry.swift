@@ -697,7 +697,7 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     }
 
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
-        try await connection.openTerminalSession(sessionName: sessionName)
+        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
     }
 
     func makeWorktreeManagementDriver() async throws

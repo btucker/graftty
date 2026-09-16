@@ -6,6 +6,7 @@ import GrafttyRemoteClient
 
 final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     typealias SurfaceWriteBuffer = (ghostty_surface_t, Data) -> Void
+    typealias PagedRendererFactory = @MainActor (MacPagedSurface, @escaping (DisplayGrid?) -> Void) -> any PagedTerminalRenderer
 
     enum Error: Swift.Error {
         case alreadyStarted
@@ -59,6 +60,18 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var takeoverRequested = false
     private var takeoverBaseEpoch: UInt64?
     private var didReportUnexpectedClose = false
+    private var pagedSurface: MacPagedSurface?
+    private var attachmentGrid: DisplayGrid?
+    private var lastPagedGrid: DisplayGrid?
+    private var awaitingInitialCheckpoint = false
+    private let pagedRendererFactory: PagedRendererFactory
+    private var prepareAttachmentGrid: (DisplayGrid?) -> Void = { _ in }
+
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
+        lock.lock()
+        prepareAttachmentGrid = prepareGrid
+        lock.unlock()
+    }
 
     private static let maxPendingInputBytes = 1_048_576
     private static let maxPendingInputFrames = 1_024
@@ -69,8 +82,12 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             RemoteTerminalSurfaceBackend.defaultWriteBuffer(surface: surface, data: data)
         },
         requestRefresh: @escaping () -> Void = {},
-        onUnexpectedClose: @escaping () -> Void = {}
+        onUnexpectedClose: @escaping () -> Void = {},
+        pagedRendererFactory: @escaping PagedRendererFactory = { surface, prepare in
+            MacPagedTerminalRenderer(surface: surface, prepareGrid: prepare)
+        }
     ) {
+        self.pagedRendererFactory = pagedRendererFactory
         self.client = client
         self.writeBuffer = writeBuffer
         self.requestRefresh = requestRefresh
@@ -116,6 +133,10 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         case .idle:
             lifecycle = .running
             self.surface = surface
+            if client.supportsPagedHistory {
+                pagedSurface = MacPagedSurface(surface)
+                awaitingInitialCheckpoint = true
+            }
         case .running:
             lock.unlock()
             throw Error.alreadyStarted
@@ -124,7 +145,12 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
             throw Error.closed
         }
         receiveTask = Task { [weak self] in
-            await self?.receiveLoop(surface: surface)
+            guard let self else { return }
+            if self.client.supportsPagedHistory {
+                await self.receivePagedLoop()
+            } else {
+                await self.receiveLoop(surface: surface)
+            }
         }
         lock.unlock()
 
@@ -207,6 +233,8 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         }
         lifecycle = .closed
         surface = nil
+        let pagedSurface = self.pagedSurface
+        self.pagedSurface = nil
         task = receiveTask
         receiveTask = nil
         sendTail?.cancel()
@@ -221,6 +249,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         }
         lock.unlock()
 
+        pagedSurface?.close()
         task?.cancel()
         client.close()
     }
@@ -274,6 +303,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private func receiveResize(cols: UInt16, rows: UInt16) {
         var ownerEpoch: UInt64?
         lock.lock()
+        if isRestoringGridLocked { lock.unlock(); return }
         guard case .closed = lifecycle else {
             if client.supportsWebControlTextFrames {
                 if isOwnerLocked {
@@ -311,6 +341,64 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                 return
             }
         }
+    }
+
+    @MainActor
+    private func receivePagedLoop() async {
+        guard let native = lock.withLock({ pagedSurface }) else { return }
+        let prepare: (DisplayGrid?) -> Void = { [weak self] grid in
+            guard let self else { return }
+            self.lock.withLock {
+                self.attachmentGrid = grid
+                if let grid {
+                    self.awaitingInitialCheckpoint = false
+                    self.lastPagedGrid = grid
+                }
+            }
+            self.updatePagedPresentation(synchronizeOwner: grid == nil)
+        }
+        let renderer = pagedRendererFactory(native, prepare)
+        let attachment = MacPagedAttachment(renderer: renderer, finishGrid: { prepare(nil) }) { [client] request in
+            try await client.send(.text(PagedTerminalEnvelope(request: request).encoded()))
+        }
+        defer { attachment.close() }
+        do {
+            while !Task.isCancelled {
+                switch try await client.receive() {
+                case .binary(let bytes): native.write(bytes)
+                case .text(let text):
+                    if let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
+                        try await attachment.handle(event)
+                    } else { handleTextFrame(text) }
+                }
+            }
+        } catch {
+            if !Task.isCancelled { reportUnexpectedClose() }
+        }
+    }
+
+    private var isRestoringGridLocked: Bool { awaitingInitialCheckpoint || attachmentGrid != nil }
+
+    @MainActor
+    private func updatePagedPresentation(synchronizeOwner: Bool = true) {
+        let presentation = lock.withLock { () -> (((DisplayGrid?) -> Void), DisplayGrid?)? in
+            guard case .running = lifecycle else { return nil }
+            let grid = attachmentGrid ?? (isOwnerLocked ? nil : ownershipSnapshot?.grid ?? lastPagedGrid)
+            return (prepareAttachmentGrid, grid)
+        }
+        guard let (prepare, grid) = presentation else { return }
+        prepare(grid)
+        // Layout must release the follower canvas before querying the owner's
+        // pane size. The native resize callback also forwards later changes.
+        guard synchronizeOwner else { return }
+        let resize = lock.withLock { () -> (UInt64, UInt16, UInt16)? in
+            guard case .running = lifecycle, !isRestoringGridLocked,
+                  isOwnerLocked, let snapshot = ownershipSnapshot else { return nil }
+            let current = currentGridLocked()
+            guard current.cols != snapshot.grid.cols || current.rows != snapshot.grid.rows else { return nil }
+            return (snapshot.epoch, current.cols, current.rows)
+        }
+        if let (epoch, cols, rows) = resize { enqueueOwnerResize(epoch: epoch, cols: cols, rows: rows) }
     }
 
     private func reportUnexpectedClose() {
@@ -459,7 +547,8 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         ownershipSnapshot = snapshot
         if isOwnerLocked {
             let grid = currentGridLocked()
-            if snapshot.grid.cols != grid.cols || snapshot.grid.rows != grid.rows {
+            if !client.supportsPagedHistory, !isRestoringGridLocked,
+               snapshot.grid.cols != grid.cols || snapshot.grid.rows != grid.rows {
                 ownerResize = (snapshot.epoch, grid.cols, grid.rows)
             }
             pending = pendingInput
@@ -486,6 +575,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                     try? await client.send(.binary(data))
                 }
             }
+        }
+        if client.supportsPagedHistory {
+            Task { @MainActor [weak self] in self?.updatePagedPresentation() }
         }
         refresh()
     }
@@ -518,6 +610,7 @@ extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
     func resyncVisibleGrid() {
         lock.lock()
         guard case .running = lifecycle,
+              !isRestoringGridLocked,
               isOwnerLocked,
               let epoch = ownershipSnapshot?.epoch
         else {

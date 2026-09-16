@@ -10,7 +10,7 @@ import Testing
 @Suite("SurfaceHandle host-managed zmx cutover")
 struct SurfaceHandleHostManagedTests {
     @Test("""
-    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned attachment only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. Existing paging-capable sessions use native snapshot restoration; new sessions and older daemons use a `zmx attach` PTY. Shell exit remains wired to `close_surface_cb` through `ghostty_surface_process_exit`.
     """)
     func zmxAvailableUsesHostManagedBackendWithoutCommandOrInitialInput() throws {
         let backend = FakeSurfaceHandleZmxBackend()
