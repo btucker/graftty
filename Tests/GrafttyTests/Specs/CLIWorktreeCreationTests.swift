@@ -7,6 +7,98 @@ import GrafttyKit
 
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
+    @Test("@spec AGENT-5.10: When `graftty worktree add --remote <Mac>` is invoked, the CLI shall accept a connected Mac name or device ID and an optional destination project, alongside the existing branch and agent launch options.")
+    func remoteCreationOptions() throws {
+        _ = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--agent", "codex"])
+        _ = try WorktreeAdd.parse(["fix", "--remote", "Laptop", "--project", "/src/other", "--base", "main"])
+        #expect(throws: (any Error).self) {
+            _ = try WorktreeAdd.parse(["fix", "--project", "other"])
+        }
+    }
+
+    @Test("Remote transport retries retain the exact request and obey the CLI deadline")
+    func remoteTransportRetryDeadline() throws {
+        let retry = try JSONDecoder().decode(ResponseMessage.self, from: Data(
+            #"{"type":"worktree_create_retry","operation_id":"op-123"}"#.utf8))
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: nil, operationID: "op-123")
+        var attempts = 0
+        let ready = ResponseMessage.worktreeCreate(.init(operationID: "op-123", state: .ready,
+            worktreePath: "/repo/.worktrees/fix", messageAddress: "graftty-mac://studio/repo/.worktrees/fix"))
+        let response = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+            deadline: Date().addingTimeInterval(1), send: { message in
+                #expect(message == request)
+                attempts += 1
+                return attempts == 1 ? retry : ready
+            }, sleep: { _ in })
+        #expect(response == ready)
+        #expect(attempts == 2)
+        var errors: [String] = []
+        #expect(throws: ExitCode.self) {
+            _ = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+                deadline: .distantPast, send: { _ in retry }, sleep: { _ in }, writeError: { errors.append($0) })
+        }
+        #expect(errors.first?.contains("may still finish") == true)
+    }
+
+    @Test("@spec AGENT-5.16: When remote worktree creation is requested, the CLI shall verify local app support before sending the mutation and shall bound compatibility-probe retries separately from the worktree creation timeout.")
+    func remoteCreationCapabilityIsRequired() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio"])
+        let expected = try JSONDecoder().decode(NotificationMessage.self, from: Data(
+            #"{"type":"remote_worktree_capability"}"#.utf8))
+        try command.requireRemoteCreationSupport(deadline: .distantPast, send: { request in
+            #expect(request == expected)
+            return .ok
+        })
+        var attempts = 0
+        #expect(throws: ExitCode.self) {
+            try command.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
+                attempts += 1
+                throw CLIError.socketClosedWithoutResponse
+            })
+        }
+        #expect(attempts == 1)
+        let local = try WorktreeAdd.parse(["fix"])
+        try local.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
+            Issue.record("Local worktree creation probed remote support")
+            return .error("unsupported")
+        })
+    }
+
+    @Test("Retry responses for a different operation remain terminal")
+    func mismatchedRetryIsNotRetried() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: nil, operationID: "op-123")
+        let mismatch = ResponseMessage.worktreeCreateRetry(operationID: "other")
+        var attempts = 0
+        let result = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+            deadline: Date().addingTimeInterval(1), send: { _ in
+                attempts += 1
+                return mismatch
+            }, sleep: { _ in })
+        #expect(attempts == 1)
+        #expect(result == mismatch)
+    }
+
+    @Test("Remote create and polling requests preserve CLI options through socket serialization")
+    func remoteCreationWireRoundTrip() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other", "--base", "origin/main", "--agent", "claude"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: .claude, resolvedPrompt: "hello '$()'", operationID: "op-123")
+        guard case .remoteWorktree(let target, .create(let options)) = request else {
+            Issue.record("Expected remote creation"); return
+        }
+        #expect(target == "Studio" && options.project == "other")
+        #expect(options.base == "origin/main" && options.agentPrompt == "hello '$()'")
+        #expect(options.command == "claude" && options.agentRuntime == .claude)
+        #expect(options.operationID == "op-123")
+        for message in [request, command.statusRequest(operationID: "op-123")] {
+            #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(message)) == message)
+        }
+    }
+
     @Test("""
     @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)

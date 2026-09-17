@@ -152,6 +152,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
+**LAYOUT-2.69** When the user double-clicks empty space after the last worktree in the project column, the application shall open Add Worktree for the selected editable project without changing a worktree row's click behavior.
+
 **LAYOUT-2.70** If worktree artwork generation still fails after its permitted prompt fallback, then the application shall retain the normal sidebar indicators and avoid repeated automatic attempts for that worktree during the same launch.
 
 **LAYOUT-2.71** When the application becomes inactive, it shall cancel worktree icon generation, discard cancelled results, and resume missing icons when active again.
@@ -1131,6 +1133,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ZMX-9.5** When a snapshot-capable bundled `zmx` client attaches to a current daemon, the daemon shall send a `GHOSTSNP` binary snapshot before subsequent live PTY output. If stdout is a PTY, then the client shall disable output processing so the line discipline cannot rewrite snapshot bytes.
 
 **ZMX-9.6** When a bundled `zmx` daemon retains a 10,000-row session and a client reattaches, the daemon shall replay each retained row exactly once and preserve both the oldest and newest rows.
+
+**ZMX-9.7** When a terminal session is reattached, the application shall preserve soft wraps in replayed text so copied selections omit display-only line breaks while retaining explicit newlines.
 
 ## DIST — Distribution
 
@@ -2641,6 +2645,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.8** Every `graftty worktree add` request shall carry a client-generated operation ID. If a socket response is lost or times out, the CLI shall retry with the same ID and the application shall return the retained pending, ready, or failed operation instead of starting a second Git worktree mutation.
 
 **AGENT-5.9** When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to pause that scope until it confirms the child is reachable, then relinquish the scope and continue only separate work.
+
+**AGENT-5.10** When `graftty worktree add --remote <Mac>` is invoked, the CLI shall accept a connected Mac name or device ID and an optional destination project, alongside the existing branch and agent launch options.
+
+**AGENT-5.11** When remote worktree creation omits a project, the application shall match the caller's Git origin on the destination regardless of project names or checkout paths, treating equivalent GitHub and GitLab SSH and HTTPS origins as the same repository; an explicit project shall match an exact destination name or absolute repository path, and missing or ambiguous matches shall fail before mutation.
+
+**AGENT-5.12** When a CLI requests a worktree on a connected Mac, the application shall route creation and status over either an outgoing or incoming authenticated connection, preserve the operation ID across retries, and return a device-qualified message address.
+
+**AGENT-5.13** If a remote worktree request has an unknown or ambiguous Mac target, then the application shall reject it; once dispatched, retries shall remain pinned to that device even if its label is reused.
+
+**AGENT-5.14** When an authenticated peer creates or polls a worktree, the destination shall scope its operation ID to that peer, stage launch inputs through local creation, and return retained pending, ready, or failed results without repeating the mutation.
+
+**AGENT-5.15** If a remote worktree RPC exceeds its transport deadline, then the application shall tell the CLI to retry the same operation within its requested timeout rather than report a terminal creation failure.
+
+**AGENT-5.16** When remote worktree creation is requested, the CLI shall verify local app support before sending the mutation and shall bound compatibility-probe retries separately from the worktree creation timeout.
 
 ### AGENT-6.x
 

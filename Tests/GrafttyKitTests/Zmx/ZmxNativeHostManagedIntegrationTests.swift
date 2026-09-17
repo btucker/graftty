@@ -306,6 +306,35 @@ struct ZmxNativeHostManagedIntegrationTests {
         }
     }
 
+    @Test("@spec ZMX-9.7: When a terminal session is reattached, the application shall preserve soft wraps in replayed text so copied selections omit display-only line breaks while retaining explicit newlines.", .timeLimit(.minutes(1)), arguments: [0, 30])
+    func reattachPreservesSoftWrapsAndExplicitNewlines(historyRows: Int) throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let first = try Self.spawnHostManagedAttach(launcher: launcher, sessionName: session)
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
+            try Self.waitForAttachReady(first)
+            try Self.disableEcho(in: first)
+            let wrapped = String(repeating: "abcdefghij", count: 20)
+            let filler = String(repeating: "history\\n", count: historyRows)
+            try first.write("printf '\\033[2J\\033[H%s\\nEXPLICIT_BREAK\\n\(filler)REPLAY_READY\\n' '\(wrapped)'\n")
+            let initial = Self.readUntil(marker: "REPLAY_READY", from: first, deadline: 5.0)
+            #expect(initial.contains(wrapped))
+            #expect(initial.contains("REPLAY_READY"))
+            first.terminate()
+            firstRunning = false
+
+            let second = try Self.spawnHostManagedAttach(launcher: launcher, sessionName: session)
+            defer { second.terminate() }
+            let replay = Self.readUntil(marker: "REPLAY_READY", from: second, deadline: 5.0)
+            #expect(replay.contains(wrapped), "Replay must let the renderer wrap the original logical line")
+            #expect(replay.contains("\r\nEXPLICIT_BREAK"), "Replay must retain explicit line breaks")
+        }
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func firstSnapshotAttachStartsWithEnvelope() throws {
         try Self.withScopedZmxDir { launcher in

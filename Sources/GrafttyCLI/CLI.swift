@@ -229,7 +229,7 @@ struct PaneList: ParsableCommand {
         case .teamInbox:
             CLIEnv.printError("Unexpected team_inbox response for list")
             throw ExitCode(1)
-        case .worktreeCreate:
+        case .worktreeCreate, .worktreeCreateRetry:
             CLIEnv.printError("Unexpected worktree_create response for list")
             throw ExitCode(1)
         case .worktreeRemove:
@@ -610,7 +610,7 @@ enum CLIEnv {
         case .teamInbox:
             printError("Unexpected team_inbox response")
             throw ExitCode(1)
-        case .worktreeCreate:
+        case .worktreeCreate, .worktreeCreateRetry:
             printError("Unexpected worktree_create response")
             throw ExitCode(1)
         case .worktreeRemove:

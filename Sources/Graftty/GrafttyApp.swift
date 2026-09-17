@@ -1559,6 +1559,26 @@ struct GrafttyApp: App {
         remoteTeamRouter.handler = { deviceID, data in
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
+                if case .worktree(let operation) = request {
+                    let response = await RemoteCLIWorktreeService.handle(
+                        operation, from: deviceID, repos: binding.wrappedValue.repos,
+                        status: { services.cliWorktreeCreations.status(operationID: $0) },
+                        create: { message in
+                            guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = message else {
+                                return .error("Expected local worktree creation")
+                            }
+                            return Self.beginCLIWorktreeCreation(
+                                callerPath: caller, worktreeName: name, branchName: branch,
+                                existing: existing, base: base, command: command,
+                                agentRuntime: runtime, agentPrompt: prompt, operationID: id,
+                                appState: binding, terminalManager: tm,
+                                teamEventDispatcher: teamEventDispatcher,
+                                worktreeMonitor: services.worktreeMonitor,
+                                statsStore: services.statsStore,
+                                worktreeCreations: services.cliWorktreeCreations)
+                        })
+                    return try JSONEncoder().encode(response)
+                }
                 let repos = binding.wrappedValue.repos
                 let enabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                 let handler = RemoteTeamService(
@@ -1589,6 +1609,9 @@ struct GrafttyApp: App {
                     }
                 },
                 onAsyncRequest: { message in
+                    if case .remoteWorktree(let target, let request) = message {
+                        return await remoteTeamRouter.worktree(target: target, request: request, repos: binding.wrappedValue.repos)
+                    }
                     if case .reconnectRemoteClient(let target) = message {
                         return await remoteTeamRouter.reconnectClient(target: target)
                     }
@@ -3777,9 +3800,9 @@ struct GrafttyApp: App {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
-             .worktreeCreateIdempotencyCapability,
+             .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
-             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient:
+             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3809,6 +3832,8 @@ struct GrafttyApp: App {
         switch message {
         case .reconnectRemoteMac(let target):
             return await remoteMacsModel.reconnectRemoteMac(target: target)
+        case .remoteWorktree:
+            return .error("Remote worktree routing is unavailable")
         case .reconnectRemoteClient:
             return .error("Client reconnect routing is unavailable")
         case .listPanes(let path):
@@ -3952,7 +3977,7 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeBaseCapability:
             return .ok
-        case .worktreeCreateIdempotencyCapability:
+        case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
             return .ok
         case .worktreeRemoveCapability:
             return .ok
