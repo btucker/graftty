@@ -7,7 +7,7 @@ import Testing
 @Suite("Automatic worktree icons")
 @MainActor
 struct WorktreeIconStoreTests {
-    @Test("@spec LAYOUT-2.69: While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.")
+    @Test("@spec LAYOUT-2.94: While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.")
     func generatesSeriallyAndReusesCache() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -408,6 +408,71 @@ struct WorktreeIconStoreTests {
         #expect(contexts.count == 3)
         #expect(!store.regeneratingPaths.contains(request.path))
         #expect(store.images[request.path] !== old)
+    }
+
+    @Test("@spec LAYOUT-2.92: While a worktree background replacement is pending, the application shall retain its pending state across sidebar refreshes and resume a cancelled replacement on activation without treating the old cache as completed.")
+    func regenerationSurvivesSidebarRefreshAndDeactivation() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = try imageData(color: .red)
+        let replacement = try imageData(color: .blue)
+        let request = requests(["pending-refresh"])[0]
+        var calls = 0
+        var suspended: CheckedContinuation<Data, Never>?
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Build a telescope" }) { _, _, _, _, _ in
+            calls += 1
+            if calls == 2 { return await withCheckedContinuation { suspended = $0 } }
+            return calls == 1 ? original : replacement
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let oldImage = try #require(store.images[request.path])
+        store.regenerate(request)
+        while suspended == nil { await Task.yield() }
+        store.update(worktrees: [request], isActive: true)
+        #expect(store.regeneratingPaths.contains(request.path))
+        #expect(store.images[request.path] === oldImage)
+        store.update(worktrees: [request], isActive: false)
+        suspended?.resume(returning: replacement)
+        await store.waitUntilIdle()
+        #expect(store.images[request.path] === oldImage)
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls == 3)
+        #expect(store.images[request.path] !== oldImage)
+        #expect(store.regeneratingPaths.isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.93: When the first-pane session changes or requests a history retry during an artwork history lookup, the application shall discard the obsolete lookup and read the current session before deciding that context is unavailable.", arguments: [false, true])
+    func historyRetryDuringLookupIsNotLost(changesPane: Bool) async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let png = try imageData()
+        var request = requests(["history-race"])[0]
+        var suspended: CheckedContinuation<String?, Never>?
+        var historyReads: [WorktreeArtworkRequest] = []
+        var prompts: [String] = []
+        let store = WorktreeIconStore(directory: directory, history: { request in
+            historyReads.append(request)
+            if historyReads.count == 1 { return await withCheckedContinuation { suspended = $0 } }
+            return "Plan a fern garden"
+        }) { _, context, _, _, _ in
+            prompts.append(context)
+            return png
+        }
+        store.update(worktrees: [request], isActive: true)
+        while suspended == nil { await Task.yield() }
+        if changesPane {
+            request = WorktreeArtworkRequest(path: request.path, name: request.name, firstPaneSessionName: "replacement-pane")
+            store.update(worktrees: [request], isActive: true)
+        } else {
+            store.retryHistory(for: request)
+        }
+        suspended?.resume(returning: nil)
+        await store.waitUntilIdle()
+        #expect(historyReads.count == 2)
+        #expect(historyReads.last == request)
+        #expect(prompts == ["Plan a fern garden"])
     }
 
     @Test("A regeneration requested during generation discards the superseded result")

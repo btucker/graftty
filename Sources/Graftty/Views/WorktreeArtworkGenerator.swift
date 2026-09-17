@@ -38,7 +38,18 @@ enum WorktreeArtworkGenerator {
             throw CancellationError()
         } catch {
             try Task.checkCancellation()
-            return try await fallback()
+            let preferredError = error
+            do {
+                return try await fallback()
+            } catch ImageCreatorWorktreeIcon.Failure.unavailable {
+                try Task.checkCancellation()
+                // A failed Codex request does not mean Codex is unavailable
+                // for the remaining worktrees when Apple cannot run here.
+                if case CodexArtworkClient.Failure.unavailable = preferredError {
+                    throw ImageCreatorWorktreeIcon.Failure.unavailable
+                }
+                throw preferredError
+            }
         }
     }
 

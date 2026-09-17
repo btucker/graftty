@@ -152,8 +152,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
-**LAYOUT-2.69** While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.
-
 **LAYOUT-2.70** If worktree artwork generation still fails after its permitted prompt fallback, then the application shall retain the normal sidebar indicators and avoid repeated automatic attempts for that worktree during the same launch.
 
 **LAYOUT-2.71** When the application becomes inactive, it shall cancel worktree icon generation, discard cancelled results, and resume missing icons when active again.
@@ -190,13 +188,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.87** When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and describe muted theme accents without requesting saturated colors.
 
-**LAYOUT-2.88** When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, while propagating cancellation without starting a fallback.
+**LAYOUT-2.88** When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, propagate cancellation without starting a fallback, and report generation as unavailable only when both providers are unavailable.
 
 **LAYOUT-2.89** When Codex generates worktree artwork, the application shall use a separate ephemeral read-only thread, accept its completed image, and bound subprocess lifetime on failure, timeout, or cancellation.
 
 **LAYOUT-2.90** When generating Codex worktree artwork, the application shall prioritize recognition at small sizes using stable worktree-specific subject directions, silhouettes, compositions, and dominant accents, while confining theme matching to the backdrop and leaving fading to the UI.
 
 **LAYOUT-2.91** When the user releases a sidebar drag, the application shall clear worktree insertion markers and pane-drop highlights even if the destination receives no drop or drag-exit callback.
+
+**LAYOUT-2.92** While a worktree background replacement is pending, the application shall retain its pending state across sidebar refreshes and resume a cancelled replacement on activation without treating the old cache as completed.
+
+**LAYOUT-2.93** When the first-pane session changes or requests a history retry during an artwork history lookup, the application shall discard the obsolete lookup and read the current session before deciding that context is unavailable.
+
+**LAYOUT-2.94** While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -393,6 +397,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-9.2** When the user activates "Open Ghostty Settings"
 
 **TERM-9.3** While a shared worktree backdrop is displayed, the application shall make only the terminal's default background transparent, preserve explicit cell backgrounds and inherited Ghostty settings, and retain the original configuration for panes without artwork.
+
+**TERM-9.4** While a follower displays preceding history, the application shall preserve the source terminal's runtime font size in the history mirror when artwork is applied or removed.
 
 ### TERM-10.x
 
@@ -2698,7 +2704,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork without capturing tool input or requiring new plugin hooks.
+**AGENT-6.33** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.
 
 ## CLI — CLI
 

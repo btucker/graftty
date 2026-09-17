@@ -120,6 +120,19 @@ struct WorktreeArtworkHistoryTests {
         }
     }
 
+    @Test func largeCodexMetadataStillIdentifiesRecentHistory() throws {
+        try withFixture { codex, claude in
+            let file = codex.appendingPathComponent("rollout-\(session).jsonl")
+            let largeMetadata: [String: Any] = ["type": "session_meta", "payload": [
+                "id": session, "cwd": worktree,
+                "base_instructions": ["text": String(repeating: "instructions ", count: 8000)],
+            ]]
+            try write([largeMetadata, user(String(repeating: "x", count: 1_200_000)),
+                       user("Build a recent observatory")], to: file)
+            #expect(read([presence()], codex, claude) == "Build a recent observatory")
+        }
+    }
+
     @Test func followsManagedCodexSessionsDirectorySymlink() throws {
         try withFixture { codex, claude in
             try write([metadata(), user("A telescope dashboard")],

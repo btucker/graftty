@@ -50,7 +50,7 @@ struct WorktreeArtworkGeneratorTests {
         #expect(first != theme.codexColorInstruction(index: 0, variation: 1))
     }
 
-    @Test("@spec LAYOUT-2.88: When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, while propagating cancellation without starting a fallback.")
+    @Test("@spec LAYOUT-2.88: When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, propagate cancellation without starting a fallback, and report generation as unavailable only when both providers are unavailable.")
     func providerOrderAndCancellation() async throws {
         var calls: [String] = []
         let result = try await WorktreeArtworkGenerator.generate(preferred: {
@@ -84,6 +84,35 @@ struct WorktreeArtworkGeneratorTests {
             })
         }
         #expect(calls.isEmpty)
+    }
+
+    @Test(arguments: [CodexArtworkClient.Failure.noImage, .timedOut, .protocolError])
+    func unavailableFallbackPreservesCodexRequestFailure(_ failure: CodexArtworkClient.Failure) async {
+        var triedFallback = false
+        await #expect(throws: failure) {
+            try await WorktreeArtworkGenerator.generate(preferred: {
+                throw failure
+            }, fallback: {
+                triedFallback = true
+                throw ImageCreatorWorktreeIcon.Failure.unavailable
+            })
+        }
+        #expect(triedFallback)
+    }
+
+    @Test func bothUnavailableReportsGlobalUnavailability() async {
+        do {
+            _ = try await WorktreeArtworkGenerator.generate(preferred: {
+                throw CodexArtworkClient.Failure.unavailable
+            }, fallback: {
+                throw ImageCreatorWorktreeIcon.Failure.unavailable
+            })
+            Issue.record("Generation must fail when both providers are unavailable")
+        } catch ImageCreatorWorktreeIcon.Failure.unavailable {
+            // Only this error stops the store's remaining generation queue.
+        } catch {
+            Issue.record("Expected global unavailability, received \(error)")
+        }
     }
 
     @Test func codexPromptPreservesContextStyleAndConfiguredColors() {

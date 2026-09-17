@@ -101,6 +101,9 @@ final class WorktreeIconStore: ObservableObject {
         self.worktrees = worktrees.filter { !$0.path.isEmpty && seen.insert($0.path).inserted }
         for request in self.worktrees where (prior[request.path] ?? nil) != request.firstPaneSessionName {
             checkedHistory.remove(request.path)
+            if contexts[request.path] == nil {
+                revisions[request.path, default: 0] &+= 1
+            }
         }
         regeneratingPaths.formIntersection(seen)
         self.isActive = isActive
@@ -182,6 +185,7 @@ final class WorktreeIconStore: ObservableObject {
         guard isEnabled, contexts[request.path] == nil, !completed.contains(request.path),
               failures[request.path] == nil else { return }
         checkedHistory.remove(request.path)
+        revisions[request.path, default: 0] &+= 1
         startIfNeeded()
     }
 
@@ -223,7 +227,7 @@ final class WorktreeIconStore: ObservableObject {
                 if Task.isCancelled { return }
                 guard revisions[path, default: 0] == revision else { continue }
                 checkedHistory.insert(path)
-                if refreshContext.remove(path) != nil {
+                if refreshContext.contains(path) {
                     if latestPrompts[path] != capturedBeforeRead {
                         contexts[path] = latestPrompts[path]
                     } else {
@@ -234,6 +238,7 @@ final class WorktreeIconStore: ObservableObject {
                 }
             }
             guard worktrees.contains(where: { $0.path == path }), let context = contexts[path] else {
+                refreshContext.remove(path)
                 regeneratingPaths.remove(path)
                 continue
             }
@@ -245,6 +250,7 @@ final class WorktreeIconStore: ObservableObject {
                 guard let image = NSImage(data: data) else { throw ImageCreatorWorktreeIcon.Failure.invalidImage }
                 images[path] = image
                 completed.insert(path)
+                refreshContext.remove(path)
                 regeneratingPaths.remove(path)
                 do {
                     try FileManager.default.createDirectory(at: styleDirectory, withIntermediateDirectories: true)
@@ -259,6 +265,7 @@ final class WorktreeIconStore: ObservableObject {
                 guard revisions[path, default: 0] == revision else { continue }
                 contexts[path] = nil
                 failures[path] = error.localizedDescription
+                refreshContext.remove(path)
                 regeneratingPaths.remove(path)
                 if case ImageCreatorWorktreeIcon.Failure.unavailable = error {
                     generationUnavailable = true

@@ -7,6 +7,52 @@ import Testing
 @Suite("Worktree terminal artwork")
 @MainActor
 struct WorktreeTerminalBackgroundTests {
+    #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-9.4: While a follower displays preceding history, the application shall preserve the source terminal's runtime font size in the history mirror when artwork is applied or removed.", arguments: [false, true])
+    func historyMirrorPreservesRuntimeFontSize(initialArtwork: Bool) throws {
+        _ = NSApplication.shared
+        #expect(ghostty_init(0, nil) == 0)
+        let base = GhosttyConfig()
+        let artwork = try GhosttyConfig(forWorktreeArtwork: base)
+        let app = GhosttyApp(config: base) { _, _ in true }
+        defer { withExtendedLifetime(app) {} }
+        var factory = SurfaceHandleGhosttySurfaceFactory.live
+        factory.create = { app, options in
+            var config = options.pointee
+            config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
+            config.receive_userdata = nil
+            config.receive_buffer = { _, _, _ in }
+            config.receive_resize = { _, _, _, _, _ in }
+            config.command = nil
+            config.initial_input = nil
+            return ghostty_surface_new(app, &config)
+        }
+        let handle = try #require(SurfaceHandle(
+            terminalID: .init(), app: app.app, worktreePath: NSTemporaryDirectory(),
+            socketPath: "", surfaceFactory: factory
+        ))
+        let configuredSize = ghostty_surface_font_size(handle.surface)
+        let zoomedSize: Float = configuredSize == 28 ? 36 : 28
+        let action = "set_font_size:\(zoomedSize)"
+        #expect(action.withCString { ghostty_surface_binding_action(handle.surface, $0, UInt(action.utf8.count)) })
+        handle.setWorktreeArtworkConfig(initialArtwork ? artwork : nil, base: base)
+
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.wantsLayer = true
+        let history = try #require(handle.makeFollowerHistorySurface(
+            in: view, scale: NSScreen.main?.backingScaleFactor ?? 2
+        ))
+        defer { ghostty_surface_free(history) }
+        #expect(ghostty_surface_font_size(history) == zoomedSize)
+        for config in [artwork, base, artwork] {
+            config.apply(to: history, in: view)
+            #expect(ghostty_surface_font_size(history) == zoomedSize)
+            #expect(ghostty_surface_size(history).cell_width_px == handle.queryGridSize().cell_width_px)
+            #expect(ghostty_surface_size(history).cell_height_px == handle.queryGridSize().cell_height_px)
+        }
+    }
+    #endif
+
     @Test("@spec LAYOUT-2.79: When a worktree has artwork, the application shall display one continuous image behind the entire terminal split layout, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.", arguments: [false, true])
     func fadesAcrossWholeLayout(isDark: Bool) throws {
         let image = NSImage(size: NSSize(width: 400, height: 200))

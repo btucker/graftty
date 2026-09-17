@@ -4,7 +4,9 @@ import GrafttyKit
 /// Reads only the conversation registered to a worktree's first pane.
 /// Call from a background executor because presence and conversation files are on disk.
 struct WorktreeArtworkHistory: Sendable {
-    private static let headerByteLimit = 64 * 1_024
+    // Codex includes base instructions in its first metadata line. Keep the
+    // read bounded while allowing those records to exceed a small JSON header.
+    private static let headerByteLimit = 1_024 * 1_024
     private static let tailByteLimit = 1_024 * 1_024
     private static let characterLimit = 4_000
 
@@ -46,7 +48,7 @@ struct WorktreeArtworkHistory: Sendable {
                 guard entry["type"] as? String == "response_item",
                       let payload = entry["payload"] as? [String: Any],
                       payload["type"] as? String == "message", payload["role"] as? String == "user" else { return nil }
-                return cleanedUserText(textContent(payload["content"], blockType: "input_text"))
+                return AgentHookPrompt.userText(textContent(payload["content"], blockType: "input_text"))
             }
             // Modern rollouts record both forms. Prefer the message stream so each
             // prompt appears once; older rollouts can contain only user_message events.
@@ -55,7 +57,7 @@ struct WorktreeArtworkHistory: Sendable {
                 guard entry["type"] as? String == "event_msg",
                       let payload = entry["payload"] as? [String: Any],
                       payload["type"] as? String == "user_message" else { return nil }
-                return cleanedUserText(payload["message"] as? String)
+                return AgentHookPrompt.userText(payload["message"] as? String)
             })
         case .claude:
             guard (header + recent).contains(where: {
@@ -70,7 +72,7 @@ struct WorktreeArtworkHistory: Sendable {
                       message["role"] as? String == "user" else { return nil }
                 if let blocks = message["content"] as? [[String: Any]],
                    blocks.contains(where: { $0["type"] as? String == "tool_result" }) { return nil }
-                return cleanedUserText(textContent(message["content"], blockType: "text"))
+                return AgentHookPrompt.userText(textContent(message["content"], blockType: "text"))
             })
         }
     }
@@ -133,21 +135,6 @@ struct WorktreeArtworkHistory: Sendable {
         return blocks.compactMap { block in
             block["type"] as? String == blockType ? block["text"] as? String : nil
         }.joined(separator: "\n")
-    }
-
-    private static func cleanedUserText(_ input: String?) -> String? {
-        guard var text = input?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
-        let injectedPrefixes = ["# AGENTS.md instructions", "<INSTRUCTIONS>", "<user_instructions>",
-                                "[Request interrupted by user", "<local-command", "<command-name>"]
-        guard !injectedPrefixes.contains(where: { text.hasPrefix($0) }),
-              !["<graftty-peer-message", "<graftty-system-message", "<graftty-forge-message"].contains(where: { text.contains($0) }) else {
-            return nil
-        }
-        for tag in ["environment_context", "system-reminder", "turn_aborted"] {
-            text = text.replacingOccurrences(of: "(?s)<\(tag)\\b[^>]*>.*?</\(tag)>", with: "", options: .regularExpression)
-        }
-        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
     }
 
     private static func boundedContext(_ messages: [String]) -> String? {
