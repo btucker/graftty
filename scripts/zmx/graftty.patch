@@ -1084,3 +1084,114 @@ index 23daed6..277ce73 100644
  /// Examine and change a signal action.
  pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) void {
      switch (errno(system.sigaction(sig, act, oact))) {
+diff --git a/src/util.zig b/src/util.zig
+index d96f5a1..1c433e9 100644
+--- a/src/util.zig
++++ b/src/util.zig
+@@ -780,6 +780,13 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+         term.modes.set(.synchronized_output, false);
+     }
+
++    // Soft wraps are recreated by the receiver. Keep DECAWM enabled until
++    // content is complete, even if the application disabled it after printing.
++    const had_wraparound = term.modes.get(.wraparound);
++    term.modes.set(.wraparound, true);
++    defer term.modes.set(.wraparound, had_wraparound);
++    builder.writer.writeAll("\x1b[?7h") catch return null;
++
+     // If state contains color override, restore it.
+     writeColorOverrides(&builder.writer, term);
+
+@@ -806,7 +813,12 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+             var sb_bottom = sb_bottom_row;
+             sb_bottom.x = @intCast(pages.cols - 1);
+
+-            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
++            // Let the receiving terminal recreate soft wraps. Emitting CRLF
++            // for every display row turns those wraps into clipboard newlines.
++            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
++                .emit = .vt,
++                .unwrap = true,
++            });
+             scroll_fmt.content = .{
+                 .selection = ghostty_vt.Selection.init(
+                     screen_top,
+@@ -827,7 +839,10 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+     }
+
+     // Phase 2: visible screen with full extras (modes, cursor, keyboard, etc.)
+-    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
++    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
++        .emit = .vt,
++        .unwrap = true,
++    });
+
+     // Restrict content to the active viewport only
+     const active_tl = pages.pin(.{ .active = .{ .x = 0, .y = 0 } });
+@@ -864,6 +879,8 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+         return null;
+     };
+
++    if (!had_wraparound) builder.writer.writeAll("\x1b[?7l") catch return null;
++
+     writePwd(&builder.writer, term);
+
+     // The formatter has no title extra and never emits OSC 0/1/2, so the title
+@@ -2191,3 +2208,57 @@ test "stripAnsi: only escape sequences" {
+     defer alloc.free(result);
+     try testing.expectEqualStrings("", result);
+ }
++
++test "serializeTerminalState preserves soft wraps and hard breaks for selection" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    // Include spaces at a wrap boundary, a wide character, and a real newline.
++    for ([_][]const u8{
++        "abcdefghijklmnopqr\r\nnext",
++        "abcdef  ijklmnopqr\r\nnext",
++        "abcdefg界ijklmnop\r\nnext",
++        "abcdefgh\r\nijklmnop\r\nnext",
++    }) |input| {
++        var source = try testCreateTerminal(alloc, io, 8, 6, input);
++        defer source.deinit(alloc);
++        var restored = try serializeRoundtrip(alloc, io, &source);
++        defer restored.deinit(alloc);
++        try expectScreensMatch(alloc, &source, &restored);
++        try expectCursorAt(&restored, source.screens.active.cursor.y, source.screens.active.cursor.x);
++        var expected: std.Io.Writer.Allocating = .init(alloc);
++        defer expected.deinit();
++        var actual: std.Io.Writer.Allocating = .init(alloc);
++        defer actual.deinit();
++        var source_fmt = ghostty_vt.formatter.TerminalFormatter.init(&source, .{ .emit = .plain, .unwrap = true });
++        source_fmt.extra = .none;
++        var restored_fmt = ghostty_vt.formatter.TerminalFormatter.init(&restored, .{ .emit = .plain, .unwrap = true });
++        restored_fmt.extra = .none;
++        try source_fmt.format(&expected.writer);
++        try restored_fmt.format(&actual.writer);
++        try testing.expectEqualStrings(expected.written(), actual.written());
++    }
++}
++
++test "serializeTerminalState preserves wrapped text and wraparound mode" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    for ([_]bool{ false, true }) |source_wrap| {
++        var source = try testCreateTerminal(alloc, io, 8, 6, "abcdefghijklmnopqr\r\nnext");
++        defer source.deinit(alloc);
++        source.modes.set(.wraparound, source_wrap);
++        const replay = serializeTerminalState(alloc, &source) orelse return error.SerializationFailed;
++        defer alloc.free(replay);
++        try testing.expectEqual(source_wrap, source.modes.get(.wraparound));
++        for ([_]bool{ false, true }) |receiver_wrap| {
++            var restored = try testCreateTerminal(alloc, io, 8, 6, "");
++            defer restored.deinit(alloc);
++            restored.modes.set(.wraparound, receiver_wrap);
++            var stream = restored.vtStream();
++            defer stream.deinit();
++            stream.nextSlice(replay);
++            try expectScreensMatch(alloc, &source, &restored);
++            try expectCursorAt(&restored, source.screens.active.cursor.y, source.screens.active.cursor.x);
++            try testing.expectEqual(source_wrap, restored.modes.get(.wraparound));
++        }
++    }
++}
