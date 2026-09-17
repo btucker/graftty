@@ -3800,7 +3800,7 @@ struct GrafttyApp: App {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
-             .worktreeCreateIdempotencyCapability,
+             .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree:
             // Request-style messages are handled by handlePaneRequest via
@@ -3975,7 +3975,7 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeBaseCapability:
             return .ok
-        case .worktreeCreateIdempotencyCapability:
+        case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
             return .ok
         case .worktreeRemoveCapability:
             return .ok

@@ -13,7 +13,7 @@ struct RemoteCLIWorktreeTests {
             command: "codex", agentRuntime: .codex, agentPrompt: "fix tests", operationID: "op-1")
     }
 
-    @Test("@spec AGENT-5.11: When remote worktree creation omits a project, the application shall match the caller's Git origin on the destination regardless of project names or checkout paths, treating equivalent SSH and HTTPS origins as the same repository; an explicit project shall match an exact destination name or absolute repository path, and missing or ambiguous matches shall fail before mutation.")
+    @Test("@spec AGENT-5.11: When remote worktree creation omits a project, the application shall match the caller's Git origin on the destination regardless of project names or checkout paths, treating equivalent GitHub and GitLab SSH and HTTPS origins as the same repository; an explicit project shall match an exact destination name or absolute repository path, and missing or ambiguous matches shall fail before mutation.")
     func resolvesDestinationProject() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -44,6 +44,18 @@ struct RemoteCLIWorktreeTests {
         let explicit = try await creation(project: duplicate.path).resolvingSourceProject(in: [])
         #expect(try await explicit.destinationRepository(in: [remote, duplicate]).path == duplicate.path)
         #expect(try await creation(project: remote.displayName).destinationRepository(in: [remote]).path == remote.path)
+    }
+
+    @Test("Caller worktree origin overrides the main checkout origin")
+    func callerWorktreeOriginWins() async throws {
+        let repo = RepoEntry(path: "/local", displayName: "app", worktrees: [
+            WorktreeEntry(path: "/local/.worktrees/task", branch: "task", state: .closed)
+        ])
+        let resolved = try await creation().resolvingSourceProject(in: [repo], readOrigin: { path in
+            GitRepositoryOrigin.parse(path == "/local/.worktrees/task"
+                ? "https://github.com/fork/app.git" : "https://github.com/upstream/app.git")
+        })
+        #expect(resolved.origin == GitRepositoryOrigin.parse("https://github.com/fork/app.git"))
     }
 
     @Test("@spec AGENT-5.12: When a CLI requests a worktree on a connected Mac, the application shall route creation and status over either an outgoing or incoming authenticated connection, preserve the operation ID across retries, and return a device-qualified message address.", arguments: [false, true])
@@ -169,6 +181,46 @@ struct RemoteCLIWorktreeTests {
                 return .ok
             })
         guard case .error = response else { Issue.record("Missing project succeeded"); return }
+    }
+
+    @Test("@spec AGENT-5.15: If a remote worktree RPC exceeds its transport deadline, then the application shall tell the CLI to retry the same operation within its requested timeout rather than report a terminal creation failure.")
+    func transportTimeoutIsRetryable() async throws {
+        let router = RemoteTeamRouter()
+        router.register(deviceID: .init(value: "remote"), connectionID: UUID(), label: "Remote") { _ in
+            throw TeamRPCSession.SessionError.timedOut
+        }
+        let response = await router.worktree(target: "remote", request: .create(creation(project: "app")), repos: [])
+        if case .error = response { Issue.record("RPC timeout became a terminal failure"); return }
+        let expected = try JSONDecoder().decode(ResponseMessage.self, from: Data(
+            #"{"type":"worktree_create_retry","operation_id":"op-1"}"#.utf8))
+        #expect(response == expected)
+        #expect(try JSONDecoder().decode(ResponseMessage.self, from: JSONEncoder().encode(response)) == response)
+    }
+
+    @Test("Source origin lookup can reconnect without dispatching to the stale connection")
+    func usesReplacementConnectionAfterOriginLookup() async throws {
+        let router = RemoteTeamRouter()
+        let device = RemoteDeviceID(value: "remote")
+        let staleConnection = UUID()
+        router.register(deviceID: device, connectionID: staleConnection, label: "Remote") { _ in
+            Issue.record("Used stale connection")
+            throw TeamRPCSession.SessionError.channelClosed
+        }
+        let repo = RepoEntry(path: "/local", displayName: "app", worktrees: [
+            WorktreeEntry(path: "/local/.worktrees/task", branch: "task", state: .closed)
+        ])
+        let result = await router.worktree(target: "remote", request: .create(creation()), repos: [repo], readOrigin: { _ in
+            await MainActor.run {
+                router.unregister(deviceID: device, connectionID: staleConnection)
+                router.register(deviceID: device, connectionID: UUID(), label: "Renamed") { _ in
+                    try JSONEncoder().encode(RemoteTeamResponse.worktreeCreate(.init(
+                        operationID: "op-1", state: .ready, worktreePath: "/remote/fix", messageAddress: "/remote/fix")))
+                }
+            }
+            return GitRepositoryOrigin.parse("https://github.com/team/app.git")
+        })
+        guard case .worktreeCreate(let status) = result else { Issue.record("Expected successful creation"); return }
+        #expect(status.state == .ready)
     }
 
     @Test("@spec AGENT-5.13: If a remote worktree request has an unknown or ambiguous Mac target, then the application shall reject it; once dispatched, retries shall remain pinned to that device even if its label is reused.")

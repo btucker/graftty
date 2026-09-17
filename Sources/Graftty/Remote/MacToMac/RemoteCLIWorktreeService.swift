@@ -12,7 +12,7 @@ enum RemoteCLIWorktreeService {
         repos: [RepoEntry],
         status: (String) -> WorktreeCreateStatus?,
         create: (NotificationMessage) -> ResponseMessage,
-        readOrigin: GitRepositoryOrigin.Loader = { try await GitRepositoryOrigin.detect(repoPath: $0) }
+        readOrigin: GitRepositoryOrigin.Loader? = nil
     ) async -> RemoteTeamResponse {
         let id = request.operationID
         guard !id.isEmpty, id.utf8.count <= 256 else {

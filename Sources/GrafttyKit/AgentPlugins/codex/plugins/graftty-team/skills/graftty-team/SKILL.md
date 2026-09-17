@@ -66,7 +66,7 @@ Report the result and commit hash by replying to my follow-up Graftty team messa
 GRAFTTY_REMOTE_A41C9E72
 ```
 
-By default, Graftty matches the caller's Git `origin` on the destination, regardless of project names or checkout paths. Equivalent SSH and HTTPS URLs match after normalizing the hostname and `.git` suffix; distinct repository paths and nonstandard ports stay distinct. Both projects must be added to Graftty. To select a different project, resolve multiple checkouts of the same origin, or work without a network origin, pass `--project '<destination-name-or-absolute-repository-path>'` with `--remote`. An explicit project works outside a local worktree.
+By default, Graftty matches the caller's Git `origin` on the destination, regardless of project names or checkout paths. Equivalent GitHub and GitLab SSH and HTTPS URLs match after normalizing the hostname and `.git` suffix. Other SSH servers retain the username and absolute or home-relative path because these can identify different repositories. Distinct repository paths and nonstandard ports stay distinct. Both projects must be added to Graftty. To select a different project, resolve multiple checkouts of the same origin, or work without a network origin, pass `--project '<destination-name-or-absolute-repository-path>'` with `--remote`. An explicit project works outside a local worktree. Run follow-up team messaging and roster commands from a tracked local worktree.
 
 ```sh
 graftty worktree add fix-tests --remote 'Laptop' --project /Users/me/projects/other --agent claude

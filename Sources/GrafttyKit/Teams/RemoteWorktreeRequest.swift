@@ -43,16 +43,22 @@ public struct RemoteWorktreeCreation: Codable, Sendable, Equatable {
 
     public func resolvingSourceProject(
         in repos: [RepoEntry],
-        readOrigin: GitRepositoryOrigin.Loader = { try await GitRepositoryOrigin.detect(repoPath: $0) }
+        readOrigin: GitRepositoryOrigin.Loader? = nil
     ) async throws -> Self {
         var result = self
         if project == nil {
-            guard let repo = repos.first(where: { repo in
+            guard repos.contains(where: { repo in
                 repo.worktrees.contains { $0.path == callerWorktree }
             }) else {
                 throw RemoteWorktreeError("Caller is not inside a tracked project; use --project with a destination project name or absolute path")
             }
-            guard let origin = try await readOrigin(repo.path) else {
+            let detectedOrigin: GitRepositoryOrigin?
+            if let readOrigin {
+                detectedOrigin = try await readOrigin(callerWorktree)
+            } else {
+                detectedOrigin = try await GitRepositoryOrigin.detect(repoPath: callerWorktree)
+            }
+            guard let origin = detectedOrigin else {
                 throw RemoteWorktreeError("Caller project has no network origin; use --project with a destination name or absolute path")
             }
             result.origin = origin
@@ -62,7 +68,7 @@ public struct RemoteWorktreeCreation: Codable, Sendable, Equatable {
 
     public func destinationRepository(
         in repos: [RepoEntry],
-        readOrigin: GitRepositoryOrigin.Loader = { try await GitRepositoryOrigin.detect(repoPath: $0) }
+        readOrigin: GitRepositoryOrigin.Loader? = nil
     ) async throws -> RepoEntry {
         let matches: [RepoEntry]
         let selector: String
@@ -76,7 +82,13 @@ public struct RemoteWorktreeCreation: Codable, Sendable, Equatable {
             selector = "Git origin"
             var matchingRepos: [RepoEntry] = []
             for repo in repos where repo.isGitTracked {
-                if try await readOrigin(repo.path) == origin { matchingRepos.append(repo) }
+                let detectedOrigin: GitRepositoryOrigin?
+                if let readOrigin {
+                    detectedOrigin = try await readOrigin(repo.path)
+                } else {
+                    detectedOrigin = try await GitRepositoryOrigin.detect(repoPath: repo.path)
+                }
+                if detectedOrigin == origin { matchingRepos.append(repo) }
             }
             matches = matchingRepos
         } else {

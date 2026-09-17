@@ -30,8 +30,8 @@ struct WorktreeAdd: ParsableCommand {
         --remote works in either direction over an existing Mac connection.
         The destination must track the project in Graftty. The default matches
         the caller's Git origin; --project overrides it with
-        a destination name or absolute path. Equivalent SSH and HTTPS origins
-        match even when project names differ. Missing origins or multiple
+        a destination name or absolute path. Equivalent GitHub/GitLab SSH and
+        HTTPS origins match even when project names differ. Missing origins or multiple
         matching checkouts require --project; names are never a fallback.
         Git revisions, including --base HEAD, resolve on the destination's
         main checkout. Local commits and uncommitted edits are not transferred.
@@ -132,6 +132,7 @@ struct WorktreeAdd: ParsableCommand {
             deadline,
             Date().addingTimeInterval(5)
         )
+        try requireRemoteCreationSupport(deadline: capabilityDeadline)
         try WorktreeCapability.require(
             .worktreeCreateIdempotencyCapability,
             unsupportedMessage: "the running Graftty app does not support safe worktree-create retries; quit and relaunch the updated app, then retry",
@@ -206,11 +207,24 @@ struct WorktreeAdd: ParsableCommand {
                 CLIEnv.printError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .teamInbox, .worktreeRemove:
+                 .teamInbox, .worktreeRemove, .worktreeCreateRetry:
                 CLIEnv.printError("Unexpected response for worktree add")
                 throw ExitCode(1)
             }
         }
+    }
+
+    func requireRemoteCreationSupport(
+        deadline: Date,
+        send: (NotificationMessage) throws -> ResponseMessage = { try SocketClient.sendExpectingResponse($0) }
+    ) throws {
+        guard remote != nil else { return }
+        try WorktreeCapability.require(
+            .remoteWorktreeCapability,
+            unsupportedMessage: "the running Graftty app does not support remote worktree creation; quit and relaunch the updated app, then retry",
+            verificationMessage: "could not verify remote worktree creation support; quit and relaunch the updated Graftty app, then retry",
+            retryTransportFailuresUntil: deadline,
+            send: send)
     }
 
     static func successOutputLines(
@@ -312,7 +326,12 @@ struct WorktreeAdd: ParsableCommand {
         }
         while true {
             do {
-                return try send(message)
+                let response = try send(message)
+                if case .remoteWorktree = message,
+                   response == .worktreeCreateRetry(operationID: operationID) {
+                    throw CLIError.socketTimeout
+                }
+                return response
             } catch let error as CLIError {
                 switch error {
                 case .socketBusy:
@@ -453,7 +472,7 @@ struct WorktreeRemove: ParsableCommand {
                 CLIEnv.printError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .teamInbox, .worktreeCreate:
+                 .teamInbox, .worktreeCreate, .worktreeCreateRetry:
                 CLIEnv.printError("Unexpected response for worktree remove")
                 throw ExitCode(1)
             }

@@ -171,7 +171,10 @@ final class RemoteTeamRouter {
         }
     }
 
-    func worktree(target: String, request: RemoteWorktreeRequest, repos: [RepoEntry]) async -> ResponseMessage {
+    func worktree(
+        target: String, request: RemoteWorktreeRequest, repos: [RepoEntry],
+        readOrigin: GitRepositoryOrigin.Loader? = nil
+    ) async -> ResponseMessage {
         let cutoff = Date().addingTimeInterval(-60 * 60)
         worktreeTargets = worktreeTargets.filter { $0.value.lastUsed > cutoff }
         let device: RemoteDeviceID
@@ -189,18 +192,18 @@ final class RemoteTeamRouter {
             }
             device = matches[0].0
         }
-        guard let route = preferredRoute(for: device) else {
-            return .error("Destination Mac \(device.value) is disconnected; operation \(request.operationID) may still finish. Check that Mac before creating another worktree")
-        }
         // Pin before reading Git metadata, which suspends this actor too.
         worktreeTargets[request.operationID] = (device, Date())
         let outgoing: RemoteWorktreeRequest
         do {
             switch request {
-            case .create(let creation): outgoing = .create(try await creation.resolvingSourceProject(in: repos))
+            case .create(let creation): outgoing = .create(try await creation.resolvingSourceProject(in: repos, readOrigin: readOrigin))
             case .status: outgoing = request
             }
         } catch { return .error(String(describing: error)) }
+        guard let route = preferredRoute(for: device) else {
+            return .error("Destination Mac \(device.value) is disconnected; operation \(request.operationID) may still finish. Check that Mac before creating another worktree")
+        }
         do {
             let data = try await route.send(JSONEncoder().encode(RemoteTeamRequest.worktree(outgoing)))
             switch try JSONDecoder().decode(RemoteTeamResponse.self, from: data) {
@@ -215,6 +218,8 @@ final class RemoteTeamRouter {
             case .ok, .members:
                 throw RemoteWorktreeError("Unexpected response; update Graftty on both Macs")
             }
+        } catch TeamRPCSession.SessionError.timedOut {
+            return .worktreeCreateRetry(operationID: request.operationID)
         } catch {
             return .error("Remote worktree operation \(request.operationID) was not acknowledged and may still finish. Check the destination before creating another worktree. Both Macs must support remote worktree creation: \(error)")
         }

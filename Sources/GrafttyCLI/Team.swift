@@ -262,7 +262,7 @@ struct TeamHook: ParsableCommand {
             case .error:
                 print("{}")
             case .serverBusy, .ok, .paneList, .paneShow, .teamList, .teamInbox,
-                 .worktreeCreate, .worktreeRemove:
+                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 print("{}")
             }
         } catch {
@@ -532,7 +532,7 @@ struct TeamInbox: ParsableCommand {
                 writeError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
             case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .worktreeCreate, .worktreeRemove:
+                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 writeError("Unexpected response for team inbox")
                 throw ExitCode(1)
             }
@@ -591,7 +591,7 @@ struct TeamInbox: ParsableCommand {
             writeError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
         case .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeRemove:
+             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             writeError(Self.advanceFailureGuidance)
             writeError("Unexpected response while advancing team inbox")
             throw ExitCode(1)
@@ -1444,7 +1444,7 @@ private enum TeamOutput {
             CLIEnv.printError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
         case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
-             .worktreeCreate, .worktreeRemove:
+             .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             CLIEnv.printError("Unexpected response for team members")
             throw ExitCode(1)
         }

@@ -16,6 +16,72 @@ struct CLIWorktreeCreationTests {
         }
     }
 
+    @Test("Remote transport retries retain the exact request and obey the CLI deadline")
+    func remoteTransportRetryDeadline() throws {
+        let retry = try JSONDecoder().decode(ResponseMessage.self, from: Data(
+            #"{"type":"worktree_create_retry","operation_id":"op-123"}"#.utf8))
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: nil, operationID: "op-123")
+        var attempts = 0
+        let ready = ResponseMessage.worktreeCreate(.init(operationID: "op-123", state: .ready,
+            worktreePath: "/repo/.worktrees/fix", messageAddress: "graftty-mac://studio/repo/.worktrees/fix"))
+        let response = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+            deadline: Date().addingTimeInterval(1), send: { message in
+                #expect(message == request)
+                attempts += 1
+                return attempts == 1 ? retry : ready
+            }, sleep: { _ in })
+        #expect(response == ready)
+        #expect(attempts == 2)
+        var errors: [String] = []
+        #expect(throws: ExitCode.self) {
+            _ = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+                deadline: .distantPast, send: { _ in retry }, sleep: { _ in }, writeError: { errors.append($0) })
+        }
+        #expect(errors.first?.contains("may still finish") == true)
+    }
+
+    @Test("@spec AGENT-5.16: When remote worktree creation is requested, the CLI shall verify local app support before sending the mutation and shall bound compatibility-probe retries separately from the worktree creation timeout.")
+    func remoteCreationCapabilityIsRequired() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio"])
+        let expected = try JSONDecoder().decode(NotificationMessage.self, from: Data(
+            #"{"type":"remote_worktree_capability"}"#.utf8))
+        try command.requireRemoteCreationSupport(deadline: .distantPast, send: { request in
+            #expect(request == expected)
+            return .ok
+        })
+        var attempts = 0
+        #expect(throws: ExitCode.self) {
+            try command.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
+                attempts += 1
+                throw CLIError.socketClosedWithoutResponse
+            })
+        }
+        #expect(attempts == 1)
+        let local = try WorktreeAdd.parse(["fix"])
+        try local.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
+            Issue.record("Local worktree creation probed remote support")
+            return .error("unsupported")
+        })
+    }
+
+    @Test("Retry responses for a different operation remain terminal")
+    func mismatchedRetryIsNotRetried() throws {
+        let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other"])
+        let request = command.creationRequest(callerWorktree: "", names: ("fix", "fix"),
+            agentRuntime: nil, resolvedPrompt: nil, operationID: "op-123")
+        let mismatch = ResponseMessage.worktreeCreateRetry(operationID: "other")
+        var attempts = 0
+        let result = try WorktreeAdd.sendRequestRetryingTimeout(request, operationID: "op-123",
+            deadline: Date().addingTimeInterval(1), send: { _ in
+                attempts += 1
+                return mismatch
+            }, sleep: { _ in })
+        #expect(attempts == 1)
+        #expect(result == mismatch)
+    }
+
     @Test("Remote create and polling requests preserve CLI options through socket serialization")
     func remoteCreationWireRoundTrip() throws {
         let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--project", "other", "--base", "origin/main", "--agent", "claude"])
