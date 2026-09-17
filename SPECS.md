@@ -172,7 +172,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.78** When generating worktree artwork with an available on-device language model, the application shall first translate the worktree name and user-authored task context into a concrete English visual description and use its deterministic visual fallback if translation is unavailable or fails.
 
-**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image behind the entire window content, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.
+**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image scaled to cover the entire window content and anchored at the top, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background at 75% of the window height.
 
 **LAYOUT-2.80** When a linked worktree has no cached context-based artwork, the application shall wait for a submitted user prompt or existing user-message history before generating, replace legacy artwork once, and keep the generated image stable across later prompts and launches.
 
