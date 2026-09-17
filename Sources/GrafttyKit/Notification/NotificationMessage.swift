@@ -85,6 +85,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case listPanes(path: String)
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
+    case remoteWorktree(target: String, request: RemoteWorktreeRequest)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
@@ -164,7 +165,7 @@ public extension NotificationMessage {
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
-        case target
+        case target, request
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -210,6 +211,10 @@ extension NotificationMessage: Codable {
         case .reconnectRemoteMac(let target):
             try container.encode("reconnect_remote_mac", forKey: .type)
             try container.encode(target, forKey: .target)
+        case .remoteWorktree(let target, let request):
+            try container.encode("remote_worktree", forKey: .type)
+            try container.encode(target, forKey: .target)
+            try container.encode(request, forKey: .request)
         case .reconnectRemoteClient(let target):
             try container.encode("reconnect_remote_client", forKey: .type)
             try container.encode(target, forKey: .target)
@@ -367,6 +372,8 @@ extension NotificationMessage: Codable {
             self = .listPanes(path: path)
         case "reconnect_remote_mac":
             self = .reconnectRemoteMac(target: try container.decode(String.self, forKey: .target))
+        case "remote_worktree":
+            self = .remoteWorktree(target: try container.decode(String.self, forKey: .target), request: try container.decode(RemoteWorktreeRequest.self, forKey: .request))
         case "reconnect_remote_client":
             self = .reconnectRemoteClient(target: try container.decode(String.self, forKey: .target))
         case "add_pane":

@@ -17,6 +17,8 @@ struct WorktreeAdd: ParsableCommand {
         discussion: """
         Examples:
           graftty worktree add fix-auth
+          graftty worktree add fix-auth --remote "Studio Mac" --agent codex
+          graftty worktree add fix-auth --remote "Laptop" --project /Users/me/other
           graftty worktree add fix-auth --agent codex
           graftty worktree add fix-auth --agent claude --prompt "Fix the auth tests"
           graftty worktree add fix-auth --agent codex --prompt-stdin <<'GRAFTTY_PROMPT'
@@ -24,6 +26,16 @@ struct WorktreeAdd: ParsableCommand {
           GRAFTTY_PROMPT
           graftty worktree add review-pr --base origin/main --agent codex
           graftty worktree add review-pr --branch existing-branch --existing --agent codex
+
+        --remote works in either direction over an existing Mac connection.
+        The destination must track the project in Graftty. The default matches
+        the caller's Git origin; --project overrides it with
+        a destination name or absolute path. Equivalent SSH and HTTPS origins
+        match even when project names differ. Missing origins or multiple
+        matching checkouts require --project; names are never a fallback.
+        Git revisions, including --base HEAD, resolve on the destination's
+        main checkout. Local commits and uncommitted edits are not transferred.
+        Both Macs need a Graftty version supporting remote worktree creation.
 
         On success, the command prints the worktree's stable message address.
         Send guidance with `graftty team send --stdin <address>`; messages
@@ -34,6 +46,12 @@ struct WorktreeAdd: ParsableCommand {
 
     @Argument(help: "Worktree directory name under <repo>/.worktrees")
     var name: String
+
+    @Option(name: .long, help: "Connected Mac name or device ID on which to create the worktree")
+    var remote: String?
+
+    @Option(name: .long, help: "Destination project name or absolute path; requires --remote (default: caller's Git origin)")
+    var project: String?
 
     @Option(name: .long, help: "Branch name (default: normalized worktree name)")
     var branch: String?
@@ -60,6 +78,14 @@ struct WorktreeAdd: ParsableCommand {
     var timeout: Int = 300
 
     func validate() throws {
+        if project != nil && remote == nil {
+            throw ValidationError("--project requires --remote")
+        }
+        for (flag, value) in [("--remote", remote), ("--project", project)] {
+            if let value, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw ValidationError("\(flag) must not be empty")
+            }
+        }
         if agent != nil && command != nil {
             throw ValidationError("--agent and --command are mutually exclusive")
         }
@@ -129,7 +155,7 @@ struct WorktreeAdd: ParsableCommand {
                 retryTransportFailuresUntil: capabilityDeadline
             )
         }
-        let callerWorktree = try CLIEnv.resolveWorktree()
+        let callerWorktree = project == nil ? try CLIEnv.resolveWorktree() : ""
         let operationID = UUID().uuidString.lowercased()
         var response = try Self.sendRequestRetryingTimeout(
             creationRequest(
@@ -156,7 +182,7 @@ struct WorktreeAdd: ParsableCommand {
                     }
                     Thread.sleep(forTimeInterval: 0.1)
                     response = try Self.sendRequestRetryingTimeout(
-                        .worktreeCreateStatus(operationID: operation.operationID),
+                        statusRequest(operationID: operation.operationID),
                         operationID: operation.operationID,
                         deadline: deadline
                     )
@@ -234,7 +260,16 @@ struct WorktreeAdd: ParsableCommand {
         resolvedPrompt: String?,
         operationID: String? = nil
     ) -> NotificationMessage {
-        .createWorktree(
+        if let remote {
+            return .remoteWorktree(target: remote, request: .create(RemoteWorktreeCreation(
+                callerWorktree: callerWorktree, project: project,
+                worktreeName: names.worktree, branchName: names.branch, existing: existing,
+                base: base, command: command ?? agentRuntime?.rawValue,
+                agentRuntime: agentRuntime, agentPrompt: resolvedPrompt,
+                operationID: operationID ?? UUID().uuidString.lowercased()
+            )))
+        }
+        return .createWorktree(
             callerWorktree: callerWorktree,
             worktreeName: names.worktree,
             branchName: names.branch,
@@ -247,6 +282,13 @@ struct WorktreeAdd: ParsableCommand {
             agentPrompt: resolvedPrompt,
             operationID: operationID
         )
+    }
+
+    func statusRequest(operationID: String) -> NotificationMessage {
+        if let remote {
+            return .remoteWorktree(target: remote, request: .status(operationID: operationID))
+        }
+        return .worktreeCreateStatus(operationID: operationID)
     }
 
     static func sendRequestRetryingTimeout(
@@ -262,9 +304,10 @@ struct WorktreeAdd: ParsableCommand {
         writeError: (String) -> Void = CLIEnv.printError
     ) throws -> ResponseMessage {
         var operationMayExist: Bool
-        if case .worktreeCreateStatus = message {
+        switch message {
+        case .worktreeCreateStatus, .remoteWorktree(_, .status):
             operationMayExist = true
-        } else {
+        default:
             operationMayExist = false
         }
         while true {

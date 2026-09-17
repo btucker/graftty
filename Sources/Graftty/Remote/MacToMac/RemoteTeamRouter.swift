@@ -18,6 +18,7 @@ final class RemoteTeamRouter {
     }
 
     private var routes: [RemoteDeviceID: [UUID: Route]] = [:]
+    private var worktreeTargets: [String: (device: RemoteDeviceID, lastUsed: Date)] = [:]
     private var sequence: UInt64 = 0
     private var reconnectsInFlight: Set<UUID> = []
     var handler: Handler = { _, _ in
@@ -70,7 +71,7 @@ final class RemoteTeamRouter {
                 return .ok
             case .error(let message):
                 return .error(message)
-            case .members:
+            case .members, .worktreeCreate:
                 return .error("Unexpected response to client reconnect; update Graftty on both Macs")
             }
         } catch {
@@ -107,7 +108,7 @@ final class RemoteTeamRouter {
             switch try JSONDecoder().decode(RemoteTeamResponse.self, from: data) {
             case .ok: return .ok
             case .error(let message): return .error(message)
-            case .members: return .error("Unexpected response to remote team send")
+            case .members, .worktreeCreate: return .error("Unexpected response to remote team send")
             }
         } catch {
             // Never retry a send automatically: the peer may have persisted
@@ -167,6 +168,55 @@ final class RemoteTeamRouter {
                     }
                 )
             }
+        }
+    }
+
+    func worktree(target: String, request: RemoteWorktreeRequest, repos: [RepoEntry]) async -> ResponseMessage {
+        let cutoff = Date().addingTimeInterval(-60 * 60)
+        worktreeTargets = worktreeTargets.filter { $0.value.lastUsed > cutoff }
+        let device: RemoteDeviceID
+        if let pinned = worktreeTargets[request.operationID] {
+            device = pinned.device
+        } else {
+            let selected = routes.keys.compactMap { device in
+                preferredRoute(for: device).map { (device, $0) }
+            }
+            let ids = selected.filter { $0.0.value == target }
+            let matches = ids.isEmpty ? selected.filter { $0.1.label == target } : ids
+            guard matches.count == 1 else {
+                let choices = selected.map { "\($0.1.label): \($0.0.value)" }.sorted().joined(separator: ", ")
+                return .error("\(matches.isEmpty ? "Unknown or disconnected" : "Ambiguous") Mac '\(target)'. Connected Macs: \(choices.isEmpty ? "none" : choices)")
+            }
+            device = matches[0].0
+        }
+        guard let route = preferredRoute(for: device) else {
+            return .error("Destination Mac \(device.value) is disconnected; operation \(request.operationID) may still finish. Check that Mac before creating another worktree")
+        }
+        // Pin before reading Git metadata, which suspends this actor too.
+        worktreeTargets[request.operationID] = (device, Date())
+        let outgoing: RemoteWorktreeRequest
+        do {
+            switch request {
+            case .create(let creation): outgoing = .create(try await creation.resolvingSourceProject(in: repos))
+            case .status: outgoing = request
+            }
+        } catch { return .error(String(describing: error)) }
+        do {
+            let data = try await route.send(JSONEncoder().encode(RemoteTeamRequest.worktree(outgoing)))
+            switch try JSONDecoder().decode(RemoteTeamResponse.self, from: data) {
+            case .worktreeCreate(let status):
+                guard status.operationID == request.operationID else {
+                    throw RemoteWorktreeError("Mismatched remote operation ID")
+                }
+                let address = try RemoteTeamAddress(deviceID: device, worktreePath: status.worktreePath)
+                return .worktreeCreate(.init(operationID: status.operationID, state: status.state,
+                    worktreePath: status.worktreePath, messageAddress: address.rawValue, error: status.error))
+            case .error(let message): return .error(message)
+            case .ok, .members:
+                throw RemoteWorktreeError("Unexpected response; update Graftty on both Macs")
+            }
+        } catch {
+            return .error("Remote worktree operation \(request.operationID) was not acknowledged and may still finish. Check the destination before creating another worktree. Both Macs must support remote worktree creation: \(error)")
         }
     }
 

@@ -55,6 +55,29 @@ Delegation within the user's requested repository work needs no separate confirm
 
 Save the returned `created worktree=... address=...`. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
 
+### Create a worktree on another Mac
+
+Add `--remote '<Mac-name-or-device-ID>'` to `worktree add`. This works from the viewing Mac to the host and from the host to a connected viewer. Both Macs must run a version of Graftty that supports remote creation, with an active control connection. Unknown or ambiguous Mac names produce an error listing connected names and IDs.
+
+```sh
+graftty worktree add fix-tests --remote 'Studio Mac' --agent codex --prompt-stdin <<'GRAFTTY_REMOTE_A41C9E72'
+Fix the failing parser tests. Keep changes in the parser and its tests.
+Report the result and commit hash by replying to my follow-up Graftty team message.
+GRAFTTY_REMOTE_A41C9E72
+```
+
+By default, Graftty matches the caller's Git `origin` on the destination, regardless of project names or checkout paths. Equivalent SSH and HTTPS URLs match after normalizing the hostname and `.git` suffix; distinct repository paths and nonstandard ports stay distinct. Both projects must be added to Graftty. To select a different project, resolve multiple checkouts of the same origin, or work without a network origin, pass `--project '<destination-name-or-absolute-repository-path>'` with `--remote`. An explicit project works outside a local worktree.
+
+```sh
+graftty worktree add fix-tests --remote 'Laptop' --project /Users/me/projects/other --agent claude
+```
+
+Git branches and `--base` resolve on the destination. For remote creation, `--base HEAD` uses the destination's main checkout. Graftty does not transfer local commits, edits, or instruction files. The destination stages the prompt and starts the agent in its new pane.
+
+Use the returned `graftty-mac://...` address unchanged for messages and reachability checks. After launch, send a follow-up `graftty team send --stdin '<returned-address>'` so the child receives your device-qualified sender address and can answer with `graftty team reply`. A local filesystem address from your own roster cannot route the child's reply across Macs.
+
+If creation times out or loses its acknowledgement, inspect the destination's roster and worktrees before issuing another `worktree add`. The original operation may still finish.
+
 ### Recover a failed launch or use an existing worktree
 
 After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
