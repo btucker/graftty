@@ -2,6 +2,7 @@ import Foundation
 import GrafttyProtocol
 
 public enum RemoteTeamRequest: Codable, Sendable, Equatable {
+    case worktree(RemoteWorktreeRequest)
     /// The viewing Mac arms reconnect for this authenticated channel's close.
     case prepareReconnect
     case list
@@ -16,6 +17,7 @@ public enum RemoteTeamRequest: Codable, Sendable, Equatable {
 }
 
 public enum RemoteTeamResponse: Codable, Sendable, Equatable {
+    case worktreeCreate(WorktreeCreateStatus)
     case members([TeamListMember])
     case ok
     case error(String)
@@ -115,6 +117,8 @@ public final class RemoteTeamService {
         do {
             guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
             switch request {
+            case .worktree:
+                return .error("Remote worktree creation is not available")
             case .prepareReconnect:
                 return .error("Reconnect requests must target the viewing Mac's connection")
             case .list:

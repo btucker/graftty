@@ -85,6 +85,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case listPanes(path: String)
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
+    case remoteWorktree(target: String, request: RemoteWorktreeRequest)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
@@ -143,6 +144,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case agentPromptStagingCapability
     case worktreeBaseCapability
     case worktreeCreateIdempotencyCapability
+    case remoteWorktreeCapability
     case worktreeCreateStatus(operationID: String)
     case removeWorktree(worktreePath: String, force: Bool)
     case worktreeRemoveCapability
@@ -164,7 +166,7 @@ public extension NotificationMessage {
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
-        case target
+        case target, request
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -210,6 +212,10 @@ extension NotificationMessage: Codable {
         case .reconnectRemoteMac(let target):
             try container.encode("reconnect_remote_mac", forKey: .type)
             try container.encode(target, forKey: .target)
+        case .remoteWorktree(let target, let request):
+            try container.encode("remote_worktree", forKey: .type)
+            try container.encode(target, forKey: .target)
+            try container.encode(request, forKey: .request)
         case .reconnectRemoteClient(let target):
             try container.encode("reconnect_remote_client", forKey: .type)
             try container.encode(target, forKey: .target)
@@ -331,6 +337,8 @@ extension NotificationMessage: Codable {
             try container.encode("agent_prompt_staging_capability", forKey: .type)
         case .worktreeBaseCapability:
             try container.encode("worktree_base_capability", forKey: .type)
+        case .remoteWorktreeCapability:
+            try container.encode("remote_worktree_capability", forKey: .type)
         case .worktreeCreateIdempotencyCapability:
             try container.encode("worktree_create_idempotency_capability", forKey: .type)
         case .worktreeCreateStatus(let operationID):
@@ -367,6 +375,8 @@ extension NotificationMessage: Codable {
             self = .listPanes(path: path)
         case "reconnect_remote_mac":
             self = .reconnectRemoteMac(target: try container.decode(String.self, forKey: .target))
+        case "remote_worktree":
+            self = .remoteWorktree(target: try container.decode(String.self, forKey: .target), request: try container.decode(RemoteWorktreeRequest.self, forKey: .request))
         case "reconnect_remote_client":
             self = .reconnectRemoteClient(target: try container.decode(String.self, forKey: .target))
         case "add_pane":
@@ -503,6 +513,8 @@ extension NotificationMessage: Codable {
             self = .agentPromptStagingCapability
         case "worktree_base_capability":
             self = .worktreeBaseCapability
+        case "remote_worktree_capability":
+            self = .remoteWorktreeCapability
         case "worktree_create_idempotency_capability":
             self = .worktreeCreateIdempotencyCapability
         case "worktree_create_status":
@@ -790,12 +802,14 @@ public enum ResponseMessage: Sendable, Equatable {
     case teamHookOutput(String)
     case teamInbox(messages: [TeamInboxMessage], nextBeforeID: String?, nextAfterID: String?, snapshotThroughID: String?)
     case worktreeCreate(WorktreeCreateStatus)
+    case worktreeCreateRetry(operationID: String)
     case worktreeRemove(WorktreeRemoveStatus)
 }
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, code, message, panes, output, messages, text, operation
+        case operationID = "operation_id"
         case teamName = "team_name"
         case members
         case nextBeforeID = "next_before_id"
@@ -834,6 +848,9 @@ extension ResponseMessage: Codable {
             try container.encodeIfPresent(nextBeforeID, forKey: .nextBeforeID)
             try container.encodeIfPresent(nextAfterID, forKey: .nextAfterID)
             try container.encodeIfPresent(snapshotThroughID, forKey: .snapshotThroughID)
+        case .worktreeCreateRetry(let operationID):
+            try container.encode("worktree_create_retry", forKey: .type)
+            try container.encode(operationID, forKey: .operationID)
         case .worktreeCreate(let operation):
             try container.encode("worktree_create", forKey: .type)
             try container.encode(operation, forKey: .operation)
@@ -876,6 +893,8 @@ extension ResponseMessage: Codable {
             let nextAfterID = try container.decodeIfPresent(String.self, forKey: .nextAfterID)
             let snapshotThroughID = try container.decodeIfPresent(String.self, forKey: .snapshotThroughID)
             self = .teamInbox(messages: messages, nextBeforeID: nextBeforeID, nextAfterID: nextAfterID, snapshotThroughID: snapshotThroughID)
+        case "worktree_create_retry":
+            self = .worktreeCreateRetry(operationID: try container.decode(String.self, forKey: .operationID))
         case "worktree_create":
             self = .worktreeCreate(
                 try container.decode(WorktreeCreateStatus.self, forKey: .operation)

@@ -2580,6 +2580,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.9** When `graftty worktree add --agent` reports a ready worktree, the CLI shall identify the delegated worktree's stable message address and tell the parent to pause that scope until it confirms the child is reachable, then relinquish the scope and continue only separate work.
 
+**AGENT-5.10** When `graftty worktree add --remote <Mac>` is invoked, the CLI shall accept a connected Mac name or device ID and an optional destination project, alongside the existing branch and agent launch options.
+
+**AGENT-5.11** When remote worktree creation omits a project, the application shall match the caller's Git origin on the destination regardless of project names or checkout paths, treating equivalent GitHub and GitLab SSH and HTTPS origins as the same repository; an explicit project shall match an exact destination name or absolute repository path, and missing or ambiguous matches shall fail before mutation.
+
+**AGENT-5.12** When a CLI requests a worktree on a connected Mac, the application shall route creation and status over either an outgoing or incoming authenticated connection, preserve the operation ID across retries, and return a device-qualified message address.
+
+**AGENT-5.13** If a remote worktree request has an unknown or ambiguous Mac target, then the application shall reject it; once dispatched, retries shall remain pinned to that device even if its label is reused.
+
+**AGENT-5.14** When an authenticated peer creates or polls a worktree, the destination shall scope its operation ID to that peer, stage launch inputs through local creation, and return retained pending, ready, or failed results without repeating the mutation.
+
+**AGENT-5.15** If a remote worktree RPC exceeds its transport deadline, then the application shall tell the CLI to retry the same operation within its requested timeout rather than report a terminal creation failure.
+
+**AGENT-5.16** When remote worktree creation is requested, the CLI shall verify local app support before sending the mutation and shall bound compatibility-probe retries separately from the worktree creation timeout.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.

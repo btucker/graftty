@@ -55,6 +55,18 @@ Delegation within the user's requested repository work needs no separate confirm
 
 Save the returned `created worktree=... address=...`. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
 
+### Create a worktree on another Mac
+
+Add `--remote '<Mac-name-or-device-ID>'` to the delegation command above. This works in either direction over an active control connection. Both Macs need a Graftty version that supports remote creation.
+
+The destination project defaults to the caller's Git `origin`, regardless of local names or paths. Equivalent GitHub and GitLab SSH and HTTPS URLs match. Both projects must be tracked in Graftty. For another project, a missing origin, or multiple matches, add `--project '<destination-name-or-absolute-repository-path>'`. This override also works outside a local worktree.
+
+Branches and `--base` resolve on the destination. `--base HEAD` uses its main checkout. Local commits, edits, and instruction files are not transferred.
+
+From a tracked local worktree, send a follow-up with `graftty team send --stdin '<returned-address>'`, preserving the full `graftty-mac://...` address. This gives the child your cross-Mac reply address for `graftty team reply`. Your local roster paths cannot route replies across Macs.
+
+After a timeout or lost acknowledgement, inspect the destination's roster and worktrees before retrying. The original creation may still finish.
+
 ### Recover a failed launch or use an existing worktree
 
 After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
