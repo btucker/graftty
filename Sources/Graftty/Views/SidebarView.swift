@@ -257,7 +257,11 @@ struct SidebarView: View {
                         .textFieldStyle(.roundedBorder).padding(10)
                     ScrollViewReader { proxy in
                         Group {
-                            if showsProjectRail { ProjectWorktreeColumn { worktreeRows } }
+                            if showsProjectRail {
+                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
+                                    worktreeRows
+                                }
+                            }
                             else { List { worktreeRows }.listStyle(.sidebar) }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
@@ -492,11 +496,7 @@ struct SidebarView: View {
     }
 
     private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool) -> some View {
-        Button {
-            remoteBranchStore.pulse()
-            prStatusStore.pulse()
-            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
-        } label: {
+        Button { presentAddWorktree(for: repo) } label: {
             HStack(spacing: 5) {
                 Image(systemName: "plus")
                 if showsLabel { Text("Add worktree") }
@@ -508,6 +508,29 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .help("Add worktree to \(repo.displayName)")
         .accessibilityLabel("Add worktree to \(repo.displayName)")
+    }
+
+    private func presentAddWorktree(for repo: RepoEntry) {
+        remoteBranchStore.pulse()
+        prStatusStore.pulse()
+        pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
+    }
+
+    private func addWorktreeToSelectedProject() {
+        guard navigation.query.isEmpty,
+              let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) else { return }
+
+        if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
+            if SidebarMenuVisibility.showsAddWorktree(repo: repo) { presentAddWorktree(for: repo) }
+            return
+        }
+
+        guard project.supportsWorktreeEditing == true,
+              let ownerID = project.owner?.deviceID,
+              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }),
+              let repository = remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
+                  .first(where: { $0.id == project.repositoryID }) else { return }
+        onAddRemoteWorktree(remoteMac, repository)
     }
 
     /// Renders a worktree and its pane children as one visually-unified
