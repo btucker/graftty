@@ -78,6 +78,9 @@ struct SidebarView: View {
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @ObservedObject private var iconStore = SidebarHostController.shared
+    @ObservedObject private var worktreeIcons = WorktreeIconStore.shared
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled) private var artworkEnabled = true
+    @AppStorage(SettingsKeys.worktreeArtworkStyle) private var artworkStyle = "illustration"
     @State private var projects: [SidebarProject] = []
     @State private var remoteIcons: [String: Data] = [:]
     @State private var fetchedIconRevisions: [String: String] = [:]
@@ -85,6 +88,11 @@ struct SidebarView: View {
     @State private var showsRemoteManagement = false
 
     private var owner: WorktreeOrigin { iconStore.owner }
+    private var worktreeArtworkRequests: [WorktreeArtworkRequest] {
+        appState.repos.flatMap { repo in
+            repo.worktrees.compactMap { WorktreeIconStore.request(for: $0, repoPath: repo.path) }
+        }
+    }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
     private var orderedSidebarRepos: [RepoEntry] {
         let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
@@ -285,6 +293,18 @@ struct SidebarView: View {
                 await refreshNavigation()
                 try? await Task.sleep(for: .seconds(1))
             }
+        }
+        .onChange(of: WorktreeArtworkTheme(theme: theme), initial: true) { _, artworkTheme in
+            worktreeIcons.configure(theme: artworkTheme)
+        }
+        .onChange(of: worktreeArtworkRequests, initial: true) { _, requests in
+            worktreeIcons.update(worktrees: requests, isActive: NSApplication.shared.isActive)
+        }
+        .onChange(of: artworkEnabled, initial: true) { _, enabled in
+            worktreeIcons.configure(enabled: enabled, style: WorktreeArtworkStyle(rawValue: artworkStyle) ?? .illustration)
+        }
+        .onChange(of: artworkStyle) { _, style in
+            worktreeIcons.configure(enabled: artworkEnabled, style: WorktreeArtworkStyle(rawValue: style) ?? .illustration)
         }
         .onChange(of: appState.selectedWorktreePath) { old, new in
             rememberSelection(old)
@@ -528,6 +548,11 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
+        let generatedArtwork = artworkEnabled ? WorktreeArtworkBackground.resolveImage(
+            isMainCheckout: worktree.path == repo.path,
+            projectIcon: iconStore.icons[repo.id.uuidString],
+            generated: worktreeIcons.images[worktree.path]
+        ) : nil
         let heading = WorktreeRow(
             entry: worktree,
             isActive: isActive,
@@ -597,7 +622,7 @@ struct SidebarView: View {
                 panes
             }
             .padding(.vertical, groupsPanes ? 8 : 0)
-            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background { worktreeBackground(image: generatedArtwork, isActive: isActive, isRegenerating: worktreeIcons.regeneratingPaths.contains(worktree.path)) }
             .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
         )
         VStack(spacing: 0) {
@@ -626,10 +651,7 @@ struct SidebarView: View {
             panes
         }
         .padding(.vertical, groupsPanes ? 8 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
-        )
+        .background { worktreeBackground(image: generatedArtwork, isActive: isActive, isRegenerating: worktreeIcons.regeneratingPaths.contains(worktree.path)) }
         // PWD-1.5: drop-target highlight. Stroked so it composes with
         // the active-worktree background fill above when the dragged-
         // onto row is also the active one.
@@ -637,6 +659,21 @@ struct SidebarView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
         )
+    }
+
+    @ViewBuilder
+    private func worktreeBackground(image: NSImage?, isActive: Bool, isRegenerating: Bool) -> some View {
+        let selectionColor = theme.foreground.opacity(isActive ? 0.16 : 0)
+        if let image {
+            WorktreeArtworkBackground(
+                image: image,
+                backgroundColor: theme.sidebarBackground,
+                selectionColor: selectionColor,
+                isRegenerating: isRegenerating
+            )
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selectionColor)
+        }
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
@@ -673,6 +710,12 @@ struct SidebarView: View {
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: worktree.path))
+            })
+            menu.addItem(.separator())
+        }
+        if artworkEnabled, let request = WorktreeIconStore.request(for: worktree, repoPath: repo.path) {
+            menu.addItem(ClosureMenuItem(title: "Regenerate Background Image") {
+                worktreeIcons.regenerate(request)
             })
             menu.addItem(.separator())
         }

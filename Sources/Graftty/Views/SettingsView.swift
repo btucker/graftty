@@ -22,6 +22,10 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.editorCliCommand) private var editorCliCommand: String = ""
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled)
+    private var worktreeArtworkEnabled = WorktreeArtworkPreferences.defaultEnabled
+    @AppStorage(SettingsKeys.worktreeArtworkStyle)
+    private var worktreeArtworkStyle = WorktreeArtworkPreferences.defaultStyle
 
     @State private var resolvedShellEditor: String = ""
     @State private var availableApps: [TextEditorApp] = []
@@ -39,6 +43,24 @@ struct SettingsView: View {
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
                 .font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
+
+            Text("Worktree backgrounds")
+                .font(.headline)
+
+            Toggle("Generate worktree backgrounds", isOn: $worktreeArtworkEnabled)
+
+            Picker("Style:", selection: $worktreeArtworkStyle) {
+                ForEach(WorktreeArtworkStyle.allCases) { style in
+                    Text(style.label).tag(style)
+                }
+            }
+            .disabled(!worktreeArtworkEnabled)
+
+            Text("Uses recent agent prompts to create backgrounds. Tries Codex with your existing sign-in, then Apple ImageCreator.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Divider().padding(.vertical, 4)
 
             VStack(alignment: .leading, spacing: 6) {

@@ -150,6 +150,20 @@ final class SurfaceHandle {
     let view: NSView
     let worktreePath: String
     weak var followerPresentation: MacFollowerTerminalView?
+    private(set) var worktreeArtworkConfig: GhosttyConfig?
+
+    @MainActor
+    func setWorktreeArtworkVisible(_ visible: Bool) {
+        (view as? SurfaceNSView)?.terminalManager?.configureWorktreeArtwork(visible, for: self)
+    }
+
+    func setWorktreeArtworkConfig(_ config: GhosttyConfig?, base: GhosttyConfig) {
+        guard worktreeArtworkConfig !== config else { return }
+        worktreeArtworkConfig = config
+        let effective = config ?? base
+        effective.apply(to: surface, in: view)
+        followerPresentation?.updateGhosttyConfig(effective)
+    }
     private(set) var followerScrollbar = ghostty_action_scrollbar_s()
     /// zmx session this pane is attached to, nil for direct-shell panes.
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
@@ -636,7 +650,11 @@ final class SurfaceHandle {
         config.receive_resize = { _, _, _, _, _ in }
         config.command = nil
         config.initial_input = nil
-        return ghostty_surface_new(app, &config)
+        let history = ghostty_surface_new(app, &config)
+        if let history, let artwork = worktreeArtworkConfig {
+            artwork.apply(to: history, in: view)
+        }
+        return history
     }
 
     func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {

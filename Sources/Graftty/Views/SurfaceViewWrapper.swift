@@ -5,8 +5,10 @@ import GhosttyKit
 /// Keeps native terminal sizing independent from the pane while following.
 struct SurfaceViewWrapper: NSViewRepresentable {
     let handle: SurfaceHandle
+    var showsWorktreeArtwork = false
 
     func makeNSView(context: Context) -> MacFollowerTerminalView {
+        handle.setWorktreeArtworkVisible(showsWorktreeArtwork)
         let terminal = handle.view as! SurfaceNSView
         let view = MacFollowerTerminalView(
             terminalView: terminal,
@@ -22,6 +24,7 @@ struct SurfaceViewWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MacFollowerTerminalView, context: Context) {
+        handle.setWorktreeArtworkVisible(showsWorktreeArtwork)
         view.followerGrid = handle.followerDisplayGrid
         view.needsLayout = true
     }

@@ -3894,7 +3894,8 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged
+            let skillManaged,
+            let userPrompt
         ):
             return await handleTeamHook(
                 callerPath: callerPath,
@@ -3905,6 +3906,7 @@ struct GrafttyApp: App {
                 paneSessionName: paneSessionName,
                 attentionReason: attentionReason,
                 skillManaged: skillManaged,
+                userPrompt: userPrompt,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
@@ -4346,6 +4348,7 @@ struct GrafttyApp: App {
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason?,
         skillManaged: Bool,
+        userPrompt: String?,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
@@ -4353,6 +4356,15 @@ struct GrafttyApp: App {
         remoteBranchStore: RemoteBranchStore,
         agentRegistry: ClaudeSessionRegistry
     ) async -> ResponseMessage {
+        if let repo = appState.wrappedValue.repo(forWorktreePath: callerPath),
+           let worktree = appState.wrappedValue.worktree(forPath: callerPath),
+           let request = WorktreeIconStore.request(for: worktree, repoPath: repo.path) {
+            if event == .userPromptSubmit, let userPrompt {
+                WorktreeIconStore.shared.recordPrompt(userPrompt, for: request)
+            } else if event == .sessionStart, paneSessionName == request.firstPaneSessionName {
+                WorktreeIconStore.shared.retryHistory(for: request)
+            }
+        }
         if let paneSessionName,
            appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: paneSessionName) != nil {
             agentRegistry.recordHook(runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,

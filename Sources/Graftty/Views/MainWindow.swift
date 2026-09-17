@@ -34,6 +34,9 @@ enum RemotePaneLayoutProjection {
 struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
+    @ObservedObject private var worktreeIcons = WorktreeIconStore.shared
+    @ObservedObject private var projectIcons = SidebarHostController.shared
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled) private var artworkEnabled = true
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
@@ -234,6 +237,8 @@ struct MainWindow: View {
                         ),
                         focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
                         theme: terminalManager.theme,
+                        artwork: selectedWorktreeArtwork,
+                        artworkIsRegenerating: worktreeIcons.regeneratingPaths.contains(worktree.wrappedValue.path),
                         onFocusTerminal: { terminalID in
                             attentionOpenGeneration &+= 1
                             // Persist the focus change on the model BEFORE
@@ -500,6 +505,15 @@ struct MainWindow: View {
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    private var selectedWorktreeArtwork: NSImage? {
+        guard artworkEnabled, let repo = selectedRepo, let worktree = selectedWorktree else { return nil }
+        return WorktreeArtworkBackground.resolveImage(
+            isMainCheckout: worktree.path == repo.path,
+            projectIcon: projectIcons.icons[repo.id.uuidString],
+            generated: worktreeIcons.images[worktree.path]
+        )
     }
 
     private var selectedRemoteMac: RemoteMac? {

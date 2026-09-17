@@ -152,6 +152,52 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
+**LAYOUT-2.69** While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.
+
+**LAYOUT-2.70** If worktree artwork generation still fails after its permitted prompt fallback, then the application shall retain the normal sidebar indicators and avoid repeated automatic attempts for that worktree during the same launch.
+
+**LAYOUT-2.71** When the application becomes inactive, it shall cancel worktree icon generation, discard cancelled results, and resume missing icons when active again.
+
+**LAYOUT-2.72** When selecting worktrees for automatic artwork, the application shall include only local on-disk linked worktrees and derive visual identities from their names without repository paths.
+
+**LAYOUT-2.73** When a worktree has generated artwork, the application shall display one continuous background behind its heading and pane rows without changing block dimensions and apply a theme-colored scrim that protects text on the leading side.
+
+**LAYOUT-2.74** When caching generated worktree artwork, the application shall preserve its aspect ratio and retain up to 512 pixels on its longest edge for row backgrounds.
+
+**LAYOUT-2.75** When initially generating linked-worktree artwork, the application shall derive a stable fallback subject, color palette, and composition from the worktree name and send English visual descriptions instead of raw technical names to ImageCreator.
+
+**LAYOUT-2.76** If ImageCreator rejects an artwork description or fails creation, then the application shall retry once with a shorter English subject description, without retrying cancellation or device unavailability.
+
+**LAYOUT-2.77** When a main checkout has a project icon, the application shall use that icon as its enlarged block background instead of generated artwork.
+
+**LAYOUT-2.78** When generating worktree artwork with an available on-device language model, the application shall first translate the worktree name and user-authored task context into a concrete English visual description and use its deterministic visual fallback if translation is unavailable or fails.
+
+**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image behind the entire terminal split layout, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.
+
+**LAYOUT-2.80** When a linked worktree has no cached context-based artwork, the application shall wait for a submitted user prompt or existing user-message history before generating, replace legacy artwork once, and keep the generated image stable across later prompts and launches.
+
+**LAYOUT-2.81** When deriving artwork context from agent history, the application shall use bounded recent user prompts from the latest top-level session registered to the exact worktree and first pane, excluding assistant output, tool results, and injected instructions.
+
+**LAYOUT-2.82** When the user chooses Regenerate Background Image for an enabled linked worktree, the application shall refresh its user context, generate a replacement in the selected style, retain the current image until success, and cache the replacement.
+
+**LAYOUT-2.83** When the user requests background regeneration, the application shall immediately mark the artwork pending, blur and dim it across the sidebar and terminal layout, and restore clarity when the request succeeds or cannot complete.
+
+**LAYOUT-2.84** When the user regenerates a worktree background, the application shall choose a fresh palette and composition and request a new task-related visual interpretation while preserving the chosen style and cached result until replacement succeeds.
+
+**LAYOUT-2.85** When generating a worktree background, the application shall use the active Ghostty background and ANSI accent colors to guide its palette and lighting while retaining a distinct task-related subject and composition.
+
+**LAYOUT-2.86** When Ghostty theme colors change, the application shall generate matching worktree backgrounds, discard results for the previous theme, and reuse cached images when returning to a theme.
+
+**LAYOUT-2.87** When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and describe muted theme accents without requesting saturated colors.
+
+**LAYOUT-2.88** When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, while propagating cancellation without starting a fallback.
+
+**LAYOUT-2.89** When Codex generates worktree artwork, the application shall use a separate ephemeral read-only thread, accept its completed image, and bound subprocess lifetime on failure, timeout, or cancellation.
+
+**LAYOUT-2.90** When generating Codex worktree artwork, the application shall prioritize recognition at small sizes using stable worktree-specific subject directions, silhouettes, compositions, and dominant accents, while confining theme matching to the backdrop and leaving fading to the UI.
+
+**LAYOUT-2.91** When the user releases a sidebar drag, the application shall clear worktree insertion markers and pane-drop highlights even if the destination receives no drop or drag-exit callback.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -345,6 +391,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-9.1** When the user activates "Reload Ghostty Config"
 
 **TERM-9.2** When the user activates "Open Ghostty Settings"
+
+**TERM-9.3** While a shared worktree backdrop is displayed, the application shall make only the terminal's default background transparent, preserve explicit cell backgrounds and inherited Ghostty settings, and retain the original configuration for panes without artwork.
 
 ### TERM-10.x
 
@@ -883,6 +931,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CONFIG-2.5** The application bundle shall include ghostty's per-shell integration scripts and the `xterm-ghostty` terminfo entry as vendored resources, pinned to the ghostty version backing libghostty-spm, with upstream license headers preserved and a provenance record, so shell integration works without a separately installed Ghostty.app.
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
+
+## SETTINGS — Settings
+
+### SETTINGS-1.x — Worktree Artwork
+
+**SETTINGS-1.1** When worktree artwork preferences have not been saved, the application shall enable worktree backgrounds and use Illustration; an unrecognized saved style shall fall back to Illustration.
+
+**SETTINGS-1.2** When the user changes worktree artwork preferences, the application shall persist the enabled state and chosen Illustration, Animation, or Sketch style independently so disabling artwork preserves the style.
 
 ## DIVERGE — Worktree Divergence Indicator
 
@@ -2641,6 +2697,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.31** When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
+
+**AGENT-6.33** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork without capturing tool input or requiring new plugin hooks.
 
 ## CLI — CLI
 

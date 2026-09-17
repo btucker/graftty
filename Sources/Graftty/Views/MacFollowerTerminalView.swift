@@ -88,6 +88,11 @@ final class MacFollowerTerminalView: NSView {
         reconcile(wasAtBottom: bottom, withinCanvas: within)
     }
 
+    func updateGhosttyConfig(_ config: GhosttyConfig) {
+        guard let historySurface, let historyView else { return }
+        config.apply(to: historySurface, in: historyView)
+    }
+
     override func layout() {
         super.layout()
         let bottom = atBottom
