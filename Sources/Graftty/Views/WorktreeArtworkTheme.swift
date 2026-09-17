@@ -24,6 +24,10 @@ struct WorktreeArtworkTheme: Equatable, Sendable {
     // v2 prioritizes the configured backdrop and preserves muted color tones.
     var cacheKey: String { "v2-" + colorCacheKey }
 
+    var backdropCacheKey: String {
+        "backdrop-v1-" + Self.hex(background).dropFirst()
+    }
+
     var colorCacheKey: String {
         let bytes = ([background, foreground] + accents).flatMap { color in
             [color.r, color.g, color.b].map { UInt8((min(1, max(0, $0)) * 255).rounded()) }

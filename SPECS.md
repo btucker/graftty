@@ -184,11 +184,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.84** When the user regenerates a worktree background, the application shall choose a fresh palette and composition and request a new task-related visual interpretation while preserving the chosen style and cached result until replacement succeeds.
 
-**LAYOUT-2.85** When generating a worktree background, the application shall use the active Ghostty background and ANSI accent colors to guide its palette and lighting while retaining a distinct task-related subject and composition.
+**LAYOUT-2.85** When generating a worktree background, the application shall match the active Ghostty backdrop and use project colors for the subject when available, otherwise use ANSI accents, while retaining a distinct task-related subject and composition.
 
 **LAYOUT-2.86** When Ghostty theme colors change, the application shall generate matching worktree backgrounds, discard results for the previous theme, and reuse cached images when returning to a theme.
 
-**LAYOUT-2.87** When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and describe muted theme accents without requesting saturated colors.
+**LAYOUT-2.87** When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and use project colors when available or muted theme accents otherwise.
 
 **LAYOUT-2.88** When generating worktree artwork, the application shall try installed Codex first and fall back to Apple on unavailability or generation failure, propagate cancellation without starting a fallback, and report generation as unavailable only when both providers are unavailable.
 
@@ -209,6 +209,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.96** When a project's resolved avatar changes, the application shall use a separate cached art direction; cancelled inference shall not publish or cache a direction.
 
 **LAYOUT-2.97** When inferring project art direction through Codex, the application shall attach the resolved avatar to a separate tool-disabled text turn and accept structured text only after successful completion.
+
+**LAYOUT-2.98** When project avatar resolution completes, the application shall make artwork requests eligible even if an override change resolves to the same image or no image.
+
+**LAYOUT-2.99** While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.
 
 ### LAYOUT-3.x — Adding Repositories
 

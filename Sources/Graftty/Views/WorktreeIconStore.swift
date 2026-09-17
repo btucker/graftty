@@ -112,7 +112,7 @@ final class WorktreeIconStore: ObservableObject {
             completed.remove(request.path)
             failures[request.path] = nil
             checkedHistory.remove(request.path)
-            if images[request.path] != nil { regeneratingPaths.insert(request.path) }
+            if !generationUnavailable, images[request.path] != nil { regeneratingPaths.insert(request.path) }
         }
         regeneratingPaths.formIntersection(seen)
         self.isActive = isActive
@@ -161,13 +161,17 @@ final class WorktreeIconStore: ObservableObject {
 
     func configure(theme: WorktreeArtworkTheme) {
         guard self.theme != theme else { return }
-        worker?.cancel()
+        let affected = worktrees.filter { $0.project == nil || self.theme?.backdropCacheKey != theme.backdropCacheKey }
         self.theme = theme
-        completed.removeAll()
-        failures.removeAll()
-        checkedHistory.removeAll()
+        guard !affected.isEmpty else { return }
+        worker?.cancel()
+        for request in affected {
+            completed.remove(request.path)
+            failures[request.path] = nil
+            checkedHistory.remove(request.path)
+        }
         generationUnavailable = false
-        regeneratingPaths.formUnion(worktrees.filter { images[$0.path] != nil }.map(\.path))
+        regeneratingPaths.formUnion(affected.filter { images[$0.path] != nil }.map(\.path))
         update(worktrees: worktrees, isActive: isActive)
     }
 
@@ -178,7 +182,9 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     private func imageDirectory(for request: WorktreeArtworkRequest) -> URL {
-        request.project.map { styleDirectory.appendingPathComponent("project-v1-" + $0.cacheKey) } ?? styleDirectory
+        guard let project = request.project else { return styleDirectory }
+        return unthemedStyleDirectory.appendingPathComponent(theme?.backdropCacheKey ?? "unthemed")
+            .appendingPathComponent("project-v1-" + project.cacheKey)
     }
 
     func regenerate(_ request: WorktreeArtworkRequest) {

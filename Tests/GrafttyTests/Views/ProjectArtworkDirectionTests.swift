@@ -1,5 +1,7 @@
 import Foundation
 import Darwin
+import Combine
+import GrafttyKit
 import Testing
 @testable import Graftty
 
@@ -58,6 +60,36 @@ struct ProjectArtworkDirectionTests {
         #expect(try await store.direction(for: source) == .fallback)
         #expect(calls == 1)
     }
+    @Test("@spec LAYOUT-2.98: When project avatar resolution completes, the application shall make artwork requests eligible even if an override change resolves to the same image or no image.", .timeLimit(.minutes(1)))
+    func unchangedAvatarPublishesResolvedReadiness() async throws {
+        let host = SidebarHostController()
+        var repo = RepoEntry(path: "/missing-project", displayName: "Example")
+        repo.iconOverride = .initials("A")
+        var publications = 0
+        let subscription = host.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        host.refreshIcons([repo])
+        while host.artworkSource(for: repo) == nil, !Task.isCancelled { await Task.yield() }
+        #expect(host.artworkSource(for: repo) != nil)
+        let before = publications
+        repo.iconOverride = .initials("B")
+        #expect(host.artworkSource(for: repo) == nil)
+        host.refreshIcons([repo])
+        while host.artworkSource(for: repo) == nil, !Task.isCancelled { await Task.yield() }
+        #expect(host.artworkSource(for: repo) != nil)
+        #expect(publications > before)
+    }
+
+    @Test func directionValidationPreservesRegenerationChoiceGuarantees() {
+        let base = ProjectArtworkDirection.harbor
+        #expect(!ProjectArtworkDirection(category: base.category, character: base.character,
+            colors: ["green", "copper", "cream"], subjects: base.subjects).isValid)
+        #expect(!ProjectArtworkDirection(category: base.category, character: base.character,
+            colors: ["green", "green", "green", "green"], subjects: base.subjects).isValid)
+        #expect(!ProjectArtworkDirection(category: base.category, character: base.character,
+            colors: ["green", "copper", "cream", "blue"], subjects: base.subjects + ["wharf"]).isValid)
+    }
+
     @Test func codebaseBriefBoundsFilesAndSkipsSymlinksAndPipes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -73,6 +105,11 @@ struct ProjectArtworkDirectionTests {
 
     @Test func projectFamilySurvivesBothImageProvidersAndFallback() async throws {
         let project = ProjectArtworkDirection.harbor
+        let exampleNames = ["claude-notifications", "paging-through-scrollback", "graftty-crash"]
+        let twelveSubjects = ProjectArtworkDirection(category: project.category, character: project.character,
+            colors: project.colors, subjects: project.subjects + ["dock", "diving bell", "winch", "barrel"])
+        #expect(Set(exampleNames.map { twelveSubjects.subject(name: $0, variation: 0) }).count == 3)
+        #expect(Set(exampleNames.map { project.palette(name: $0, variation: 0) }).count >= 2)
         let name = "notifications"
         let theme = WorktreeArtworkTheme(theme: GhosttyTheme(core: .init(
             backgroundRGB: .init(r: 40.0/255, g: 44.0/255, b: 52.0/255), foregroundRGB: .init(r: 1, g: 1, b: 1))))
@@ -98,7 +135,7 @@ struct ProjectArtworkDirectionTests {
 
 extension ProjectArtworkDirection {
     static var harbor: Self {
-        .init(category: "a working harbor", character: "painted wood and brass", colors: ["sea green", "copper", "cream"],
+        .init(category: "a working harbor", character: "painted wood and brass", colors: ["sea green", "copper", "cream", "blue"],
               subjects: ["lighthouse", "tugboat", "anchor", "buoy", "crane", "compass", "sailboat", "sextant"])
     }
 }

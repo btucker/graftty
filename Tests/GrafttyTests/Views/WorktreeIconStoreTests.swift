@@ -40,6 +40,36 @@ struct WorktreeIconStoreTests {
         #expect(restored.images["new-tabs"] != nil)
     }
 
+    @Test("@spec LAYOUT-2.99: While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.")
+    func projectArtworkIgnoresUnconsumedThemeAccents() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let png = try imageData()
+        var calls = 0
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Build a harbor" }) { _, _, _, _, _, _ in
+            calls += 1
+            return png
+        }
+        var request = requests(["harbor"])[0]
+        request.project = .init(path: "/project", avatar: nil)
+        let first = WorktreeArtworkTheme(theme: GhosttyTheme(backgroundRGB: .init(r: 0, g: 0, b: 0), foregroundRGB: .init(r: 1, g: 1, b: 1)))
+        let second = WorktreeArtworkTheme(theme: GhosttyTheme(backgroundRGB: .init(r: 0, g: 0, b: 0), foregroundRGB: .init(r: 0.8, g: 0.5, b: 0.5)))
+        store.configure(theme: first)
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        store.configure(theme: second)
+        await store.waitUntilIdle()
+        #expect(calls == 1)
+        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in png }
+        restored.configure(theme: second)
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(restored.images[request.path] != nil)
+        store.configure(theme: WorktreeArtworkTheme(theme: GhosttyTheme(backgroundRGB: .init(r: 1, g: 1, b: 1), foregroundRGB: .init(r: 0, g: 0, b: 0))))
+        await store.waitUntilIdle()
+        #expect(calls == 2)
+    }
+
     @Test func changedAvatarDiscardsInflightImageAndUsesSeparateCache() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -166,6 +196,29 @@ struct WorktreeIconStoreTests {
         await store.waitUntilIdle()
         #expect(store.images.isEmpty)
         #expect(store.failures["test"] != nil)
+    }
+
+    @Test func avatarChangeDoesNotLeaveBlurWhenProvidersAreUnavailable() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let png = try imageData()
+        var request = requests(["cached"])[0]
+        request.project = .init(path: "/project", avatar: nil)
+        let seed = WorktreeIconStore(directory: directory, history: { _ in "Task" }) { _, _, _, _, _, _ in png }
+        seed.update(worktrees: [request], isActive: true)
+        await seed.waitUntilIdle()
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Task" }) { _, _, _, _, _, _ in
+            throw ImageCreatorWorktreeIcon.Failure.unavailable
+        }
+        let missing = requests(["missing"])[0]
+        store.update(worktrees: [request, missing], isActive: true)
+        await store.waitUntilIdle()
+        #expect(store.images[request.path] != nil)
+        request.project = .init(path: "/project", avatar: Data([1]))
+        store.update(worktrees: [request, missing], isActive: true)
+        await store.waitUntilIdle()
+        #expect(store.regeneratingPaths.isEmpty)
+        #expect(store.images[request.path] != nil)
     }
 
     @Test func unavailableGenerationStopsTheQueueButStillLoadsCache() async throws {

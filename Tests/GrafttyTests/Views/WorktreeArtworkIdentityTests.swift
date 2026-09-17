@@ -52,7 +52,7 @@ struct WorktreeArtworkIdentityTests {
         #expect(fallback == previous)
     }
 
-    @Test("@spec LAYOUT-2.85: When generating a worktree background, the application shall use the active Ghostty background and ANSI accent colors to guide its palette and lighting while retaining a distinct task-related subject and composition.")
+    @Test("@spec LAYOUT-2.85: When generating a worktree background, the application shall match the active Ghostty backdrop and use project colors for the subject when available, otherwise use ANSI accents, while retaining a distinct task-related subject and composition.")
     @MainActor
     func themeColorsGuideArtworkAndFallback() async throws {
         let dark = WorktreeArtworkTheme(theme: GhosttyTheme(
@@ -63,6 +63,9 @@ struct WorktreeArtworkIdentityTests {
             palette: [.init(r: 1, g: 0, b: 0), .init(r: 0, g: 0, b: 1)]))
         #expect(dark.cacheKey != light.cacheKey)
         let identity = try await WorktreeArtworkPrompt.identity(for: "garden", userContext: "Grow flowers", theme: dark) { _ in "a blooming sunflower" }
+        let projectIdentity = WorktreeArtworkIdentity(name: "garden", theme: dark, project: .harbor)
+        #expect(projectIdentity.palette == ProjectArtworkDirection.harbor.palette(name: "garden", variation: 0))
+        #expect(projectIdentity.concepts.first == identity.concepts.first)
         #expect(identity.subject == "a blooming sunflower")
         #expect(identity.palette.contains("red"))
         #expect(identity.palette.contains("blue"))
@@ -102,7 +105,7 @@ struct WorktreeArtworkIdentityTests {
         #expect(identities.allSatisfy { $0.concepts.joined().contains("low-key lighting") })
     }
 
-    @Test("@spec LAYOUT-2.87: When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and describe muted theme accents without requesting saturated colors.")
+    @Test("@spec LAYOUT-2.87: When generating Apple artwork for a Ghostty theme with a dark low-saturation background, the application shall lead its image prompt with a charcoal backdrop and positive low-light instructions, and use project colors when available or muted theme accents otherwise.")
     func charcoalThemeLeadsPromptWithoutWhiteBackdropHints() {
         let theme = WorktreeArtworkTheme(theme: GhosttyTheme(core: .init(
             backgroundRGB: .init(r: 40.0 / 255, g: 44.0 / 255, b: 52.0 / 255),
