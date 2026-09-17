@@ -90,7 +90,7 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty3"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty4"
 
 echo "→ testing patched zmx"
 (

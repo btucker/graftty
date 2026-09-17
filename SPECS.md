@@ -1070,6 +1070,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.6** When a bundled `zmx` daemon retains a 10,000-row session and a client reattaches, the daemon shall replay each retained row exactly once and preserve both the oldest and newest rows.
 
+**ZMX-9.7** When a terminal session is reattached, the application shall preserve soft wraps in replayed text so copied selections omit display-only line breaks while retaining explicit newlines.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle

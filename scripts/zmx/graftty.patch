@@ -1084,3 +1084,67 @@ index 23daed6..277ce73 100644
  /// Examine and change a signal action.
  pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) void {
      switch (errno(system.sigaction(sig, act, oact))) {
+diff --git a/src/util.zig b/src/util.zig
+index d96f5a1..a4d2449 100644
+--- a/src/util.zig
++++ b/src/util.zig
+@@ -806,7 +806,12 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+             var sb_bottom = sb_bottom_row;
+             sb_bottom.x = @intCast(pages.cols - 1);
+
+-            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
++            // Let the receiving terminal recreate soft wraps. Emitting CRLF
++            // for every display row turns those wraps into clipboard newlines.
++            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
++                .emit = .vt,
++                .unwrap = true,
++            });
+             scroll_fmt.content = .{
+                 .selection = ghostty_vt.Selection.init(
+                     screen_top,
+@@ -827,7 +832,10 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+     }
+
+     // Phase 2: visible screen with full extras (modes, cursor, keyboard, etc.)
+-    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
++    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
++        .emit = .vt,
++        .unwrap = true,
++    });
+
+     // Restrict content to the active viewport only
+     const active_tl = pages.pin(.{ .active = .{ .x = 0, .y = 0 } });
+@@ -2191,3 +2199,33 @@ test "stripAnsi: only escape sequences" {
+     defer alloc.free(result);
+     try testing.expectEqualStrings("", result);
+ }
++
++test "serializeTerminalState preserves soft wraps and hard breaks for selection" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    // Include spaces at a wrap boundary, a wide character, and a real newline.
++    for ([_][]const u8{
++        "abcdefghijklmnopqr\r\nnext",
++        "abcdef  ijklmnopqr\r\nnext",
++        "abcdefg界ijklmnop\r\nnext",
++        "abcdefgh\r\nijklmnop\r\nnext",
++    }) |input| {
++        var source = try testCreateTerminal(alloc, io, 8, 6, input);
++        defer source.deinit(alloc);
++        var restored = try serializeRoundtrip(alloc, io, &source);
++        defer restored.deinit(alloc);
++        try expectScreensMatch(alloc, &source, &restored);
++        try expectCursorAt(&restored, source.screens.active.cursor.y, source.screens.active.cursor.x);
++        var expected: std.Io.Writer.Allocating = .init(alloc);
++        defer expected.deinit();
++        var actual: std.Io.Writer.Allocating = .init(alloc);
++        defer actual.deinit();
++        var source_fmt = ghostty_vt.formatter.TerminalFormatter.init(&source, .{ .emit = .plain, .unwrap = true });
++        source_fmt.extra = .none;
++        var restored_fmt = ghostty_vt.formatter.TerminalFormatter.init(&restored, .{ .emit = .plain, .unwrap = true });
++        restored_fmt.extra = .none;
++        try source_fmt.format(&expected.writer);
++        try restored_fmt.format(&actual.writer);
++        try testing.expectEqualStrings(expected.written(), actual.written());
++    }
++}
