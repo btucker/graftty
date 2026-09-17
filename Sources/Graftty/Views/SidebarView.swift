@@ -90,8 +90,12 @@ struct SidebarView: View {
     private var owner: WorktreeOrigin { iconStore.owner }
     private var worktreeArtworkRequests: [WorktreeArtworkRequest] {
         appState.repos.flatMap { repo in
-            repo.worktrees.compactMap { WorktreeIconStore.request(for: $0, repoPath: repo.path) }
+            repo.worktrees.compactMap { artworkRequest(for: $0, repo: repo) }
         }
+    }
+    private func artworkRequest(for worktree: WorktreeEntry, repo: RepoEntry) -> WorktreeArtworkRequest? {
+        guard let project = iconStore.artworkSource(for: repo) else { return nil }
+        return WorktreeIconStore.request(for: worktree, repoPath: repo.path, project: project)
     }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
     private var orderedSidebarRepos: [RepoEntry] {
@@ -736,7 +740,7 @@ struct SidebarView: View {
             })
             menu.addItem(.separator())
         }
-        if artworkEnabled, let request = WorktreeIconStore.request(for: worktree, repoPath: repo.path) {
+        if artworkEnabled, let request = artworkRequest(for: worktree, repo: repo) {
             menu.addItem(ClosureMenuItem(title: "Regenerate Background Image") {
                 worktreeIcons.regenerate(request)
             })

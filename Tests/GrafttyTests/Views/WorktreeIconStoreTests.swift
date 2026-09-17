@@ -15,7 +15,7 @@ struct WorktreeIconStoreTests {
         var calls: [String] = []
         var active = 0
         var maximumActive = 0
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _, _ in
             active += 1
             maximumActive = max(maximumActive, active)
             calls.append(name)
@@ -30,7 +30,7 @@ struct WorktreeIconStoreTests {
         #expect(maximumActive == 1)
         #expect(store.images["fix-login"] != nil)
 
-        let restored = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _ in
+        let restored = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _, _ in
             calls.append(name)
             return png
         }
@@ -40,13 +40,47 @@ struct WorktreeIconStoreTests {
         #expect(restored.images["new-tabs"] != nil)
     }
 
+    @Test func changedAvatarDiscardsInflightImageAndUsesSeparateCache() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let png = try imageData()
+        var calls: [ProjectArtworkSource?] = []
+        var completion: CheckedContinuation<Data, Never>?
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Build a harbor" }) { _, _, _, _, _, project in
+            calls.append(project)
+            if calls.count == 1 { return await withCheckedContinuation { completion = $0 } }
+            return png
+        }
+        var request = requests(["login"])[0]
+        request.project = .init(path: "/project", avatar: Data([1]))
+        let original = request
+        store.update(worktrees: [request], isActive: true)
+        while completion == nil { await Task.yield() }
+        request.project = .init(path: "/project", avatar: Data([2]))
+        store.update(worktrees: [request], isActive: true)
+        completion?.resume(returning: png)
+        await store.waitUntilIdle()
+        #expect(calls == [original.project, request.project])
+        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in
+            Issue.record("Matching project cache must avoid generation")
+            return png
+        }
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(restored.images[request.path] != nil)
+        let old = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in png }
+        old.update(worktrees: [original], isActive: true)
+        await old.waitUntilIdle()
+        #expect(old.images.isEmpty)
+    }
+
     @Test("@spec LAYOUT-2.70: If worktree artwork generation still fails after its permitted prompt fallback, then the application shall retain the normal sidebar indicators and avoid repeated automatic attempts for that worktree during the same launch.")
     func failureDoesNotLoopOrBlockOtherNames() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let png = try imageData()
         var calls: [String] = []
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _, _ in
             calls.append(name)
             if name == "rejected" { throw TestFailure.rejected }
             return png
@@ -68,7 +102,7 @@ struct WorktreeIconStoreTests {
         let png = try imageData()
         var calls = 0
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _, _ in
             calls += 1
             if calls == 1 {
                 return await withCheckedContinuation { completion = $0 }
@@ -111,7 +145,7 @@ struct WorktreeIconStoreTests {
         let png = try imageData()
         var calls: [String] = []
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { name, _, _, _, _, _ in
             calls.append(name)
             return await withCheckedContinuation { completion = $0 }
         }
@@ -127,7 +161,7 @@ struct WorktreeIconStoreTests {
     @Test func invalidImageDataFallsBack() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _ in Data("invalid".utf8) }
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _, _ in Data("invalid".utf8) }
         store.update(worktrees: requests(["test"]), isActive: true)
         await store.waitUntilIdle()
         #expect(store.images.isEmpty)
@@ -138,11 +172,11 @@ struct WorktreeIconStoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let png = try imageData()
-        let seed = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _ in png }
+        let seed = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _, _ in png }
         seed.update(worktrees: requests(["cached"]), isActive: true)
         await seed.waitUntilIdle()
         var calls = 0
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _, _ in
             calls += 1
             throw ImageCreatorWorktreeIcon.Failure.unavailable
         }
@@ -160,7 +194,7 @@ struct WorktreeIconStoreTests {
         let png = try imageData()
         var calls = 0
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Existing user task" }) { _, _, _, _, _, _ in
             calls += 1
             if calls == 1 { return await withCheckedContinuation { completion = $0 } }
             return png
@@ -183,7 +217,7 @@ struct WorktreeIconStoreTests {
         let png = try imageData()
         var prompts: [String] = []
         let request = requests(["new-worktree"])[0]
-        let store = WorktreeIconStore(directory: directory) { _, prompt, _, _, _ in
+        let store = WorktreeIconStore(directory: directory) { _, prompt, _, _, _, _ in
             prompts.append(prompt)
             return png
         }
@@ -200,7 +234,7 @@ struct WorktreeIconStoreTests {
         store.recordPrompt("An unrelated later task", for: request)
         await store.waitUntilIdle()
         #expect(prompts.count == 1)
-        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _ in
+        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in
             Issue.record("Should reuse the stable image")
             return png
         }
@@ -217,7 +251,7 @@ struct WorktreeIconStoreTests {
         let first = WorktreeArtworkRequest(path: "/project-one/fix", name: "fix", firstPaneSessionName: nil)
         let second = WorktreeArtworkRequest(path: "/project-two/fix", name: "fix", firstPaneSessionName: nil)
         var prompts: [String] = []
-        let store = WorktreeIconStore(directory: directory) { _, prompt, _, _, _ in
+        let store = WorktreeIconStore(directory: directory) { _, prompt, _, _, _, _ in
             prompts.append(prompt)
             return png
         }
@@ -241,7 +275,7 @@ struct WorktreeIconStoreTests {
         let request = requests(["existing"])[0]
         let store = WorktreeIconStore(directory: directory, history: { _ in
             await withCheckedContinuation { completion = $0 }
-        }) { _, prompt, _, _, _ in
+        }) { _, prompt, _, _, _, _ in
             prompts.append(prompt)
             return png
         }
@@ -264,7 +298,7 @@ struct WorktreeIconStoreTests {
         let key = SHA256.hash(data: Data(request.name.utf8)).map { String(format: "%02x", $0) }.joined()
         try png.write(to: legacy.appendingPathComponent(key).appendingPathExtension("png"))
         var calls = 0
-        let store = WorktreeIconStore(directory: directory, legacyDirectory: legacy) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, legacyDirectory: legacy) { _, _, _, _, _, _ in
             calls += 1
             return png
         }
@@ -285,7 +319,7 @@ struct WorktreeIconStoreTests {
         let request = requests(["styled"])[0]
         var styles: [WorktreeArtworkStyle] = []
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory) { _, _, style, _, _ in
+        let store = WorktreeIconStore(directory: directory) { _, _, style, _, _, _ in
             styles.append(style)
             if styles.count == 1 { return await withCheckedContinuation { completion = $0 } }
             return png
@@ -316,7 +350,7 @@ struct WorktreeIconStoreTests {
         let request = requests(["late-session"])[0]
         var savedPrompt: String?
         var prompts: [String] = []
-        let store = WorktreeIconStore(directory: directory, history: { _ in savedPrompt }) { _, prompt, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in savedPrompt }) { _, prompt, _, _, _, _ in
             prompts.append(prompt)
             return png
         }
@@ -341,7 +375,7 @@ struct WorktreeIconStoreTests {
         var contexts: [String] = []
         var styles: [WorktreeArtworkStyle] = []
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in history }) { _, context, style, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in history }) { _, context, style, _, _, _ in
             contexts.append(context)
             styles.append(style)
             if contexts.count == 2 { return await withCheckedContinuation { completion = $0 } }
@@ -364,7 +398,7 @@ struct WorktreeIconStoreTests {
         #expect(styles == [.sketch, .sketch])
         let cachedFiles = try FileManager.default.contentsOfDirectory(at: directory.appendingPathComponent("sketch"), includingPropertiesForKeys: nil)
         #expect(try Data(contentsOf: #require(cachedFiles.first { $0.pathExtension == "png" })) == replacement)
-        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _ in
+        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in
             Issue.record("The regenerated image should be cached")
             return png
         }
@@ -383,7 +417,7 @@ struct WorktreeIconStoreTests {
         let png = try imageData()
         let request = requests(["retry"])[0]
         var contexts: [String] = []
-        let store = WorktreeIconStore(directory: directory) { _, context, _, _, _ in
+        let store = WorktreeIconStore(directory: directory) { _, context, _, _, _, _ in
             contexts.append(context)
             if contexts.count == 2 { throw TestFailure.rejected }
             return png
@@ -419,7 +453,7 @@ struct WorktreeIconStoreTests {
         let request = requests(["pending-refresh"])[0]
         var calls = 0
         var suspended: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Build a telescope" }) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Build a telescope" }) { _, _, _, _, _, _ in
             calls += 1
             if calls == 2 { return await withCheckedContinuation { suspended = $0 } }
             return calls == 1 ? original : replacement
@@ -456,7 +490,7 @@ struct WorktreeIconStoreTests {
             historyReads.append(request)
             if historyReads.count == 1 { return await withCheckedContinuation { suspended = $0 } }
             return "Plan a fern garden"
-        }) { _, context, _, _, _ in
+        }) { _, context, _, _, _, _ in
             prompts.append(context)
             return png
         }
@@ -485,7 +519,7 @@ struct WorktreeIconStoreTests {
         var history = "First task"
         var completion: CheckedContinuation<Data, Never>?
         var storeImageCheck: (() -> Bool)?
-        let store = WorktreeIconStore(directory: directory, history: { _ in history }) { _, context, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in history }) { _, context, _, _, _, _ in
             contexts.append(context)
             if contexts.count == 1 { return await withCheckedContinuation { completion = $0 } }
             #expect(storeImageCheck?() == true)
@@ -511,7 +545,7 @@ struct WorktreeIconStoreTests {
         var read: CheckedContinuation<String?, Never>?
         let store = WorktreeIconStore(directory: directory, history: { _ in
             await withCheckedContinuation { read = $0 }
-        }) { _, _, _, _, _ in
+        }) { _, _, _, _, _, _ in
             Issue.record("No user context is available")
             return Data()
         }
@@ -528,7 +562,7 @@ struct WorktreeIconStoreTests {
 
     @Test("Pending artwork clears when its worktree is removed or its style changes")
     func pendingClearsWhenRemovedOrStyleChanges() {
-        let store = WorktreeIconStore(directory: temporaryDirectory()) { _, _, _, _, _ in Data() }
+        let store = WorktreeIconStore(directory: temporaryDirectory()) { _, _, _, _, _, _ in Data() }
         let request = requests(["pending"])[0]
         store.update(worktrees: [request], isActive: false)
         store.regenerate(request)
@@ -549,7 +583,7 @@ struct WorktreeIconStoreTests {
         var variants: [UInt64] = []
         var contexts: [String] = []
         var styles: [WorktreeArtworkStyle] = []
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, context, style, variation, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, context, style, variation, _, _ in
             variants.append(variation)
             contexts.append(context)
             styles.append(style)
@@ -575,7 +609,7 @@ struct WorktreeIconStoreTests {
         await store.waitUntilIdle()
         #expect(variants.count == 4)
         let last = try #require(identities.last)
-        let restored = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, variation, _ in
+        let restored = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, variation, _, _ in
             let identity = WorktreeArtworkIdentity(name: request.name, variation: variation)
             #expect(identity.palette != last.palette)
             #expect(identity.composition != last.composition)
@@ -602,7 +636,7 @@ struct WorktreeIconStoreTests {
         let request = requests(["themed"])[0]
         var themes: [WorktreeArtworkTheme?] = []
         var completion: CheckedContinuation<Data, Never>?
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, theme in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, theme, _ in
             themes.append(theme)
             if themes.count == 1 { return await withCheckedContinuation { completion = $0 } }
             return png
@@ -623,7 +657,7 @@ struct WorktreeIconStoreTests {
         await store.waitUntilIdle()
         #expect(themes.count == 3)
         #expect(store.regeneratingPaths.isEmpty)
-        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _ in
+        let restored = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in
             Issue.record("The selected theme should reuse its cached image")
             return png
         }
@@ -639,10 +673,10 @@ struct WorktreeIconStoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let png = try imageData(color: .red)
         let request = requests(["upgrade"])[0]
-        let old = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, _ in png }
+        let old = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, _, _ in png }
         old.update(worktrees: [request], isActive: true)
         await old.waitUntilIdle()
-        let themed = WorktreeIconStore(directory: directory) { _, _, _, _, _ in
+        let themed = WorktreeIconStore(directory: directory) { _, _, _, _, _, _ in
             Issue.record("No task context is available yet")
             return png
         }
@@ -664,7 +698,7 @@ struct WorktreeIconStoreTests {
         try imageData(color: .red).write(to: oldDirectory.appendingPathComponent(key + ".png"))
         let replacement = try imageData(color: .blue)
         var calls = 0
-        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, _ in
+        let store = WorktreeIconStore(directory: directory, history: { _ in "Plan a garden" }) { _, _, _, _, _, _ in
             calls += 1
             return replacement
         }

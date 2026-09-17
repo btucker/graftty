@@ -9,7 +9,7 @@ struct WorktreeArtworkIdentity: Hashable {
     private let fallbackSubject: String
     private let backgroundConcept: String?
 
-    init(name: String, variation: UInt64 = 0, theme: WorktreeArtworkTheme? = nil) {
+    init(name: String, variation: UInt64 = 0, theme: WorktreeArtworkTheme? = nil, project: ProjectArtworkDirection? = nil) {
         let digest = Array(SHA256.hash(data: Data(name.utf8)))
         let subjects = [
             "fox", "octopus", "kingfisher", "sunflower", "chameleon", "toucan", "lantern", "compass",
@@ -33,10 +33,10 @@ struct WorktreeArtworkIdentity: Hashable {
             "Diagonal close-up, subject on the right",
             "Close-up viewed from above, subject on the right",
         ]
-        subject = subjects[(Int(digest[0]) + Int(variation % UInt64(subjects.count))) % subjects.count]
+        subject = project?.subject(name: name, variation: variation) ?? subjects[(Int(digest[0]) + Int(variation % UInt64(subjects.count))) % subjects.count]
         fallbackSubject = subject
         backgroundConcept = theme?.backgroundConcept
-        palette = theme?.palette(index: Int(digest[1]), variation: variation) ?? palettes[(Int(digest[1]) + Int(variation % UInt64(palettes.count))) % palettes.count]
+        palette = project?.palette(name: name, variation: variation) ?? theme?.palette(index: Int(digest[1]), variation: variation) ?? palettes[(Int(digest[1]) + Int(variation % UInt64(palettes.count))) % palettes.count]
         composition = compositions[(Int(digest[2]) + Int(variation % UInt64(compositions.count))) % compositions.count]
     }
 

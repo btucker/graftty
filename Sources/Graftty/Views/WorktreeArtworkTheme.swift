@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import ImageIO
 
 /// Resolved Ghostty colors, independent of theme names and unrelated settings.
 struct WorktreeArtworkTheme: Equatable, Sendable {
@@ -44,16 +45,42 @@ struct WorktreeArtworkTheme: Equatable, Sendable {
     }
 
     func codexColorInstruction(index: Int, variation: UInt64) -> String {
-        func hex(_ color: GhosttyTheme.RGB) -> String {
-            "#" + [color.r, color.g, color.b].map { String(format: "%02x", Int((min(1, max(0, $0)) * 255).rounded())) }.joined()
-        }
         let primary = (index + Int(variation % UInt64(accents.count))) % accents.count
         let secondary = (primary + max(1, accents.count / 2 - 1)) % accents.count
         return """
-        Match only the scene's backdrop to the configured terminal background \(hex(background)).
-        Dominant subject color: \(hex(accents[primary])). Small secondary accent: \(hex(accents[secondary])).
+        Match only the scene's backdrop to the configured terminal background \(Self.hex(background)).
+        Dominant subject color: \(Self.hex(accents[primary])). Small secondary accent: \(Self.hex(accents[secondary])).
         Make the dominant color a large, unmistakable area of the subject, with strong separation from the backdrop. Keep the subject clearly lit and its color distinct, even on a dark theme. These codes describe colors; never render them as text.
         """
+    }
+
+    var codexBackdropInstruction: String {
+        "Match only the scene's backdrop to the configured terminal background \(Self.hex(background)). Keep the subject clearly lit; use its assigned project colors. Never render color codes as text."
+    }
+
+    private static func hex(_ color: GhosttyTheme.RGB) -> String {
+        "#" + [color.r, color.g, color.b].map { String(format: "%02x", Int((min(1, max(0, $0)) * 255).rounded())) }.joined()
+    }
+
+    static func imagePalette(_ data: Data) -> [String]? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 16,
+              ] as CFDictionary),
+              let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        var counts: [String: Int] = [:]
+        for index in stride(from: 0, to: 1024, by: 4) where bytes[index + 3] > 128 {
+            let alpha = Double(bytes[index + 3])
+            let name = describe(.init(r: Double(bytes[index]) / alpha,
+                g: Double(bytes[index + 1]) / alpha, b: Double(bytes[index + 2]) / alpha))
+            counts[name, default: 0] += 1
+        }
+        let colors = counts.keys.sorted { counts[$0] == counts[$1] ? $0 < $1 : counts[$0]! > counts[$1]! }
+        return colors.isEmpty ? nil : Array(colors.prefix(4))
     }
 
     // ImageCreator gets ordinary color words rather than hex codes it might

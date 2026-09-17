@@ -18,12 +18,16 @@ enum WorktreeArtworkPrompt {
         userContext: String? = nil,
         variation: UInt64 = 0,
         theme: WorktreeArtworkTheme? = nil,
+        project: ProjectArtworkDirection? = nil,
         describe: ((String) async throws -> String?)? = nil
     ) async throws -> WorktreeArtworkIdentity {
-        var identity = WorktreeArtworkIdentity(name: name, variation: variation, theme: theme)
+        var identity = WorktreeArtworkIdentity(name: name, variation: variation, theme: theme, project: project)
         do {
             var input = "Worktree name: \(String(name.prefix(240)))\nUser-authored task context:\n\(String((userContext ?? "").prefix(4000)))"
-            if variation != 0 {
+            if let project {
+                input += "\nProject art direction: Stay within \(project.category). \(project.character). Adapt \(identity.subject) into a distinctive task-relevant subject in this world."
+                if variation != 0 { input += " Choose a substantially different physical interpretation. Variation: \(variation)." }
+            } else if variation != 0 {
                 let directions = [
                     "an animal whose behavior reflects the task",
                     "a plant or natural growth pattern that reflects the task",

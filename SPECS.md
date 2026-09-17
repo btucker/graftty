@@ -204,6 +204,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.94** While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.
 
+**LAYOUT-2.95** When generating worktree backgrounds, the application shall reuse a project metaphor category derived from bounded codebase context and the resolved project avatar, with distinct task-specific subjects inside that category.
+
+**LAYOUT-2.96** When a project's resolved avatar changes, the application shall use a separate cached art direction; cancelled inference shall not publish or cache a direction.
+
+**LAYOUT-2.97** When inferring project art direction through Codex, the application shall attach the resolved avatar to a separate tool-disabled text turn and accept structured text only after successful completion.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

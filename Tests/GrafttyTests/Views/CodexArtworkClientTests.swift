@@ -64,6 +64,29 @@ struct CodexArtworkClientTests {
         #expect(CodexArtworkClient.findBinary(path: "/nonexistent", desktopPaths: []) == nil)
     }
 
+    @Test("@spec LAYOUT-2.97: When inferring project art direction through Codex, the application shall attach the resolved avatar to a separate tool-disabled text turn and accept structured text only after successful completion.")
+    func textDirectionDoesNotRequireImageCapability() async throws {
+        let fixture = try Fixture(capable: false, mode: "text")
+        defer { fixture.remove() }
+        let data = try await fixture.client.describe(prompt: "Choose a world", avatar: Data([1, 2, 3]))
+        #expect(String(decoding: data, as: UTF8.self) == "{\"category\":\"harbor\"}")
+        let requests = try fixture.requests()
+        #expect(!requests.contains { $0["method"] as? String == "modelProvider/capabilities/read" })
+        let start = try #require(requests.first { $0["method"] as? String == "thread/start" }?["params"] as? [String: Any])
+        let config = try #require(start["config"] as? [String: Any])
+        #expect((config["features"] as? [String: Bool])?["image_generation"] == false)
+        let turn = try #require(requests.first { $0["method"] as? String == "turn/start" }?["params"] as? [String: Any])
+        #expect(turn["outputSchema"] != nil)
+        let input = try #require(turn["input"] as? [[String: Any]])
+        #expect(input.last?["url"] as? String == "data:image/png;base64,AQID")
+    }
+
+    @Test func textFromFailedTurnIsDiscarded() async throws {
+        let fixture = try Fixture(mode: "textFailure")
+        defer { fixture.remove() }
+        await #expect(throws: (any Error).self) { try await fixture.client.describe(prompt: "Choose a world") }
+    }
+
     private struct Fixture {
         let directory: URL
         var binary: URL { directory.appendingPathComponent("codex") }
@@ -80,6 +103,8 @@ struct CodexArtworkClientTests {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let completion: String
             switch mode {
+            case "text", "textFailure": completion = #"{"method":"item/completed","params":{"threadId":"art","item":{"type":"agentMessage","phase":"final_answer","text":"{\"category\":\"harbor\"}"}}}"#
+                + "\n" + "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"art\",\"turn\":{\"status\":\"\(mode == "text" ? "completed" : "failed")\"}}}"
             case "auth": completion = #"{"id":5,"error":{"code":-32000,"message":"Authentication required"}}"#
             case "invalidImage": completion = #"{"method":"item/completed","params":{"threadId":"art","item":{"type":"imageGeneration","status":"completed","result":"not base64"}}}"#
             case "failure": completion = #"{"method":"item/completed","params":{"threadId":"art","item":{"type":"imageGeneration","status":"failed","result":"","failure":{"type":"usageLimitExceeded"}}}}"#

@@ -8,6 +8,7 @@ struct WorktreeArtworkRequest: Equatable, Sendable {
     let path: String
     let name: String
     let firstPaneSessionName: String?
+    var project: ProjectArtworkSource? = nil
 }
 
 /// Artwork is scoped to a worktree; raw user context stays in memory only.
@@ -55,7 +56,7 @@ final class WorktreeIconStore: ObservableObject {
     private let directory: URL
     private let legacyDirectory: URL?
     private let history: @MainActor (WorktreeArtworkRequest) async -> String?
-    private let generate: @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?) async throws -> Data
+    private let generate: @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?, ProjectArtworkSource?) async throws -> Data
     private var worktrees: [WorktreeArtworkRequest] = []
     private var contexts: [String: String] = [:]
     private var latestPrompts: [String: String] = [:]
@@ -75,7 +76,7 @@ final class WorktreeIconStore: ObservableObject {
 
     init(directory: URL, legacyDirectory: URL? = nil,
          history: @escaping @MainActor (WorktreeArtworkRequest) async -> String? = { _ in nil },
-         generate: @escaping @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?) async throws -> Data) {
+         generate: @escaping @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?, ProjectArtworkSource?) async throws -> Data) {
         self.directory = directory
         self.legacyDirectory = legacyDirectory
         self.history = history
@@ -88,16 +89,17 @@ final class WorktreeIconStore: ObservableObject {
             ?? URL(fileURLWithPath: worktree.path).lastPathComponent
     }
 
-    static func request(for worktree: WorktreeEntry, repoPath: String) -> WorktreeArtworkRequest? {
+    static func request(for worktree: WorktreeEntry, repoPath: String, project: ProjectArtworkSource? = nil) -> WorktreeArtworkRequest? {
         guard let name = name(for: worktree, repoPath: repoPath) else { return nil }
         let pane = worktree.splitTree.allLeaves.first.flatMap { worktree.paneSessions[$0] }
         return WorktreeArtworkRequest(path: worktree.path, name: name,
-            firstPaneSessionName: pane.map { ZmxLauncher.sessionName(for: $0) })
+            firstPaneSessionName: pane.map { ZmxLauncher.sessionName(for: $0) }, project: project)
     }
 
     func update(worktrees: [WorktreeArtworkRequest], isActive: Bool) {
         var seen = Set<String>()
-        let prior = Dictionary(self.worktrees.map { ($0.path, $0.firstPaneSessionName) }, uniquingKeysWith: { first, _ in first })
+        let priorRequests = Dictionary(self.worktrees.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let prior = priorRequests.mapValues(\.firstPaneSessionName)
         self.worktrees = worktrees.filter { !$0.path.isEmpty && seen.insert($0.path).inserted }
         for request in self.worktrees where (prior[request.path] ?? nil) != request.firstPaneSessionName {
             checkedHistory.remove(request.path)
@@ -105,16 +107,23 @@ final class WorktreeIconStore: ObservableObject {
                 revisions[request.path, default: 0] &+= 1
             }
         }
+        for request in self.worktrees where priorRequests[request.path]?.project != request.project {
+            revisions[request.path, default: 0] &+= 1
+            completed.remove(request.path)
+            failures[request.path] = nil
+            checkedHistory.remove(request.path)
+            if images[request.path] != nil { regeneratingPaths.insert(request.path) }
+        }
         regeneratingPaths.formIntersection(seen)
         self.isActive = isActive
         for request in self.worktrees where !completed.contains(request.path) && !refreshContext.contains(request.path) {
-            if let image = loadCachedImage(for: request.path, in: styleDirectory) {
+            if let image = loadCachedImage(for: request.path, in: imageDirectory(for: request)) {
                 images[request.path] = image
                 completed.insert(request.path)
                 regeneratingPaths.remove(request.path)
             } else if images[request.path] == nil {
                 if let theme {
-                    let previousDirectories = [unthemedStyleDirectory.appendingPathComponent(theme.colorCacheKey),
+                    let previousDirectories = [styleDirectory, unthemedStyleDirectory.appendingPathComponent(theme.colorCacheKey),
                                                unthemedStyleDirectory]
                     for directory in previousDirectories {
                         if let image = loadCachedImage(for: request.path, in: directory) {
@@ -166,6 +175,10 @@ final class WorktreeIconStore: ObservableObject {
 
     private var styleDirectory: URL {
         theme.map { unthemedStyleDirectory.appendingPathComponent($0.cacheKey) } ?? unthemedStyleDirectory
+    }
+
+    private func imageDirectory(for request: WorktreeArtworkRequest) -> URL {
+        request.project.map { styleDirectory.appendingPathComponent("project-v1-" + $0.cacheKey) } ?? styleDirectory
     }
 
     func regenerate(_ request: WorktreeArtworkRequest) {
@@ -243,7 +256,7 @@ final class WorktreeIconStore: ObservableObject {
                 continue
             }
             do {
-                let data = try await generate(request.name, context, style, variation, theme)
+                let data = try await generate(request.name, context, style, variation, theme, request.project)
                 try Task.checkCancellation()
                 guard revisions[path, default: 0] == revision else { continue }
                 guard worktrees.contains(where: { $0.path == path }) else { continue }
@@ -253,8 +266,9 @@ final class WorktreeIconStore: ObservableObject {
                 refreshContext.remove(path)
                 regeneratingPaths.remove(path)
                 do {
-                    try FileManager.default.createDirectory(at: styleDirectory, withIntermediateDirectories: true)
-                    let imageURL = fileURL(for: path, in: styleDirectory)
+                    let cacheDirectory = imageDirectory(for: request)
+                    try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+                    let imageURL = fileURL(for: path, in: cacheDirectory)
                     try data.write(to: imageURL, options: .atomic)
                     try String(variation).write(to: imageURL.appendingPathExtension("variation"), atomically: true, encoding: .utf8)
                 } catch {
