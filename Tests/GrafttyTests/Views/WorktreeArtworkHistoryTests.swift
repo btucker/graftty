@@ -3,7 +3,7 @@ import GrafttyKit
 import Testing
 @testable import Graftty
 
-@Suite("@spec LAYOUT-2.81: When deriving artwork context from agent history, the application shall use bounded recent user prompts from the latest top-level session registered to the exact worktree and first pane, excluding assistant output, tool results, and injected instructions.")
+@Suite("@spec LAYOUT-2.81: When deriving artwork context from agent history, the application shall use bounded user prompts from the latest top-level session registered to the exact worktree and first pane, prefer recent prompts and fall back to opening prompts when recent history has none, and exclude assistant output, tool results, and injected instructions.")
 struct WorktreeArtworkHistoryTests {
     private let worktree = "/projects/example/.worktrees/art"
     private let session = "11111111-2222-3333-4444-555555555555"
@@ -117,6 +117,43 @@ struct WorktreeArtworkHistoryTests {
             let file = codex.appendingPathComponent("rollout-\(session).jsonl")
             try write([metadata(), user(String(repeating: "x", count: 1_200_000)), user("A recent observatory")], to: file)
             #expect(read([presence()], codex, claude) == "A recent observatory")
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func codexFallsBackToOpeningPromptAfterLongAutonomousWork(legacyEvents: Bool) throws {
+        try withFixture { codex, claude in
+            func prompt(_ text: String) -> [String: Any] {
+                legacyEvents ? ["type": "event_msg", "payload": ["type": "user_message", "message": text]] : user(text)
+            }
+            let file = codex.appendingPathComponent("rollout-\(session).jsonl")
+            let assistant: [String: Any] = ["type": "response_item", "payload": ["type": "message", "role": "assistant",
+                "content": [["type": "output_text", "text": String(repeating: "tool detail ", count: 120_000)]]]]
+            try write([metadata(), prompt("Improve internship matching accuracy"), assistant,
+                prompt("<graftty-peer-message>Injected instructions</graftty-peer-message>")], to: file)
+            #expect(read([presence()], codex, claude) == "Improve internship matching accuracy")
+            try write([metadata(), prompt("Old opening request"), assistant, prompt("Build a recent observatory")], to: file)
+            #expect(read([presence()], codex, claude) == "Build a recent observatory")
+            try write([metadata(path: "/another/worktree"), prompt("Wrong project"), assistant], to: file)
+            #expect(read([presence()], codex, claude) == nil)
+        }
+    }
+
+    @Test func claudeFallsBackToOpeningPromptWithoutUsingToolResults() throws {
+        try withFixture { codex, claude in
+            func message(_ content: Any) -> [String: Any] {
+                ["type": "user", "sessionId": session, "cwd": worktree,
+                 "message": ["role": "user", "content": content]]
+            }
+            let file = claude.appendingPathComponent("project/\(session).jsonl")
+            let tool = message([["type": "tool_result", "content": String(repeating: "tool output ", count: 120_000)]])
+            try write([message("Build an internship search page"), tool,
+                message("<graftty-system-message>System update</graftty-system-message>")], to: file)
+            #expect(read([presence(runtime: .claude)], codex, claude) == "Build an internship search page")
+            try write([message("Old opening request"), tool, message("Create an observatory")], to: file)
+            #expect(read([presence(runtime: .claude)], codex, claude) == "Create an observatory")
+            try write([message("<environment_context>Machine details</environment_context>"), tool], to: file)
+            #expect(read([presence(runtime: .claude)], codex, claude) == nil)
         }
     }
 

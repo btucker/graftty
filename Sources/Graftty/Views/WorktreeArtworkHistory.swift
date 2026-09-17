@@ -44,37 +44,49 @@ struct WorktreeArtworkHistory: Sendable {
                       let payload = entry["payload"] as? [String: Any] else { return false }
                 return payload["id"] as? String == sessionID && payload["cwd"] as? String == worktreePath
             }) else { return nil }
-            let primary = recent.compactMap { entry -> String? in
-                guard entry["type"] as? String == "response_item",
-                      let payload = entry["payload"] as? [String: Any],
-                      payload["type"] as? String == "message", payload["role"] as? String == "user" else { return nil }
-                return AgentHookPrompt.userText(textContent(payload["content"], blockType: "input_text"))
-            }
-            // Modern rollouts record both forms. Prefer the message stream so each
-            // prompt appears once; older rollouts can contain only user_message events.
-            if !primary.isEmpty { return boundedContext(primary) }
-            return boundedContext(recent.compactMap { entry in
-                guard entry["type"] as? String == "event_msg",
-                      let payload = entry["payload"] as? [String: Any],
-                      payload["type"] as? String == "user_message" else { return nil }
-                return AgentHookPrompt.userText(payload["message"] as? String)
-            })
+            return codexContext(recent) ?? codexContext(header)
         case .claude:
             guard (header + recent).contains(where: {
                 $0["sessionId"] as? String == sessionID && $0["cwd"] as? String == worktreePath
             }) else { return nil }
-            return boundedContext(recent.compactMap { entry in
-                guard entry["type"] as? String == "user", entry["isMeta"] as? Bool != true,
-                      entry["isSidechain"] as? Bool != true,
-                      entry["sessionId"] as? String == sessionID,
-                      entry["cwd"] as? String == worktreePath,
-                      let message = entry["message"] as? [String: Any],
-                      message["role"] as? String == "user" else { return nil }
-                if let blocks = message["content"] as? [[String: Any]],
-                   blocks.contains(where: { $0["type"] as? String == "tool_result" }) { return nil }
-                return AgentHookPrompt.userText(textContent(message["content"], blockType: "text"))
-            })
+            return claudeContext(recent, sessionID: sessionID, worktreePath: worktreePath)
+                ?? claudeContext(header, sessionID: sessionID, worktreePath: worktreePath)
         }
+    }
+
+    // Long autonomous turns can push every genuine user prompt out of the
+    // bounded tail. Reuse the already-read opening chunk in that case, applying
+    // the same filters and output cap without scanning the full conversation.
+    private static func codexContext(_ records: [[String: Any]]) -> String? {
+        let primary = records.compactMap { entry -> String? in
+            guard entry["type"] as? String == "response_item",
+                  let payload = entry["payload"] as? [String: Any],
+                  payload["type"] as? String == "message", payload["role"] as? String == "user" else { return nil }
+            return AgentHookPrompt.userText(textContent(payload["content"], blockType: "input_text"))
+        }
+        // Modern rollouts record both forms. Prefer the message stream so each
+        // prompt appears once; older rollouts can contain only user_message events.
+        if !primary.isEmpty { return boundedContext(primary) }
+        return boundedContext(records.compactMap { entry in
+            guard entry["type"] as? String == "event_msg",
+                  let payload = entry["payload"] as? [String: Any],
+                  payload["type"] as? String == "user_message" else { return nil }
+            return AgentHookPrompt.userText(payload["message"] as? String)
+        })
+    }
+
+    private static func claudeContext(_ records: [[String: Any]], sessionID: String, worktreePath: String) -> String? {
+        boundedContext(records.compactMap { entry in
+            guard entry["type"] as? String == "user", entry["isMeta"] as? Bool != true,
+                  entry["isSidechain"] as? Bool != true,
+                  entry["sessionId"] as? String == sessionID,
+                  entry["cwd"] as? String == worktreePath,
+                  let message = entry["message"] as? [String: Any],
+                  message["role"] as? String == "user" else { return nil }
+            if let blocks = message["content"] as? [[String: Any]],
+               blocks.contains(where: { $0["type"] as? String == "tool_result" }) { return nil }
+            return AgentHookPrompt.userText(textContent(message["content"], blockType: "text"))
+        })
     }
 
     private static func directoryURL(_ path: String) -> URL? {

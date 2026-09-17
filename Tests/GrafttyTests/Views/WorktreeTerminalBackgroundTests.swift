@@ -53,7 +53,7 @@ struct WorktreeTerminalBackgroundTests {
     }
     #endif
 
-    @Test("@spec LAYOUT-2.79: When a worktree has artwork, the application shall display one continuous image behind the entire terminal split layout, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.79: When a worktree has artwork, the application shall display one continuous image behind the entire window content, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.", arguments: [false, true])
     func fadesAcrossWholeLayout(isDark: Bool) throws {
         let image = NSImage(size: NSSize(width: 400, height: 200))
         image.lockFocus()
@@ -88,6 +88,54 @@ struct WorktreeTerminalBackgroundTests {
                 #expect(abs(color.blueComponent - expected) < 0.01)
                 #expect(color.alphaComponent == 1)
             }
+        }
+    }
+
+    @Test func windowBackdropUsesOneImageAcrossNavigationColumns() async throws {
+        _ = NSApplication.shared
+        let image = NSImage(size: NSSize(width: 900, height: 500))
+        image.lockFocus()
+        for (index, color) in [NSColor.red, .green, .blue].enumerated() {
+            color.setFill()
+            NSRect(x: index * 300, y: 0, width: 300, height: 500).fill()
+        }
+        image.unlockFocus()
+        let layout = NavigationSplitView {
+            Color.clear.navigationSplitViewColumnWidth(200)
+        } detail: {
+            HStack(spacing: 0) {
+                Color.clear
+                Divider()
+                Color.clear
+            }
+        }
+        .modifier(WorktreeWindowArtwork(image: image, backgroundColor: .black))
+        .preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: layout)
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 900, height: 500),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.backgroundColor = .black
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        func pixel(_ x: Int, _ y: Int) throws -> NSColor {
+            try #require(bitmap.colorAt(x: Int(CGFloat(x) * scale), y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB))
+        }
+        let leftDetail = try pixel(260, 60)
+        let center = try pixel(450, 60)
+        let right = try pixel(760, 60)
+        #expect(leftDetail.redComponent > leftDetail.blueComponent + 0.08)
+        #expect(center.greenComponent > center.redComponent + 0.08)
+        #expect(right.blueComponent > right.redComponent + 0.08)
+        let bottom = try pixel(760, 400)
+        #expect(bottom.redComponent < 0.01 && bottom.greenComponent < 0.01 && bottom.blueComponent < 0.01)
+        if let path = ProcessInfo.processInfo.environment["GRAFTTY_WINDOW_ARTWORK_RENDER_PATH"] {
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
     }
 

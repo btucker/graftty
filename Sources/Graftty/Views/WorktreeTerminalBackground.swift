@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared by the whole split layout so dividers never restart the image or fade.
+/// A single canvas behind the window content; navigation columns and pane dividers never restart its image or fade.
 struct WorktreeTerminalBackground: View {
     let image: NSImage
     let backgroundColor: Color

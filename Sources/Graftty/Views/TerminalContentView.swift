@@ -7,19 +7,10 @@ struct TerminalContentView: View {
     let splitTree: Binding<SplitTree>
     let focusedPaneSlotID: PaneSlotID?
     let theme: GhosttyTheme
-    var artwork: NSImage? = nil
-    var artworkIsRegenerating = false
+    var showsWorktreeArtwork = false
     let onFocusTerminal: (PaneSlotID) -> Void
 
-    var body: some View {
-        terminalLayout
-            .background {
-                if let artwork {
-                    WorktreeTerminalBackground(image: artwork, backgroundColor: theme.background,
-                                              isRegenerating: artworkIsRegenerating)
-                }
-            }
-    }
+    var body: some View { terminalLayout }
 
     @ViewBuilder
     private var terminalLayout: some View {
@@ -74,7 +65,7 @@ struct TerminalContentView: View {
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             return AnyView(
-                SurfaceViewWrapper(handle: handle, showsWorktreeArtwork: artwork != nil)
+                SurfaceViewWrapper(handle: handle, showsWorktreeArtwork: showsWorktreeArtwork)
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Mirror the iOS "Take Control" affordance (OWN-2.1):
                     // offered when another display client (iOS/web) owns this
@@ -108,7 +99,7 @@ struct TerminalContentView: View {
             )
         } else {
             return AnyView(
-                (artwork == nil ? theme.background : Color.clear)
+                (!showsWorktreeArtwork ? theme.background : Color.clear)
                     .overlay(
                         ProgressView()
                             .controlSize(.small)

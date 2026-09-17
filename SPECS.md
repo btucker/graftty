@@ -172,11 +172,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.78** When generating worktree artwork with an available on-device language model, the application shall first translate the worktree name and user-authored task context into a concrete English visual description and use its deterministic visual fallback if translation is unavailable or fails.
 
-**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image behind the entire terminal split layout, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.
+**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image behind the entire window content, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background by the vertical midpoint.
 
 **LAYOUT-2.80** When a linked worktree has no cached context-based artwork, the application shall wait for a submitted user prompt or existing user-message history before generating, replace legacy artwork once, and keep the generated image stable across later prompts and launches.
 
-**LAYOUT-2.81** When deriving artwork context from agent history, the application shall use bounded recent user prompts from the latest top-level session registered to the exact worktree and first pane, excluding assistant output, tool results, and injected instructions.
+**LAYOUT-2.81** When deriving artwork context from agent history, the application shall use bounded user prompts from the latest top-level session registered to the exact worktree and first pane, prefer recent prompts and fall back to opening prompts when recent history has none, and exclude assistant output, tool results, and injected instructions.
 
 **LAYOUT-2.82** When the user chooses Regenerate Background Image for an enabled linked worktree, the application shall refresh its user context, generate a replacement in the selected style, retain the current image until success, and cache the replacement.
 
