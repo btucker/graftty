@@ -4,6 +4,16 @@ import Testing
 
 @Suite("Codex artwork app-server")
 struct CodexArtworkClientTests {
+    @Test func mapRegenerationAttachesPriorArtworkToTheImageTurn() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.client.generate(prompt: "Reconnect these landmarks", reference: Data([4, 5, 6]))
+        let turn = try #require(fixture.requests().first { $0["method"] as? String == "turn/start" }?["params"] as? [String: Any])
+        let input = try #require(turn["input"] as? [[String: Any]])
+        #expect(input.last?["type"] as? String == "image")
+        #expect(input.last?["url"] as? String == "data:image/png;base64,BAUG")
+    }
+
     @Test("@spec LAYOUT-2.89: When Codex generates worktree artwork, the application shall use a separate ephemeral read-only thread, accept its completed image, and bound subprocess lifetime on failure, timeout, or cancellation.")
     func isolatedThreadAndEarlyImage() async throws {
         let fixture = try Fixture()

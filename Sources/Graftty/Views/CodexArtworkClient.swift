@@ -10,8 +10,8 @@ struct CodexArtworkClient: Sendable {
     var environment = ProcessInfo.processInfo.environment
     var timeout: TimeInterval = 180
 
-    static func generateInstalled(prompt: String) async throws -> Data {
-        try await installed(prompt: prompt, image: true, avatar: nil)
+    static func generateInstalled(prompt: String, reference: Data? = nil) async throws -> Data {
+        try await installed(prompt: prompt, image: true, avatar: reference)
     }
 
     static func describeInstalled(prompt: String, avatar: Data?) async throws -> Data {
@@ -46,8 +46,8 @@ struct CodexArtworkClient: Sendable {
         }
     }
 
-    func generate(prompt: String) async throws -> Data {
-        let task = Task.detached(priority: .utility) { try run(prompt: prompt) }
+    func generate(prompt: String, reference: Data? = nil) async throws -> Data {
+        let task = Task.detached(priority: .utility) { try run(prompt: prompt, avatar: reference) }
         return try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
     }
 
@@ -101,7 +101,7 @@ struct CodexArtworkClient: Sendable {
         guard let thread = start["thread"] as? [String: Any], let threadID = thread["id"] as? String else { throw Failure.protocolError }
         deadline = ProcessInfo.processInfo.systemUptime + timeout
         var content: [[String: Any]] = [["type": "text", "text": prompt, "text_elements": []]]
-        if let avatar, !image {
+        if let avatar {
             content.append(["type": "image", "url": "data:image/png;base64," + avatar.base64EncodedString()])
         }
         var turn: [String: Any] = ["threadId": threadID, "input": content]

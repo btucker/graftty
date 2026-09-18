@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A single canvas behind the window content; navigation columns and pane dividers never restart its image or fade.
+/// A single smooth gradient behind the window; raster detail stays in the sidebar.
 struct WorktreeTerminalBackground: View {
     let image: NSImage
     let backgroundColor: Color
@@ -11,12 +11,8 @@ struct WorktreeTerminalBackground: View {
         GeometryReader { geometry in
             backgroundColor
                 .overlay {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
-                        .blur(radius: isRegenerating ? 12 : 0)
+                    LinearGradient(colors: WorktreeArtworkPalette.colors(image), startPoint: .topLeading, endPoint: .topTrailing)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                         .opacity(isRegenerating ? 0.55 : 1)
                         .mask {
                             LinearGradient(

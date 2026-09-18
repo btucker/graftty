@@ -1,0 +1,333 @@
+import AppKit
+import Testing
+@testable import Graftty
+
+@Suite("Project worktree maps")
+@MainActor
+struct ProjectWorktreeMapTests {
+    @Test("@spec LAYOUT-2.94: While the application is active and artwork is enabled, the application shall generate pending project maps serially from worktree names and available user prompts, and reuse cached maps across launches.")
+    func projectsGenerateSeriallyAndWaitWhileDisabledOrInactive() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requests = ["one", "two"].map {
+            WorktreeArtworkRequest(path: "/\($0)/branch", name: "branch", firstPaneSessionName: nil,
+                project: .init(path: "/\($0)", avatar: nil))
+        }
+        var active = 0, calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "User task" }) { _ in
+            active += 1
+            calls += 1
+            #expect(active == 1)
+            await Task.yield()
+            active -= 1
+            return try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: requests, isActive: false)
+        await store.waitUntilIdle()
+        #expect(calls == 0)
+        store.configure(enabled: false, style: .illustration)
+        store.update(worktrees: requests, isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls == 0)
+        store.configure(enabled: true, style: .illustration)
+        await store.waitUntilIdle()
+        #expect(calls == 2)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        #expect(files.count == 2)
+        for file in files { #expect(try !String(contentsOf: file, encoding: .utf8).contains("User task")) }
+    }
+
+    @Test func generationPromptKeepsTallRowLandmarksNearTheTop() {
+        let input = WorktreeMapGeneration(rows: [
+            .init(path: "a", name: "A", height: 400, context: "Find related calls"),
+            .init(path: "b", name: "B", height: 80, context: nil),
+        ], project: .init(path: "/example", avatar: nil), style: .sketch, theme: nil,
+           reference: Data([1]), preservedPaths: ["a"])
+        let prompt = ProjectWorktreeMapGenerator.prompt(input, direction: .harbor)
+        #expect(prompt.contains("FIRST 80 logical units"))
+        #expect(prompt.contains("landmarkCenterPercent"))
+        #expect(prompt.contains("restore their original interior pixels"))
+        #expect(prompt.contains("Find related calls"))
+        #expect(prompt.contains("quiet connecting terrain"))
+        #expect(prompt.contains("a working harbor"))
+    }
+
+    @Test("@spec LAYOUT-2.102: When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.")
+    func mapsReuseCacheAndRebuildOnlyForChangedLayout() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        let a = WorktreeArtworkRequest(path: "/project/a", name: "A", firstPaneSessionName: "a", project: project)
+        let b = WorktreeArtworkRequest(path: "/project/b", name: "B", firstPaneSessionName: "b", project: project)
+        var calls: [WorktreeMapGeneration] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { $0.name }) { input in
+            calls.append(input)
+            return try WorktreeMapRaster.png(solid(calls.count == 1 ? .red : .blue, height: 160))
+        }
+        store.update(worktrees: [a, b], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls.count == 1)
+        store.update(worktrees: [a, b], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls.count == 1)
+        store.update(worktrees: [b, a], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls.count == 2)
+        #expect(calls.last?.rows.map(\.path) == [b.path, a.path])
+        #expect(calls.last?.preservedPaths == [a.path, b.path])
+        #expect(try pixel(store.images[a.path], y: 40).redComponent > 0.95)
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            Issue.record("Cached map should not generate again")
+            throw ImageCreatorWorktreeIcon.Failure.unavailable
+        }
+        restored.update(worktrees: [b, a], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(try pixel(restored.images[a.path], y: 40).redComponent > 0.95)
+        store.regenerate(a)
+        #expect(store.regeneratingPaths.contains(a.path))
+        await store.waitUntilIdle()
+        #expect(calls.last?.preservedPaths == [b.path])
+        #expect(try pixel(store.images[a.path], y: 40).blueComponent > 0.95)
+        #expect(try pixel(store.images[b.path], y: 40).redComponent > 0.95)
+        #expect(store.regeneratingPaths.isEmpty)
+    }
+
+    @Test func staleResultCannotOverwriteReorderedMap() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        let a = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil, project: project)
+        let b = WorktreeArtworkRequest(path: "b", name: "B", firstPaneSessionName: nil, project: project)
+        var continuation: CheckedContinuation<Data, any Error>?
+        var calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { $0.name }) { _ in
+            calls += 1
+            if calls == 1 { return try await withCheckedThrowingContinuation { continuation = $0 } }
+            return try WorktreeMapRaster.png(solid(.blue, height: 160))
+        }
+        store.update(worktrees: [a, b], isActive: true)
+        while continuation == nil { await Task.yield() }
+        store.update(worktrees: [b, a], isActive: true)
+        continuation?.resume(returning: try WorktreeMapRaster.png(solid(.red, height: 160)))
+        await store.waitUntilIdle()
+        #expect(calls == 2)
+        #expect(try pixel(store.images[a.path], y: 40).blueComponent > 0.95)
+    }
+
+    @Test("Identical updates retain the in-flight map even when another project changes")
+    func unchangedProjectDoesNotRestartGeneration() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        let other = WorktreeArtworkRequest(path: "other", name: "Other", firstPaneSessionName: nil,
+            project: .init(path: "/other", avatar: nil))
+        var continuation: CheckedContinuation<Data, any Error>?
+        var calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero,
+            history: { $0.path == request.path ? "Build a garden" : nil }) { _ in
+                calls += 1
+                if calls == 1 { return try await withCheckedThrowingContinuation { continuation = $0 } }
+                return try WorktreeMapRaster.png(solid(.blue))
+            }
+        store.update(worktrees: [request], isActive: true)
+        while continuation == nil { await Task.yield() }
+        store.update(worktrees: [request], isActive: true)
+        store.update(worktrees: [request, other], isActive: true)
+        continuation?.resume(returning: try WorktreeMapRaster.png(solid(.red)))
+        await store.waitUntilIdle()
+        #expect(calls == 1)
+        #expect(try pixel(store.images[request.path], y: 40).redComponent > 0.95)
+    }
+
+    @Test("Hook requests without project metadata resolve the registered worktree", arguments: [false, true])
+    func hookRequestsResolveRegisteredProject(retryHistory: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registered = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: "pane",
+            project: .init(path: "/project", avatar: nil))
+        let hook = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: "pane")
+        var historyContext: String?
+        var calls: [WorktreeMapGeneration] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero,
+            history: { _ in historyContext }) { input in
+                calls.append(input)
+                return try WorktreeMapRaster.png(solid(.red))
+            }
+        store.update(worktrees: [registered], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls.isEmpty)
+        if retryHistory {
+            historyContext = "Build a garden"
+            store.retryHistory(for: hook)
+        } else {
+            store.recordPrompt("Build a garden", for: hook)
+        }
+        await store.waitUntilIdle()
+        #expect(calls.count == 1)
+        #expect(calls.first?.rows.first?.context == "Build a garden")
+    }
+
+    @Test("Switching back to a cached theme restores its map without generation")
+    func cachedThemeReplacesDisplayedMap() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        let dark = WorktreeArtworkTheme(theme: GhosttyTheme(core: .init(
+            backgroundRGB: .init(r: 0, g: 0, b: 0), foregroundRGB: .init(r: 1, g: 1, b: 1))))
+        let light = WorktreeArtworkTheme(theme: GhosttyTheme(core: .init(
+            backgroundRGB: .init(r: 1, g: 1, b: 1), foregroundRGB: .init(r: 0, g: 0, b: 0))))
+        var calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "Build a garden" }) { _ in
+            calls += 1
+            return try WorktreeMapRaster.png(solid(calls == 1 ? .red : .blue))
+        }
+        store.configure(theme: dark)
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        store.configure(theme: light)
+        await store.waitUntilIdle()
+        #expect(try pixel(store.images[request.path], y: 40).blueComponent > 0.95)
+        store.configure(theme: dark)
+        await store.waitUntilIdle()
+        #expect(calls == 2)
+        #expect(try pixel(store.images[request.path], y: 40).redComponent > 0.95)
+    }
+
+    @Test("Regenerating without recovered task context retains the cached landmark")
+    func missingContextCannotEraseCachedLandmark() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        let original = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "Build a garden" }) { _ in
+            try WorktreeMapRaster.png(solid(.red))
+        }
+        original.update(worktrees: [request], isActive: true)
+        await original.waitUntilIdle()
+        var calls = 0
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            calls += 1
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        restored.regenerate(request)
+        await restored.waitUntilIdle()
+        #expect(calls == 0)
+        #expect(restored.regeneratingPaths.isEmpty)
+        #expect(restored.failures[request.path] != nil)
+        #expect(try pixel(restored.images[request.path], y: 40).redComponent > 0.95)
+    }
+
+    @Test("Hidden worktrees retain cached landmarks while folder rows reserve terrain without reading history")
+    func layoutUsesVisibleRowsAndRetainsHiddenLandmarksAcrossLaunches() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        var a = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil, project: project)
+        let b = WorktreeArtworkRequest(path: "b", name: "B", firstPaneSessionName: nil, project: project)
+        var folder = WorktreeArtworkRequest(path: "folder", name: "Folder", firstPaneSessionName: nil, project: project)
+        folder.mapFolder = true
+        folder.mapHeight = 44
+        var calls: [WorktreeMapGeneration] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { request in
+            #expect(!request.mapFolder)
+            return request.name
+        }) { input in
+            calls.append(input)
+            return try WorktreeMapRaster.png(solid(calls.count == 1 ? .red : .blue,
+                height: input.rows.reduce(0) { $0 + $1.height }))
+        }
+        store.update(worktrees: [a, b], isActive: true)
+        await store.waitUntilIdle()
+        a.mapVisible = false
+        store.update(worktrees: [folder, a, b], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls.last?.rows.map(\.path) == [folder.path, b.path])
+        #expect(calls.last?.rows.map(\.height) == [44, 80])
+        #expect(calls.last?.rows.first?.context == nil)
+        #expect(calls.last?.preservedPaths == [b.path])
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls.append(input)
+            return try WorktreeMapRaster.png(solid(.blue, height: input.rows.reduce(0) { $0 + $1.height }))
+        }
+        restored.update(worktrees: [folder, a, b], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(calls.count == 2)
+        a.mapVisible = true
+        a.mapHeight = 140
+        restored.update(worktrees: [folder, a, b], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(calls.last?.rows.map(\.height) == [44, 140, 80])
+        #expect(calls.last?.preservedPaths == [a.path, b.path])
+        #expect(try pixel(restored.images[a.path], y: 40).redComponent > 0.95)
+        #expect(try pixel(restored.images[a.path], y: 110).blueComponent > 0.95)
+    }
+
+    @Test func firstPromptUnlocksLandmarkAndFailureRetainsMap() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        var calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            calls += 1
+            if calls > 1 { throw ImageCreatorWorktreeIcon.Failure.unavailable }
+            return try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls == 0)
+        store.recordPrompt("Build a garden", for: request)
+        await store.waitUntilIdle()
+        #expect(calls == 1)
+        store.regenerate(request)
+        await store.waitUntilIdle()
+        #expect(calls == 2)
+        #expect(try pixel(store.images[request.path], y: 40).redComponent > 0.95)
+        #expect(store.regeneratingPaths.isEmpty)
+        #expect(store.failures[request.path] != nil)
+    }
+
+    @Test("@spec LAYOUT-2.100: When worktrees are reordered, the application shall rebuild their shared project map in the new order while preserving the pixels of existing landmarks and replacing only connecting terrain.")
+    func reorderPreservesLandmarkPixels() throws {
+        let red = solid(.red), blue = solid(.blue)
+        let rows = [WorktreeMapRow(path: "b", name: "B", height: 80, context: "B"),
+                    WorktreeMapRow(path: "a", name: "A", height: 80, context: "A")]
+        let result = try WorktreeMapRaster.compose(rows: rows, generated: solid(.green, height: 160),
+                                                  preserving: ["a": red, "b": blue])
+        let slices = try WorktreeMapRaster.slices(result, rows: rows)
+        #expect(try pixel(slices["b"], y: 40).blueComponent > 0.95)
+        #expect(try pixel(slices["a"], y: 40).redComponent > 0.95)
+        #expect(try pixel(slices["a"], y: 0).greenComponent > 0.8)
+    }
+
+    @Test("@spec LAYOUT-2.101: While a project map is displayed, resizing the sidebar shall keep artwork at its saved scale and top-left origin, fading beyond its right and bottom edges without triggering image generation.")
+    func expandingRowDoesNotStretchLandmark() throws {
+        let rows = [WorktreeMapRow(path: "a", name: "A", height: 180, context: "A")]
+        let result = try WorktreeMapRaster.compose(rows: rows, generated: solid(.green, height: 180),
+                                                  preserving: ["a": solid(.red)])
+        #expect(try pixel(result, y: 40).redComponent > 0.95)
+        #expect(try pixel(result, y: 120).greenComponent > 0.95)
+    }
+
+    func solid(_ color: NSColor, height: CGFloat = 80) -> NSImage {
+        let image = NSImage(size: .init(width: WorktreeMapLayout.width, height: height))
+        image.lockFocus()
+        color.setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    func pixel(_ image: NSImage?, y: Int) throws -> NSColor {
+        let image = try #require(image)
+        var rect = CGRect(origin: .zero, size: image.size)
+        let cg = try #require(image.cgImage(forProposedRect: &rect, context: nil, hints: nil))
+        let bitmap = NSBitmapImageRep(cgImage: cg)
+        return try #require(bitmap.colorAt(x: bitmap.pixelsWide / 2,
+            y: Int(CGFloat(y) * CGFloat(bitmap.pixelsHigh) / image.size.height))?.usingColorSpace(.deviceRGB))
+    }
+}

@@ -5,11 +5,13 @@ import AppKit
 
 /// Uses the project rail's margins without native List disclosure-column padding.
 public struct ProjectWorktreeColumn<Content: View>: View {
+    private let rowSpacing: CGFloat
     private let content: Content
     private let onDoubleClickEmptySpace: () -> Void
     @State private var rowsHeight: CGFloat = 0
 
-    public init(onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+    public init(rowSpacing: CGFloat = 3, onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+        self.rowSpacing = rowSpacing
         self.onDoubleClickEmptySpace = onDoubleClickEmptySpace
         self.content = content()
     }
@@ -18,7 +20,7 @@ public struct ProjectWorktreeColumn<Content: View>: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(spacing: 0) {
-                    LazyVStack(alignment: .leading, spacing: 3) {
+                    LazyVStack(alignment: .leading, spacing: rowSpacing) {
                         content
                     }
                     .padding(.horizontal, 6)

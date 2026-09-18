@@ -53,7 +53,7 @@ struct WorktreeTerminalBackgroundTests {
     }
     #endif
 
-    @Test("@spec LAYOUT-2.79: When a worktree has artwork, the application shall display one continuous image scaled to cover the entire window content and anchored at the top, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background at 75% of the window height.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.79: When a worktree has artwork, the application shall display one continuous color gradient sampled from its map landmark behind the entire window and all terminal panes, without enlarging image pixels, fading completely into the Ghostty theme background at 75% of the window height.", arguments: [false, true])
     func fadesAcrossWholeLayout(isDark: Bool) throws {
         let image = NSImage(size: NSSize(width: 400, height: 200))
         image.lockFocus()
@@ -75,15 +75,17 @@ struct WorktreeTerminalBackgroundTests {
         }
         let left = try pixel(50, 5)
         let right = try pixel(250, 5)
-        #expect(left.redComponent > left.blueComponent + 0.1)
-        #expect(right.blueComponent > right.redComponent + 0.1)
+        #expect(left.redComponent + left.blueComponent > 2 * left.greenComponent + 0.1)
+        #expect(right.redComponent + right.blueComponent > 2 * right.greenComponent + 0.1)
         let fading = try pixel(50, 70)
-        #expect(fading.redComponent - fading.blueComponent < left.redComponent - left.blueComponent)
+        #expect(fading.redComponent + fading.blueComponent - 2 * fading.greenComponent
+            < left.redComponent + left.blueComponent - 2 * left.greenComponent)
         let midpoint = try pixel(50, 100)
         let lower = try pixel(50, 130)
-        #expect(midpoint.redComponent > midpoint.blueComponent + 0.05)
-        #expect(lower.redComponent > lower.blueComponent + 0.02)
-        #expect(lower.redComponent - lower.blueComponent < midpoint.redComponent - midpoint.blueComponent)
+        #expect(midpoint.redComponent + midpoint.blueComponent > 2 * midpoint.greenComponent + 0.04)
+        #expect(lower.redComponent + lower.blueComponent > 2 * lower.greenComponent + 0.02)
+        #expect(lower.redComponent + lower.blueComponent - 2 * lower.greenComponent
+            < midpoint.redComponent + midpoint.blueComponent - 2 * midpoint.greenComponent)
         for y in [150, 175, 199] {
             for x in [50, 250] {
                 let color = try pixel(x, y)
@@ -96,25 +98,23 @@ struct WorktreeTerminalBackgroundTests {
         }
     }
 
-    @Test func imageCoversFullWidthAndKeepsItsTopEdge() throws {
-        let image = NSImage(size: NSSize(width: 200, height: 400))
+    @Test func gradientDoesNotEnlargeTheImageBoundary() throws {
+        let image = NSImage(size: NSSize(width: 400, height: 200))
         image.lockFocus()
-        NSColor.blue.setFill()
-        NSRect(x: 0, y: 0, width: 200, height: 400).fill()
         NSColor.red.setFill()
-        NSRect(x: 0, y: 350, width: 200, height: 50).fill()
+        NSRect(x: 0, y: 0, width: 200, height: 200).fill()
+        NSColor.blue.setFill()
+        NSRect(x: 200, y: 0, width: 200, height: 200).fill()
         image.unlockFocus()
         let renderer = ImageRenderer(content: WorktreeTerminalBackground(
             image: image, backgroundColor: .black
         ).frame(width: 400, height: 200))
         renderer.scale = 1
         let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
-        for x in [0, 200, 399] {
-            let top = try #require(bitmap.colorAt(x: x, y: 5)?.usingColorSpace(.deviceRGB))
-            #expect(top.redComponent > top.blueComponent + 0.1)
-            let below = try #require(bitmap.colorAt(x: x, y: 110)?.usingColorSpace(.deviceRGB))
-            #expect(below.blueComponent > below.redComponent + 0.03)
-        }
+        let left = try #require(bitmap.colorAt(x: 198, y: 5)?.usingColorSpace(.deviceRGB))
+        let right = try #require(bitmap.colorAt(x: 202, y: 5)?.usingColorSpace(.deviceRGB))
+        #expect(abs(left.redComponent - right.redComponent) < 0.03)
+        #expect(abs(left.blueComponent - right.blueComponent) < 0.03)
     }
 
     @Test func windowBackdropUsesOneImageAcrossNavigationColumns() async throws {
@@ -155,9 +155,9 @@ struct WorktreeTerminalBackgroundTests {
         let leftDetail = try pixel(260, 60)
         let center = try pixel(450, 60)
         let right = try pixel(760, 60)
-        #expect(leftDetail.redComponent > leftDetail.blueComponent + 0.08)
-        #expect(center.greenComponent > center.redComponent + 0.08)
-        #expect(right.blueComponent > right.redComponent + 0.08)
+        #expect(max(leftDetail.redComponent, leftDetail.greenComponent, leftDetail.blueComponent) > 0.05)
+        #expect(max(center.redComponent, center.greenComponent, center.blueComponent) > 0.05)
+        #expect(max(right.redComponent, right.greenComponent, right.blueComponent) > 0.05)
         let bottom = try pixel(760, 400)
         #expect(bottom.redComponent < 0.01 && bottom.greenComponent < 0.01 && bottom.blueComponent < 0.01)
         if let path = ProcessInfo.processInfo.environment["GRAFTTY_WINDOW_ARTWORK_RENDER_PATH"] {

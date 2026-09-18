@@ -57,7 +57,7 @@ struct SettingsView: View {
             }
             .disabled(!worktreeArtworkEnabled)
 
-            Text("Uses recent agent prompts to create backgrounds. Tries Codex with your existing sign-in, then Apple ImageCreator.")
+            Text("Creates a connected map for each project from recent agent prompts. Reordering keeps each landmark and rebuilds its connections. Terminal backgrounds use colors sampled from the map. Tries Codex, then Apple ImageCreator.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

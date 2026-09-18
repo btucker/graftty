@@ -7,7 +7,7 @@ import Testing
 @Suite("Automatic worktree icons")
 @MainActor
 struct WorktreeIconStoreTests {
-    @Test("@spec LAYOUT-2.94: While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.")
+    @Test("Legacy per-worktree generator serializes requests and reuses its cache")
     func generatesSeriallyAndReusesCache() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

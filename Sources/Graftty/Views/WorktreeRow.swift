@@ -71,6 +71,8 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
+    var hasArtwork = false
+    @Environment(\.worktreeMapIndent) private var mapIndent
 
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
@@ -104,11 +106,12 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty
             ))
+            .modifier(ArtworkTextBacking(enabled: hasArtwork))
     }
 
     var body: some View {
@@ -151,7 +154,7 @@ struct PaneTitleRow: View {
         // The `↳` character's vertical stroke sits at its own left edge,
         // so a 14pt leading padding drops that stroke onto the icon's
         // vertical centerline.
-        .padding(.leading, 14)
+        .padding(.leading, 14 + (hasArtwork ? mapIndent : 0))
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -252,6 +255,8 @@ struct WorktreeRow: View {
     /// reachable.
     let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
+    var hasArtwork = false
+    @Environment(\.worktreeMapIndent) private var mapIndent
 
     var body: some View {
         HStack(spacing: 6) {
@@ -262,6 +267,7 @@ struct WorktreeRow: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             branchLabel
+                .modifier(ArtworkTextBacking(enabled: hasArtwork))
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
@@ -271,8 +277,10 @@ struct WorktreeRow: View {
                 baseRef: baseRef,
                 theme: theme
             )
+            .modifier(ArtworkTextBacking(enabled: hasArtwork))
         }
         .padding(.vertical, 4)
+        .padding(.leading, hasArtwork ? mapIndent : 0)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -328,10 +336,10 @@ struct WorktreeRow: View {
                 // identity rather than a generic placeholder.
                 Text(displayName)
                     .italic()
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive))
             } else {
                 Text(displayName)
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive))
             }
 
             // Secondary label: git branch, dimmed. Skip when it duplicates
@@ -343,7 +351,7 @@ struct WorktreeRow: View {
             if entry.displayBranch != displayName {
                 Text(entry.displayBranch)
                     .font(.caption)
-                    .foregroundColor(theme.sidebarSecondaryText)
+                    .foregroundColor(hasArtwork ? .white.opacity(0.85) : theme.sidebarSecondaryText)
             }
         }
         .lineLimit(1)

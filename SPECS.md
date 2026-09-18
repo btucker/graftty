@@ -160,19 +160,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When selecting worktrees for automatic artwork, the application shall include only local on-disk linked worktrees and derive visual identities from their names without repository paths.
 
-**LAYOUT-2.73** When a worktree has generated artwork, the application shall display one continuous background behind its heading and pane rows without changing block dimensions and apply a theme-colored scrim that protects text on the leading side.
+**LAYOUT-2.73** When a worktree has generated artwork, the application shall display its project map section behind its heading and pane rows at a fixed scale and top-left origin, fading its right edge into the sidebar theme without changing block dimensions.
 
-**LAYOUT-2.74** When caching generated worktree artwork, the application shall preserve its aspect ratio and retain up to 512 pixels on its longest edge for row backgrounds.
+**LAYOUT-2.74** When preparing Apple fallback artwork, the application shall preserve its aspect ratio and retain up to 512 pixels on its longest edge before composing it into a project map.
 
 **LAYOUT-2.75** When initially generating linked-worktree artwork, the application shall derive a stable fallback subject, color palette, and composition from the worktree name and send English visual descriptions instead of raw technical names to ImageCreator.
 
 **LAYOUT-2.76** If ImageCreator rejects an artwork description or fails creation, then the application shall retry once with a shorter English subject description, without retrying cancellation or device unavailability.
 
-**LAYOUT-2.77** When a main checkout has a project icon, the application shall use that icon as its enlarged block background instead of generated artwork.
+**LAYOUT-2.77** When a main checkout has a project icon, the application shall use that icon until its project map is available, then use the map's root landmark inspired by the project avatar.
 
 **LAYOUT-2.78** When generating worktree artwork with an available on-device language model, the application shall first translate the worktree name and user-authored task context into a concrete English visual description and use its deterministic visual fallback if translation is unavailable or fails.
 
-**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous image scaled to cover the entire window content and anchored at the top, with the sidebar above it and all terminal panes sharing its coordinates, strongest at the top and fading completely into the Ghostty theme background at 75% of the window height.
+**LAYOUT-2.79** When a worktree has artwork, the application shall display one continuous color gradient sampled from its map landmark behind the entire window and all terminal panes, without enlarging image pixels, fading completely into the Ghostty theme background at 75% of the window height.
 
 **LAYOUT-2.80** When a linked worktree has no cached context-based artwork, the application shall wait for a submitted user prompt or existing user-message history before generating, replace legacy artwork once, and keep the generated image stable across later prompts and launches.
 
@@ -202,7 +202,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.93** When the first-pane session changes or requests a history retry during an artwork history lookup, the application shall discard the obsolete lookup and read the current session before deciding that context is unavailable.
 
-**LAYOUT-2.94** While the application is active, it shall automatically generate missing local linked-worktree artwork from their names and available user-prompt context one at a time and reuse cached artwork across launches.
+**LAYOUT-2.94** While the application is active and artwork is enabled, the application shall generate pending project maps serially from worktree names and available user prompts, and reuse cached maps across launches.
 
 **LAYOUT-2.95** When generating worktree backgrounds, the application shall reuse a project metaphor category derived from bounded codebase context and the resolved project avatar, with distinct task-specific subjects inside that category.
 
@@ -213,6 +213,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.98** When project avatar resolution completes, the application shall make artwork requests eligible even if an override change resolves to the same image or no image.
 
 **LAYOUT-2.99** While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.
+
+**LAYOUT-2.100** When worktrees are reordered, the application shall rebuild their shared project map in the new order while preserving the pixels of existing landmarks and replacing only connecting terrain.
+
+**LAYOUT-2.101** While a project map is displayed, resizing the sidebar shall keep artwork at its saved scale and top-left origin, fading beyond its right and bottom edges without triggering image generation.
+
+**LAYOUT-2.102** When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.
+
+**LAYOUT-2.103** While map artwork appears behind sidebar text, the application shall draw translucent dark backing fitted to each title without changing row dimensions or hiding the full map behind a text column.
+
+**LAYOUT-2.104** When a worktree's pane count changes, the application shall retain its landmark in the first 80 points of the map section and sample terminal colors from that area rather than the surrounding terrain.
 
 ### LAYOUT-3.x — Adding Repositories
 

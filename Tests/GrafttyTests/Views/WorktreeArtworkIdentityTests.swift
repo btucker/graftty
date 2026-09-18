@@ -206,9 +206,9 @@ struct WorktreeArtworkIdentityTests {
         }
     }
 
-    @Test("@spec LAYOUT-2.77: When a main checkout has a project icon, the application shall use that icon as its enlarged block background instead of generated artwork.")
+    @Test("@spec LAYOUT-2.77: When a main checkout has a project icon, the application shall use that icon until its project map is available, then use the map's root landmark inspired by the project avatar.")
     @MainActor
-    func mainUsesProjectIconAndLinkedWorktreesUseGeneratedArtwork() throws {
+    func mainUsesProjectIconUntilMapArrives() throws {
         let icon = NSImage(size: NSSize(width: 4, height: 4))
         icon.lockFocus()
         NSColor.orange.setFill()
@@ -216,7 +216,8 @@ struct WorktreeArtworkIdentityTests {
         icon.unlockFocus()
         let data = try #require(icon.tiffRepresentation)
         #expect(WorktreeArtworkBackground.resolveImage(isMainCheckout: true, projectIcon: data, generated: nil) != nil)
-        #expect(WorktreeArtworkBackground.resolveImage(isMainCheckout: true, projectIcon: nil, generated: icon) == nil)
+        #expect(WorktreeArtworkBackground.resolveImage(isMainCheckout: true, projectIcon: nil, generated: icon) === icon)
+        #expect(WorktreeArtworkBackground.resolveImage(isMainCheckout: true, projectIcon: data, generated: icon) === icon)
         #expect(WorktreeArtworkBackground.resolveImage(isMainCheckout: false, projectIcon: data, generated: icon) === icon)
     }
 }

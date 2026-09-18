@@ -9,6 +9,10 @@ struct WorktreeArtworkRequest: Equatable, Sendable {
     let name: String
     let firstPaneSessionName: String?
     var project: ProjectArtworkSource? = nil
+    var isMainCheckout = false
+    var mapHeight: Double = 80
+    var mapVisible = true
+    var mapFolder = false
 }
 
 /// Artwork is scoped to a worktree; raw user context stays in memory only.
@@ -17,16 +21,19 @@ final class WorktreeIconStore: ObservableObject {
     static let shared: WorktreeIconStore = {
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty/WorktreeIcons", isDirectory: true)
+        let history: @MainActor (WorktreeArtworkRequest) async -> String? = { request in
+            guard let pane = request.firstPaneSessionName else { return nil }
+            return await OffMainIO.run {
+                WorktreeArtworkHistory.context(worktreePath: request.path, paneSessionName: pane)
+            }
+        }
+        let maps = ProjectWorktreeMapStore(directory: cache.appendingPathComponent("maps-v1"),
+            history: history, generate: ProjectWorktreeMapGenerator.generate)
         let store = WorktreeIconStore(
             directory: cache.appendingPathComponent("v5"),
             legacyDirectory: cache.appendingPathComponent("v4"),
-            history: { request in
-                guard let pane = request.firstPaneSessionName else { return nil }
-                return await OffMainIO.run {
-                    WorktreeArtworkHistory.context(worktreePath: request.path, paneSessionName: pane)
-                }
-            },
-            generate: WorktreeArtworkGenerator.generate
+            history: history,
+            generate: WorktreeArtworkGenerator.generate, maps: maps
         )
         let preferences = WorktreeArtworkPreferences()
         store.configure(enabled: preferences.isEnabled, style: preferences.style)
@@ -53,6 +60,7 @@ final class WorktreeIconStore: ObservableObject {
     @Published private(set) var images: [String: NSImage] = [:]
     @Published private(set) var regeneratingPaths = Set<String>()
     @Published private(set) var failures: [String: String] = [:]
+    private let mapStore: ProjectWorktreeMapStore?
     private let directory: URL
     private let legacyDirectory: URL?
     private let history: @MainActor (WorktreeArtworkRequest) async -> String?
@@ -76,11 +84,17 @@ final class WorktreeIconStore: ObservableObject {
 
     init(directory: URL, legacyDirectory: URL? = nil,
          history: @escaping @MainActor (WorktreeArtworkRequest) async -> String? = { _ in nil },
-         generate: @escaping @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?, ProjectArtworkSource?) async throws -> Data) {
+         generate: @escaping @MainActor (String, String, WorktreeArtworkStyle, UInt64, WorktreeArtworkTheme?, ProjectArtworkSource?) async throws -> Data, maps: ProjectWorktreeMapStore? = nil) {
         self.directory = directory
         self.legacyDirectory = legacyDirectory
         self.history = history
         self.generate = generate
+        self.mapStore = maps
+        if let maps {
+            maps.$images.sink { [weak self] in self?.images = $0 }.store(in: &lifecycleSubscriptions)
+            maps.$regeneratingPaths.sink { [weak self] in self?.regeneratingPaths = $0 }.store(in: &lifecycleSubscriptions)
+            maps.$failures.sink { [weak self] in self?.failures = $0 }.store(in: &lifecycleSubscriptions)
+        }
     }
 
     static func name(for worktree: WorktreeEntry, repoPath: String) -> String? {
@@ -97,6 +111,12 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func update(worktrees: [WorktreeArtworkRequest], isActive: Bool) {
+        if let mapStore {
+            self.worktrees = worktrees
+            self.isActive = isActive
+            mapStore.update(worktrees: worktrees, isActive: isActive)
+            return
+        }
         var seen = Set<String>()
         let priorRequests = Dictionary(self.worktrees.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let prior = priorRequests.mapValues(\.firstPaneSessionName)
@@ -143,6 +163,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func configure(enabled: Bool, style: WorktreeArtworkStyle) {
+        if let mapStore { mapStore.configure(enabled: enabled, style: style); return }
         guard isEnabled != enabled || self.style != style else { return }
         isEnabled = enabled
         if !enabled || self.style != style { worker?.cancel() }
@@ -160,6 +181,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func configure(theme: WorktreeArtworkTheme) {
+        if let mapStore { mapStore.configure(theme: theme); return }
         guard self.theme != theme else { return }
         let affected = worktrees.filter { $0.project == nil || self.theme?.backdropCacheKey != theme.backdropCacheKey }
         self.theme = theme
@@ -188,6 +210,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func regenerate(_ request: WorktreeArtworkRequest) {
+        if let mapStore { mapStore.regenerate(request); return }
         guard isEnabled, let index = worktrees.firstIndex(where: { $0.path == request.path }) else { return }
         worktrees[index] = request
         revisions[request.path, default: 0] &+= 1
@@ -201,6 +224,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func retryHistory(for request: WorktreeArtworkRequest) {
+        if let mapStore { mapStore.retryHistory(for: request); return }
         guard isEnabled, contexts[request.path] == nil, !completed.contains(request.path),
               failures[request.path] == nil else { return }
         checkedHistory.remove(request.path)
@@ -209,6 +233,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func recordPrompt(_ text: String, for request: WorktreeArtworkRequest) {
+        if let mapStore { mapStore.recordPrompt(text, for: request); return }
         guard isEnabled, let prompt = AgentHookPrompt.bounded(text) else { return }
         latestPrompts[request.path] = prompt
         guard !completed.contains(request.path), failures[request.path] == nil,
@@ -297,6 +322,7 @@ final class WorktreeIconStore: ObservableObject {
     }
 
     func waitUntilIdle() async {
+        if let mapStore { await mapStore.waitUntilIdle(); return }
         while let worker { await worker.value }
     }
 
