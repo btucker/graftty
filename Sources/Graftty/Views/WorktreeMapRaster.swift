@@ -10,6 +10,12 @@ struct WorktreeMapRow: Equatable, Sendable {
 enum WorktreeMapLayout {
     static let width: CGFloat = 320
     static let landmarkHeight: CGFloat = 80
+    static let headerHeight: Double = 128
+    static func headerPath(repo: String) -> String { "graftty-map-header:\(repo)" }
+    static func header(project: ProjectArtworkSource) -> WorktreeArtworkRequest {
+        .init(path: headerPath(repo: project.path), name: "Project canopy above the worktrees",
+              firstPaneSessionName: nil, project: project, mapHeight: headerHeight, mapFolder: true)
+    }
     static func height(_ value: Double) -> Double { min(800, max(44, ceil(value))) }
     static func folderPath(repo: String, folder: String) -> String { "graftty-map-folder:\(repo.count):\(repo):\(folder)" }
 }

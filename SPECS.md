@@ -168,7 +168,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.76** If ImageCreator rejects an artwork description or fails creation, then the application shall retry once with a shorter English subject description, without retrying cancellation or device unavailability.
 
-**LAYOUT-2.77** When a main checkout has a project icon, the application shall use that icon until its project map is available, then use the map's root landmark inspired by the project avatar.
+**LAYOUT-2.77** While a worktree has no generated map, the application shall retain its normal background without a project-avatar placeholder.
 
 **LAYOUT-2.78** When generating worktree artwork with an available on-device language model, the application shall first translate the worktree name and user-authored task context into a concrete English visual description and use its deterministic visual fallback if translation is unavailable or fails.
 
@@ -220,9 +220,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.102** When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.
 
-**LAYOUT-2.103** While map artwork appears behind sidebar text, the application shall draw translucent dark backing fitted to each title without changing row dimensions or hiding the full map behind a text column.
+**LAYOUT-2.103** While map artwork appears behind sidebar text, the application shall shade each worktree block continuously behind its title and panes and separate neighboring blocks without individual label boxes.
 
 **LAYOUT-2.104** When a worktree's pane count changes, the application shall retain its landmark in the first 80 points of the map section and sample terminal colors from that area rather than the surrounding terrain.
+
+**LAYOUT-2.105** When the sidebar map ends, the application shall fade the artwork and selection tint into the sidebar background using native rendering.
+
+**LAYOUT-2.106** When a project map extends behind the sidebar header, the application shall reserve a terrain-only header section and preserve existing worktree landmarks below it.
 
 ### LAYOUT-3.x — Adding Repositories
 

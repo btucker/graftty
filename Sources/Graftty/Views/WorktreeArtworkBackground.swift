@@ -9,10 +9,11 @@ struct WorktreeArtworkBackground: View {
 
     var isRegenerating = false
     var fadesBottom = false
+    var groupsText = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static func resolveImage(isMainCheckout: Bool, projectIcon: Data?, generated: NSImage?) -> NSImage? {
-        if isMainCheckout { return generated ?? projectIcon.flatMap { NSImage(data: $0) } }
+        // Avatars guide generation, but are not map-sized loading placeholders.
         return generated
     }
 
@@ -25,6 +26,8 @@ struct WorktreeArtworkBackground: View {
                 .frame(width: image.size.width, height: image.size.height)
                 .blur(radius: isRegenerating ? 12 : 0)
                 .opacity(isRegenerating ? 0.55 : 1)
+                .overlay { if groupsText { ArtworkBlockBacking() } }
+                .overlay(selectionColor)
                 .mask {
                     LinearGradient(
                         stops: [
@@ -40,17 +43,43 @@ struct WorktreeArtworkBackground: View {
                     LinearGradient(stops: [
                         .init(color: .white, location: 0),
                         .init(color: .white, location: 0.85),
-                        .init(color: fadesBottom || geometry.size.height > image.size.height ? .clear : .white, location: 1),
+                        .init(color: fadesBottom || geometry.size.height > image.size.height ? .clear : .white, location: 0.98),
                     ], startPoint: .top, endPoint: .bottom)
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 .background(backgroundColor)
-                .overlay(selectionColor)
                 .clipped()
                 .id(ObjectIdentifier(image))
                 .transition(.opacity)
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: ObjectIdentifier(image))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A terrain-only map section reaches behind search and window chrome.
+/// Only this decorative section fits the header height; landmarks keep their scale.
+struct WorktreeMapHeaderBackground: View {
+    let image: NSImage
+    let backgroundColor: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: WorktreeMapLayout.width, height: geometry.size.height)
+                .overlay(.black.opacity(0.38))
+                .mask {
+                    LinearGradient(stops: [.init(color: .white, location: 0.8),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .leading, endPoint: .trailing)
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                .background(backgroundColor)
+                .clipped()
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

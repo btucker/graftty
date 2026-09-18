@@ -107,9 +107,13 @@ struct SidebarView: View {
                     }
                 }
             }
-            return flatten(SidebarWorktreeHierarchy.nodes(for: repo.worktrees,
+            return [WorktreeMapLayout.header(project: project)] + flatten(SidebarWorktreeHierarchy.nodes(for: repo.worktrees,
                 inRepoAtPath: repo.path, defaultBranch: nil), visible: true)
         }
+    }
+    private var mapHeaderRepo: RepoEntry? {
+        guard artworkEnabled, showsProjectRail, !navigation.showsAttention, navigation.query.isEmpty else { return nil }
+        return appState.repos.first { localProjectID($0) == navigation.selectedProjectID }
     }
     private func lastMapPath(in repo: RepoEntry) -> String? {
         worktreeArtworkRequests.last { $0.project?.path == repo.path && $0.mapVisible }?.path
@@ -293,8 +297,26 @@ struct SidebarView: View {
                         return opened
                     }
                 } else {
-                    TextField("Find any project or worktree", text: $navigation.query)
-                        .textFieldStyle(.roundedBorder).padding(10)
+                    VStack(spacing: 0) {
+                        TextField("Find any project or worktree", text: $navigation.query)
+                            .textFieldStyle(.roundedBorder).padding(10)
+                        if let repo = mapHeaderRepo, SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+                            HStack {
+                                Spacer()
+                                addWorktreeButton(repo, showsLabel: true,
+                                    hasArtwork: worktreeIcons.images[WorktreeMapLayout.headerPath(repo: repo.path)] != nil)
+                            }
+                                .frame(height: 44).padding(.horizontal, 6)
+                        }
+                    }
+                    .background {
+                        if let repo = mapHeaderRepo,
+                           let image = worktreeIcons.images[WorktreeMapLayout.headerPath(repo: repo.path)] {
+                            WorktreeMapHeaderBackground(image: image, backgroundColor: theme.sidebarBackground)
+                                .padding(.leading, 6)
+                                .ignoresSafeArea(.container, edges: .top)
+                        }
+                    }
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail || artworkEnabled {
@@ -324,6 +346,7 @@ struct SidebarView: View {
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
+        .background { if artworkEnabled { theme.sidebarBackground.ignoresSafeArea() } }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
@@ -517,7 +540,7 @@ struct SidebarView: View {
             }
         }
         if showsProjectRail {
-            if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+            if mapHeaderRepo?.id != repo.id, SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                 HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
                     .frame(height: 44)
             }
@@ -555,14 +578,14 @@ struct SidebarView: View {
         }
     }
 
-    private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool) -> some View {
+    private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool, hasArtwork: Bool = false) -> some View {
         Button { presentAddWorktree(for: repo) } label: {
             HStack(spacing: 5) {
                 Image(systemName: "plus")
                 if showsLabel { Text("Add worktree") }
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(theme.sidebarDimIcon)
+            .foregroundColor(hasArtwork ? .white.opacity(0.9) : theme.sidebarDimIcon)
             .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -736,7 +759,8 @@ struct SidebarView: View {
                 backgroundColor: theme.sidebarBackground,
                 selectionColor: selectionColor,
                 isRegenerating: isRegenerating,
-                fadesBottom: fadesBottom
+                fadesBottom: fadesBottom,
+                groupsText: true
             )
         } else {
             RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selectionColor)
@@ -974,14 +998,14 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         HStack(spacing: 6) {
                             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             Image(systemName: "folder")
-                            Text(name).lineLimit(1).modifier(ArtworkTextBacking(enabled: true))
+                            Text(name).lineLimit(1)
                             Spacer()
                             if !isExpanded {
                                 WorktreeRowGutter(stats: aggregate, baseRef: nil, theme: theme)
-                                    .modifier(ArtworkTextBacking(enabled: true))
                             }
                         }
-                        .font(.caption).foregroundStyle(.white)
+                        .font(.caption)
+                        .foregroundStyle(mapImages[WorktreeMapLayout.folderPath(repo: mapRepoPath, folder: path)] == nil ? theme.foreground : .white)
                         .padding(.leading, CGFloat(8 + depth * 12)).padding(.trailing, 8)
                         .frame(height: 44).contentShape(Rectangle())
                     }
@@ -991,7 +1015,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         let path = WorktreeMapLayout.folderPath(repo: mapRepoPath, folder: path)
                         if let image = mapImages[path] {
                             WorktreeArtworkBackground(image: image, backgroundColor: theme.sidebarBackground,
-                                selectionColor: .clear, fadesBottom: mapLastPath == path)
+                                selectionColor: .clear, fadesBottom: mapLastPath == path, groupsText: true)
                         }
                     }
                     if isExpanded {

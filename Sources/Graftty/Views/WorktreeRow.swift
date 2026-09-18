@@ -106,12 +106,11 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white : theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.76) : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty
             ))
-            .modifier(ArtworkTextBacking(enabled: hasArtwork))
     }
 
     var body: some View {
@@ -267,7 +266,7 @@ struct WorktreeRow: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             branchLabel
-                .modifier(ArtworkTextBacking(enabled: hasArtwork))
+                .fontWeight(hasArtwork ? .semibold : .regular)
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
@@ -277,7 +276,6 @@ struct WorktreeRow: View {
                 baseRef: baseRef,
                 theme: theme
             )
-            .modifier(ArtworkTextBacking(enabled: hasArtwork))
         }
         .padding(.vertical, 4)
         .padding(.leading, hasArtwork ? mapIndent : 0)

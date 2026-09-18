@@ -37,6 +37,32 @@ struct ProjectWorktreeMapTests {
         for file in files { #expect(try !String(contentsOf: file, encoding: .utf8).contains("User task")) }
     }
 
+    @Test("@spec LAYOUT-2.106: When a project map extends behind the sidebar header, the application shall reserve a terrain-only header section and preserve existing worktree landmarks below it.")
+    func addingHeaderPreservesLandmarksAndDoesNotReadHeaderHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectArtworkSource(path: "/header-project", avatar: nil)
+        let worktree = WorktreeArtworkRequest(path: "task", name: "Task", firstPaneSessionName: nil, project: project)
+        let header = WorktreeMapLayout.header(project: project)
+        var inputs: [WorktreeMapGeneration] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: {
+            #expect($0.path != header.path)
+            return "Build the map"
+        }) { input in
+            inputs.append(input)
+            return try WorktreeMapRaster.png(solid(inputs.count == 1 ? .red : .blue))
+        }
+        store.update(worktrees: [worktree], isActive: true)
+        await store.waitUntilIdle()
+        store.update(worktrees: [header, worktree], isActive: true)
+        await store.waitUntilIdle()
+        #expect(inputs.last?.rows.map(\.path) == [header.path, worktree.path])
+        #expect(inputs.last?.rows.first?.context == nil)
+        #expect(inputs.last?.preservedPaths == [worktree.path])
+        #expect(store.images[header.path]?.size.height == CGFloat(WorktreeMapLayout.headerHeight))
+        #expect(try pixel(store.images[worktree.path], y: 40).redComponent > 0.95)
+    }
+
     @Test func generationPromptKeepsTallRowLandmarksNearTheTop() {
         let input = WorktreeMapGeneration(rows: [
             .init(path: "a", name: "A", height: 400, context: "Find related calls"),
@@ -50,6 +76,8 @@ struct ProjectWorktreeMapTests {
         #expect(prompt.contains("Find related calls"))
         #expect(prompt.contains("quiet connecting terrain"))
         #expect(prompt.contains("a working harbor"))
+        #expect(prompt.contains("Paint opaque terrain all the way to every canvas edge"))
+        #expect(prompt.contains("application alone fades"))
     }
 
     @Test("@spec LAYOUT-2.102: When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.")

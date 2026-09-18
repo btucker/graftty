@@ -6,21 +6,45 @@ import Testing
 @Suite("Worktree row artwork")
 @MainActor
 struct WorktreeArtworkBackgroundTests {
-    @Test("@spec LAYOUT-2.103: While map artwork appears behind sidebar text, the application shall draw translucent dark backing fitted to each title without changing row dimensions or hiding the full map behind a text column.")
-    func backingProtectsTextWithoutChangingItsLayout() throws {
+    @Test("@spec LAYOUT-2.103: While map artwork appears behind sidebar text, the application shall shade each worktree block continuously behind its title and panes and separate neighboring blocks without individual label boxes.")
+    func sharedBackingGroupsTitleAndPanesWithoutChangingDimensions() throws {
+        let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
+            context.setFillColor(NSColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 80))
+        }
         func render(_ enabled: Bool) throws -> NSBitmapImageRep {
-            let renderer = ImageRenderer(content: Color.clear.frame(width: 60, height: 20)
-                .modifier(ArtworkTextBacking(enabled: enabled)).padding(10).background(.white))
+            let renderer = ImageRenderer(content: WorktreeArtworkBackground(image: image,
+                backgroundColor: .black, selectionColor: .clear, groupsText: enabled)
+                .frame(width: 280, height: 80))
             renderer.scale = 1
             return NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
         }
         let plain = try render(false), backed = try render(true)
         #expect(plain.pixelsWide == backed.pixelsWide)
         #expect(plain.pixelsHigh == backed.pixelsHigh)
-        let center = try #require(backed.colorAt(x: 40, y: 20)?.usingColorSpace(.deviceRGB))
-        let outside = try #require(backed.colorAt(x: 1, y: 1)?.usingColorSpace(.deviceRGB))
-        #expect(center.redComponent < 0.6)
-        #expect(outside.redComponent > 0.95)
+        let title = try #require(backed.colorAt(x: 40, y: 15)?.usingColorSpace(.deviceRGB))
+        let pane = try #require(backed.colorAt(x: 40, y: 45)?.usingColorSpace(.deviceRGB))
+        let unshaded = try #require(plain.colorAt(x: 40, y: 15)?.usingColorSpace(.deviceRGB))
+        #expect(title.redComponent < unshaded.redComponent - 0.2)
+        #expect(abs(title.redComponent - pane.redComponent) < 0.01)
+    }
+
+    @Test func headerTerrainFillsTheHeaderWithoutFadingAtTheWindowTop() throws {
+        let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 128)) { context in
+            context.setFillColor(NSColor.red.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 128))
+        }
+        let renderer = ImageRenderer(content: WorktreeMapHeaderBackground(image: image, backgroundColor: .black)
+            .frame(width: 400, height: 150))
+        renderer.scale = 1
+        let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        for y in [1, 75, 148] {
+            let color = try #require(bitmap.colorAt(x: 40, y: y)?.usingColorSpace(.deviceRGB))
+            #expect(color.redComponent > 0.5)
+            #expect(color.redComponent > color.greenComponent + 0.4)
+        }
+        let beyondMap = try #require(bitmap.colorAt(x: 380, y: 50)?.usingColorSpace(.deviceRGB))
+        #expect(beyondMap.redComponent < 0.01)
     }
 
     @Test func expandingSidebarKeepsMapPixelsAtTheSameCoordinates() throws {
@@ -65,19 +89,20 @@ struct WorktreeArtworkBackgroundTests {
         #expect(WorktreeArtworkPalette.colors(short) == WorktreeArtworkPalette.colors(tall))
     }
 
-    @Test func finalMapSectionFadesEvenWhenItsBlockMatchesImageHeight() throws {
+    @Test("@spec LAYOUT-2.105: When the sidebar map ends, the application shall fade the artwork and selection tint into the sidebar background using native rendering.")
+    func finalMapSectionFadesEvenWhenItsBlockMatchesImageHeight() throws {
         let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
             context.setFillColor(NSColor.red.cgColor)
             context.fill(CGRect(x: 0, y: 0, width: 320, height: 80))
         }
         let renderer = ImageRenderer(content: WorktreeArtworkBackground(image: image,
-            backgroundColor: .black, selectionColor: .clear, fadesBottom: true).frame(width: 320, height: 80))
+            backgroundColor: .black, selectionColor: .white.opacity(0.16), fadesBottom: true).frame(width: 320, height: 80))
         renderer.scale = 1
         let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
         let top = try #require(bitmap.colorAt(x: 40, y: 10)?.usingColorSpace(.deviceRGB))
         let bottom = try #require(bitmap.colorAt(x: 40, y: 79)?.usingColorSpace(.deviceRGB))
         #expect(top.redComponent > 0.95)
-        #expect(bottom.redComponent < 0.25)
+        #expect(bottom.redComponent < 0.06)
     }
 
     @Test("@spec LAYOUT-2.73: When a worktree has generated artwork, the application shall display its project map section behind its heading and pane rows at a fixed scale and top-left origin, fading its right edge into the sidebar theme without changing block dimensions.", arguments: [false, true], [44, 160])
