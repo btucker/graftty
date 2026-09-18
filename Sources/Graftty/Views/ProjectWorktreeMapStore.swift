@@ -220,7 +220,8 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let changing = requested.subtracting(unavailable)
             // Quiet terrain may stand in for rows with no user context yet.
             guard layout.contains(where: \.hasLandmark) else { dirty.remove(k); return }
-            if existing?.slots == layout, changing.isEmpty { dirty.remove(k); return }
+            if let existing, existing.slots == layout, changing.isEmpty,
+               WorktreeMapRaster.hasCompleteCanvas(existing.image) { dirty.remove(k); return }
             let rows = layout.map { slot in
                 WorktreeMapRow(path: slot.path, name: slot.name, height: slot.height, context: contexts[slot.path])
             }
@@ -230,7 +231,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
                 reference: preserved.isEmpty ? nil : try WorktreeMapRaster.png(reference), preservedPaths: Set(preserved.keys)))
             try Task.checkCancellation()
             guard revisions[k, default: 0] == revision, projects.contains(project) else { return }
-            guard let generated = NSImage(data: data) else { throw ImageCreatorWorktreeIcon.Failure.invalidImage }
+            guard let generated = NSImage(data: data), WorktreeMapRaster.hasCompleteCanvas(generated) else {
+                throw ImageCreatorWorktreeIcon.Failure.invalidImage
+            }
             let composed = try WorktreeMapRaster.compose(rows: rows, generated: generated, preserving: preserved)
             let slices = try WorktreeMapRaster.slices(composed, rows: rows)
             let registeredPaths = Set(worktrees.filter { !$0.mapFolder }.map(\.path))
@@ -262,6 +265,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
     private func load(_ project: ProjectArtworkSource) {
         let k = key(project)
         if let map = maps[k] {
+            guard WorktreeMapRaster.hasCompleteCanvas(map.image) else { return }
             guard map.slots.contains(where: { images[$0.path] == nil }) else { return }
             if let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) {
                 for (path, image) in slices where images[path] == nil { images[path] = image }
@@ -286,6 +290,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             landmarks[path] = image
         }
         maps[k] = Map(slots: saved.slots, image: image, landmarks: landmarks)
+        // Earlier Apple fallbacks could save only landmark patches. Keep those
+        // originals for repair, but do not publish the incomplete canvas.
+        guard WorktreeMapRaster.hasCompleteCanvas(image) else { return }
         if let slices = try? WorktreeMapRaster.slices(image, rows: saved.slots.map(\.row)) {
             for (path, image) in slices { images[path] = image }
         }

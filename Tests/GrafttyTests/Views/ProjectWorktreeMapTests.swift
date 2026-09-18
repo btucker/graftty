@@ -63,6 +63,82 @@ struct ProjectWorktreeMapTests {
         #expect(try pixel(store.images[worktree.path], y: 40).redComponent > 0.95)
     }
 
+    @Test("@spec LAYOUT-2.107: If a map provider returns incomplete transparent artwork, then the application shall retain its previous complete map and report generation failure.")
+    func incompleteProviderImageCannotEraseExistingMap() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "task", name: "Task", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        var calls = 0
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "Build a map" }) { _ in
+            calls += 1
+            let image = calls == 1 ? solid(.red) : try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { _ in }
+            return try WorktreeMapRaster.png(image)
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let previous = store.images[request.path]
+        store.regenerate(request)
+        await store.waitUntilIdle()
+        #expect(store.images[request.path] === previous)
+        #expect(store.failures[request.path] != nil)
+    }
+
+    @Test("Incomplete legacy map caches retain landmark pixels while their canvas is repaired")
+    func incompleteCacheIsRepairedWithoutPublishingBlankRegions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "task", name: "Task", firstPaneSessionName: nil,
+            project: .init(path: "/repair", avatar: nil))
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "Build a map" }) { _ in
+            try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let empty = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { _ in }
+        saved["image"] = try WorktreeMapRaster.png(empty).base64EncodedString()
+        try JSONSerialization.data(withJSONObject: saved).write(to: file)
+        var calls = 0
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls += 1
+            #expect(input.preservedPaths == [request.path])
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        restored.update(worktrees: [request], isActive: true)
+        #expect(restored.images.isEmpty)
+        await restored.waitUntilIdle()
+        #expect(calls == 1)
+        #expect(try pixel(restored.images[request.path], y: 40).redComponent > 0.95)
+        #expect(WorktreeMapRaster.hasCompleteCanvas(try #require(restored.images[request.path])))
+    }
+
+    @Test func appleFallbackPaintsHeaderAndQuietRowsBehindPreservedLandmarks() async throws {
+        let rows: [WorktreeMapRow] = [
+            .init(path: "header", name: "Canopy", height: 128, context: nil),
+            .init(path: "task", name: "Task", height: 80, context: "Build a garden"),
+            .init(path: "quiet", name: "Waiting", height: 80, context: nil),
+        ]
+        let reference = try WorktreeMapRaster.compose(rows: rows, generated: nil, preserving: ["task": solid(.red)])
+        let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
+            style: .illustration, theme: nil, reference: try WorktreeMapRaster.png(reference), preservedPaths: ["task"])
+        var calls = 0
+        let data = try await ProjectWorktreeMapGenerator.appleFallback(input, direction: .harbor) { name, _ in
+            calls += 1
+            #expect(name == "Project map terrain")
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        let image = try #require(NSImage(data: data))
+        image.size = .init(width: 320, height: 288)
+        #expect(WorktreeMapRaster.hasCompleteCanvas(image))
+        let slices = try WorktreeMapRaster.slices(image, rows: rows)
+        #expect(try pixel(slices["header"], y: 40).blueComponent > 0.95)
+        #expect(try pixel(slices["quiet"], y: 40).blueComponent > 0.95)
+        #expect(try pixel(slices["task"], y: 40).redComponent > 0.95)
+        #expect(calls == 1)
+    }
+
     @Test func generationPromptKeepsTallRowLandmarksNearTheTop() {
         let input = WorktreeMapGeneration(rows: [
             .init(path: "a", name: "A", height: 400, context: "Find related calls"),

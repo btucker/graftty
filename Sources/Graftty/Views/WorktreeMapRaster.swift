@@ -22,6 +22,18 @@ enum WorktreeMapLayout {
 
 @MainActor
 enum WorktreeMapRaster {
+    static func hasCompleteCanvas(_ image: NSImage) -> Bool {
+        var rect = CGRect(origin: .zero, size: image.size)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+              let context = CGContext(data: nil, width: 32, height: 64, bitsPerComponent: 8,
+                bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: 32, height: 64))
+        let painted = (0..<(32 * 64)).filter { bytes[$0 * 4 + 3] >= 250 }.count
+        return painted >= 32 * 64 * 99 / 100
+    }
+
     static func compose(rows: [WorktreeMapRow], generated: NSImage?, preserving: [String: NSImage]) throws -> NSImage {
         let height = rows.reduce(0) { $0 + $1.height }
         return try draw(size: .init(width: WorktreeMapLayout.width, height: height)) { ctx in

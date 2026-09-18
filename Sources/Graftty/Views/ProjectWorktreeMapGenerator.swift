@@ -5,30 +5,47 @@ enum ProjectWorktreeMapGenerator {
     static func generate(_ input: WorktreeMapGeneration) async throws -> Data {
         let direction = try await ProjectArtworkDirectionStore.shared.direction(for: input.project)
         return try await WorktreeArtworkGenerator.generate(preferred: {
-            try await CodexArtworkClient.generateInstalled(prompt: prompt(input, direction: direction),
-                                                           reference: input.reference ?? input.project.avatar)
-        }, fallback: {
-            // Apple cannot edit a tall reference map. Retain all existing
-            // landmarks and create only missing ones, then assemble the canvas.
-            var landmarks: [String: NSImage] = [:]
-            if let data = input.reference, let reference = NSImage(data: data) {
-                reference.size = .init(width: WorktreeMapLayout.width, height: input.rows.reduce(0) { $0 + $1.height })
-                landmarks = try WorktreeMapRaster.slices(reference, rows: input.rows)
-                    .filter { input.preservedPaths.contains($0.key) }
+            let data = try await CodexArtworkClient.generateInstalled(prompt: prompt(input, direction: direction),
+                                                                      reference: input.reference ?? input.project.avatar)
+            guard let image = NSImage(data: data), WorktreeMapRaster.hasCompleteCanvas(image) else {
+                throw ImageCreatorWorktreeIcon.Failure.invalidImage
             }
-            for row in input.rows where !input.preservedPaths.contains(row.path) {
-                guard let context = row.context else { continue }
-                let data = try await ImageCreatorWorktreeIcon.generate(name: row.name,
-                    userContext: "One recognizable landmark in a connected \(direction.category) map. \(context)",
+            return data
+        }, fallback: {
+            try await appleFallback(input, direction: direction) { name, context in
+                try await ImageCreatorWorktreeIcon.generate(name: name, userContext: context,
                     style: input.style, variation: WorktreeArtworkIdentity.nextVariation(after: 0),
                     theme: input.theme, project: direction)
-                guard let image = NSImage(data: data) else { throw ImageCreatorWorktreeIcon.Failure.invalidImage }
-                image.size = .init(width: WorktreeMapLayout.width, height: WorktreeMapLayout.landmarkHeight)
-                landmarks[row.path] = image
             }
-            let result = try WorktreeMapRaster.compose(rows: input.rows, generated: nil, preserving: landmarks)
-            return try WorktreeMapRaster.png(result)
         })
+    }
+
+    @MainActor
+    static func appleFallback(_ input: WorktreeMapGeneration, direction: ProjectArtworkDirection,
+                              render: (String, String) async throws -> Data) async throws -> Data {
+        // Every region needs painted terrain, even when it has no user task.
+        // Composing saved landmark patches over transparency would erase the map.
+        let terrainData = try await render("Project map terrain",
+            "An overhead map of quiet connecting terrain in \(direction.category). \(direction.character). Paths, vegetation and landscape fill every edge. No focal landmark, text, panels, vignette or fade.")
+        guard let terrain = NSImage(data: terrainData), WorktreeMapRaster.hasCompleteCanvas(terrain) else {
+            throw ImageCreatorWorktreeIcon.Failure.invalidImage
+        }
+        var landmarks: [String: NSImage] = [:]
+        if let data = input.reference, let reference = NSImage(data: data) {
+            reference.size = .init(width: WorktreeMapLayout.width, height: input.rows.reduce(0) { $0 + $1.height })
+            landmarks = try WorktreeMapRaster.slices(reference, rows: input.rows)
+                .filter { input.preservedPaths.contains($0.key) }
+        }
+        for row in input.rows where !input.preservedPaths.contains(row.path) {
+            guard let context = row.context else { continue }
+            let data = try await render(row.name,
+                "One recognizable landmark in a connected \(direction.category) map. \(context)")
+            guard let image = NSImage(data: data) else { throw ImageCreatorWorktreeIcon.Failure.invalidImage }
+            image.size = .init(width: WorktreeMapLayout.width, height: WorktreeMapLayout.landmarkHeight)
+            landmarks[row.path] = image
+        }
+        let result = try WorktreeMapRaster.compose(rows: input.rows, generated: terrain, preserving: landmarks)
+        return try WorktreeMapRaster.png(result)
     }
 
     static func prompt(_ input: WorktreeMapGeneration, direction: ProjectArtworkDirection) -> String {
