@@ -124,10 +124,10 @@ public final class PagedTerminalCoordinator {
 
     /// Called from scroll demand or a modest viewport poll. There is at most
     /// one outstanding page, and live output never waits for this operation.
-    public func loadIfNeeded() async {
+    public func loadIfNeeded(prefetch: Bool = false) async {
         guard status == .available, pending == nil, let checkpoint else { return }
         guard let screen = (0..<2).first(where: {
-            remaining[$0] && renderer.isNearHistoryTop(screen: UInt16($0), generation: generation)
+            remaining[$0] && (prefetch || renderer.isNearHistoryTop(screen: UInt16($0), generation: generation))
         }) else { return }
         let request: PagedTerminalHistoryRequest
         if let retryRequest, retryRequest.screen == UInt16(screen) {

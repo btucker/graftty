@@ -224,11 +224,6 @@ struct TermTodo {
     func term_9_2() async throws { }
 
     @Test("""
-@spec TERM-12.1: When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
-""", .disabled("paged history is not yet implemented"))
-    func term_12_1() async throws { }
-
-    @Test("""
 @spec TERM-12.2: When the user approaches the oldest loaded history on Mac or mobile, the application shall request the next contiguous older page and retain fetched pages in a bounded in-memory cache, without requesting the entire remaining history.
 """, .disabled("paged history is not yet implemented"))
     func term_12_2() async throws { }

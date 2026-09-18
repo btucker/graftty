@@ -9,6 +9,108 @@ import Testing
 
 @Suite("RemoteTerminalSurfaceBackend — Ghostty host-managed adapter", .serialized)
 struct RemoteTerminalSurfaceBackendTests {
+    @MainActor
+    @Test("@spec TERM-12.26: When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.")
+    func pagedFollowerKeepsGridAfterHistoryAndReleasesItForOwner() async throws {
+        let client = FakeRemoteTerminalWebSocketClient(supportsWebControlTextFrames: true, supportsPagedHistory: true)
+        var grids: [DisplayGrid?] = []
+        let backend = RemoteTerminalSurfaceBackend(client: client, pagedRendererFactory: { _, prepare in
+            RemotePagedRenderer(prepare: prepare)
+        })
+        defer { backend.close(); backend.surfaceWasFreed() }
+        backend.bindAttachmentGrid { grids.append($0) }
+        backend.bindSurfaceSync(currentGridSize: { (120, 40) }, requestRefresh: {})
+        try backend.start(surface: fakeSurface())
+        try await client.waitForControlCounts(hello: 1)
+        let hello = try #require(client.hellos().first)
+        let checkpointGrid = try DisplayGrid(cols: 80, rows: 24)
+        client.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(.init(
+            incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
+            hasPrimaryHistory: false, hasAlternateHistory: false))).encoded()))
+        try await waitForGridUpdates(2, grids: { grids })
+        #expect(grids.last! == checkpointGrid, "Completion must preserve the checkpoint grid before ownership arrives")
+
+        let followerGrid = try DisplayGrid(cols: 90, rows: 30)
+        client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: DisplayClientID("other"), ownerKind: .ios,
+            grid: followerGrid, epoch: 1, revision: 1)).encoded()))
+        try await waitForGridUpdates(3, grids: { grids })
+        #expect(grids.last! == followerGrid)
+        client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 90, rows: 30)).encoded()))
+        try await waitForGridUpdates(5, grids: { grids })
+        #expect(grids.last! == followerGrid, "A live grid update must preserve follower sizing after its temporary pin ends")
+
+        client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: hello.clientID, ownerKind: .mac,
+            grid: followerGrid, epoch: 2, revision: 2)).encoded()))
+        try await waitForGridUpdates(6, grids: { grids })
+        #expect(grids.last! == nil)
+        try await client.waitForControlCounts(ownerResize: 1)
+        #expect(client.ownerResizes().last?.cols == 120)
+
+        client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: DisplayClientID("other"), ownerKind: .ios,
+            grid: checkpointGrid, epoch: 3, revision: 3)).encoded()))
+        try await waitForGridUpdates(7, grids: { grids })
+        #expect(grids.last! == checkpointGrid)
+    }
+
+    @MainActor
+    @Test("@spec TERM-12.27: While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.")
+    func pagedRestoreDefersOwnerResizesFromOwnershipAndLayout() async throws {
+        let client = FakeRemoteTerminalWebSocketClient(supportsWebControlTextFrames: true, supportsPagedHistory: true)
+        var grids: [DisplayGrid?] = []
+        let backend = RemoteTerminalSurfaceBackend(client: client, pagedRendererFactory: { _, prepare in
+            RemotePagedRenderer(prepare: prepare)
+        })
+        defer { backend.close(); backend.surfaceWasFreed() }
+        backend.bindAttachmentGrid { grids.append($0) }
+        backend.bindSurfaceSync(currentGridSize: { (120, 40) }, requestRefresh: {})
+        try backend.start(surface: fakeSurface())
+        try await client.waitForControlCounts(hello: 1)
+        let hello = try #require(client.hellos().first)
+        func deliverOwnership(revision: UInt64) throws {
+            client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+                sessionName: "main", ownerClientID: hello.clientID, ownerKind: .mac,
+                grid: DisplayGrid(cols: 80, rows: 24), epoch: 1, revision: revision)).encoded()))
+        }
+        try deliverOwnership(revision: 1)
+        try await waitForGridUpdates(1, grids: { grids })
+        backend.resyncVisibleGrid()
+        RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 120, 40, 0, 0)
+        client.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(.init(
+            incarnation: 1, id: 1, cols: 80, rows: 24, ready: Data([1]),
+            hasPrimaryHistory: true, hasAlternateHistory: false))).encoded()))
+        try await client.waitForSentFrames(count: 1)
+        try deliverOwnership(revision: 2)
+        try await waitForGridUpdates(3, grids: { grids })
+        backend.resyncVisibleGrid()
+        RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 120, 40, 0, 0)
+        #expect(client.ownerResizes().isEmpty)
+        let frame = try #require(client.sentFrames().first)
+        guard case .text(let text) = frame,
+              case .history(let request)? = try PagedTerminalEnvelope.parse(text).request else {
+            Issue.record("Expected a history request"); return
+        }
+        client.deliver(.text(try PagedTerminalEnvelope(event: .page(.init(
+            incarnation: request.incarnation, checkpointID: request.checkpointID,
+            requestID: request.requestID, ordinal: request.ordinal, screen: request.screen,
+            data: Data(), complete: true))).encoded()))
+        try await waitForGridUpdates(4, grids: { grids })
+        #expect(grids.last! == nil)
+        try await client.waitForControlCounts(ownerResize: 1)
+        #expect(client.ownerResizes().count == 1)
+    }
+
+    @MainActor
+    private func waitForGridUpdates(_ count: Int, grids: () -> [DisplayGrid?]) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while grids().count < count {
+            guard ContinuousClock.now < deadline else { throw TestTimeout() }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     @Test func configureSetsHostManagedBackendAndReceiveCallbacks() {
         let client = FakeRemoteTerminalWebSocketClient()
         let backend = RemoteTerminalSurfaceBackend(client: client)
@@ -448,6 +550,7 @@ private struct RecordedOwnerResize: Equatable {
 private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @unchecked Sendable {
     private let lock = NIOLock()
     let supportsWebControlTextFrames: Bool
+    let supportsPagedHistory: Bool
     private var recordedSentFrames: [WebSocketFrame] = []
     private var recordedResizes: [RemoteResize] = []
     private var recordedHellos: [RecordedHello] = []
@@ -460,8 +563,9 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
     private var sentWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
     private var resizeWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
 
-    init(supportsWebControlTextFrames: Bool = false) {
+    init(supportsWebControlTextFrames: Bool = false, supportsPagedHistory: Bool = false) {
         self.supportsWebControlTextFrames = supportsWebControlTextFrames
+        self.supportsPagedHistory = supportsPagedHistory
     }
 
     func send(_ frame: WebSocketFrame) async throws {
@@ -711,4 +815,18 @@ private extension Array {
         }
         return (matches, remaining)
     }
+}
+
+@MainActor
+private final class RemotePagedRenderer: PagedTerminalRenderer {
+    private let prepare: (DisplayGrid?) -> Void
+    init(prepare: @escaping (DisplayGrid?) -> Void) { self.prepare = prepare }
+    func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
+        try await resize(cols: checkpoint.cols, rows: checkpoint.rows)
+    }
+    func resize(cols: UInt16, rows: UInt16) async throws {
+        prepare(try DisplayGrid(cols: cols, rows: rows))
+    }
+    func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult { .applied }
+    func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { true }
 }

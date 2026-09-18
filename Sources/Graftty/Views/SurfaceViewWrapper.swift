@@ -16,13 +16,13 @@ struct SurfaceViewWrapper: NSViewRepresentable {
             }
         )
         handle.followerPresentation = view
-        view.followerGrid = handle.followerDisplayGrid
+        view.followerGrid = handle.presentationGrid
         view.updateScrollbar(handle.followerScrollbar)
         return view
     }
 
     func updateNSView(_ view: MacFollowerTerminalView, context: Context) {
-        view.followerGrid = handle.followerDisplayGrid
+        view.followerGrid = handle.presentationGrid
         view.needsLayout = true
     }
 }

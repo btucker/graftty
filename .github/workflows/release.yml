@@ -76,6 +76,8 @@ jobs:
 
           security find-identity -v -p codesigning "$KEYCHAIN"
 
+      - uses: ./.github/actions/paging-renderer
+
       - name: Build app bundle
         env:
           CONFIGURATION: release
