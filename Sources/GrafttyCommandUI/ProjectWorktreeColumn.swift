@@ -7,11 +7,13 @@ import AppKit
 public struct ProjectWorktreeColumn<Content: View>: View {
     private let rowSpacing: CGFloat
     private let content: Content
+    private let emptySpaceBackground: AnyView
     private let onDoubleClickEmptySpace: () -> Void
     @State private var rowsHeight: CGFloat = 0
 
-    public init(rowSpacing: CGFloat = 3, onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+    public init(rowSpacing: CGFloat = 3, emptySpaceBackground: AnyView = AnyView(Color.clear), onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
         self.rowSpacing = rowSpacing
+        self.emptySpaceBackground = emptySpaceBackground
         self.onDoubleClickEmptySpace = onDoubleClickEmptySpace
         self.content = content()
     }
@@ -29,8 +31,10 @@ public struct ProjectWorktreeColumn<Content: View>: View {
                     #if os(macOS)
                     ProjectWorktreeEmptySpace(onDoubleClick: onDoubleClickEmptySpace)
                         .frame(height: max(0, viewport.size.height - rowsHeight))
+                        .background(emptySpaceBackground.padding(.horizontal, 6))
                     #else
                     Color.clear.frame(height: max(0, viewport.size.height - rowsHeight))
+                        .background(emptySpaceBackground.padding(.horizontal, 6))
                     #endif
                 }
             }

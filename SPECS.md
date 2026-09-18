@@ -230,6 +230,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.107** If a map provider returns incomplete transparent artwork, then the application shall retain its previous complete map and report generation failure.
 
+**LAYOUT-2.108** When generating a project map, the application shall assign every worktree a distinct region with a stable dominant color and large-scale terrain composition, including worktrees without task context, and keep connecting paths subordinate to those regions.
+
+**LAYOUT-2.109** When worktrees are reordered, added, hidden, or restored from cache, the application shall retain their assigned region identities and preserve their existing region pixels, including regions awaiting task context.
+
+**LAYOUT-2.110** While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and fade the final edge into the sidebar background.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

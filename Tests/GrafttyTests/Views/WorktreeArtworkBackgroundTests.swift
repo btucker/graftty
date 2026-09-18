@@ -47,6 +47,41 @@ struct WorktreeArtworkBackgroundTests {
         #expect(beyondMap.redComponent < 0.01)
     }
 
+    @Test("@spec LAYOUT-2.110: While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and fade the final edge into the sidebar background.")
+    func footerRepeatsAtFixedScaleThroughRemainingSpace() throws {
+        let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
+            context.setFillColor(NSColor.red.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 40))
+            context.setFillColor(NSColor.blue.cgColor)
+            context.fill(CGRect(x: 0, y: 40, width: 320, height: 40))
+        }
+        func render(_ height: CGFloat) throws -> NSBitmapImageRep {
+            let renderer = ImageRenderer(content: WorktreeMapTailBackground(image: image, backgroundColor: .black)
+                .frame(width: 400, height: height))
+            renderer.scale = 1
+            return NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        }
+        let short = try render(320), tall = try render(480)
+        func color(_ bitmap: NSBitmapImageRep, _ y: Int) throws -> NSColor {
+            try #require(bitmap.colorAt(x: 40, y: y)?.usingColorSpace(.deviceRGB))
+        }
+        for y in [10, 70, 90, 150, 170, 230] {
+            let a = try color(short, y), b = try color(tall, y)
+            #expect(abs(a.redComponent - b.redComponent) < 0.01)
+            #expect(abs(a.blueComponent - b.blueComponent) < 0.01)
+        }
+        #expect(try color(short, 10).redComponent > 0.3)
+        #expect(try color(short, 90).blueComponent > 0.3)
+        #expect(try color(short, 170).redComponent > 0.3)
+        #expect(try color(short, 10).blueComponent < 0.01)
+        #expect(try color(short, 90).redComponent < 0.01)
+        let before = try color(short, 79), after = try color(short, 80)
+        #expect(abs(before.blueComponent - after.blueComponent) < 0.01)
+        #expect(try color(short, 319).redComponent < 0.05)
+        let beyondRight = try #require(short.colorAt(x: 380, y: 20)?.usingColorSpace(.deviceRGB))
+        #expect(beyondRight.redComponent < 0.01)
+    }
+
     @Test func expandingSidebarKeepsMapPixelsAtTheSameCoordinates() throws {
         let image = NSImage(size: NSSize(width: 320, height: 80))
         image.lockFocus()

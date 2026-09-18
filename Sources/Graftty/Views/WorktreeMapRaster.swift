@@ -5,6 +5,8 @@ struct WorktreeMapRow: Equatable, Sendable {
     let name: String
     var height: Double
     let context: String?
+    var isConnector = false
+    var regionID: Int? = nil
 }
 
 enum WorktreeMapLayout {
@@ -12,6 +14,11 @@ enum WorktreeMapLayout {
     static let landmarkHeight: CGFloat = 80
     static let headerHeight: Double = 128
     static func headerPath(repo: String) -> String { "graftty-map-header:\(repo)" }
+    static func footerPath(repo: String) -> String { "graftty-map-footer:\(repo)" }
+    static func footer(project: ProjectArtworkSource) -> WorktreeArtworkRequest {
+        .init(path: footerPath(repo: project.path), name: "Repeating terrain below the worktrees",
+              firstPaneSessionName: nil, project: project, mapHeight: 96, mapFolder: true)
+    }
     static func header(project: ProjectArtworkSource) -> WorktreeArtworkRequest {
         .init(path: headerPath(repo: project.path), name: "Project canopy above the worktrees",
               firstPaneSessionName: nil, project: project, mapHeight: headerHeight, mapFolder: true)
@@ -34,15 +41,19 @@ enum WorktreeMapRaster {
         return painted >= 32 * 64 * 99 / 100
     }
 
-    static func compose(rows: [WorktreeMapRow], generated: NSImage?, preserving: [String: NSImage]) throws -> NSImage {
+    static func compose(rows: [WorktreeMapRow], generated: NSImage?, preserving: [String: NSImage],
+                        regionTerrain: [String: NSImage] = [:]) throws -> NSImage {
         let height = rows.reduce(0) { $0 + $1.height }
         return try draw(size: .init(width: WorktreeMapLayout.width, height: height)) { ctx in
             if let generated { paint(generated, in: CGRect(x: 0, y: 0, width: WorktreeMapLayout.width, height: height), context: ctx) }
             var top: CGFloat = 0
             for row in rows {
                 defer { top += row.height }
+                if let terrain = regionTerrain[row.path] {
+                    paint(terrain, in: CGRect(x: 0, y: top, width: WorktreeMapLayout.width, height: row.height), context: ctx)
+                }
                 guard let original = preserving[row.path] else { continue }
-                let h = min(original.size.height, row.height, WorktreeMapLayout.landmarkHeight)
+                let h = min(original.size.height, row.height)
                 let rect = CGRect(x: 0, y: top, width: original.size.width, height: original.size.height)
                 // Only the twelve-point transition at each edge can change.
                 // The interior is copied from the original, never model-redrawn.

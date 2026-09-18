@@ -24,6 +24,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
         let name: String
         let height: Double
         let hasLandmark: Bool
+        var isConnector: Bool? = nil
         var row: WorktreeMapRow { .init(path: path, name: name, height: height, context: nil) }
     }
     private struct Saved: Codable {
@@ -31,11 +32,17 @@ final class ProjectWorktreeMapStore: ObservableObject {
         let image: Data
         let landmarks: [String: Data]
         let heights: [String: Double]
+        var regionIDs: [String: Int]? = nil
+        var contextualPaths: Set<String>? = nil
+        var regionRevision: Int? = nil
     }
     private struct Map {
         var slots: [Slot]
         var image: NSImage
         var landmarks: [String: NSImage]
+        var regionIDs: [String: Int] = [:]
+        var contextualPaths = Set<String>()
+        var regionRevision = 0
     }
     private let directory: URL
     private let history: @MainActor (WorktreeArtworkRequest) async -> String?
@@ -77,11 +84,12 @@ final class ProjectWorktreeMapStore: ObservableObject {
         requests.filter { $0.project == project }
     }
     private func slots(_ project: ProjectArtworkSource) -> [Slot] {
-        let landmarks = maps[key(project)]?.landmarks ?? [:]
+        let contextualPaths = maps[key(project)]?.contextualPaths ?? []
         return members(project).filter(\.mapVisible).map {
             Slot(path: $0.path, name: $0.name,
                  height: WorktreeMapLayout.height(max($0.mapFolder ? 44 : 80, $0.mapHeight)),
-                 hasLandmark: !$0.mapFolder && (contexts[$0.path] != nil || landmarks[$0.path] != nil))
+                 hasLandmark: !$0.mapFolder && (contexts[$0.path] != nil || contextualPaths.contains($0.path)),
+                 isConnector: $0.mapFolder)
         }
     }
 
@@ -144,7 +152,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
         guard
               let request = requests.first(where: { $0.path == request.path }),
               !request.mapFolder, let project = request.project else { return }
-        guard contexts[request.path] == nil, maps[key(project)]?.landmarks[request.path] == nil else { return }
+        guard contexts[request.path] == nil, maps[key(project)]?.contextualPaths.contains(request.path) != true else { return }
         contexts[request.path] = prompt
         invalidate(project)
         start()
@@ -153,7 +161,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
     func retryHistory(for request: WorktreeArtworkRequest) {
         guard enabled, let request = requests.first(where: { $0.path == request.path }),
               !request.mapFolder, contexts[request.path] == nil, let project = request.project,
-              maps[key(project)]?.landmarks[request.path] == nil else { return }
+              maps[key(project)]?.contextualPaths.contains(request.path) != true else { return }
         checkedHistory.remove(request.path)
         invalidate(project)
         start()
@@ -217,15 +225,22 @@ final class ProjectWorktreeMapStore: ObservableObject {
                 regeneratingPaths.remove(path)
                 failures[path] = "No user task context is available yet. Submit a prompt before regenerating the map landmark."
             }
-            let changing = requested.subtracting(unavailable)
-            // Quiet terrain may stand in for rows with no user context yet.
+            let newlyContextual = Set(layout.filter { $0.isConnector != true && contexts[$0.path] != nil
+                && existing?.contextualPaths.contains($0.path) != true }.map(\.path))
+            let changing = requested.subtracting(unavailable).union(newlyContextual)
+            // A task or the project root starts the map; every worktree then gets its own region.
             guard layout.contains(where: \.hasLandmark) else { dirty.remove(k); return }
             if let existing, existing.slots == layout, changing.isEmpty,
+               existing.regionRevision == WorktreeMapRegionIdentity.revision,
                WorktreeMapRaster.hasCompleteCanvas(existing.image) { dirty.remove(k); return }
+            let regionIDs = WorktreeMapRegionIdentity.assign(paths: worktrees.filter { !$0.mapFolder }.map(\.path),
+                preserving: existing?.regionIDs ?? [:])
             let rows = layout.map { slot in
-                WorktreeMapRow(path: slot.path, name: slot.name, height: slot.height, context: contexts[slot.path])
+                WorktreeMapRow(path: slot.path, name: slot.name, height: slot.height, context: contexts[slot.path],
+                    isConnector: slot.isConnector == true, regionID: regionIDs[slot.path])
             }
-            let preserved = (existing?.landmarks ?? [:]).filter { visiblePaths.contains($0.key) && !changing.contains($0.key) }
+            let previousRegions = existing?.regionRevision == WorktreeMapRegionIdentity.revision ? existing?.landmarks ?? [:] : [:]
+            let preserved = previousRegions.filter { visiblePaths.contains($0.key) && !changing.contains($0.key) }
             let reference = try WorktreeMapRaster.compose(rows: rows, generated: nil, preserving: preserved)
             let data = try await generate(.init(rows: rows, project: project, style: style, theme: theme,
                 reference: preserved.isEmpty ? nil : try WorktreeMapRaster.png(reference), preservedPaths: Set(preserved.keys)))
@@ -237,9 +252,12 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let composed = try WorktreeMapRaster.compose(rows: rows, generated: generated, preserving: preserved)
             let slices = try WorktreeMapRaster.slices(composed, rows: rows)
             let registeredPaths = Set(worktrees.filter { !$0.mapFolder }.map(\.path))
-            var landmarks = (existing?.landmarks ?? [:]).filter { registeredPaths.contains($0.key) && !changing.contains($0.key) }
-            for slot in layout where slot.hasLandmark && landmarks[slot.path] == nil { landmarks[slot.path] = slices[slot.path] }
-            let map = Map(slots: layout, image: composed, landmarks: landmarks)
+            var landmarks = previousRegions.filter { registeredPaths.contains($0.key) && !changing.contains($0.key) }
+            for slot in layout where slot.isConnector != true && landmarks[slot.path] == nil { landmarks[slot.path] = slices[slot.path] }
+            let contextualPaths = (existing?.contextualPaths ?? []).union(layout.filter { contexts[$0.path] != nil }.map(\.path))
+                .intersection(registeredPaths)
+            let map = Map(slots: layout, image: composed, landmarks: landmarks, regionIDs: regionIDs,
+                contextualPaths: contextualPaths, regionRevision: WorktreeMapRegionIdentity.revision)
             maps[k] = map
             for (path, image) in slices { images[path] = image }
             dirty.remove(k)
@@ -289,7 +307,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             image.size = .init(width: WorktreeMapLayout.width, height: h)
             landmarks[path] = image
         }
-        maps[k] = Map(slots: saved.slots, image: image, landmarks: landmarks)
+        maps[k] = Map(slots: saved.slots, image: image, landmarks: landmarks, regionIDs: saved.regionIDs ?? [:],
+            contextualPaths: saved.contextualPaths ?? Set(saved.slots.filter(\.hasLandmark).map(\.path)),
+            regionRevision: saved.regionRevision ?? 0)
         // Earlier Apple fallbacks could save only landmark patches. Keep those
         // originals for repair, but do not publish the incomplete canvas.
         guard WorktreeMapRaster.hasCompleteCanvas(image) else { return }
@@ -300,7 +320,8 @@ final class ProjectWorktreeMapStore: ObservableObject {
     private func save(_ map: Map, key: String) {
         do {
             let saved = Saved(slots: map.slots, image: try WorktreeMapRaster.png(map.image),
-                landmarks: try map.landmarks.mapValues(WorktreeMapRaster.png), heights: map.landmarks.mapValues { $0.size.height })
+                landmarks: try map.landmarks.mapValues(WorktreeMapRaster.png), heights: map.landmarks.mapValues { $0.size.height },
+                regionIDs: map.regionIDs, contextualPaths: map.contextualPaths, regionRevision: map.regionRevision)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONEncoder().encode(saved).write(to: file(key), options: .atomic)
         } catch { /* A cache write must not discard successfully generated artwork. */ }

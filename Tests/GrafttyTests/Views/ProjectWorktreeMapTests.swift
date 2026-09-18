@@ -116,9 +116,9 @@ struct ProjectWorktreeMapTests {
 
     @Test func appleFallbackPaintsHeaderAndQuietRowsBehindPreservedLandmarks() async throws {
         let rows: [WorktreeMapRow] = [
-            .init(path: "header", name: "Canopy", height: 128, context: nil),
+            .init(path: "header", name: "Canopy", height: 128, context: nil, isConnector: true),
             .init(path: "task", name: "Task", height: 80, context: "Build a garden"),
-            .init(path: "quiet", name: "Waiting", height: 80, context: nil),
+            .init(path: "quiet", name: "Waiting", height: 240, context: nil),
         ]
         let reference = try WorktreeMapRaster.compose(rows: rows, generated: nil, preserving: ["task": solid(.red)])
         let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
@@ -126,17 +126,119 @@ struct ProjectWorktreeMapTests {
         var calls = 0
         let data = try await ProjectWorktreeMapGenerator.appleFallback(input, direction: .harbor) { name, _ in
             calls += 1
-            #expect(name == "Project map terrain")
-            return try WorktreeMapRaster.png(solid(.blue))
+            #expect(["Project map terrain", "Waiting"].contains(name))
+            return try WorktreeMapRaster.png(solid(name == "Waiting" ? .green : .blue))
         }
         let image = try #require(NSImage(data: data))
-        image.size = .init(width: 320, height: 288)
+        image.size = .init(width: 320, height: 448)
         #expect(WorktreeMapRaster.hasCompleteCanvas(image))
         let slices = try WorktreeMapRaster.slices(image, rows: rows)
         #expect(try pixel(slices["header"], y: 40).blueComponent > 0.95)
-        #expect(try pixel(slices["quiet"], y: 40).blueComponent > 0.95)
+        #expect(try pixel(slices["quiet"], y: 40).greenComponent > 0.95)
+        #expect(try pixel(slices["quiet"], y: 180).greenComponent > 0.95)
         #expect(try pixel(slices["task"], y: 40).redComponent > 0.95)
+        #expect(calls == 2)
+    }
+
+    @Test("@spec LAYOUT-2.109: When worktrees are reordered, added, hidden, or restored from cache, the application shall retain their assigned region identities and preserve their existing region pixels, including regions awaiting task context.")
+    func regionAssignmentsAndUncontextualizedPixelsSurviveReorderingAndCache() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectArtworkSource(path: "/regions", avatar: nil)
+        let a = WorktreeArtworkRequest(path: "a", name: "A", firstPaneSessionName: nil, project: project)
+        let b = WorktreeArtworkRequest(path: "b", name: "B", firstPaneSessionName: nil, project: project)
+        let c = WorktreeArtworkRequest(path: "0", name: "New", firstPaneSessionName: nil, project: project)
+        var calls: [WorktreeMapGeneration] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { $0.path == "a" ? "Build a garden" : nil }) { input in
+            calls.append(input)
+            return try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: [a, b], isActive: true)
+        await store.waitUntilIdle()
+        let originalIDs = Dictionary(uniqueKeysWithValues: calls[0].rows.map { ($0.path, $0.regionID) })
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls.append(input)
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        restored.update(worktrees: [c, b, a], isActive: true)
+        await restored.waitUntilIdle()
+        let latest = try #require(calls.last)
+        #expect(Set(latest.rows.compactMap(\.regionID)).count == 3)
+        for row in latest.rows where row.path != c.path { #expect(row.regionID == originalIDs[row.path]!) }
+        #expect(latest.preservedPaths == [a.path, b.path])
+        #expect(try pixel(restored.images[b.path], y: 40).redComponent > 0.95)
+        let bID = latest.rows.first { $0.path == b.path }?.regionID
+        var hiddenB = b
+        hiddenB.mapVisible = false
+        restored.update(worktrees: [c, hiddenB, a], isActive: true)
+        await restored.waitUntilIdle()
+        restored.recordPrompt("Review notifications", for: b)
+        await restored.waitUntilIdle()
+        restored.update(worktrees: [c, b, a], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(calls.last?.rows.first { $0.path == b.path }?.regionID == bID)
+        #expect(calls.last?.preservedPaths == [a.path, c.path])
+        #expect(calls.last?.rows.first { $0.path == b.path }?.context == "Review notifications")
+    }
+
+    @Test("Legacy maps remain visible while their distinct region identities are generated once")
+    func legacyMapMigratesOnceWithoutPreservingTheOldUniformArtwork() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "task", name: "Task", firstPaneSessionName: nil,
+            project: .init(path: "/legacy", avatar: nil))
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in "Build a map" }) { _ in
+            try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        for key in ["regionRevision", "regionIDs", "contextualPaths"] { saved.removeValue(forKey: key) }
+        try JSONSerialization.data(withJSONObject: saved).write(to: file)
+        var calls = 0
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls += 1
+            #expect(input.preservedPaths.isEmpty)
+            #expect(input.rows.first?.regionID == 0)
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        restored.update(worktrees: [request], isActive: true)
+        #expect(try pixel(restored.images[request.path], y: 40).redComponent > 0.95)
+        await restored.waitUntilIdle()
         #expect(calls == 1)
+        #expect(try pixel(restored.images[request.path], y: 40).blueComponent > 0.95)
+        let reused = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            Issue.record("Migrated maps must reuse their cache")
+            return Data()
+        }
+        reused.update(worktrees: [request], isActive: true)
+        await reused.waitUntilIdle()
+        #expect(try pixel(reused.images[request.path], y: 40).blueComponent > 0.95)
+    }
+
+    @Test func regionIdentityAllocatorUsesDistinctColorsAndRetainsExistingAssignments() {
+        let paths = (0..<16).map { "task-\($0)" }
+        let original = WorktreeMapRegionIdentity.assign(paths: paths, preserving: [:])
+        #expect(Set(original.values).count == paths.count)
+        #expect(Set(original.values.map(WorktreeMapRegionIdentity.design)).count == paths.count)
+        let updated = WorktreeMapRegionIdentity.assign(paths: ["new"] + paths.reversed(), preserving: original)
+        for path in paths { #expect(updated[path] == original[path]) }
+        #expect(updated["new"] == 16)
+    }
+
+    @Test("@spec LAYOUT-2.108: When generating a project map, the application shall assign every worktree a distinct region with a stable dominant color and large-scale terrain composition, including worktrees without task context, and keep connecting paths subordinate to those regions.")
+    func mapPromptPrioritizesWholeRegionIdentityOverConnectingRoads() {
+        let input = WorktreeMapGeneration(rows: [
+            .init(path: "a", name: "Review", height: 80, context: "Review code"),
+            .init(path: "b", name: "Notifications", height: 80, context: nil),
+        ], project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil,
+           reference: nil, preservedPaths: [])
+        let prompt = ProjectWorktreeMapGenerator.prompt(input, direction: .harbor)
+        #expect(prompt.contains("regionDesign"))
+        #expect(prompt.contains("at least 70%"))
+        #expect(prompt.contains("Connections occupy at most 10%"))
+        #expect(!prompt.contains("No task context yet: draw quiet connecting terrain"))
     }
 
     @Test func generationPromptKeepsTallRowLandmarksNearTheTop() {
@@ -150,7 +252,7 @@ struct ProjectWorktreeMapTests {
         #expect(prompt.contains("landmarkCenterPercent"))
         #expect(prompt.contains("restore their original interior pixels"))
         #expect(prompt.contains("Find related calls"))
-        #expect(prompt.contains("quiet connecting terrain"))
+        #expect(prompt.contains("assigned region design"))
         #expect(prompt.contains("a working harbor"))
         #expect(prompt.contains("Paint opaque terrain all the way to every canvas edge"))
         #expect(prompt.contains("application alone fades"))
@@ -415,6 +517,15 @@ struct ProjectWorktreeMapTests {
                                                   preserving: ["a": solid(.red)])
         #expect(try pixel(result, y: 40).redComponent > 0.95)
         #expect(try pixel(result, y: 120).greenComponent > 0.95)
+    }
+
+    @Test func reorderingPreservesTerrainBelowTheLandmark() throws {
+        let rows = [WorktreeMapRow(path: "a", name: "A", height: 240, context: "A")]
+        let result = try WorktreeMapRaster.compose(rows: rows, generated: solid(.green, height: 240),
+                                                  preserving: ["a": solid(.red, height: 240)])
+        #expect(try pixel(result, y: 40).redComponent > 0.95)
+        #expect(try pixel(result, y: 180).redComponent > 0.95)
+        #expect(try pixel(result, y: 239).greenComponent > 0.8)
     }
 
     func solid(_ color: NSColor, height: CGFloat = 80) -> NSImage {

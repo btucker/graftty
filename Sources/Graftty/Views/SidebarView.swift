@@ -108,7 +108,7 @@ struct SidebarView: View {
                 }
             }
             return [WorktreeMapLayout.header(project: project)] + flatten(SidebarWorktreeHierarchy.nodes(for: repo.worktrees,
-                inRepoAtPath: repo.path, defaultBranch: nil), visible: true)
+                inRepoAtPath: repo.path, defaultBranch: nil), visible: true) + [WorktreeMapLayout.footer(project: project)]
         }
     }
     private var mapHeaderRepo: RepoEntry? {
@@ -116,7 +116,21 @@ struct SidebarView: View {
         return appState.repos.first { localProjectID($0) == navigation.selectedProjectID }
     }
     private func lastMapPath(in repo: RepoEntry) -> String? {
-        worktreeArtworkRequests.last { $0.project?.path == repo.path && $0.mapVisible }?.path
+        if mapTailRepo?.id == repo.id, worktreeIcons.images[WorktreeMapLayout.footerPath(repo: repo.path)] != nil { return nil }
+        return worktreeArtworkRequests.last {
+            $0.project?.path == repo.path && $0.mapVisible && $0.path != WorktreeMapLayout.footerPath(repo: repo.path)
+        }?.path
+    }
+    private var mapTailRepo: RepoEntry? {
+        guard artworkEnabled, !navigation.showsAttention, navigation.query.isEmpty else { return nil }
+        // The combined list has remote controls after its local repositories.
+        // Only the selected-project column ends directly after its map.
+        return mapHeaderRepo
+    }
+    private var mapTailBackground: AnyView {
+        guard let repo = mapTailRepo,
+              let image = worktreeIcons.images[WorktreeMapLayout.footerPath(repo: repo.path)] else { return AnyView(Color.clear) }
+        return AnyView(WorktreeMapTailBackground(image: image, backgroundColor: theme.sidebarBackground))
     }
     private func artworkRequest(for worktree: WorktreeEntry, repo: RepoEntry) -> WorktreeArtworkRequest? {
         guard let project = iconStore.artworkSource(for: repo) else { return nil }
@@ -320,7 +334,7 @@ struct SidebarView: View {
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail || artworkEnabled {
-                                ProjectWorktreeColumn(rowSpacing: artworkEnabled ? 0 : 3, onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
+                                ProjectWorktreeColumn(rowSpacing: artworkEnabled ? 0 : 3, emptySpaceBackground: mapTailBackground, onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
                                     worktreeRows
                                 }
                             }
