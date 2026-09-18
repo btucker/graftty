@@ -1,12 +1,45 @@
 import AppKit
 import SwiftUI
 import Testing
+import GrafttyKit
 @testable import Graftty
 
 @Suite("Worktree row artwork")
 @MainActor
 struct WorktreeArtworkBackgroundTests {
-    @Test("@spec LAYOUT-2.103: While map artwork appears behind sidebar text, the application shall shade each worktree block continuously behind its title and panes and separate neighboring blocks without individual label boxes.")
+    @Test("@spec LAYOUT-2.112: While Git divergence counts appear over map artwork, the application shall place them on a compact translucent backing without adding a backing when artwork is absent.")
+    func gitStatsBackingProtectsCountsOnBrightTerrain() throws {
+        let theme = GhosttyTheme(core: .init(backgroundRGB: .init(r: 1, g: 1, b: 1), foregroundRGB: .init(r: 0, g: 0, b: 0)))
+        func render(_ artwork: Bool) throws -> NSBitmapImageRep {
+            let renderer = ImageRenderer(content: WorktreeRowGutter(stats: .init(ahead: 3, behind: 22, insertions: 0, deletions: 0),
+                baseRef: "main", theme: theme, hasArtwork: artwork).padding(4).background(.white))
+            renderer.scale = 1
+            return NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        }
+        let backed = try render(true), plain = try render(false)
+        let protected = try #require(backed.colorAt(x: 7, y: 7)?.usingColorSpace(.deviceRGB))
+        #expect(protected.redComponent < 0.6)
+        let outside = try #require(plain.colorAt(x: 2, y: 2)?.usingColorSpace(.deviceRGB))
+        #expect(outside.redComponent > 0.95)
+    }
+
+    @Test("@spec LAYOUT-2.113: When a project has an avatar, the application shall display it above the worktree-panel search field with a contrast backing and its original aspect ratio.")
+    func avatarKeepsAspectRatioOnItsOwnBacking() throws {
+        let image = try WorktreeMapRaster.draw(size: .init(width: 90, height: 30)) { context in
+            context.setFillColor(NSColor.green.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: 90, height: 30))
+        }
+        let renderer = ImageRenderer(content: ProjectMapHeaderAvatar(image: image, backgroundColor: .black, projectName: "Project").background(.white))
+        renderer.scale = 1
+        let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        #expect(bitmap.pixelsWide == 46 && bitmap.pixelsHigh == 46)
+        let center = try #require(bitmap.colorAt(x: 23, y: 23)?.usingColorSpace(.deviceRGB))
+        let margin = try #require(bitmap.colorAt(x: 23, y: 8)?.usingColorSpace(.deviceRGB))
+        #expect(center.greenComponent > 0.95)
+        #expect(margin.greenComponent < 0.3)
+    }
+
+    @Test("@spec LAYOUT-2.103: While map artwork appears behind sidebar text, the application shall retain most of the map brightness beneath subtle continuous shading, use localized shadows for text contrast, and separate neighboring blocks without individual label boxes.")
     func sharedBackingGroupsTitleAndPanesWithoutChangingDimensions() throws {
         let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
             context.setFillColor(NSColor.white.cgColor)
@@ -25,7 +58,8 @@ struct WorktreeArtworkBackgroundTests {
         let title = try #require(backed.colorAt(x: 40, y: 15)?.usingColorSpace(.deviceRGB))
         let pane = try #require(backed.colorAt(x: 40, y: 45)?.usingColorSpace(.deviceRGB))
         let unshaded = try #require(plain.colorAt(x: 40, y: 15)?.usingColorSpace(.deviceRGB))
-        #expect(title.redComponent < unshaded.redComponent - 0.2)
+        #expect(title.redComponent > unshaded.redComponent * 0.75)
+        #expect(title.redComponent < unshaded.redComponent - 0.05)
         #expect(abs(title.redComponent - pane.redComponent) < 0.01)
     }
 
@@ -47,7 +81,7 @@ struct WorktreeArtworkBackgroundTests {
         #expect(beyondMap.redComponent < 0.01)
     }
 
-    @Test("@spec LAYOUT-2.110: While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and fade the final edge into the sidebar background.")
+    @Test("@spec LAYOUT-2.110: While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and continue the artwork to the bottom edge without fading.")
     func footerRepeatsAtFixedScaleThroughRemainingSpace() throws {
         let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
             context.setFillColor(NSColor.red.cgColor)
@@ -74,10 +108,10 @@ struct WorktreeArtworkBackgroundTests {
         #expect(try color(short, 90).blueComponent > 0.3)
         #expect(try color(short, 170).redComponent > 0.3)
         #expect(try color(short, 10).blueComponent < 0.01)
-        #expect(try color(short, 90).redComponent < 0.01)
+        #expect(try color(short, 90).redComponent < 0.05)
         let before = try color(short, 79), after = try color(short, 80)
         #expect(abs(before.blueComponent - after.blueComponent) < 0.01)
-        #expect(try color(short, 319).redComponent < 0.05)
+        #expect(try color(short, 319).redComponent > 0.75)
         let beyondRight = try #require(short.colorAt(x: 380, y: 20)?.usingColorSpace(.deviceRGB))
         #expect(beyondRight.redComponent < 0.01)
     }

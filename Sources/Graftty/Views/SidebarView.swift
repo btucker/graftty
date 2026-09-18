@@ -79,6 +79,7 @@ struct SidebarView: View {
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @ObservedObject private var iconStore = SidebarHostController.shared
     @ObservedObject private var worktreeIcons = WorktreeIconStore.shared
+    @ObservedObject private var projectArtworkStyles = ProjectMapStyles.shared
     @AppStorage(SettingsKeys.worktreeArtworkEnabled) private var artworkEnabled = true
     @AppStorage(SettingsKeys.worktreeArtworkStyle) private var artworkStyle = "illustration"
     @State private var projects: [SidebarProject] = []
@@ -90,7 +91,7 @@ struct SidebarView: View {
     private var owner: WorktreeOrigin { iconStore.owner }
     private var worktreeArtworkRequests: [WorktreeArtworkRequest] {
         appState.repos.flatMap { repo in
-            guard let project = iconStore.artworkSource(for: repo) else { return [WorktreeArtworkRequest]() }
+            guard let project = projectArtworkSource(for: repo) else { return [WorktreeArtworkRequest]() }
             func flatten(_ nodes: [SidebarWorktreeNode], visible: Bool) -> [WorktreeArtworkRequest] {
                 nodes.flatMap { node -> [WorktreeArtworkRequest] in
                     switch node {
@@ -133,7 +134,7 @@ struct SidebarView: View {
         return AnyView(WorktreeMapTailBackground(image: image, backgroundColor: theme.sidebarBackground))
     }
     private func artworkRequest(for worktree: WorktreeEntry, repo: RepoEntry) -> WorktreeArtworkRequest? {
-        guard let project = iconStore.artworkSource(for: repo) else { return nil }
+        guard let project = projectArtworkSource(for: repo) else { return nil }
         let height = max(80, 44 + 20 * (worktree.state == .running ? worktree.splitTree.allLeaves.count : 0))
         if worktree.path == repo.path, worktree.state.hasOnDiskWorktree {
             return WorktreeArtworkRequest(path: worktree.path, name: "main", firstPaneSessionName: nil,
@@ -142,6 +143,25 @@ struct SidebarView: View {
         var request = WorktreeIconStore.request(for: worktree, repoPath: repo.path, project: project)
         request?.mapHeight = Double(height)
         return request
+    }
+    private func projectArtworkSource(for repo: RepoEntry) -> ProjectArtworkSource? {
+        guard var source = iconStore.artworkSource(for: repo) else { return nil }
+        source.mapStyle = projectArtworkStyles.style(for: repo.path)
+        return source
+    }
+
+    private func projectMapStyleMenu(_ repo: RepoEntry) -> some View {
+        Menu("Map Style") {
+            Picker("Map Style", selection: Binding<ProjectMapStyle?>(
+                get: { projectArtworkStyles.override(for: repo.path) },
+                set: { projectArtworkStyles.setOverride($0, for: repo.path) }
+            )) {
+                Text("Automatic (\(projectArtworkStyles.automaticStyle(for: repo.path).label))").tag(Optional<ProjectMapStyle>.none)
+                ForEach(ProjectMapStyle.allCases, id: \.self) { style in
+                    Text(style.label).tag(Optional(style))
+                }
+            }
+        }
     }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
     private var orderedSidebarRepos: [RepoEntry] {
@@ -225,6 +245,7 @@ struct SidebarView: View {
                 Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
             }
             Button("Choose Project Icon…") { iconStore.chooseIcon(for: repo.id, state: &appState) }
+            projectMapStyleMenu(repo)
             Button("Use Initials") {
                 if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
                     appState.repos[index].iconOverride = .initials(project.displayInitials)
@@ -312,8 +333,23 @@ struct SidebarView: View {
                     }
                 } else {
                     VStack(spacing: 0) {
-                        TextField("Find any project or worktree", text: $navigation.query)
-                            .textFieldStyle(.roundedBorder).padding(10)
+                        if let repo = mapHeaderRepo,
+                           let avatar = iconStore.artworkSource(for: repo)?.avatar,
+                           let image = NSImage(data: avatar) {
+                            HStack {
+                                ProjectMapHeaderAvatar(image: image, backgroundColor: theme.sidebarBackground,
+                                                       projectName: repo.displayName)
+                                Spacer()
+                            }.padding(.horizontal, 10).padding(.top, 6)
+                        }
+                        TextField("Find any project or worktree", text: $navigation.query,
+                                  prompt: Text("Find any project or worktree").foregroundColor(theme.foreground.opacity(0.75)))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(theme.foreground)
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .background(theme.sidebarBackground.opacity(0.94), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(theme.foreground.opacity(0.2), lineWidth: 1) }
+                            .padding(10)
                         if let repo = mapHeaderRepo, SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                             HStack {
                                 Spacer()
@@ -327,14 +363,13 @@ struct SidebarView: View {
                         if let repo = mapHeaderRepo,
                            let image = worktreeIcons.images[WorktreeMapLayout.headerPath(repo: repo.path)] {
                             WorktreeMapHeaderBackground(image: image, backgroundColor: theme.sidebarBackground)
-                                .padding(.leading, 6)
                                 .ignoresSafeArea(.container, edges: .top)
                         }
                     }
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail || artworkEnabled {
-                                ProjectWorktreeColumn(rowSpacing: artworkEnabled ? 0 : 3, emptySpaceBackground: mapTailBackground, onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
+                                ProjectWorktreeColumn(rowSpacing: artworkEnabled ? 0 : 3, horizontalInset: artworkEnabled ? 0 : 6, emptySpaceBackground: mapTailBackground, onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
                                     worktreeRows
                                 }
                             }
@@ -369,6 +404,9 @@ struct SidebarView: View {
         }
         .onChange(of: WorktreeArtworkTheme(theme: theme), initial: true) { _, artworkTheme in
             worktreeIcons.configure(theme: artworkTheme)
+        }
+        .onChange(of: appState.repos.map(\.path), initial: true) { _, paths in
+            projectArtworkStyles.register(paths)
         }
         .onChange(of: worktreeArtworkRequests, initial: true) { _, requests in
             worktreeIcons.update(worktrees: requests, isActive: NSApplication.shared.isActive)
@@ -586,6 +624,7 @@ struct SidebarView: View {
                     if let forge = forgeLink {
                         Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
                     }
+                    projectMapStyleMenu(repo)
                     Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
@@ -601,6 +640,10 @@ struct SidebarView: View {
             .font(.system(size: 11, weight: .semibold))
             .foregroundColor(hasArtwork ? .white.opacity(0.9) : theme.sidebarDimIcon)
             .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
+            .padding(.horizontal, hasArtwork ? 6 : 0)
+            .background {
+                if hasArtwork { RoundedRectangle(cornerRadius: 5).fill(.black.opacity(0.6)) }
+            }
         }
         .buttonStyle(.plain)
         .help("Add worktree to \(repo.displayName)")

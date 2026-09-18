@@ -3,13 +3,13 @@ import Combine
 import CryptoKit
 import GrafttyKit
 
-struct WorktreeMapGeneration {
+struct WorktreeMapGeneration: Sendable {
     let rows: [WorktreeMapRow]
     let project: ProjectArtworkSource
     let style: WorktreeArtworkStyle
     let theme: WorktreeArtworkTheme?
-    let reference: Data?
     let preservedPaths: Set<String>
+    var preservedRegions: [String: Data] = [:]
 }
 
 /// One serial worker for project maps. Prompt text is never written to the map cache.
@@ -59,6 +59,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
     private var dirty = Set<String>()
     private var revisions: [String: UInt64] = [:]
     private var worker: Task<Void, Never>?
+    private var generatingProject: ProjectArtworkSource?
     private var enabled = true
     private var active = false
     private var style: WorktreeArtworkStyle = .illustration
@@ -107,16 +108,17 @@ final class ProjectWorktreeMapStore: ObservableObject {
         }
         regeneratingPaths.formIntersection(seen)
         images = images.filter { seen.contains($0.key) }
-        for request in requests where previous[request.path]?.project != request.project {
+        for request in requests where previous[request.path]?.project?.path != request.project?.path {
             images[request.path] = nil
         }
         for project in projects {
-            load(project)
+            let sourceChanged = previousRequests.contains { $0.project?.path == project.path && $0.project != project }
+            load(project, restoreDisplayedPixels: sourceChanged)
             // Compare desired inputs, not the last completed map: identical
             // updates must not invalidate an image that is still generating.
             if previousRequests.filter({ $0.project == project }) != members(project) { invalidate(project) }
         }
-        if !active { worker?.cancel() }
+        if !active || generatingProject.map({ !projects.contains($0) }) == true { worker?.cancel() }
         start()
     }
 
@@ -198,6 +200,8 @@ final class ProjectWorktreeMapStore: ObservableObject {
     }
 
     private func render(_ project: ProjectArtworkSource) async {
+        generatingProject = project
+        defer { generatingProject = nil }
         let k = key(project), revision = revisions[key(project), default: 0]
         let worktrees = members(project)
         do {
@@ -241,9 +245,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             }
             let previousRegions = existing?.regionRevision == WorktreeMapRegionIdentity.revision ? existing?.landmarks ?? [:] : [:]
             let preserved = previousRegions.filter { visiblePaths.contains($0.key) && !changing.contains($0.key) }
-            let reference = try WorktreeMapRaster.compose(rows: rows, generated: nil, preserving: preserved)
             let data = try await generate(.init(rows: rows, project: project, style: style, theme: theme,
-                reference: preserved.isEmpty ? nil : try WorktreeMapRaster.png(reference), preservedPaths: Set(preserved.keys)))
+                preservedPaths: Set(preserved.keys),
+                preservedRegions: try preserved.mapValues(WorktreeMapRaster.png)))
             try Task.checkCancellation()
             guard revisions[k, default: 0] == revision, projects.contains(project) else { return }
             guard let generated = NSImage(data: data), WorktreeMapRaster.hasCompleteCanvas(generated) else {
@@ -251,9 +255,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             }
             let composed = try WorktreeMapRaster.compose(rows: rows, generated: generated, preserving: preserved)
             let slices = try WorktreeMapRaster.slices(composed, rows: rows)
-            let registeredPaths = Set(worktrees.filter { !$0.mapFolder }.map(\.path))
+            let registeredPaths = Set(worktrees.map(\.path))
             var landmarks = previousRegions.filter { registeredPaths.contains($0.key) && !changing.contains($0.key) }
-            for slot in layout where slot.isConnector != true && landmarks[slot.path] == nil { landmarks[slot.path] = slices[slot.path] }
+            for slot in layout where landmarks[slot.path] == nil { landmarks[slot.path] = slices[slot.path] }
             let contextualPaths = (existing?.contextualPaths ?? []).union(layout.filter { contexts[$0.path] != nil }.map(\.path))
                 .intersection(registeredPaths)
             let map = Map(slots: layout, image: composed, landmarks: landmarks, regionIDs: regionIDs,
@@ -280,13 +284,13 @@ final class ProjectWorktreeMapStore: ObservableObject {
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent(digest + ".json")
     }
-    private func load(_ project: ProjectArtworkSource) {
+    private func load(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false) {
         let k = key(project)
         if let map = maps[k] {
             guard WorktreeMapRaster.hasCompleteCanvas(map.image) else { return }
-            guard map.slots.contains(where: { images[$0.path] == nil }) else { return }
+            guard restoreDisplayedPixels || map.slots.contains(where: { images[$0.path] == nil }) else { return }
             if let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) {
-                for (path, image) in slices where images[path] == nil { images[path] = image }
+                for (path, image) in slices where restoreDisplayedPixels || images[path] == nil { images[path] = image }
             }
             return
         }

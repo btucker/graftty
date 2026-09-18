@@ -16,11 +16,15 @@ enum ImageCreatorWorktreeIcon {
     }
 
     @MainActor
-    static func generate(name: String, userContext: String, style: WorktreeArtworkStyle, variation: UInt64 = 0, theme: WorktreeArtworkTheme? = nil, project: ProjectArtworkDirection? = nil) async throws -> Data {
+    static func generate(name: String, userContext: String, style: WorktreeArtworkStyle, variation: UInt64 = 0, theme: WorktreeArtworkTheme? = nil, project: ProjectArtworkDirection? = nil, regionConcept: String? = nil, terrainOnly: Bool = false) async throws -> Data {
         guard #available(macOS 15.4, *), ImagePlaygroundViewController.isAvailable else {
             throw Failure.unavailable
         }
-        let identity = try await WorktreeArtworkPrompt.identity(for: name, userContext: userContext, variation: variation, theme: theme, project: project)
+        var identity: WorktreeArtworkIdentity
+        if terrainOnly { identity = WorktreeArtworkIdentity(name: name, variation: variation, theme: theme, project: project) }
+        else { identity = try await WorktreeArtworkPrompt.identity(for: name, userContext: userContext, variation: variation, theme: theme, project: project) }
+        identity.regionConcept = regionConcept
+        identity.terrainOnly = terrainOnly
         let creator: ImageCreator
         do {
             creator = try await ImageCreator()

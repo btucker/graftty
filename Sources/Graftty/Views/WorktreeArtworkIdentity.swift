@@ -4,10 +4,13 @@ import Foundation
 /// Stable visual choices keep a worktree recognizable even when its name is opaque.
 struct WorktreeArtworkIdentity: Hashable {
     var subject: String
+    var regionConcept: String? = nil
+    var terrainOnly = false
     let palette: String
     let composition: String
     private let fallbackSubject: String
     private let backgroundConcept: String?
+    private let mediumConcept: String?
 
     init(name: String, variation: UInt64 = 0, theme: WorktreeArtworkTheme? = nil, project: ProjectArtworkDirection? = nil) {
         let digest = Array(SHA256.hash(data: Data(name.utf8)))
@@ -36,6 +39,7 @@ struct WorktreeArtworkIdentity: Hashable {
         subject = project?.subject(name: name, variation: variation) ?? subjects[(Int(digest[0]) + Int(variation % UInt64(subjects.count))) % subjects.count]
         fallbackSubject = subject
         backgroundConcept = theme?.backgroundConcept
+        mediumConcept = project?.character
         palette = project?.palette(name: name, variation: variation) ?? theme?.palette(index: Int(digest[1]), variation: variation) ?? palettes[(Int(digest[1]) + Int(variation % UInt64(palettes.count))) % palettes.count]
         composition = compositions[(Int(digest[2]) + Int(variation % UInt64(compositions.count))) % compositions.count]
     }
@@ -49,10 +53,12 @@ struct WorktreeArtworkIdentity: Hashable {
     }
 
     var concepts: [String] {
-        [backgroundConcept].compactMap { $0 } + ["\(subject). \(palette).", "\(composition). Large recognizable silhouette."]
+        if terrainOnly { return [backgroundConcept, mediumConcept, regionConcept].compactMap { $0 } }
+        return [backgroundConcept, mediumConcept, regionConcept].compactMap { $0 } + ["\(subject). \(palette).", "\(composition). Large recognizable silhouette."]
     }
 
     var fallbackConcepts: [String] {
-        [backgroundConcept].compactMap { $0 } + ["\(fallbackSubject), \(palette)"]
+        if terrainOnly { return [backgroundConcept, mediumConcept, regionConcept].compactMap { $0 } }
+        return [backgroundConcept, mediumConcept, regionConcept].compactMap { $0 } + ["\(fallbackSubject), \(palette)"]
     }
 }

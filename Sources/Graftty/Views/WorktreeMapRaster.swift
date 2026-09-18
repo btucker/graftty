@@ -13,6 +13,9 @@ enum WorktreeMapLayout {
     static let width: CGFloat = 320
     static let landmarkHeight: CGFloat = 80
     static let headerHeight: Double = 128
+    static func trailingOpacity(availableWidth: CGFloat, imageWidth: CGFloat = width) -> Double {
+        1 - min(1, max(0, availableWidth - imageWidth) / 64)
+    }
     static func headerPath(repo: String) -> String { "graftty-map-header:\(repo)" }
     static func footerPath(repo: String) -> String { "graftty-map-footer:\(repo)" }
     static func footer(project: ProjectArtworkSource) -> WorktreeArtworkRequest {
@@ -29,6 +32,39 @@ enum WorktreeMapLayout {
 
 @MainActor
 enum WorktreeMapRaster {
+    /// Keep the focal first 80 points fixed; extend only the lower terrain when a row grows.
+    static func fitRegion(_ image: NSImage, height: CGFloat) throws -> NSImage {
+        let sourceHeight = image.size.height
+        let focalHeight = min(WorktreeMapLayout.landmarkHeight, sourceHeight, height)
+        return try draw(size: .init(width: WorktreeMapLayout.width, height: height)) { context in
+            if height > focalHeight {
+                let terrainTop = sourceHeight > focalHeight ? focalHeight : max(0, sourceHeight - 0.5)
+                let terrainHeight = max(0.5, sourceHeight - terrainTop)
+                let scale = (height - focalHeight) / terrainHeight
+                context.saveGState()
+                context.clip(to: CGRect(x: 0, y: focalHeight, width: WorktreeMapLayout.width, height: height - focalHeight))
+                paint(image, in: CGRect(x: 0, y: focalHeight - terrainTop * scale,
+                    width: WorktreeMapLayout.width, height: sourceHeight * scale), context: context)
+                context.restoreGState()
+            }
+            context.saveGState()
+            context.clip(to: CGRect(x: 0, y: 0, width: WorktreeMapLayout.width, height: focalHeight))
+            paint(image, in: CGRect(x: 0, y: 0, width: WorktreeMapLayout.width, height: sourceHeight), context: context)
+            context.restoreGState()
+        }
+    }
+
+    static func stack(rows: [WorktreeMapRow], regions: [String: NSImage]) throws -> NSImage {
+        try draw(size: .init(width: WorktreeMapLayout.width, height: rows.reduce(0) { $0 + $1.height })) { context in
+            var top: CGFloat = 0
+            for row in rows {
+                defer { top += row.height }
+                guard let image = regions[row.path] else { continue }
+                paint(image, in: CGRect(x: 0, y: top, width: WorktreeMapLayout.width, height: row.height), context: context)
+            }
+        }
+    }
+
     static func hasCompleteCanvas(_ image: NSImage) -> Bool {
         var rect = CGRect(origin: .zero, size: image.size)
         guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
@@ -53,7 +89,8 @@ enum WorktreeMapRaster {
                     paint(terrain, in: CGRect(x: 0, y: top, width: WorktreeMapLayout.width, height: row.height), context: ctx)
                 }
                 guard let original = preserving[row.path] else { continue }
-                let h = min(original.size.height, row.height)
+                let h = original.size.height == row.height ? row.height
+                    : min(original.size.height, row.height, WorktreeMapLayout.landmarkHeight)
                 let rect = CGRect(x: 0, y: top, width: original.size.width, height: original.size.height)
                 // Only the twelve-point transition at each edge can change.
                 // The interior is copied from the original, never model-redrawn.

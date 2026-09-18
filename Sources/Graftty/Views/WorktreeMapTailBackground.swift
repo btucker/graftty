@@ -21,17 +21,12 @@ struct WorktreeMapTailBackground: View {
             }
             .overlay { ArtworkBlockBacking(showsSeparator: false) }
             .mask {
-                LinearGradient(stops: [.init(color: .white, location: 0.8), .init(color: .clear, location: 1)],
+                LinearGradient(stops: [.init(color: .white, location: 0.8),
+                                       .init(color: .white.opacity(WorktreeMapLayout.trailingOpacity(availableWidth: geometry.size.width)), location: 1)],
                                startPoint: .leading, endPoint: .trailing)
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
             .clipped()
-            .mask {
-                LinearGradient(stops: [
-                    .init(color: .white, location: max(0, 1 - 48 / max(1, geometry.size.height))),
-                    .init(color: .clear, location: 0.999),
-                ], startPoint: .top, endPoint: .bottom)
-            }
             .background(backgroundColor)
         }
         .allowsHitTesting(false)

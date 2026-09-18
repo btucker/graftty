@@ -57,7 +57,7 @@ struct SettingsView: View {
             }
             .disabled(!worktreeArtworkEnabled)
 
-            Text("Creates a connected map for each project from recent agent prompts. Reordering keeps each landmark and rebuilds its connections. Terminal backgrounds use colors sampled from the map. Tries Codex, then Apple ImageCreator.")
+            Text("Creates a connected map for each project from recent agent prompts. Choose each project's medium in its Map Style menu. Reordering keeps each landmark and rebuilds its connections. Terminal backgrounds use colors sampled from the map. Tries Codex, then Apple ImageCreator.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

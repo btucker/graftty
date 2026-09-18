@@ -106,7 +106,7 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.76) : theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.9) : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty
@@ -146,6 +146,7 @@ struct PaneTitleRow: View {
             }
             Spacer(minLength: 0)
         }
+        .artworkTextContrast(hasArtwork)
         .padding(.vertical, 2)
         // Place the `↳` glyph's vertical stroke directly under the center
         // of the worktree row's house/branch icon above. The worktree
@@ -274,9 +275,11 @@ struct WorktreeRow: View {
             WorktreeRowGutter(
                 stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,
-                theme: theme
+                theme: theme,
+                hasArtwork: hasArtwork
             )
         }
+        .artworkTextContrast(hasArtwork)
         .padding(.vertical, 4)
         .padding(.leading, hasArtwork ? mapIndent : 0)
         .padding(.horizontal, 8)

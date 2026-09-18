@@ -214,13 +214,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.99** While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.
 
-**LAYOUT-2.100** When worktrees are reordered, the application shall rebuild their shared project map in the new order while preserving the pixels of existing landmarks and replacing only connecting terrain.
+**LAYOUT-2.100** When worktrees are reordered, the application shall rebuild their shared project map in the new order while preserving the pixels of existing regions and generating only missing or explicitly replaced regions.
 
 **LAYOUT-2.101** While a project map is displayed, resizing the sidebar shall keep artwork at its saved scale and top-left origin, fading beyond its right and bottom edges without triggering image generation.
 
 **LAYOUT-2.102** When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.
 
-**LAYOUT-2.103** While map artwork appears behind sidebar text, the application shall shade each worktree block continuously behind its title and panes and separate neighboring blocks without individual label boxes.
+**LAYOUT-2.103** While map artwork appears behind sidebar text, the application shall retain most of the map brightness beneath subtle continuous shading, use localized shadows for text contrast, and separate neighboring blocks without individual label boxes.
 
 **LAYOUT-2.104** When a worktree's pane count changes, the application shall retain its landmark in the first 80 points of the map section and sample terminal colors from that area rather than the surrounding terrain.
 
@@ -234,7 +234,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.109** When worktrees are reordered, added, hidden, or restored from cache, the application shall retain their assigned region identities and preserve their existing region pixels, including regions awaiting task context.
 
-**LAYOUT-2.110** While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and fade the final edge into the sidebar background.
+**LAYOUT-2.110** While unused sidebar space remains below the last worktree, the application shall repeat only a decorative map footer at a fixed scale, join repeats without hard seams, and continue the artwork to the bottom edge without fading.
+
+**LAYOUT-2.111** When repositories receive map styles, the application shall choose separate visual media before reusing a medium, persist each assignment across reordering and launches, and allow a project-specific override without changing other repositories.
+
+**LAYOUT-2.112** While Git divergence counts appear over map artwork, the application shall place them on a compact translucent backing without adding a backing when artwork is absent.
+
+**LAYOUT-2.113** When a project has an avatar, the application shall display it above the worktree-panel search field with a contrast backing and its original aspect ratio.
+
+**LAYOUT-2.114** When composing a project map, the application shall place independently generated regions within their exact worktree row boundaries, keep focal artwork in the first 80 points, and reuse saved regions during reordering without another provider call.
 
 ### LAYOUT-3.x — Adding Repositories
 

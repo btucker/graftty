@@ -1,6 +1,19 @@
 import AppKit
 import SwiftUI
 
+struct ProjectMapHeaderAvatar: View {
+    let image: NSImage
+    let backgroundColor: Color
+    let projectName: String
+
+    var body: some View {
+        Image(nsImage: image).resizable().scaledToFit()
+            .frame(width: 36, height: 36).padding(5)
+            .background(backgroundColor.opacity(0.9), in: RoundedRectangle(cornerRadius: 9))
+            .accessibilityLabel(projectName)
+    }
+}
+
 /// One decorative image behind the entire worktree block, including its panes.
 struct WorktreeArtworkBackground: View {
     let image: NSImage
@@ -33,7 +46,7 @@ struct WorktreeArtworkBackground: View {
                         stops: [
                             .init(color: .white, location: 0),
                             .init(color: .white, location: 0.8),
-                            .init(color: .clear, location: 1),
+                            .init(color: .white.opacity(WorktreeMapLayout.trailingOpacity(availableWidth: geometry.size.width, imageWidth: image.size.width)), location: 1),
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
@@ -71,10 +84,10 @@ struct WorktreeMapHeaderBackground: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: WorktreeMapLayout.width, height: geometry.size.height)
-                .overlay(.black.opacity(0.38))
+                .overlay(.black.opacity(0.14))
                 .mask {
                     LinearGradient(stops: [.init(color: .white, location: 0.8),
-                                           .init(color: .clear, location: 1)],
+                                           .init(color: .white.opacity(WorktreeMapLayout.trailingOpacity(availableWidth: geometry.size.width)), location: 1)],
                                    startPoint: .leading, endPoint: .trailing)
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
