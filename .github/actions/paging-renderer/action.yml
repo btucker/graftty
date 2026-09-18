@@ -1,0 +1,31 @@
+name: Build paging renderer
+description: Build the pinned native snapshot APIs used by Mac and mobile terminals.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      id: renderer
+      with:
+        path: .dependencies/libghostty-spm
+        key: paging-renderer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}
+    - if: steps.renderer.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          arm64)
+            arch=aarch64
+            checksum=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489
+            ;;
+          x86_64)
+            arch=x86_64
+            checksum=0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7
+            ;;
+          *) exit 1 ;;
+        esac
+        compiler="$RUNNER_TEMP/zig-$arch-macos-0.16.0"
+        curl --fail --location --retry 3 "https://ziglang.org/download/0.16.0/zig-$arch-macos-0.16.0.tar.xz" -o "$compiler.tar.xz"
+        echo "$checksum  $compiler.tar.xz" | shasum -a 256 --check
+        tar -xf "$compiler.tar.xz" -C "$RUNNER_TEMP"
+        if ! xcrun metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
+        scripts/ghostty-paging/build-package.sh --zig "$compiler/zig"

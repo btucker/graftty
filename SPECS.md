@@ -494,6 +494,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.22** While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.
 
+**TERM-12.23** When a Mac attachment prefetches older history, the application shall install the current screen first and fetch at most one bounded history page at a time, including history on the inactive screen.
+
+**TERM-12.25** When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.
+
+**TERM-12.26** When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.
+
+**TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
+
+**TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1074,7 +1084,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-4.x — Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned attachment only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. Existing paging-capable sessions use native snapshot restoration; new sessions and older daemons use a `zmx attach` PTY. Shell exit remains wired to `close_surface_cb` through `ghostty_surface_process_exit`.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 

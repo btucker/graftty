@@ -35,6 +35,8 @@ final class SurfaceUserdataBox {
 }
 
 protocol SurfaceHandleZmxBackend: AnyObject {
+    /// Main-thread presentation updates during snapshot import or remote following.
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
     func configure(_ config: inout ghostty_surface_config_s)
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
@@ -76,6 +78,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func synchronizeFollowerGrid() {}
     func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool {
         try write(data, claimEngagement: claimEngagement)
@@ -164,6 +167,7 @@ final class SurfaceHandle {
         effective.apply(to: surface, in: view)
         followerPresentation?.updateGhosttyConfig(effective)
     }
+    private var attachmentGrid: DisplayGrid?
     private(set) var followerScrollbar = ghostty_action_scrollbar_s()
     /// zmx session this pane is attached to, nil for direct-shell panes.
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
@@ -390,6 +394,12 @@ final class SurfaceHandle {
         }
 
         self.surface = newSurface
+        backend?.bindAttachmentGrid { [weak self] grid in
+            guard let self else { return }
+            self.attachmentGrid = grid
+            self.followerPresentation?.followerGrid = grid ?? self.followerDisplayGrid
+            self.followerPresentation?.layout()
+        }
         // Bind the surface to the view now that ghostty_surface_new succeeded.
         // The view weakly references the surface via this unmanaged handle;
         // it forwards keystrokes/mouse events back into libghostty.
@@ -626,8 +636,10 @@ final class SurfaceHandle {
         return displayOwnershipStore.snapshot(sessionName: zmxSessionName).grid
     }
 
+    var presentationGrid: DisplayGrid? { attachmentGrid ?? followerDisplayGrid }
+
     func synchronizeDisplayOwnership() {
-        followerPresentation?.followerGrid = followerDisplayGrid
+        followerPresentation?.followerGrid = presentationGrid
         followerPresentation?.layout()
         zmxBackend?.synchronizeFollowerGrid()
     }
