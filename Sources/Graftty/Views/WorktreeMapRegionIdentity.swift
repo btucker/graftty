@@ -2,7 +2,7 @@ import Foundation
 
 /// Region assignments belong to worktree paths, not their current list positions.
 enum WorktreeMapRegionIdentity {
-    static let revision = 4
+    static let revision = 5
 
     static func assign(paths: [String], preserving existing: [String: Int]) -> [String: Int] {
         let paths = Set(paths).sorted()

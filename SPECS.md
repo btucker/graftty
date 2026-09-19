@@ -250,7 +250,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.117** While sidebar artwork is displayed, the application shall suppress fine detail behind labels, pane lists, and decorative terrain while retaining regional color and clear landmark detail on the right.
 
-**LAYOUT-2.118** When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and patterns, and shared routes across row boundaries.
+**LAYOUT-2.118** When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and filled landmarks, and shared routes across row boundaries.
 
 **LAYOUT-2.119** When an SVG map is reordered or regenerated, the application shall preserve unchanged district identities, rebuild shared connections, and change only explicitly replaced or newly contextualized districts.
 
@@ -258,9 +258,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.121** While an SVG map appears in a narrow sidebar, the application shall retain its connected route through the full height of every worktree and its pane rows.
 
-**LAYOUT-2.122** When worktrees share a task metaphor, the application shall allocate different landmark silhouettes and terrain compositions while unused variants remain, preserving existing identities during cache upgrades and reordering.
+**LAYOUT-2.122** When worktrees share a task metaphor, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.
 
 **LAYOUT-2.123** While SVG map artwork extends above or below the worktrees, the application shall use straight continuous routes without repeated bends or decorative tiles.
+
+**LAYOUT-2.124** While an SVG district is displayed, the application shall keep its title band and extended pane terrain free of repeating artwork, place its landmark below the title, and retain a subdued connecting route.
 
 ### LAYOUT-3.x — Adding Repositories
 

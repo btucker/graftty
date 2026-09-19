@@ -6,7 +6,7 @@ import Testing
 @Suite("Worktree SVG atlas")
 @MainActor
 struct WorktreeSVGMapTests {
-    @Test("@spec LAYOUT-2.118: When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and patterns, and shared routes across row boundaries.")
+    @Test("@spec LAYOUT-2.118: When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and filled landmarks, and shared routes across row boundaries.")
     func contiguousMapHasGroundedDistinctDistricts() throws {
         let rows = [WorktreeMapRow(path: "a", name: "notifications", height: 104, context: "Notify people when reviews finish"),
                     WorktreeMapRow(path: "b", name: "search", height: 160, context: "Improve search results"),
@@ -54,7 +54,7 @@ struct WorktreeSVGMapTests {
         #expect(WorktreeSVGMap.districts(in: replaced)?["a"] != WorktreeSVGMap.districts(in: first)?["a"])
     }
 
-    @Test("@spec LAYOUT-2.122: When worktrees share a task metaphor, the application shall allocate different landmark silhouettes and terrain compositions while unused variants remain, preserving existing identities during cache upgrades and reordering.")
+    @Test("@spec LAYOUT-2.122: When worktrees share a task metaphor, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.")
     func relatedTasksHaveDifferentSilhouettes() throws {
         for motif in WorktreeSVGMap.Motif.allCases {
             let rows = (0..<3).map { WorktreeMapRow(path: "\($0)", name: "notifications", height: 104, context: nil) }
@@ -135,7 +135,7 @@ struct WorktreeSVGMapTests {
         #expect(updated["b"] == old["b"])
     }
 
-    @Test func legacySVGCacheUpgradesOnceWithoutChangingColors() async throws {
+    @Test(arguments: [3, 4]) func legacySVGCacheUpgradesOnceWithoutChangingColors(revision: Int) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let request = WorktreeArtworkRequest(path: "/project", name: "main", firstPaneSessionName: nil,
@@ -151,10 +151,10 @@ struct WorktreeSVGMapTests {
         let originalSVG = try #require(Data(base64Encoded: encodedSVG))
         let original = try #require(WorktreeSVGMap.districts(in: originalSVG))
         var old = original
-        for path in old.keys { old[path]?.variant = nil }
+        if revision == 3 { for path in old.keys { old[path]?.variant = nil } }
         let metadata = try JSONEncoder().encode(old).base64EncodedString()
         saved["svg"] = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8).base64EncodedString()
-        saved["regionRevision"] = 3
+        saved["regionRevision"] = revision
         try JSONSerialization.data(withJSONObject: saved).write(to: file)
         var calls = 0
         let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
@@ -164,6 +164,7 @@ struct WorktreeSVGMapTests {
             #expect(upgraded[request.path]?.palette == original[request.path]?.palette)
             #expect(upgraded[request.path]?.variation == original[request.path]?.variation)
             #expect(upgraded[request.path]?.variant != nil)
+            if revision == 4 { #expect(upgraded == original) }
             return data
         }
         restored.update(worktrees: [request], isActive: true)
@@ -200,6 +201,139 @@ struct WorktreeSVGMapTests {
         let updated = try #require(WorktreeSVGMap.districts(in: data))
         #expect(updated["a"]?.motif == .gate)
         #expect(updated["a"]?.variation == 1)
+    }
+
+    @Test("@spec LAYOUT-2.124: While an SVG district is displayed, the application shall keep its title band and extended pane terrain free of repeating artwork, place its landmark below the title, and retain a subdued connecting route.")
+    func titlesAndExtendedTerrainRemainQuiet() throws {
+        let data = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "notifications", height: 240, context: nil)],
+            project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil, preservedPaths: []))
+        let image = try #require(NSImage(data: data))
+        var rect = CGRect(origin: .zero, size: image.size)
+        let bitmap = NSBitmapImageRep(cgImage: try #require(image.cgImage(forProposedRect: &rect, context: nil, hints: nil)))
+        func sample(_ x: Int, _ y: Int) throws -> NSColor {
+            try #require(bitmap.colorAt(x: x * bitmap.pixelsWide / 320,
+                y: y * bitmap.pixelsHigh / 240)?.usingColorSpace(.deviceRGB))
+        }
+        for y in [14, 22, 30, 100, 130, 160, 200] {
+            let ground = try sample(20, y)
+            for x in stride(from: 40, through: 198, by: 8) {
+                let pixel = try sample(x, y)
+                #expect(abs(pixel.redComponent - ground.redComponent) < 0.01)
+                #expect(abs(pixel.greenComponent - ground.greenComponent) < 0.01)
+                #expect(abs(pixel.blueComponent - ground.blueComponent) < 0.01)
+            }
+        }
+        let ground = try sample(20, 55)
+        var landmarkPixels = 0
+        for y in 34..<80 {
+            for x in 150..<198 {
+                let pixel = try sample(x, y)
+                if abs(pixel.redComponent - ground.redComponent) > 0.1 { landmarkPixels += 1 }
+            }
+        }
+        #expect(landmarkPixels > 100)
+    }
+
+    @Test func taskPurposeSelectsLandmarksInsteadOfGenericCategoryAlone() {
+        let examples: [(WorktreeSVGMap.Motif, String, Int)] = [
+            (.beacon, "Ask for human approval before proceeding", 1),
+            (.beacon, "Deliver updates to a remote device", 2),
+            (.archive, "Recover data from a backup", 0),
+            (.archive, "Partition storage into separate buckets", 1),
+            (.archive, "Encrypt stored secrets", 2),
+            (.observatory, "Research which approach to use", 0),
+            (.observatory, "Index and catalog project files", 1),
+            (.observatory, "Listen for incoming events", 2),
+        ]
+        for (family, context, expected) in examples {
+            for seed in 0..<10 {
+                #expect(WorktreeSVGMap.preferredVariant(family, name: "task", context: context, seed: UInt64(seed)) == expected)
+            }
+        }
+    }
+
+    @Test func laterPromptsKeepTheLearnedPlaceUntilExplicitRegeneration() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "a", name: "notifications", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil))
+        var latest = "Notify when human approval is needed"
+        var generations: [[String: WorktreeSVGMap.District]] = []
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in latest }) { input in
+            let data = try await ProjectWorktreeMapGenerator.generate(input)
+            generations.append(try #require(WorktreeSVGMap.districts(in: data)))
+            return data
+        }
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let image = store.images[request.path]
+        latest = "Add authentication permissions"
+        store.recordPrompt(latest, for: request)
+        await store.waitUntilIdle()
+        #expect(generations.count == 1)
+        #expect(store.images[request.path] === image)
+        #expect(generations.first?[request.path]?.motif == .beacon)
+        store.regenerate(request)
+        await store.waitUntilIdle()
+        #expect(generations.count == 2)
+        #expect(generations.last?[request.path]?.motif == .gate)
+    }
+
+    @Test func updatedPurposeWithinTheSameFamilyUsesItsPreferredLandmark() throws {
+        let old = ["a": WorktreeSVGMap.District(motif: .archive, palette: 0, variation: 0, variant: 1)]
+        let metadata = try JSONEncoder().encode(old).base64EncodedString()
+        let previous = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8)
+        let data = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "storage", height: 104,
+            context: "Encrypt stored database secrets")], project: .init(path: "/project", avatar: nil),
+            style: .illustration, theme: nil, preservedPaths: [], previousSVG: previous, changingPaths: ["a"]))
+        #expect(WorktreeSVGMap.districts(in: data)?["a"]?.motif == .archive)
+        #expect(WorktreeSVGMap.districts(in: data)?["a"]?.variant == 2)
+    }
+
+    @Test func saturatedCatalogStillVisiblyRegeneratesWithoutLosingIdentity() throws {
+        let rows = (0..<11).map { WorktreeMapRow(path: "\($0)", name: "notify", height: 104, context: nil) }
+        let old = Dictionary(uniqueKeysWithValues: rows.enumerated().map { i, row in
+            (row.path, WorktreeSVGMap.District(motif: i < 3 ? .beacon : .garden, palette: i,
+                variation: 0, variant: i % 3))
+        })
+        let metadata = try JSONEncoder().encode(old).base64EncodedString()
+        let previous = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8)
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        let first = try WorktreeSVGMap.generate(.init(rows: rows, project: project, style: .illustration,
+            theme: nil, preservedPaths: Set(rows.map(\.path)), previousSVG: previous))
+        let next = try WorktreeSVGMap.generate(.init(rows: rows, project: project, style: .illustration,
+            theme: nil, preservedPaths: Set(rows.dropFirst().map(\.path)), previousSVG: first))
+        let current = try #require(WorktreeSVGMap.districts(in: next))
+        #expect(current["0"]?.palette == old["0"]?.palette)
+        #expect(current["0"]?.variant == old["0"]?.variant)
+        #expect(try WorktreeMapRaster.png(#require(NSImage(data: first))) != WorktreeMapRaster.png(#require(NSImage(data: next))))
+    }
+
+    @Test func addingPanesDoesNotMoveOrScaleTheLandmark() throws {
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        let small = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "icons", height: 80, context: nil)],
+            project: project, style: .illustration, theme: nil, preservedPaths: []))
+        let tall = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "icons", height: 240, context: nil)],
+            project: project, style: .illustration, theme: nil, preservedPaths: ["a"], previousSVG: small))
+        func pixels(_ data: Data) throws -> [Double] {
+            let image = try #require(NSImage(data: data))
+            var rect = CGRect(origin: .zero, size: image.size)
+            let cg = try #require(image.cgImage(forProposedRect: &rect, context: nil, hints: nil))
+            let bitmap = NSBitmapImageRep(cgImage: cg)
+            let scale = CGFloat(cg.width) / image.size.width
+            var result: [Double] = []
+            for y in 34..<70 {
+                for x in 145..<198 {
+                    let color = try #require(bitmap.colorAt(x: Int(CGFloat(x) * scale),
+                        y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB))
+                    result += [color.redComponent, color.greenComponent, color.blueComponent]
+                }
+            }
+            return result
+        }
+        let before = try pixels(small), after = try pixels(tall)
+        // Native SVG rasterization can round color channels between canvas sizes.
+        #expect(zip(before, after).allSatisfy { abs($0 - $1) < 0.01 })
     }
 
     @Test func allProjectMediaHaveDistinctRenderedTreatments() throws {
@@ -242,7 +376,8 @@ struct WorktreeSVGMapTests {
             let colors = try (203..<219).map { x in
                 try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)).redComponent
             }
-            #expect(try #require(colors.max()) - #require(colors.min()) > 0.1)
+            #expect(try #require(colors.max()) - #require(colors.min()) > 0.02)
+            #expect(try #require(colors.max()) - #require(colors.min()) < 0.12)
         }
     }
 

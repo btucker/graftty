@@ -21,12 +21,16 @@ struct ProjectWorktreeMapTests {
             var rect = CGRect(origin: .zero, size: slice.size)
             let bitmap = NSBitmapImageRep(cgImage: try #require(slice.cgImage(forProposedRect: &rect, context: nil, hints: nil)))
             var focalPixels = 0
-            for y in 0..<bitmap.pixelsHigh {
-                for x in 0..<bitmap.pixelsWide {
-                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                          min(color.redComponent, color.greenComponent, color.blueComponent) > 0.7 else { continue }
+            for y in 14..<(Int(row.height) - 14) {
+                let rasterY = y * bitmap.pixelsHigh / Int(row.height)
+                let ground = try #require(bitmap.colorAt(x: 20 * bitmap.pixelsWide / 320, y: rasterY)?.usingColorSpace(.deviceRGB))
+                for x in 130..<198 {
+                    let color = try #require(bitmap.colorAt(x: x * bitmap.pixelsWide / 320, y: rasterY)?.usingColorSpace(.deviceRGB))
+                    let contrast = max(abs(color.redComponent - ground.redComponent),
+                        abs(color.greenComponent - ground.greenComponent), abs(color.blueComponent - ground.blueComponent))
+                    guard contrast > 0.12 else { continue }
                     focalPixels += 1
-                    #expect(CGFloat(y) * slice.size.height / CGFloat(bitmap.pixelsHigh) < 80)
+                    #expect(y >= 32 && y < 80)
                 }
             }
             #expect(focalPixels > 0)

@@ -89,7 +89,7 @@ enum WorktreeSVGMap {
             // Keep a unique silhouette at saturation; only reuse shapes when all
             // three already belong to neighbors. A new family can reuse its index.
             let candidates = !available.isEmpty ? available : !unused.isEmpty ? unused : Array(0..<3)
-            let variant = oldVariant == nil && candidates.contains(preferredVariant) ? preferredVariant
+            let variant = candidates.contains(preferredVariant) ? preferredVariant
                 : candidates.min { lhs, rhs in
                     let left = used.filter { $0 == lhs }.count
                     let right = used.filter { $0 == rhs }.count
@@ -103,15 +103,14 @@ enum WorktreeSVGMap {
         let base = input.theme?.svgBackground ?? "#30343A"
         let ink = input.theme?.svgForeground ?? "#ECE5CE"
         let medium = input.project.mapStyle ?? .contour
-        let weight = input.style == .sketch || medium == .ink ? 0.9 : medium == .screenprint ? 2.0 : 1.4
-        let landOpacity = input.style == .animation ? 0.36 : medium == .watercolor ? 0.16 : medium == .screenprint ? 0.3 : 0.23
+        let treatment = landmarkTreatment(medium, style: input.style)
+        let landOpacity = input.style == .animation ? 0.48 : medium == .watercolor ? 0.30 : 0.38
         let accent = input.project.avatar.flatMap(avatarAccent) ?? "#C9B989"
-        var definitions = ""
         var terrain = ""
         var landmarks = ""
         var route = "M208 0"
         var top = 0.0
-        for (index, row) in input.rows.enumerated() {
+        for row in input.rows {
             let h = row.height
             defer { top += h }
             // Every segment meets at the same point with a vertical tangent.
@@ -124,76 +123,47 @@ enum WorktreeSVGMap {
                 continue
             }
             let color = palette[district.palette]
-            let offset = Double(district.variation % 11)
-            // The lower boundary is exactly the next district's upper boundary.
+            // A bounded shade change keeps explicit regeneration visible even
+            // when every color and silhouette is already occupied.
+            let districtOpacity = landOpacity + Double(district.variation % 3) * 0.035
+            // Shared organic borders keep the territories contiguous. The color
+            // field stays plain so titles and pane labels do not compete with texture.
             let edge = "M0 0 Q80 12 160 0 T320 0 L320 \(h) Q240 \(h-12) 160 \(h) T0 \(h) Z"
-            definitions += "<clipPath id=\"district-\(index)\"><path d=\"\(edge)\"/></clipPath>"
-            terrain += "<g transform=\"translate(0 \(top))\"><path d=\"\(edge)\" fill=\"\(color)\" fill-opacity=\"\(landOpacity)\"/>"
-            let dash = medium == .risograph ? " stroke-dasharray=\"1 4\" stroke-linecap=\"round\"" : ""
-            terrain += "<g clip-path=\"url(#district-\(index))\" fill=\"none\" stroke=\"\(color)\" stroke-width=\"\(weight)\" opacity=\"0.42\"\(dash)>"
-            terrain += pattern(district.motif, variant: district.variant ?? 0, height: h, offset: offset, medium: medium)
-            terrain += "</g></g>"
-            // Buildings and routes use the same materials throughout the project.
-            landmarks += "<g transform=\"translate(174 \(top + 40))\" stroke=\"\(ink)\" stroke-width=\"\(weight)\" stroke-linejoin=\"round\" stroke-linecap=\"round\">"
-            landmarks += "<path d=\"M20 6 Q30 12 38 6\" fill=\"none\" stroke=\"\(accent)\" stroke-width=\"3\"/>"
+            terrain += "<path transform=\"translate(0 \(top))\" d=\"\(edge)\" fill=\"\(color)\" fill-opacity=\"\(districtOpacity)\"/>"
+            // A fixed footprint below the title stays put as pane rows are added.
+            landmarks += "<g transform=\"translate(174 \(top + 56)) scale(0.7)\" stroke=\"\(ink)\" \(treatment)>"
+            landmarks += "<path d=\"M24 12 Q44 20 54 0\" fill=\"none\" stroke=\"\(accent)\" stroke-opacity=\"0.32\" stroke-width=\"1.3\"/>"
             let variant = district.variant ?? 0
-            landmarks += "<g fill=\"\(color)\" fill-opacity=\"0.35\" stroke=\"\(color)\" stroke-opacity=\"0.75\">\(foundation(variant))</g>"
-            landmarks += "<g fill=\"\(base)\">\(landmark(district.motif, variant: variant))</g>"
-            landmarks += "</g>"
-
+            landmarks += "<g fill=\"\(color)\">\(landmark(district.motif, variant: variant))</g></g>"
         }
         let svg = """
         <svg xmlns="http://www.w3.org/2000/svg" width="320" height="\(height)" viewBox="0 0 320 \(height)">
         <metadata id="graftty-districts">\(metadata)</metadata>
-        <defs>\(definitions)</defs>
         <rect width="320" height="\(height)" fill="\(base)"/>
         \(terrain)
-        <g id="shared-route" fill="none" stroke-linecap="round"><path d="\(route)" stroke="\(accent)" stroke-opacity="0.12" stroke-width="13"/><path d="\(route)" stroke="\(accent)" stroke-opacity="0.65" stroke-width="2"/><path d="\(route)" stroke="\(ink)" stroke-opacity="0.22" stroke-width="0.6"/></g>
+        <g id="shared-route" fill="none" stroke-linecap="round"><path d="\(route)" stroke="\(accent)" stroke-opacity="0.32" stroke-width="1.2"/></g>
         \(landmarks)
         </svg>
         """
         return Data(svg.utf8)
     }
 
-    private static func pattern(_ motif: Motif, variant: Int, height: Double, offset: Double, medium: ProjectMapStyle) -> String {
-        var result = ""
-        for n in 0..<min(30, Int(height / 14) + 1) {
-            let y = Double(n * 17) + offset
-            if variant != 0 {
-                result += alternateTerrain(motif, variant: variant, row: n, y: y)
-                continue
-            }
-            switch motif {
-            case .beacon, .observatory, .plaza:
-                let r = 24 + n * 14
-                result += "<ellipse cx=\"174\" cy=\"40\" rx=\"\(r)\" ry=\"\(Double(r)*0.6)\"/>"
-            case .canal, .harbor:
-                result += "<path d=\"M116 \(y) C148 \(y-12) 170 \(y+14) 205 \(y) S268 \(y-10) 320 \(y+2)\"/>"
-            case .gate, .archive:
-                result += "<path d=\"M124 \(y) h188 m-164 0 v12 m32 -12 v12 m32 -12 v12 m32 -12 v12 m32 -12 v12\"/>"
-            case .garden:
-                result += "<path d=\"M126 \(y+12) Q152 \(y-5) 170 \(y+8) T218 \(y+7) T272 \(y+8) T320 \(y+4)\"/>"
-            case .forge:
-                result += "<path d=\"M125 \(y) l25 10 25 -10 25 10 25 -10 25 10 25 -10 25 10\"/>"
-            case .bridge:
-                result += "<path d=\"M132 \(y+14) Q146 \(y-8) 160 \(y+14) Q174 \(y-8) 188 \(y+14) Q202 \(y-8) 216 \(y+14) Q230 \(y-8) 244 \(y+14)\"/>"
-            case .windmill:
-                result += "<path d=\"M120 \(y+10) Q216 \(y-14) 314 \(y)\"/>"
-            }
+    /// Project media affect the landmark itself, never add background texture.
+    private static func landmarkTreatment(_ medium: ProjectMapStyle, style: WorktreeArtworkStyle) -> String {
+        let fill: Double
+        let weight: Double
+        let opacity: Double
+        switch medium {
+        case .woodcut: (fill, weight, opacity) = (0.95, 1.4, 0.55)
+        case .screenprint: (fill, weight, opacity) = (1, 0.8, 0.35)
+        case .ink: (fill, weight, opacity) = (0.25, 1.2, 0.8)
+        case .watercolor: (fill, weight, opacity) = (0.65, 0.8, 0.3)
+        case .risograph: (fill, weight, opacity) = (0.85, 1.0, 0.45)
+        case .mosaic: (fill, weight, opacity) = (0.95, 2, 0.55)
+        case .contour: (fill, weight, opacity) = (0.9, 1.1, 0.55)
+        case .collage: (fill, weight, opacity) = (1, 0.5, 0.2)
         }
-        if medium == .woodcut || medium == .ink {
-            result += "<path d=\"M250 14 l30 10 m-26 -2 l30 10 m-26 -2 l30 10\"/>"
-        }
-        if medium == .mosaic {
-            for y in stride(from: 8, to: Int(height), by: 24) {
-                result += "<path d=\"M136 \(y) l12 -8 12 8 -12 8 Z M184 \(y) l12 -8 12 8 -12 8 Z M232 \(y) l12 -8 12 8 -12 8 Z M280 \(y) l12 -8 12 8 -12 8 Z\"/>"
-            }
-        } else if medium == .collage {
-            result += "<path d=\"M125 0 L153 17 L138 44 L158 71 L142 \(height) M278 0 L254 31 L275 61 L260 \(height)\" stroke-width=\"5\" opacity=\"0.4\"/>"
-        } else if medium == .watercolor {
-            result += "<ellipse cx=\"220\" cy=\"\(height/2)\" rx=\"92\" ry=\"\(height*0.45)\" stroke-width=\"12\" opacity=\"0.15\"/>"
-        }
-        return result
+        return "fill-opacity=\"\(style == .sketch ? 0.16 : fill)\" stroke-opacity=\"\(style == .sketch ? 0.8 : opacity)\" stroke-width=\"\(weight)\" stroke-linejoin=\"\(medium == .mosaic ? "miter" : "round")\" stroke-linecap=\"round\""
     }
 
     static func landmark(_ motif: Motif, variant: Int) -> String {
@@ -225,60 +195,41 @@ enum WorktreeSVGMap {
         }
     }
 
-    private static func alternateTerrain(_ motif: Motif, variant: Int, row: Int, y: Double) -> String {
-        if variant == 1 {
-            switch motif {
-            case .beacon: // Bell vibrations travel in angular fans.
-                return "<path d=\"M126 \(y+10) l25 -12 24 12 m18 0 l25 -12 24 12 m18 0 l25 -12 24 12\"/>"
-            case .forge, .canal, .plaza:
-                return "<path d=\"M126 \(y+10) H148 V\(y) H191 V\(y+6) H238 V\(y-4) H320\"/>"
-            case .garden: // Parallel cultivated beds beside the printing atelier.
-                return "<rect x=\"132\" y=\"\(y)\" width=\"25\" height=\"10\" rx=\"5\"/><rect x=\"170\" y=\"\(y)\" width=\"25\" height=\"10\" rx=\"5\"/><rect x=\"234\" y=\"\(y)\" width=\"56\" height=\"10\" rx=\"5\"/>"
-            case .observatory, .gate:
-                return "<path d=\"M130 \(y+14) l20 -14 20 14 Z M240 \(y+14) l20 -14 20 14 Z\"/>"
-            case .harbor, .bridge:
-                return "<path d=\"M126 \(y+8) H188 M234 \(y) H310 M136 \(y+4) v8 m16 -8 v8 m16 -8 v8 M244 \(y-4) v8 m16 -8 v8 m16 -8 v8\"/>"
-            case .archive, .windmill:
-                return "<path d=\"M126 \(y+12) Q150 \(y-8) 174 \(y+12) Z M236 \(y+12) Q260 \(y-8) 284 \(y+12) Z\"/>"
-            }
-        }
-        switch motif {
-        case .beacon: // Broken radio arcs leave much more open ground.
-            let r = 27 + row * 18
-            return "<ellipse cx=\"174\" cy=\"35\" rx=\"\(r)\" ry=\"\(r)\" stroke-dasharray=\"4 12\"/>"
-        case .garden, .archive: // Gallery courtyards and vault paving.
-            return "<path d=\"M132 \(y) h24 v11 h-24 Z M172 \(y) h24 v11 h-24 Z M244 \(y) h38 v11 h-38 Z\"/>"
-        case .forge, .gate, .plaza:
-            let x = 135 + (row % 3) * 28
-            return "<path d=\"M\(x) \(y+5) l12 -5 17 4 -5 8 -18 1 Z M\(x+88) \(y-2) l18 -4 13 7 -19 5 Z\"/>"
-        case .canal, .harbor, .bridge:
-            return "<path d=\"M128 \(y) q10 -7 20 0 t20 0 M239 \(y+5) q10 -7 20 0 t20 0\"/>"
-        case .observatory, .windmill:
-            return "<path d=\"M130 \(y+12) l12 -12 m4 12 l12 -12 M244 \(y+12) l12 -12 m4 12 l12 -12\"/>"
-        }
-    }
-
-    private static func preferredVariant(_ motif: Motif, name: String, context: String?, seed: UInt64) -> Int {
+    /// Match the task's purpose before using the path seed. Specific activities
+    /// distinguish places within a family; raw task text is never stored in SVG.
+    static func preferredVariant(_ motif: Motif, name: String, context: String?, seed: UInt64) -> Int {
         let hints: [(Int, [String])]
         switch motif {
-        case .beacon: hints = [(2, ["push", "broadcast", "signal"]), (1, ["bell", "claude", "attention"])]
-        case .forge: hints = [(2, ["test", "verify", "check"]), (1, ["review", "inspect", "debug"])]
-        case .garden: hints = [(2, ["browser", "gallery", "show", "preview"]), (1, ["generate", "icon", "print", "svg"])]
+        case .beacon: hints = [(2, ["push", "broadcast", "remote device", "deliver", "signal"]),
+                              (1, ["bell", "claude", "attention", "approval", "human", "remind"]),
+                              (0, ["monitor", "status", "watch", "health"])]
+        case .forge: hints = [(2, ["test", "verify", "check", "assert", "validate"]),
+                             (1, ["review", "inspect", "debug", "audit"]), (0, ["repair", "fix", "crash"])]
+        case .garden: hints = [(2, ["browser", "gallery", "show", "preview", "display"]),
+                              (1, ["generate", "icon", "print", "svg", "create"]),
+                              (0, ["grow", "theme", "style", "color"])]
+        case .archive: hints = [(2, ["encrypt", "secret", "private", "secure"]),
+                               (1, ["partition", "bucket", "shard", "capacity"]),
+                               (0, ["recover", "backup", "restore", "history"])]
+        case .observatory: hints = [(2, ["listen", "incoming", "event", "subscribe"]),
+                                   (1, ["index", "catalog", "measure", "survey"]),
+                                   (0, ["research", "explore", "search", "discover"])]
+        case .canal: hints = [(2, ["fork", "branch", "split", "route"]), (1, ["page", "step", "scroll", "pagination"]),
+                             (0, ["buffer", "stream", "flow"])]
+        case .gate: hints = [(2, ["remote", "temporary", "invite"]), (1, ["permission", "role", "policy"]),
+                            (0, ["login", "auth", "account"])]
+        case .bridge: hints = [(2, ["sync", "live", "realtime"]), (1, ["batch", "migrate", "transfer"]),
+                              (0, ["connect", "ssh", "protocol"])]
+        case .windmill: hints = [(2, ["parallel", "concurrent", "async"]), (1, ["cache", "reuse", "recycl"]),
+                                (0, ["speed", "latency", "performance"])]
+        case .harbor: hints = [(2, ["launch", "startup", "boot"]), (1, ["build", "bundle", "package"]),
+                              (0, ["release", "publish", "deploy"])]
         case .plaza: return 0
-        default: hints = []
         }
         for text in [context, name].compactMap({ $0?.lowercased() }) {
             if let match = hints.first(where: { hint in hint.1.contains(where: text.contains) }) { return match.0 }
         }
         return Int(seed % 3)
-    }
-
-    private static func foundation(_ variant: Int) -> String {
-        switch variant {
-        case 1: return "<path d=\"M-31 17 H22 V23 H29 V28 H-35 V23 H-31 Z\"/><path d=\"M-35 23 H29\" fill=\"none\"/>"
-        case 2: return "<path d=\"M-31 21 L-18 14 L14 16 L30 22 L16 30 L-22 28 Z\"/><path d=\"M-32 32 Q-16 27 0 32 T32 32\" fill=\"none\"/>"
-        default: return "<path d=\"M-32 18 L-21 10 L17 12 L30 20 L20 28 L-16 29 Z\"/><path d=\"M-28 22 L-18 18 M16 23 L23 20\" fill=\"none\"/>"
-        }
     }
 
     /// A second set of silhouettes: civic buildings and terraced infrastructure.
