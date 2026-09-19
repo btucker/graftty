@@ -258,6 +258,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.121** While an SVG map appears in a narrow sidebar, the application shall retain its connected route through the full height of every worktree and its pane rows.
 
+**LAYOUT-2.122** When worktrees share a task metaphor, the application shall allocate different landmark silhouettes and terrain compositions while unused variants remain, preserving existing identities during cache upgrades and reordering.
+
+**LAYOUT-2.123** While SVG map artwork extends above or below the worktrees, the application shall use straight continuous routes without repeated bends or decorative tiles.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

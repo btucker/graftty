@@ -11,6 +11,7 @@ struct WorktreeMapGeneration: Sendable {
     let preservedPaths: Set<String>
     var previousSVG: Data? = nil
     var registeredPaths: Set<String>? = nil
+    var changingPaths: Set<String> = []
 }
 
 /// One serial worker for project maps. Prompt text is never written to the map cache.
@@ -252,7 +253,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let preserved = previousRegions.filter { visiblePaths.contains($0.key) && !changing.contains($0.key) }
             let data = try await generate(.init(rows: rows, project: project, style: style, theme: theme,
                 preservedPaths: Set(preserved.keys),
-                previousSVG: existing?.svg, registeredPaths: Set(worktrees.map(\.path))))
+                previousSVG: existing?.svg, registeredPaths: Set(worktrees.map(\.path)), changingPaths: changing))
             try Task.checkCancellation()
             guard revisions[k, default: 0] == revision, projects.contains(project) else { return }
             guard let generated = NSImage(data: data), WorktreeMapRaster.hasCompleteCanvas(generated) else {

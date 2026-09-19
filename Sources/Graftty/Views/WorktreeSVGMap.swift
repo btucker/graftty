@@ -18,6 +18,8 @@ enum WorktreeSVGMap {
         var motif: Motif
         var palette: Int
         var variation: UInt64
+        // Missing in the first SVG cache format; upgrades preserve its color and seed.
+        var variant: Int? = nil
     }
     private static let palette = ["#E8836F", "#66C5BC", "#DDB85E", "#AB93DB", "#93B86B",
                                   "#DA94B1", "#74A7D9", "#D9CAA1", "#D99B61", "#83BFCF", "#B190AE"]
@@ -28,7 +30,7 @@ enum WorktreeSVGMap {
               let end = text.range(of: "</metadata>", range: start.upperBound..<text.endIndex),
               let json = Data(base64Encoded: String(text[start.upperBound..<end.lowerBound])),
               let result = try? JSONDecoder().decode([String: District].self, from: json),
-              result.count <= 2000, result.values.allSatisfy({ (0..<palette.count).contains($0.palette) }) else { return nil }
+              result.count <= 2000, result.values.allSatisfy({ (0..<palette.count).contains($0.palette) && ($0.variant.map { (0..<3).contains($0) } ?? true) }) else { return nil }
         return result
     }
 
@@ -63,19 +65,37 @@ enum WorktreeSVGMap {
         if let paths = input.registeredPaths { designs = designs.filter { paths.contains($0.key) } }
         let ids = WorktreeMapRegionIdentity.assign(paths: input.rows.filter { !$0.isConnector }.map(\.path),
             preserving: Dictionary(input.rows.compactMap { row in row.regionID.map { (row.path, $0) } }, uniquingKeysWith: { first, _ in first }))
-        for row in input.rows where !row.isConnector {
-            if input.preservedPaths.contains(row.path), designs[row.path] != nil { continue }
+        // Allocate in path order so first composition does not depend on sidebar order.
+        for row in input.rows.filter({ !$0.isConnector }).sorted(by: { $0.path < $1.path }) {
+            let old = designs[row.path]
+            if input.preservedPaths.contains(row.path), old?.variant != nil { continue }
             let seed = SHA256.hash(data: Data((input.project.path + "\n" + row.path).utf8)).prefix(8)
                 .reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-            let variation = designs[row.path].map { $0.variation &+ 1 } ?? seed
-            let occupied = Set(designs.filter { $0.key != row.path }.values.map(\.palette))
-            let free = palette.indices.filter { !occupied.contains($0) && $0 != designs[row.path]?.palette }
+            let upgrading = old != nil && old?.variant == nil && !input.changingPaths.contains(row.path)
+            let variation = upgrading ? old!.variation : old.map { $0.variation &+ 1 } ?? seed
+            let family = upgrading ? old!.motif : row.path == input.project.path ? .plaza
+                : motif(name: row.name, context: row.context, seed: seed)
+            let neighbors = designs.filter { $0.key != row.path }.values
+            let occupied = Set(neighbors.map(\.palette))
+            let free = palette.indices.filter { !occupied.contains($0) && $0 != old?.palette }
             let preferred = (ids[row.path] ?? 0) % palette.count
-            let chosen = designs[row.path] == nil && free.contains(preferred) ? preferred
-                : free.isEmpty ? designs[row.path]?.palette ?? preferred : free[Int(variation % UInt64(free.count))]
-            designs[row.path] = District(motif: row.path == input.project.path ? .plaza
-                : motif(name: row.name, context: row.context, seed: seed),
-                palette: chosen, variation: variation)
+            let chosen = upgrading ? old!.palette : old == nil && free.contains(preferred) ? preferred
+                : free.isEmpty ? old?.palette ?? preferred : free[Int(variation % UInt64(free.count))]
+            let used = neighbors.filter { $0.motif == family }.compactMap(\.variant)
+            let unused = (0..<3).filter { !used.contains($0) }
+            let oldVariant = old?.motif == family ? old?.variant : nil
+            let available = unused.filter { $0 != oldVariant }
+            let preferredVariant = preferredVariant(family, name: row.name, context: row.context, seed: seed)
+            // Keep a unique silhouette at saturation; only reuse shapes when all
+            // three already belong to neighbors. A new family can reuse its index.
+            let candidates = !available.isEmpty ? available : !unused.isEmpty ? unused : Array(0..<3)
+            let variant = oldVariant == nil && candidates.contains(preferredVariant) ? preferredVariant
+                : candidates.min { lhs, rhs in
+                    let left = used.filter { $0 == lhs }.count
+                    let right = used.filter { $0 == rhs }.count
+                    return left == right ? lhs < rhs : left < right
+                } ?? 0
+            designs[row.path] = District(motif: family, palette: chosen, variation: variation, variant: variant)
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -95,9 +115,12 @@ enum WorktreeSVGMap {
             let h = row.height
             defer { top += h }
             // Every segment meets at the same point with a vertical tangent.
-            route += " C208 \(top + 14) 216 \(top + h * 0.3) 212 \(top + h * 0.5) S208 \(top + h - 14) 208 \(top + h)"
+            if row.isConnector {
+                route += " L208 \(top + h)"
+            } else {
+                route += " C208 \(top + 14) 216 \(top + h * 0.3) 212 \(top + h * 0.5) S208 \(top + h - 14) 208 \(top + h)"
+            }
             guard !row.isConnector, let district = designs[row.path] else {
-                terrain += "<path d=\"M248 \(top) C272 \(top+h*0.3) 258 \(top+h*0.7) 248 \(top+h)\" fill=\"none\" stroke=\"\(accent)\" opacity=\"0.1\"/>"
                 continue
             }
             let color = palette[district.palette]
@@ -108,20 +131,16 @@ enum WorktreeSVGMap {
             terrain += "<g transform=\"translate(0 \(top))\"><path d=\"\(edge)\" fill=\"\(color)\" fill-opacity=\"\(landOpacity)\"/>"
             let dash = medium == .risograph ? " stroke-dasharray=\"1 4\" stroke-linecap=\"round\"" : ""
             terrain += "<g clip-path=\"url(#district-\(index))\" fill=\"none\" stroke=\"\(color)\" stroke-width=\"\(weight)\" opacity=\"0.42\"\(dash)>"
-            terrain += pattern(district.motif, height: h, offset: offset, medium: medium)
+            terrain += pattern(district.motif, variant: district.variant ?? 0, height: h, offset: offset, medium: medium)
             terrain += "</g></g>"
             // Buildings and routes use the same materials throughout the project.
             landmarks += "<g transform=\"translate(174 \(top + 40))\" stroke=\"\(ink)\" stroke-width=\"\(weight)\" stroke-linejoin=\"round\" stroke-linecap=\"round\">"
             landmarks += "<path d=\"M20 6 Q30 12 38 6\" fill=\"none\" stroke=\"\(accent)\" stroke-width=\"3\"/>"
-            landmarks += "<ellipse cx=\"0\" cy=\"18\" rx=\"29\" ry=\"11\" fill=\"\(color)\" fill-opacity=\"0.38\" stroke-opacity=\"0.3\"/>"
-            landmarks += "<g fill=\"\(base)\">\(landmark(district.motif))</g>"
-            landmarks += "<g fill=\"\(color)\" stroke=\"\(accent)\" stroke-width=\"0.7\">"
-            for n in 0..<3 {
-                let x = -28 - n * 7
-                let y = 8 + Int(district.variation % 5) + n * 3
-                landmarks += "<path d=\"M\(x) \(y) l4 -5 5 3 -1 6 -6 0 Z\"/>"
-            }
-            landmarks += "</g></g>"
+            let variant = district.variant ?? 0
+            landmarks += "<g fill=\"\(color)\" fill-opacity=\"0.35\" stroke=\"\(color)\" stroke-opacity=\"0.75\">\(foundation(variant))</g>"
+            landmarks += "<g fill=\"\(base)\">\(landmark(district.motif, variant: variant))</g>"
+            landmarks += "</g>"
+
         }
         let svg = """
         <svg xmlns="http://www.w3.org/2000/svg" width="320" height="\(height)" viewBox="0 0 320 \(height)">
@@ -136,10 +155,14 @@ enum WorktreeSVGMap {
         return Data(svg.utf8)
     }
 
-    private static func pattern(_ motif: Motif, height: Double, offset: Double, medium: ProjectMapStyle) -> String {
+    private static func pattern(_ motif: Motif, variant: Int, height: Double, offset: Double, medium: ProjectMapStyle) -> String {
         var result = ""
         for n in 0..<min(30, Int(height / 14) + 1) {
             let y = Double(n * 17) + offset
+            if variant != 0 {
+                result += alternateTerrain(motif, variant: variant, row: n, y: y)
+                continue
+            }
             switch motif {
             case .beacon, .observatory, .plaza:
                 let r = 24 + n * 14
@@ -173,7 +196,9 @@ enum WorktreeSVGMap {
         return result
     }
 
-    private static func landmark(_ motif: Motif) -> String {
+    static func landmark(_ motif: Motif, variant: Int) -> String {
+        if variant == 1 { return terraceLandmark(motif) }
+        if variant == 2 { return islandLandmark(motif) }
         switch motif {
         case .beacon:
             return "<path d=\"M-11 19 L-7 -13 L7 -13 L11 19 Z M-9 -13 V-23 H9 V-13 Z M-12 -23 L0 -30 L12 -23 Z\"/><path d=\"M-5 -19 H5 M-6 2 H6 M-8 12 H8 M-18 -19 L-28 -23 M18 -19 L28 -23\" fill=\"none\"/>"
@@ -197,6 +222,118 @@ enum WorktreeSVGMap {
             return "<path d=\"M-13 24 L-7 -13 H7 L13 24 Z\"/><path d=\"M0 -8 L-21 -28 L-26 -20 Z M0 -8 L21 -28 L26 -20 Z M0 -8 L21 12 L26 4 Z M0 -8 L-21 12 L-26 4 Z\"/><circle cx=\"0\" cy=\"-8\" r=\"4\"/>"
         case .plaza:
             return "<ellipse cx=\"0\" cy=\"15\" rx=\"25\" ry=\"11\"/><ellipse cx=\"0\" cy=\"11\" rx=\"19\" ry=\"7\"/><path d=\"M-5 10 V-12 H5 V10 Z M0 -12 Q-23 -12 -19 -29 Q-3 -30 0 -12 Q2 -32 20 -28 Q20 -11 0 -12\"/>"
+        }
+    }
+
+    private static func alternateTerrain(_ motif: Motif, variant: Int, row: Int, y: Double) -> String {
+        if variant == 1 {
+            switch motif {
+            case .beacon: // Bell vibrations travel in angular fans.
+                return "<path d=\"M126 \(y+10) l25 -12 24 12 m18 0 l25 -12 24 12 m18 0 l25 -12 24 12\"/>"
+            case .forge, .canal, .plaza:
+                return "<path d=\"M126 \(y+10) H148 V\(y) H191 V\(y+6) H238 V\(y-4) H320\"/>"
+            case .garden: // Parallel cultivated beds beside the printing atelier.
+                return "<rect x=\"132\" y=\"\(y)\" width=\"25\" height=\"10\" rx=\"5\"/><rect x=\"170\" y=\"\(y)\" width=\"25\" height=\"10\" rx=\"5\"/><rect x=\"234\" y=\"\(y)\" width=\"56\" height=\"10\" rx=\"5\"/>"
+            case .observatory, .gate:
+                return "<path d=\"M130 \(y+14) l20 -14 20 14 Z M240 \(y+14) l20 -14 20 14 Z\"/>"
+            case .harbor, .bridge:
+                return "<path d=\"M126 \(y+8) H188 M234 \(y) H310 M136 \(y+4) v8 m16 -8 v8 m16 -8 v8 M244 \(y-4) v8 m16 -8 v8 m16 -8 v8\"/>"
+            case .archive, .windmill:
+                return "<path d=\"M126 \(y+12) Q150 \(y-8) 174 \(y+12) Z M236 \(y+12) Q260 \(y-8) 284 \(y+12) Z\"/>"
+            }
+        }
+        switch motif {
+        case .beacon: // Broken radio arcs leave much more open ground.
+            let r = 27 + row * 18
+            return "<ellipse cx=\"174\" cy=\"35\" rx=\"\(r)\" ry=\"\(r)\" stroke-dasharray=\"4 12\"/>"
+        case .garden, .archive: // Gallery courtyards and vault paving.
+            return "<path d=\"M132 \(y) h24 v11 h-24 Z M172 \(y) h24 v11 h-24 Z M244 \(y) h38 v11 h-38 Z\"/>"
+        case .forge, .gate, .plaza:
+            let x = 135 + (row % 3) * 28
+            return "<path d=\"M\(x) \(y+5) l12 -5 17 4 -5 8 -18 1 Z M\(x+88) \(y-2) l18 -4 13 7 -19 5 Z\"/>"
+        case .canal, .harbor, .bridge:
+            return "<path d=\"M128 \(y) q10 -7 20 0 t20 0 M239 \(y+5) q10 -7 20 0 t20 0\"/>"
+        case .observatory, .windmill:
+            return "<path d=\"M130 \(y+12) l12 -12 m4 12 l12 -12 M244 \(y+12) l12 -12 m4 12 l12 -12\"/>"
+        }
+    }
+
+    private static func preferredVariant(_ motif: Motif, name: String, context: String?, seed: UInt64) -> Int {
+        let hints: [(Int, [String])]
+        switch motif {
+        case .beacon: hints = [(2, ["push", "broadcast", "signal"]), (1, ["bell", "claude", "attention"])]
+        case .forge: hints = [(2, ["test", "verify", "check"]), (1, ["review", "inspect", "debug"])]
+        case .garden: hints = [(2, ["browser", "gallery", "show", "preview"]), (1, ["generate", "icon", "print", "svg"])]
+        case .plaza: return 0
+        default: hints = []
+        }
+        for text in [context, name].compactMap({ $0?.lowercased() }) {
+            if let match = hints.first(where: { hint in hint.1.contains(where: text.contains) }) { return match.0 }
+        }
+        return Int(seed % 3)
+    }
+
+    private static func foundation(_ variant: Int) -> String {
+        switch variant {
+        case 1: return "<path d=\"M-31 17 H22 V23 H29 V28 H-35 V23 H-31 Z\"/><path d=\"M-35 23 H29\" fill=\"none\"/>"
+        case 2: return "<path d=\"M-31 21 L-18 14 L14 16 L30 22 L16 30 L-22 28 Z\"/><path d=\"M-32 32 Q-16 27 0 32 T32 32\" fill=\"none\"/>"
+        default: return "<path d=\"M-32 18 L-21 10 L17 12 L30 20 L20 28 L-16 29 Z\"/><path d=\"M-28 22 L-18 18 M16 23 L23 20\" fill=\"none\"/>"
+        }
+    }
+
+    /// A second set of silhouettes: civic buildings and terraced infrastructure.
+    private static func terraceLandmark(_ motif: Motif) -> String {
+        switch motif {
+        case .beacon: // Open bell campanile, distinct from the closed lighthouse.
+            return "<path d=\"M-17 22 V-18 L0 -30 L17 -18 V22 H9 V-13 H-9 V22 Z M-20 -18 H20\"/><path d=\"M-8 1 Q-5 -1 -5 -8 A5 5 0 0 1 5 -8 Q5 -1 8 1 Z\"/><circle cx=\"0\" cy=\"5\" r=\"2\"/><path d=\"M-9 15 H9 M-9 20 H9 M-26 -5 Q-32 0 -26 5 M26 -5 Q32 0 26 5\" fill=\"none\"/>"
+        case .observatory: // Armillary sphere and survey pedestal.
+            return "<path d=\"M-13 22 L-8 10 H8 L13 22 Z M0 10 V-28\"/><circle cx=\"0\" cy=\"-9\" r=\"18\"/><ellipse cx=\"0\" cy=\"-9\" rx=\"8\" ry=\"18\" fill=\"none\"/><ellipse cx=\"0\" cy=\"-9\" rx=\"22\" ry=\"6\" transform=\"rotate(-25 0 -9)\" fill=\"none\"/>"
+        case .canal: // A stepped cascade instead of a lock.
+            return "<path d=\"M-23 -24 H-5 V-9 H9 V6 H24 V22 H-23 Z\"/><path d=\"M-17 -19 H-10 V-4 H3 V11 H18 V22 M-23 -9 H-5 M-23 6 H9 M-23 22 H24\" fill=\"none\"/>"
+        case .gate: // A raised portcullis and its counterweights.
+            return "<path d=\"M-25 23 V-23 H-16 V23 Z M16 23 V-23 H25 V23 Z M-16 -20 H16 V-12 H-16 Z\"/><path d=\"M-11 -12 V9 M-4 -12 V9 M4 -12 V9 M11 -12 V9 M-16 -5 H16 M-16 3 H16 M-28 23 H28\" fill=\"none\"/>"
+        case .archive: // Stacked granary silos.
+            return "<path d=\"M-27 22 V-8 L-17 -20 L-7 -8 V22 Z M-7 22 V-17 L4 -30 L15 -17 V22 Z M15 22 V-3 L26 -15 L32 -3 V22 Z\"/><path d=\"M-27 -8 H-7 M-7 -17 H15 M15 -3 H32 M-23 7 H-11 M-2 2 H10 M20 10 H28\" fill=\"none\"/>"
+        case .forge: // Inspection hall with a large magnifying lens.
+            return "<path d=\"M-27 22 V1 L-16 -10 L-5 1 V22 Z M-27 1 H-5 M-20 22 V10 H-12 V22\"/><circle cx=\"9\" cy=\"-11\" r=\"16\"/><circle cx=\"9\" cy=\"-11\" r=\"10\"/><path d=\"M18 2 L29 19 L23 23 L12 6 Z M4 -11 L8 -7 L15 -16\"/>"
+        case .garden: // Color-making atelier with a printing roller.
+            return "<path d=\"M-26 22 V-17 H-19 V22 Z M19 22 V-17 H26 V22 Z M-26 -17 H26 V-10 H-26 Z M-19 12 H19 V18 H-19 Z\"/><rect x=\"-14\" y=\"-6\" width=\"28\" height=\"12\" rx=\"6\"/><path d=\"M0 -10 V-26 M-9 -26 H9 M-9 6 V12 M9 6 V12 M-12 18 L-17 25 H17 L12 18\"/>"
+        case .harbor: // Dockside crane.
+            return "<path d=\"M-21 23 V-24 H-13 V23 Z M-24 -24 H25 V-17 H-24 Z M-13 13 L13 -17 M-27 23 H-7\"/><path d=\"M20 -17 V2 Q20 10 13 7 M4 23 V12 H24 V23 Z\"/>"
+        case .bridge: // High aqueduct.
+            return "<path d=\"M-30 -10 H30 V23 H23 V7 A7 7 0 0 0 9 7 V23 H3 V7 A7 7 0 0 0 -11 7 V23 H-17 V7 A7 7 0 0 0 -30 7 Z M-30 -17 H30 V-10 H-30 Z\"/><path d=\"M-24 -17 V-23 M-8 -17 V-23 M8 -17 V-23 M24 -17 V-23\"/>"
+        case .windmill: // Broad waterwheel.
+            return "<path d=\"M-29 22 V-6 L-17 -16 L-5 -6 V22 Z\"/><circle cx=\"10\" cy=\"1\" r=\"23\"/><circle cx=\"10\" cy=\"1\" r=\"16\"/><path d=\"M10 -22 V24 M-13 1 H33 M-6 -15 L26 17 M-6 17 L26 -15\" fill=\"none\"/><circle cx=\"10\" cy=\"1\" r=\"4\"/>"
+        case .plaza: // Civic clock tower.
+            return "<path d=\"M-12 23 V-23 L0 -31 L12 -23 V23 Z M-19 23 H19 M-9 16 H9\"/><circle cx=\"0\" cy=\"-11\" r=\"8\"/><path d=\"M0 -17 V-11 L5 -8 M-4 23 V7 H4 V23\"/>"
+        }
+    }
+
+    /// A third set: open structures around islands, docks, and scattered ground.
+    private static func islandLandmark(_ motif: Motif) -> String {
+        switch motif {
+        case .beacon: // Signal mast and broad broadcast arcs.
+            return "<path d=\"M-13 23 L0 -22 L13 23 Z M-10 14 H10 M-7 3 H7 M-4 -8 H4\"/><circle cx=\"0\" cy=\"-24\" r=\"4\"/><path d=\"M-12 -29 Q-23 -20 -12 -11 M12 -29 Q23 -20 12 -11 M-22 -32 Q-38 -20 -22 -7 M22 -32 Q38 -20 22 -7\" fill=\"none\"/>"
+        case .observatory: // Dish antenna, open asymmetric silhouette.
+            return "<path d=\"M-10 24 L-1 6 H7 L15 24 Z M-25 -24 Q-27 12 18 4 Z\"/><path d=\"M-25 -24 L-5 -7 L18 4 M-5 -7 L12 -25\" fill=\"none\"/><circle cx=\"12\" cy=\"-25\" r=\"3\"/>"
+        case .canal: // Forking sluices and three watercourses.
+            return "<path d=\"M-6 -28 H6 V-8 L28 9 L22 17 L0 1 L-22 17 L-28 9 L-6 -8 Z\"/><path d=\"M0 -23 V-4 M-23 22 Q-17 17 -12 23 M-5 20 Q0 15 5 21 M14 24 Q21 18 27 23\" fill=\"none\"/>"
+        case .gate: // Watch island with a drawbridge.
+            return "<path d=\"M-24 19 V-19 H-18 V-25 H-10 V-19 H-4 V19 Z M-17 -10 H-11 V-3 H-17 Z M-4 9 L23 -6 L28 2 L-4 22 Z\"/><path d=\"M-4 -15 L23 -6 M-4 -10 L28 2 M4 5 L9 16 M14 0 L19 10\" fill=\"none\"/>"
+        case .archive: // Secure domed vault.
+            return "<path d=\"M-26 22 V-1 A26 26 0 0 1 26 -1 V22 Z M-26 -1 H26\"/><circle cx=\"0\" cy=\"7\" r=\"13\"/><circle cx=\"0\" cy=\"7\" r=\"4\"/><path d=\"M0 -6 V3 M0 11 V20 M-13 7 H-4 M4 7 H13 M-20 -10 H-8 M8 -10 H20\"/>"
+        case .forge: // Test gantry with suspended load and calibration ticks.
+            return "<path d=\"M-27 24 V-27 H-20 V24 Z M20 24 V-27 H27 V24 Z M-20 -25 H20 V-18 H-20 Z\"/><path d=\"M0 -18 V-4 M-9 -4 H9 L15 12 H-15 Z M-15 20 H15 M-16 24 H16 M-20 -9 H-14 M-20 0 H-14 M-20 9 H-14\"/>"
+        case .garden: // Gallery pavilion with wide fan roof and picture frames.
+            return "<path d=\"M-27 -8 L-17 -23 H17 L27 -8 Z M-22 -8 V23 H22 V-8 M-17 -23 L-8 -8 M0 -23 V-8 M17 -23 L8 -8\"/><path d=\"M-16 -1 H-3 V14 H-16 Z M3 -1 H16 V14 H3 Z M-16 10 L-11 4 L-3 12 M3 10 L8 3 L16 11 M-27 23 H27\"/>"
+        case .harbor: // Launch slip and ship's prow.
+            return "<path d=\"M-23 -6 L0 -27 L23 -6 L15 15 H-15 Z M0 -27 V15 M-16 -2 H16 M-9 -15 H9\"/><path d=\"M-29 22 L-18 15 M29 22 L18 15 M-23 28 Q-12 21 0 28 T25 28\" fill=\"none\"/>"
+        case .bridge: // Suspension bridge with two tall cable pylons.
+            return "<path d=\"M-19 24 V-26 H-14 V24 Z M14 24 V-26 H19 V24 Z M-31 8 H31 V13 H-31 Z\"/><path d=\"M-31 5 L-17 -22 Q0 14 17 -22 L31 5 M-8 -8 V8 M0 -4 V8 M8 -8 V8\" fill=\"none\"/>"
+        case .windmill: // Sail-powered turbine, asymmetric blades.
+            return "<path d=\"M-5 24 L-2 -8 H3 L7 24 Z M0 -8 L-10 -31 L1 -29 Z M0 -8 L27 -8 L21 1 Z M0 -8 L-14 16 L-20 7 Z\"/><circle cx=\"0\" cy=\"-8\" r=\"4\"/>"
+        case .plaza: // Town well and canopy.
+            return "<path d=\"M-22 23 V8 H22 V23 Z M-17 8 V-15 M17 8 V-15 M-27 -15 L0 -29 L27 -15 Z\"/><path d=\"M-17 -6 H17 M0 -6 V10 M-5 10 H5 L4 18 H-4 Z M-22 16 H22 M-10 16 V23 M10 8 V16\"/>"
         }
     }
 

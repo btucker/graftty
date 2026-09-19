@@ -54,6 +54,51 @@ struct WorktreeSVGMapTests {
         #expect(WorktreeSVGMap.districts(in: replaced)?["a"] != WorktreeSVGMap.districts(in: first)?["a"])
     }
 
+    @Test("@spec LAYOUT-2.122: When worktrees share a task metaphor, the application shall allocate different landmark silhouettes and terrain compositions while unused variants remain, preserving existing identities during cache upgrades and reordering.")
+    func relatedTasksHaveDifferentSilhouettes() throws {
+        for motif in WorktreeSVGMap.Motif.allCases {
+            let rows = (0..<3).map { WorktreeMapRow(path: "\($0)", name: "notifications", height: 104, context: nil) }
+            let old = Dictionary(uniqueKeysWithValues: rows.enumerated().map { i, row in
+                (row.path, WorktreeSVGMap.District(motif: motif, palette: i, variation: UInt64(i)))
+            })
+            let json = try JSONEncoder().encode(old).base64EncodedString()
+            let legacy = Data("<svg ><metadata id=\"graftty-districts\">\(json)</metadata></svg>".utf8)
+            let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
+                style: .illustration, theme: nil, preservedPaths: [], previousSVG: legacy)
+            let data = try WorktreeSVGMap.generate(input)
+            let migrated = try #require(WorktreeSVGMap.districts(in: data))
+            #expect(Set(migrated.values.compactMap(\.variant)).count == 3)
+            for row in rows {
+                #expect(migrated[row.path]?.palette == old[row.path]?.palette)
+                #expect(migrated[row.path]?.variation == old[row.path]?.variation)
+                #expect(migrated[row.path]?.motif == motif)
+            }
+            #expect(Set(migrated.values.map { WorktreeSVGMap.landmark($0.motif, variant: $0.variant ?? 0) }).count == 3)
+            #expect(NSImage(data: data) != nil)
+            let reordered = try WorktreeSVGMap.generate(.init(rows: rows.reversed(), project: input.project,
+                style: input.style, theme: nil, preservedPaths: Set(rows.map(\.path)), previousSVG: data))
+            #expect(WorktreeSVGMap.districts(in: reordered) == migrated)
+        }
+    }
+
+    @Test("@spec LAYOUT-2.123: While SVG map artwork extends above or below the worktrees, the application shall use straight continuous routes without repeated bends or decorative tiles.")
+    func decorativeExtensionsHaveNoRepeatingBends() throws {
+        let rows = [WorktreeMapRow(path: "header", name: "header", height: 128, context: nil, isConnector: true),
+                    WorktreeMapRow(path: "footer", name: "footer", height: 96, context: nil, isConnector: true)]
+        let data = try WorktreeSVGMap.generate(.init(rows: rows, project: .init(path: "/project", avatar: nil),
+            style: .illustration, theme: nil, preservedPaths: []))
+        let image = try #require(NSImage(data: data))
+        var rect = CGRect(origin: .zero, size: image.size)
+        let bitmap = NSBitmapImageRep(cgImage: try #require(image.cgImage(forProposedRect: &rect, context: nil, hints: nil)))
+        for x in [140, 208, 212, 248, 262] {
+            let first = try #require(bitmap.colorAt(x: x, y: 10)?.usingColorSpace(.deviceRGB))
+            for y in [30, 60, 100, 140, 180, 210] {
+                let next = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                #expect(abs(first.redComponent - next.redComponent) < 0.01)
+            }
+        }
+    }
+
     @Test func userTaskOverridesOpaqueNameAndXMLIsNotInjected() throws {
         let input = WorktreeMapGeneration(rows: [.init(path: "<script>", name: "fix-search", height: 80,
             context: "Add authentication and permissions <image href='https://example.com'/>")],
@@ -72,6 +117,89 @@ struct WorktreeSVGMapTests {
             theme: nil, preservedPaths: ["1", "2", "3"], previousSVG: original))
         let districts = try #require(WorktreeSVGMap.districts(in: replaced))
         #expect(Set(districts.values.map(\.palette)).count == 4)
+    }
+
+    @Test func similarNamesChooseGroundedVariantsAndRegenerationAvoidsHiddenNeighbors() throws {
+        let rows = [WorktreeMapRow(path: "a", name: "claude-notifications", height: 104, context: "Needs attention"),
+                    WorktreeMapRow(path: "b", name: "push-notifications", height: 104, context: "Broadcast updates")]
+        let project = ProjectArtworkSource(path: "/project", avatar: nil)
+        let original = try WorktreeSVGMap.generate(.init(rows: rows, project: project, style: .illustration,
+            theme: nil, preservedPaths: []))
+        let old = try #require(WorktreeSVGMap.districts(in: original))
+        #expect(old["a"]?.variant == 1)
+        #expect(old["b"]?.variant == 2)
+        let changed = try WorktreeSVGMap.generate(.init(rows: [rows[0]], project: project, style: .illustration,
+            theme: nil, preservedPaths: [], previousSVG: original, registeredPaths: ["a", "b"]))
+        let updated = try #require(WorktreeSVGMap.districts(in: changed))
+        #expect(updated["a"]?.variant == 0)
+        #expect(updated["b"] == old["b"])
+    }
+
+    @Test func legacySVGCacheUpgradesOnceWithoutChangingColors() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorktreeArtworkRequest(path: "/project", name: "main", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil), isMainCheckout: true)
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil },
+            generate: ProjectWorktreeMapGenerator.generate)
+        store.update(worktrees: [request], isActive: true)
+        await store.waitUntilIdle()
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .first { $0.pathExtension == "json" })
+        var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let encodedSVG = try #require(saved["svg"] as? String)
+        let originalSVG = try #require(Data(base64Encoded: encodedSVG))
+        let original = try #require(WorktreeSVGMap.districts(in: originalSVG))
+        var old = original
+        for path in old.keys { old[path]?.variant = nil }
+        let metadata = try JSONEncoder().encode(old).base64EncodedString()
+        saved["svg"] = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8).base64EncodedString()
+        saved["regionRevision"] = 3
+        try JSONSerialization.data(withJSONObject: saved).write(to: file)
+        var calls = 0
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls += 1
+            let data = try await ProjectWorktreeMapGenerator.generate(input)
+            let upgraded = try #require(WorktreeSVGMap.districts(in: data))
+            #expect(upgraded[request.path]?.palette == original[request.path]?.palette)
+            #expect(upgraded[request.path]?.variation == original[request.path]?.variation)
+            #expect(upgraded[request.path]?.variant != nil)
+            return data
+        }
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(calls == 1)
+        #expect(restored.failures.isEmpty)
+    }
+
+    @Test(arguments: [WorktreeSVGMap.Motif.beacon, .garden])
+    func regenerationAndFamilyChangesDoNotDuplicateAvailableSilhouettes(oldFamily: WorktreeSVGMap.Motif) throws {
+        let old: [String: WorktreeSVGMap.District] = [
+            "a": .init(motif: oldFamily, palette: 0, variation: 0, variant: 0),
+            "b": .init(motif: .beacon, palette: 1, variation: 1, variant: 1),
+            "c": .init(motif: .beacon, palette: 2, variation: 2, variant: 2)]
+        let metadata = try JSONEncoder().encode(old).base64EncodedString()
+        let previous = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8)
+        let data = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "notify", height: 104, context: "Notifications")],
+            project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil,
+            preservedPaths: [], previousSVG: previous, registeredPaths: ["a", "b", "c"]))
+        let updated = try #require(WorktreeSVGMap.districts(in: data))
+        #expect(updated["a"]?.motif == .beacon)
+        #expect(Set(updated.values.compactMap(\.variant)).count == 3)
+    }
+
+    @Test func migrationStillAppliesPendingContextChanges() throws {
+        let old = ["a": WorktreeSVGMap.District(motif: .garden, palette: 0, variation: 0)]
+        let metadata = try JSONEncoder().encode(old).base64EncodedString()
+        let previous = Data("<svg ><metadata id=\"graftty-districts\">\(metadata)</metadata></svg>".utf8)
+        let data = try WorktreeSVGMap.generate(.init(rows: [.init(path: "a", name: "icons", height: 104, context: "Authentication permissions")],
+            project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil,
+            preservedPaths: [], previousSVG: previous, changingPaths: ["a"]))
+        let updated = try #require(WorktreeSVGMap.districts(in: data))
+        #expect(updated["a"]?.motif == .gate)
+        #expect(updated["a"]?.variation == 1)
     }
 
     @Test func allProjectMediaHaveDistinctRenderedTreatments() throws {
