@@ -308,6 +308,10 @@ struct ProjectWorktreeMapTests {
         #expect(prompt.contains(WorktreeMapRegionIdentity.design(0)))
         #expect(prompt.contains("at least 70%"))
         #expect(prompt.contains("Connections occupy at most 10%"))
+        #expect(prompt.contains("left 40%"))
+        #expect(prompt.contains("between 45% and 65%"))
+        #expect(prompt.contains("one landmark"))
+        #expect(WorktreeMapRegionIdentity.design(0).contains("sparse"))
         #expect(!prompt.contains("No task context yet: draw quiet connecting terrain"))
     }
 

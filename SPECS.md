@@ -248,6 +248,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.116** When the application loses focus during map generation, the application shall let the current map finish, cache successful results, and defer retries and subsequent projects until the application becomes active.
 
+**LAYOUT-2.117** While sidebar artwork is displayed, the application shall suppress fine detail behind labels, pane lists, and decorative terrain while retaining regional color and clear landmark detail on the right.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

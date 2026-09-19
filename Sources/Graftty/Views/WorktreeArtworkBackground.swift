@@ -33,9 +33,10 @@ struct WorktreeArtworkBackground: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
+                Group {
+                    if groupsText { WorktreeMapArtwork(image: image) }
+                    else { Image(nsImage: image).resizable().interpolation(.high) }
+                }
                 .frame(width: image.size.width, height: image.size.height)
                 .blur(radius: isRegenerating ? 12 : 0)
                 .opacity(isRegenerating ? 0.55 : 1)
@@ -80,9 +81,7 @@ struct WorktreeMapHeaderBackground: View {
 
     var body: some View {
         GeometryReader { geometry in
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
+            WorktreeMapArtwork(image: image, decorative: true)
                 .frame(width: WorktreeMapLayout.width, height: geometry.size.height)
                 .overlay(.black.opacity(0.14))
                 .mask {

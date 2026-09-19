@@ -11,8 +11,7 @@ struct WorktreeMapTailBackground: View {
             let count = max(1, Int(ceil(geometry.size.height / tileHeight)))
             VStack(spacing: 0) {
                 ForEach(0..<count, id: \.self) { index in
-                    Image(nsImage: image)
-                        .resizable().interpolation(.high)
+                    WorktreeMapArtwork(image: image, decorative: true)
                         .frame(width: WorktreeMapLayout.width, height: tileHeight)
                         // Mirrored repeats meet at identical edge pixels, even
                         // when the provider's texture is not perfectly tileable.

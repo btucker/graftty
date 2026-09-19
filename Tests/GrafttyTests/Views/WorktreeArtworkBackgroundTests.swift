@@ -7,6 +7,36 @@ import GrafttyKit
 @Suite("Worktree row artwork")
 @MainActor
 struct WorktreeArtworkBackgroundTests {
+    @Test("@spec LAYOUT-2.117: While sidebar artwork is displayed, the application shall suppress fine detail behind labels, pane lists, and decorative terrain while retaining regional color and clear landmark detail on the right.")
+    func quietTerrainKeepsColorAndLimitsDetailToLandmarks() throws {
+        let image = try WorktreeMapRaster.draw(size: .init(width: 320, height: 160)) { context in
+            for x in stride(from: 0, to: 320, by: 4) {
+                context.setFillColor((x.isMultiple(of: 8) ? NSColor.white : NSColor.black).cgColor)
+                context.fill(CGRect(x: x, y: 0, width: 4, height: 160))
+            }
+        }
+        func render(_ decorative: Bool) throws -> NSBitmapImageRep {
+            let renderer = ImageRenderer(content: WorktreeMapArtwork(image: image, decorative: decorative)
+                .frame(width: 320, height: 160))
+            renderer.scale = 1
+            return NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        }
+        func brightness(_ bitmap: NSBitmapImageRep, _ x: Int, _ y: Int) throws -> CGFloat {
+            try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)).redComponent
+        }
+        let row = try render(false), terrain = try render(true)
+        #expect(abs(try brightness(row, 25, 25) - brightness(row, 29, 25)) < 0.15)
+        #expect(abs(try brightness(row, 273, 25) - brightness(row, 277, 25)) > 0.8)
+        #expect(abs(try brightness(row, 273, 135) - brightness(row, 277, 135)) < 0.15)
+        #expect(abs(try brightness(terrain, 273, 25) - brightness(terrain, 277, 25)) < 0.12)
+        #expect(try brightness(row, 25, 25) > 0.4)
+        let narrowRenderer = ImageRenderer(content: WorktreeArtworkBackground(image: image,
+            backgroundColor: .black, selectionColor: .clear, groupsText: true).frame(width: 220, height: 160))
+        narrowRenderer.scale = 1
+        let narrow = NSBitmapImageRep(cgImage: try #require(narrowRenderer.cgImage))
+        #expect(abs(try brightness(narrow, 193, 25) - brightness(narrow, 197, 25)) > 0.6)
+    }
+
     @Test("@spec LAYOUT-2.112: While Git divergence counts appear over map artwork, the application shall place them on a compact translucent backing without adding a backing when artwork is absent.")
     func gitStatsBackingProtectsCountsOnBrightTerrain() throws {
         let theme = GhosttyTheme(core: .init(backgroundRGB: .init(r: 1, g: 1, b: 1), foregroundRGB: .init(r: 0, g: 0, b: 0)))
@@ -107,11 +137,12 @@ struct WorktreeArtworkBackgroundTests {
         #expect(try color(short, 10).redComponent > 0.3)
         #expect(try color(short, 90).blueComponent > 0.3)
         #expect(try color(short, 170).redComponent > 0.3)
-        #expect(try color(short, 10).blueComponent < 0.01)
-        #expect(try color(short, 90).redComponent < 0.05)
+        // Decorative terrain retains the colors but suppresses high-contrast repeats.
+        #expect(abs(try color(short, 10).redComponent - color(short, 90).redComponent) < 0.15)
         let before = try color(short, 79), after = try color(short, 80)
         #expect(abs(before.blueComponent - after.blueComponent) < 0.01)
-        #expect(try color(short, 319).redComponent > 0.75)
+        #expect(try color(short, 319).redComponent > 0.3)
+        #expect(abs(try color(short, 319).redComponent - color(short, 0).redComponent) < 0.01)
         let beyondRight = try #require(short.colorAt(x: 380, y: 20)?.usingColorSpace(.deviceRGB))
         #expect(beyondRight.redComponent < 0.01)
     }

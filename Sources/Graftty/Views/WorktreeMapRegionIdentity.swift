@@ -3,6 +3,7 @@ import Foundation
 /// Region assignments belong to worktree paths, not their current list positions.
 enum WorktreeMapRegionIdentity {
     static let revision = 2
+    static let quietTerrain = "Nearly uniform matte terrain with sparse, low-contrast texture. No objects, cliffs, paths, cracks or directional lines. Matching top and bottom edges."
 
     static func assign(paths: [String], preserving existing: [String: Int]) -> [String: Int] {
         let paths = Set(paths).sorted()
@@ -26,10 +27,10 @@ enum WorktreeMapRegionIdentity {
                       "burnt orange", "icy cyan", "magenta", "chartreuse",
                       "deep plum", "seafoam mint", "saffron yellow", "powder blue"]
         let terrain = [
-            "a dense orchard-like canopy of broad rounded crowns",
+            "three broad rounded crowns surrounded by open ground",
             "one large circular pool or hollow with an open smooth center",
             "broad open fields arranged in horizontal terraces",
-            "a cluster of tall narrow spires forming a jagged skyline",
+            "three narrow spires forming a simple skyline",
             "a fan of oversized leaves, sails or radial wedges",
             "one broad domed enclosure surrounded by sparse open space",
             "angular crystalline ridges with strong diagonal faces",
@@ -44,6 +45,6 @@ enum WorktreeMapRegionIdentity {
             "one broad star-shaped formation surrounded by quiet space",
         ]
         let value = max(0, id)
-        return "Dominant color field: \(colors[value % colors.count]). Terrain silhouette: \(terrain[(value % 16 + value / 16) % terrain.count]). Interpret this as a distinct place inside the project's world, in its chosen visual medium. The color belongs to the entire region, not small accents."
+        return "Dominant color field: \(colors[value % colors.count]). Terrain silhouette: \(terrain[(value % 16 + value / 16) % terrain.count]). Interpret this as a distinct place inside the project's world, in its chosen visual medium. The color belongs to the entire region, not small accents. Keep the composition sparse: one landmark between 45% and 65% of image width, calm open color on the left 40% and outer right third, minimal texture, no scattered props or tiny repeated details."
     }
 }
