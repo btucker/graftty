@@ -118,7 +118,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             // updates must not invalidate an image that is still generating.
             if previousRequests.filter({ $0.project == project }) != members(project) { invalidate(project) }
         }
-        if !active || generatingProject.map({ !projects.contains($0) }) == true { worker?.cancel() }
+        // A map can take several minutes. Losing focus must not discard completed
+        // regions; nextProject already pauses the queue before another project.
+        if generatingProject.map({ !projects.contains($0) }) == true { worker?.cancel() }
         start()
     }
 
@@ -272,6 +274,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
         } catch {
             if Task.isCancelled { return }
             guard revisions[k, default: 0] == revision else { return }
+            // Apple generation can require the foreground. Keep background
+            // failures pending so activation can retry them without a busy loop.
+            guard active else { return }
             dirty.remove(k)
             for request in worktrees {
                 failures[request.path] = error.localizedDescription
@@ -285,13 +290,30 @@ final class ProjectWorktreeMapStore: ObservableObject {
         return directory.appendingPathComponent(digest + ".json")
     }
     private func load(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false) {
+        loadCached(project, restoreDisplayedPixels: restoreDisplayedPixels)
+        guard project.mapStyle != nil, members(project).contains(where: { images[$0.path] == nil }) else { return }
+        // Per-project media added a cache-key component. Show the pre-medium map
+        // during migration, but keep it under its own key so none of its regions
+        // are reused when generating the new medium.
+        var legacy = project
+        legacy.mapStyle = nil
+        loadCached(legacy)
+    }
+
+    private func publish(_ map: Map, for project: ProjectArtworkSource, replacing: Bool) {
+        guard WorktreeMapRaster.hasCompleteCanvas(map.image) else { return }
+        let paths = Set(requests.filter { $0.project?.path == project.path }.map(\.path))
+        guard map.slots.contains(where: { paths.contains($0.path) && (replacing || images[$0.path] == nil) }),
+              let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) else { return }
+        for (path, image) in slices where paths.contains(path) && (replacing || images[path] == nil) {
+            images[path] = image
+        }
+    }
+
+    private func loadCached(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false) {
         let k = key(project)
         if let map = maps[k] {
-            guard WorktreeMapRaster.hasCompleteCanvas(map.image) else { return }
-            guard restoreDisplayedPixels || map.slots.contains(where: { images[$0.path] == nil }) else { return }
-            if let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) {
-                for (path, image) in slices where restoreDisplayedPixels || images[path] == nil { images[path] = image }
-            }
+            publish(map, for: project, replacing: restoreDisplayedPixels)
             return
         }
         guard loaded.insert(k).inserted,
@@ -311,15 +333,13 @@ final class ProjectWorktreeMapStore: ObservableObject {
             image.size = .init(width: WorktreeMapLayout.width, height: h)
             landmarks[path] = image
         }
-        maps[k] = Map(slots: saved.slots, image: image, landmarks: landmarks, regionIDs: saved.regionIDs ?? [:],
+        let map = Map(slots: saved.slots, image: image, landmarks: landmarks, regionIDs: saved.regionIDs ?? [:],
             contextualPaths: saved.contextualPaths ?? Set(saved.slots.filter(\.hasLandmark).map(\.path)),
             regionRevision: saved.regionRevision ?? 0)
+        maps[k] = map
         // Earlier Apple fallbacks could save only landmark patches. Keep those
         // originals for repair, but do not publish the incomplete canvas.
-        guard WorktreeMapRaster.hasCompleteCanvas(image) else { return }
-        if let slices = try? WorktreeMapRaster.slices(image, rows: saved.slots.map(\.row)) {
-            for (path, image) in slices { images[path] = image }
-        }
+        publish(map, for: project, replacing: restoreDisplayedPixels)
     }
     private func save(_ map: Map, key: String) {
         do {

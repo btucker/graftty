@@ -2,7 +2,7 @@
 
 Each repository gets one illustrated map spanning its local worktrees and folder headers. Each worktree has a distinct region with a stable dominant color and broad terrain silhouette. Task context shapes its landmark; narrow connections join the regions. Main checkouts receive a root landmark inspired by the project avatar and purpose. Rows retain their normal background until the map is ready, without a temporary project-avatar background.
 
-Settings → General → Worktree backgrounds enables the feature and selects Illustration, Animation, or Sketch. Disabling it hides sidebar artwork and the terminal gradient and cancels generation. Style, resolved Ghostty backdrop, and project avatar changes select separate caches. This revision uses a new map cache; earlier independent worktree images are not migrated into it.
+Settings → General → Worktree backgrounds enables the feature and selects Illustration, Animation, or Sketch. Disabling it hides sidebar artwork and the terminal gradient and cancels generation. Style, resolved Ghostty backdrop, and project avatar changes select separate caches. When a project first adopts its assigned medium, its previous cached map remains visible across restarts until the replacement succeeds. Those old regions are not reused in the new medium. Earlier independent worktree images are not migrated into the map cache.
 
 ## Project direction and generation
 
@@ -12,7 +12,7 @@ For each map generation, Graftty tries installed Codex through `codex app-server
 
 Each worktree region is generated independently, then the application stacks it at the exact row boundaries. A shared project world and medium tie the regions together. Each request supplies the region's stable dominant color, terrain silhouette, bounded task context, selected style, and resolved Ghostty backdrop. One complete focal image occupies the first 80 logical points. Native rendering extends its quiet lower terrain when the row has more panes. Model placement no longer determines which worktree owns an image. Header, folder, and footer terrain are separate decorative regions.
 
-The worker runs at most two Codex region requests concurrently. Missing installations, unsupported capabilities, authentication errors, limits, incomplete images, and generation failures fall back to Apple's ImageCreator for only the affected regions. Apple fallback runs serially and retains the requested project medium and regional design in both its initial concepts and shorter retry. Apple requires a compatible device and foreground application. A failed replacement retains the displayed map. The first map requires more provider calls than whole-map generation; saved regions make reordering and reopening cheap.
+The worker runs at most two Codex region requests concurrently. Missing installations, unsupported capabilities, authentication errors, limits, incomplete images, and generation failures fall back to Apple's ImageCreator for only the affected regions. Apple fallback runs serially and retains the requested project medium and regional design in both its initial concepts and shorter retry. Apple requires a compatible device and foreground application. Losing focus lets the current project finish, while subsequent projects wait for activation. A failure while inactive remains pending for retry on activation. A failed replacement retains the displayed map. The first map requires more provider calls than whole-map generation; saved regions make reordering and reopening cheap.
 
 ## Stable landmarks and readable rows
 

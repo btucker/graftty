@@ -408,6 +408,77 @@ struct ProjectWorktreeMapTests {
         #expect(try pixel(store.images[a.path], y: 40).blueComponent > 0.95)
     }
 
+    @Test("@spec LAYOUT-2.115: When a project first adopts an artwork medium after restart, the application shall display its previous cached map until a replacement succeeds without reusing old regions in the new medium.", arguments: [false, true])
+    func mediumMigrationDisplaysPreviousCache(replacementFails: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var request = WorktreeArtworkRequest(path: "/project", name: "main", firstPaneSessionName: nil,
+            project: .init(path: "/project", avatar: nil), isMainCheckout: true)
+        let original = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            try WorktreeMapRaster.png(solid(.red))
+        }
+        original.update(worktrees: [request], isActive: true)
+        await original.waitUntilIdle()
+        request.project?.mapStyle = .ink
+        var calls = 0
+        let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
+            calls += 1
+            #expect(input.preservedRegions.isEmpty)
+            #expect(input.preservedPaths.isEmpty)
+            if replacementFails { throw ImageCreatorWorktreeIcon.Failure.unavailable }
+            return try WorktreeMapRaster.png(solid(.blue))
+        }
+        restored.update(worktrees: [request], isActive: false)
+        #expect(try pixel(restored.images[request.path], y: 40).redComponent > 0.95)
+        restored.update(worktrees: [request], isActive: true)
+        await restored.waitUntilIdle()
+        #expect(calls == 1)
+        let color = try pixel(restored.images[request.path], y: 40)
+        #expect(replacementFails ? color.redComponent > 0.95 : color.blueComponent > 0.95)
+        let relaunched = ProjectWorktreeMapStore(directory: directory, history: { _ in nil }) { _ in
+            Issue.record("Inactive cache loading must not generate")
+            return Data()
+        }
+        relaunched.update(worktrees: [request], isActive: false)
+        let cached = try pixel(relaunched.images[request.path], y: 40)
+        #expect(replacementFails ? cached.redComponent > 0.95 : cached.blueComponent > 0.95)
+    }
+
+    @Test("@spec LAYOUT-2.116: When the application loses focus during map generation, the application shall let the current map finish, cache successful results, and defer retries and subsequent projects until the application becomes active.", arguments: [false, true])
+    func losingFocusKeepsInFlightMap(backgroundFails: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requests = ["one", "two"].map {
+            WorktreeArtworkRequest(path: "/\($0)", name: "main", firstPaneSessionName: nil,
+                project: .init(path: "/\($0)", avatar: nil), isMainCheckout: true)
+        }
+        var calls = 0
+        var continuation: CheckedContinuation<Void, Never>?
+        let store = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { _ in
+            calls += 1
+            if calls == 1 {
+                await withCheckedContinuation { continuation = $0 }
+                if backgroundFails { throw ImageCreatorWorktreeIcon.Failure.unavailable }
+            }
+            try Task.checkCancellation()
+            return try WorktreeMapRaster.png(solid(.red))
+        }
+        store.update(worktrees: requests, isActive: true)
+        while continuation == nil { await Task.yield() }
+        store.update(worktrees: requests, isActive: false)
+        continuation?.resume()
+        await store.waitUntilIdle()
+        #expect(calls == 1)
+        #expect((store.images[requests[0].path] == nil) == backgroundFails)
+        #expect(store.images[requests[1].path] == nil)
+        store.update(worktrees: requests, isActive: true)
+        await store.waitUntilIdle()
+        #expect(calls == (backgroundFails ? 3 : 2))
+        #expect(store.images[requests[0].path] != nil)
+        #expect(store.images[requests[1].path] != nil)
+        #expect(store.failures.isEmpty)
+    }
+
     @Test("Returning to a cached project medium restores its pixels without generating again")
     func mediumRoundTripRestoresCachedPixels() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
