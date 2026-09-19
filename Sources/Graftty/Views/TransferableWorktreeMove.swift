@@ -1,3 +1,4 @@
+import AppKit
 import CoreTransferable
 import CoreGraphics
 import Foundation
@@ -86,12 +87,24 @@ enum WorktreeRowDrop: Transferable {
     }
 }
 
+/// DropDelegate exit/end callbacks can be lost when SwiftUI replaces a row
+/// during a drag. Pointer release independently expires both decorations.
+struct WorktreeDropIndicator: Equatable {
+    var placement: WorktreeDropPlacement?
+    var targetsPane = false
+
+    var isVisible: Bool { placement != nil || targetsPane }
+
+    mutating func reconcilePointer(buttons: Int) {
+        if buttons & 1 == 0 { self = .init() }
+    }
+}
+
 private struct WorktreeRowDropDelegate: DropDelegate {
     let rowHeight: CGFloat
     let allowsReordering: Bool
     let isInFlight: Bool
-    @Binding var placement: WorktreeDropPlacement?
-    let onPaneTargeted: (Bool) -> Void
+    @Binding var indicator: WorktreeDropIndicator
     let onDrop: (WorktreeRowDrop, WorktreeDropPlacement) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -101,7 +114,7 @@ private struct WorktreeRowDropDelegate: DropDelegate {
 
     func dropEntered(info: DropInfo) { updateIndicator(info) }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard validateDrop(info: info) else { return DropProposal(operation: .forbidden) }
+        guard validateDrop(info: info) else { clearIndicator(); return DropProposal(operation: .forbidden) }
         updateIndicator(info)
         return DropProposal(operation: .move)
     }
@@ -110,10 +123,12 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     private func updateIndicator(_ info: DropInfo) {
         guard validateDrop(info: info) else { clearIndicator(); return }
         let isWorktree = info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])
-        placement = isWorktree ? WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight) : nil
-        onPaneTargeted(!isWorktree)
+        indicator = .init(
+            placement: isWorktree ? WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight) : nil,
+            targetsPane: !isWorktree
+        )
     }
-    private func clearIndicator() { placement = nil; onPaneTargeted(false) }
+    private func clearIndicator() { indicator = .init() }
 
     func performDrop(info: DropInfo) -> Bool {
         clearIndicator()
@@ -139,7 +154,7 @@ struct WorktreeReorderTarget: ViewModifier {
     let onMovePane: (PaneSlotID, String) -> Void
     let onPaneTargeted: (Bool) -> Void
     @State private var rowSize: CGSize = .init(width: 280, height: 28)
-    @State private var placement: WorktreeDropPlacement?
+    @State private var indicator = WorktreeDropIndicator()
 
     private var worktree: WorktreeEntry? {
         appState.repos.first { $0.id == repoID }?.worktrees.first { $0.id == worktreeID }
@@ -165,15 +180,34 @@ struct WorktreeReorderTarget: ViewModifier {
             .onDrop(of: WorktreeRowDrop.contentTypes, delegate: WorktreeRowDropDelegate(
                 rowHeight: rowSize.height, allowsReordering: isEnabled,
                 isInFlight: worktree?.state.isInFlight ?? true,
-                placement: $placement, onPaneTargeted: onPaneTargeted,
+                indicator: $indicator,
                 onDrop: { payload, destination in
                     let result = payload.apply(repoID: repoID, targetWorktreeID: worktreeID, placement: destination,
                                   allowsReordering: isEnabled, to: &appState)
                     // Invoke pane moves after releasing the state binding's writeback.
                     if case .movePane(let slot, let path) = result { onMovePane(slot, path) }
                 }))
-            .overlay(alignment: placement == .after ? .bottom : .top) {
-                if placement != nil { Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false) }
+            .overlay(alignment: indicator.placement == .after ? .bottom : .top) {
+                if indicator.placement != nil { Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false) }
+            }
+            .onChange(of: indicator.targetsPane) { _, targeted in onPaneTargeted(targeted) }
+            .task(id: indicator.isVisible) {
+                // Only run while a decoration is showing. Reading button state
+                // also works after a release outside this window, without an
+                // event monitor or Accessibility permission.
+                guard indicator.isVisible else { return }
+                do {
+                    while true {
+                        try Task.checkCancellation()
+                        indicator.reconcilePointer(buttons: NSEvent.pressedMouseButtons)
+                        guard indicator.isVisible else { return }
+                        try await Task.sleep(for: .milliseconds(75))
+                    }
+                } catch { /* The row disappeared or its drop indicator cleared. */ }
+            }
+            .onDisappear {
+                indicator = .init()
+                onPaneTargeted(false)
             }
     }
 }

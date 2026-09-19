@@ -13,11 +13,19 @@ struct WorktreeRowGutter: View {
     let stats: WorktreeStats?
     let baseRef: String?
     let theme: GhosttyTheme
+    var hasArtwork = false
 
     var body: some View {
         if let stats, !stats.isEmpty {
             commitsText(stats)
                 .font(.system(size: 10, design: .monospaced))
+                .padding(.horizontal, hasArtwork ? 4 : 0)
+                .padding(.vertical, hasArtwork ? 2 : 0)
+                .background {
+                    if hasArtwork {
+                        RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.65))
+                    }
+                }
                 .help(tooltip(stats))
         }
     }
@@ -31,7 +39,7 @@ struct WorktreeRowGutter: View {
         let aheadShown = s.ahead > 0 || s.hasUncommittedChanges
         let behindShown = s.behind > 0
         let ahead = Text("↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")")
-            .foregroundColor(theme.foreground.opacity(0.55))
+            .foregroundColor(hasArtwork ? .white.opacity(0.9) : theme.foreground.opacity(0.55))
         let behind = Text("↓\(s.behind)")
             .foregroundColor(.red)
         switch (aheadShown, behindShown) {

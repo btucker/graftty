@@ -34,6 +34,9 @@ enum RemotePaneLayoutProjection {
 struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
+    @ObservedObject private var worktreeIcons = WorktreeIconStore.shared
+    @ObservedObject private var projectIcons = SidebarHostController.shared
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled) private var artworkEnabled = true
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
@@ -165,6 +168,7 @@ struct MainWindow: View {
                         : nil,
                     theme: terminalManager.theme,
                     sidebarHidden: columnVisibility == .detailOnly,
+                    showsWorktreeArtwork: selectedWorktreeArtwork != nil,
                     onRefreshPR: refreshPR
                 )
 
@@ -234,6 +238,7 @@ struct MainWindow: View {
                         ),
                         focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
                         theme: terminalManager.theme,
+                        showsWorktreeArtwork: selectedWorktreeArtwork != nil,
                         onFocusTerminal: { terminalID in
                             attentionOpenGeneration &+= 1
                             // Persist the focus change on the model BEFORE
@@ -267,6 +272,11 @@ struct MainWindow: View {
             }
             .ignoresSafeArea(.container, edges: .top)
         }
+        .modifier(WorktreeWindowArtwork(
+            image: selectedWorktreeArtwork,
+            backgroundColor: terminalManager.theme.background,
+            isRegenerating: appState.selectedWorktreePath.map { worktreeIcons.regeneratingPaths.contains($0) } ?? false
+        ))
         // Tint the NSWindow to match the terminal theme: background color,
         // transparent titlebar + full-size content view, and NSAppearance
         // matching the theme's dark/light-ness so system chrome (traffic
@@ -500,6 +510,15 @@ struct MainWindow: View {
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    private var selectedWorktreeArtwork: NSImage? {
+        guard artworkEnabled, selectedRemoteIdentity == nil, let repo = selectedRepo, let worktree = selectedWorktree else { return nil }
+        return WorktreeArtworkBackground.resolveImage(
+            isMainCheckout: worktree.path == repo.path,
+            projectIcon: projectIcons.icons[repo.id.uuidString],
+            generated: worktreeIcons.images[worktree.path]
+        )
     }
 
     private var selectedRemoteMac: RemoteMac? {

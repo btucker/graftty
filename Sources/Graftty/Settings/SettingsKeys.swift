@@ -16,6 +16,8 @@ enum SettingsKeys {
     static let teamSessionPromptLegacySuffixBackup = "teamSessionPromptLegacySuffixBackup"
     static let teamPrompt                = "teamPrompt"
     static let defaultCommand            = "defaultCommand"
+    static let worktreeArtworkEnabled    = "worktreeArtworkEnabled"
+    static let worktreeArtworkStyle      = "worktreeArtworkStyle"
     // Editor keys are owned by GrafttyKit (so the resolver and the UI never drift).
     static let editorKind                = EditorPreference.Keys.kind
     static let editorAppBundleID         = EditorPreference.Keys.appBundleID

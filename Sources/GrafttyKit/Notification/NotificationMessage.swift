@@ -120,7 +120,8 @@ public enum NotificationMessage: Sendable, Equatable {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason? = nil,
-        skillManaged: Bool = false
+        skillManaged: Bool = false,
+        userPrompt: String? = nil
     )
     case teamInbox(TeamInboxPageRequest)
     case teamInboxAdvance(
@@ -190,6 +191,7 @@ extension NotificationMessage: Codable {
         case paneSessionName = "pane_session_name"
         case attentionReason = "attention_reason"
         case skillManaged = "skill_managed"
+        case userPrompt = "user_prompt"
         case pressEnter = "press_enter"
     }
 
@@ -273,7 +275,8 @@ extension NotificationMessage: Codable {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged
+            let skillManaged,
+            let userPrompt
         ):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -284,6 +287,7 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
             try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
             try container.encode(skillManaged, forKey: .skillManaged)
+            try container.encodeIfPresent(userPrompt, forKey: .userPrompt)
         case .teamInbox(let request):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(request.callerWorktree, forKey: .callerWorktree)
@@ -453,7 +457,8 @@ extension NotificationMessage: Codable {
                              runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
                              attentionReason: attentionReason,
-                             skillManaged: skillManaged)
+                             skillManaged: skillManaged,
+                             userPrompt: try container.decodeIfPresent(String.self, forKey: .userPrompt))
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)

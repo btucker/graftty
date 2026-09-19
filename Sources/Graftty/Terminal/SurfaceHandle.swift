@@ -153,6 +153,20 @@ final class SurfaceHandle {
     let view: NSView
     let worktreePath: String
     weak var followerPresentation: MacFollowerTerminalView?
+    private(set) var worktreeArtworkConfig: GhosttyConfig?
+
+    @MainActor
+    func setWorktreeArtworkVisible(_ visible: Bool) {
+        (view as? SurfaceNSView)?.terminalManager?.configureWorktreeArtwork(visible, for: self)
+    }
+
+    func setWorktreeArtworkConfig(_ config: GhosttyConfig?, base: GhosttyConfig) {
+        guard worktreeArtworkConfig !== config else { return }
+        worktreeArtworkConfig = config
+        let effective = config ?? base
+        effective.apply(to: surface, in: view)
+        followerPresentation?.updateGhosttyConfig(effective)
+    }
     private var attachmentGrid: DisplayGrid?
     private(set) var followerScrollbar = ghostty_action_scrollbar_s()
     /// zmx session this pane is attached to, nil for direct-shell panes.
@@ -633,11 +647,6 @@ final class SurfaceHandle {
     func makeFollowerHistorySurface(in view: NSView, scale: CGFloat) -> ghostty_surface_t? {
         var config = ghostty_surface_config_new()
         config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
-        #if GRAFTTY_PAGED_HISTORY
-        // A read-only mirror must match runtime zoom even when the user has
-        // disabled font inheritance for newly created interactive surfaces.
-        config.font_size = ghostty_surface_font_size(surface)
-        #endif
         config.platform_tag = GHOSTTY_PLATFORM_MACOS
         config.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
         config.scale_factor = Double(scale)
@@ -648,7 +657,18 @@ final class SurfaceHandle {
         config.receive_resize = { _, _, _, _, _ in }
         config.command = nil
         config.initial_input = nil
-        return ghostty_surface_new(app, &config)
+        guard let history = ghostty_surface_new(app, &config) else { return nil }
+        #if GRAFTTY_PAGED_HISTORY
+        // Pin the mirror to the source's runtime zoom. The creation option
+        // font_size does not mark the size as adjusted, so a later config
+        // update would reset it to the user's configured font size.
+        let fontAction = "set_font_size:\(ghostty_surface_font_size(surface))"
+        fontAction.withCString { _ = ghostty_surface_binding_action(history, $0, UInt(fontAction.utf8.count)) }
+        #endif
+        if let artwork = worktreeArtworkConfig {
+            artwork.apply(to: history, in: view)
+        }
+        return history
     }
 
     func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {

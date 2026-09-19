@@ -5,11 +5,17 @@ import AppKit
 
 /// Uses the project rail's margins without native List disclosure-column padding.
 public struct ProjectWorktreeColumn<Content: View>: View {
+    private let rowSpacing: CGFloat
+    private let horizontalInset: CGFloat
     private let content: Content
+    private let emptySpaceBackground: AnyView
     private let onDoubleClickEmptySpace: () -> Void
     @State private var rowsHeight: CGFloat = 0
 
-    public init(onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+    public init(rowSpacing: CGFloat = 3, horizontalInset: CGFloat = 6, emptySpaceBackground: AnyView = AnyView(Color.clear), onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+        self.rowSpacing = rowSpacing
+        self.horizontalInset = horizontalInset
+        self.emptySpaceBackground = emptySpaceBackground
         self.onDoubleClickEmptySpace = onDoubleClickEmptySpace
         self.content = content()
     }
@@ -18,17 +24,19 @@ public struct ProjectWorktreeColumn<Content: View>: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(spacing: 0) {
-                    LazyVStack(alignment: .leading, spacing: 3) {
+                    LazyVStack(alignment: .leading, spacing: rowSpacing) {
                         content
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, horizontalInset)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
 
                     #if os(macOS)
                     ProjectWorktreeEmptySpace(onDoubleClick: onDoubleClickEmptySpace)
                         .frame(height: max(0, viewport.size.height - rowsHeight))
+                        .background(emptySpaceBackground.padding(.horizontal, horizontalInset))
                     #else
                     Color.clear.frame(height: max(0, viewport.size.height - rowsHeight))
+                        .background(emptySpaceBackground.padding(.horizontal, horizontalInset))
                     #endif
                 }
             }

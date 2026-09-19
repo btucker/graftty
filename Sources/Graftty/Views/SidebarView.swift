@@ -78,6 +78,10 @@ struct SidebarView: View {
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @ObservedObject private var iconStore = SidebarHostController.shared
+    @ObservedObject private var worktreeIcons = WorktreeIconStore.shared
+    @ObservedObject private var projectArtworkStyles = ProjectMapStyles.shared
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled) private var artworkEnabled = true
+    @AppStorage(SettingsKeys.worktreeArtworkStyle) private var artworkStyle = "illustration"
     @State private var projects: [SidebarProject] = []
     @State private var remoteIcons: [String: Data] = [:]
     @State private var fetchedIconRevisions: [String: String] = [:]
@@ -85,6 +89,80 @@ struct SidebarView: View {
     @State private var showsRemoteManagement = false
 
     private var owner: WorktreeOrigin { iconStore.owner }
+    private var worktreeArtworkRequests: [WorktreeArtworkRequest] {
+        appState.repos.flatMap { repo in
+            guard let project = projectArtworkSource(for: repo) else { return [WorktreeArtworkRequest]() }
+            func flatten(_ nodes: [SidebarWorktreeNode], visible: Bool) -> [WorktreeArtworkRequest] {
+                nodes.flatMap { node -> [WorktreeArtworkRequest] in
+                    switch node {
+                    case .worktree(let worktree, _):
+                        guard var request = artworkRequest(for: worktree, repo: repo) else { return [] }
+                        request.mapVisible = visible
+                        return [request]
+                    case .folder(let path, let name, let children):
+                        let folder = WorktreeArtworkRequest(path: WorktreeMapLayout.folderPath(repo: repo.path, folder: path),
+                            name: name, firstPaneSessionName: nil, project: project, mapHeight: 44,
+                            mapVisible: visible, mapFolder: true)
+                        let expanded = worktreeFolderExpansion.isExpanded(.init(repositoryID: repo.id, path: path))
+                        return [folder] + flatten(children, visible: visible && expanded)
+                    }
+                }
+            }
+            return [WorktreeMapLayout.header(project: project)] + flatten(SidebarWorktreeHierarchy.nodes(for: repo.worktrees,
+                inRepoAtPath: repo.path, defaultBranch: nil), visible: true) + [WorktreeMapLayout.footer(project: project)]
+        }
+    }
+    private var mapHeaderRepo: RepoEntry? {
+        guard artworkEnabled, showsProjectRail, !navigation.showsAttention, navigation.query.isEmpty else { return nil }
+        return appState.repos.first { localProjectID($0) == navigation.selectedProjectID }
+    }
+    private func lastMapPath(in repo: RepoEntry) -> String? {
+        if mapTailRepo?.id == repo.id, worktreeIcons.images[WorktreeMapLayout.footerPath(repo: repo.path)] != nil { return nil }
+        return worktreeArtworkRequests.last {
+            $0.project?.path == repo.path && $0.mapVisible && $0.path != WorktreeMapLayout.footerPath(repo: repo.path)
+        }?.path
+    }
+    private var mapTailRepo: RepoEntry? {
+        guard artworkEnabled, !navigation.showsAttention, navigation.query.isEmpty else { return nil }
+        // The combined list has remote controls after its local repositories.
+        // Only the selected-project column ends directly after its map.
+        return mapHeaderRepo
+    }
+    private var mapTailBackground: AnyView {
+        guard let repo = mapTailRepo,
+              let image = worktreeIcons.images[WorktreeMapLayout.footerPath(repo: repo.path)] else { return AnyView(Color.clear) }
+        return AnyView(WorktreeMapTailBackground(image: image, backgroundColor: theme.sidebarBackground))
+    }
+    private func artworkRequest(for worktree: WorktreeEntry, repo: RepoEntry) -> WorktreeArtworkRequest? {
+        guard let project = projectArtworkSource(for: repo) else { return nil }
+        let height = max(80, 44 + 20 * (worktree.state == .running ? worktree.splitTree.allLeaves.count : 0))
+        if worktree.path == repo.path, worktree.state.hasOnDiskWorktree {
+            return WorktreeArtworkRequest(path: worktree.path, name: "main", firstPaneSessionName: nil,
+                project: project, isMainCheckout: true, mapHeight: Double(height))
+        }
+        var request = WorktreeIconStore.request(for: worktree, repoPath: repo.path, project: project)
+        request?.mapHeight = Double(height)
+        return request
+    }
+    private func projectArtworkSource(for repo: RepoEntry) -> ProjectArtworkSource? {
+        guard var source = iconStore.artworkSource(for: repo) else { return nil }
+        source.mapStyle = projectArtworkStyles.style(for: repo.path)
+        return source
+    }
+
+    private func projectMapStyleMenu(_ repo: RepoEntry) -> some View {
+        Menu("Map Style") {
+            Picker("Map Style", selection: Binding<ProjectMapStyle?>(
+                get: { projectArtworkStyles.override(for: repo.path) },
+                set: { projectArtworkStyles.setOverride($0, for: repo.path) }
+            )) {
+                Text("Automatic (\(projectArtworkStyles.automaticStyle(for: repo.path).label))").tag(Optional<ProjectMapStyle>.none)
+                ForEach(ProjectMapStyle.allCases, id: \.self) { style in
+                    Text(style.label).tag(Optional(style))
+                }
+            }
+        }
+    }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
     private var orderedSidebarRepos: [RepoEntry] {
         let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
@@ -167,6 +245,7 @@ struct SidebarView: View {
                 Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
             }
             Button("Choose Project Icon…") { iconStore.chooseIcon(for: repo.id, state: &appState) }
+            projectMapStyleMenu(repo)
             Button("Use Initials") {
                 if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
                     appState.repos[index].iconOverride = .initials(project.displayInitials)
@@ -253,12 +332,44 @@ struct SidebarView: View {
                         return opened
                     }
                 } else {
-                    TextField("Find any project or worktree", text: $navigation.query)
-                        .textFieldStyle(.roundedBorder).padding(10)
+                    VStack(spacing: 0) {
+                        if let repo = mapHeaderRepo,
+                           let avatar = iconStore.artworkSource(for: repo)?.avatar,
+                           let image = NSImage(data: avatar) {
+                            HStack {
+                                ProjectMapHeaderAvatar(image: image, backgroundColor: theme.sidebarBackground,
+                                                       projectName: repo.displayName)
+                                Spacer()
+                            }.padding(.horizontal, 10).padding(.top, 6)
+                        }
+                        TextField("Find any project or worktree", text: $navigation.query,
+                                  prompt: Text("Find any project or worktree").foregroundColor(theme.foreground.opacity(0.75)))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(theme.foreground)
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .background(theme.sidebarBackground.opacity(0.94), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(theme.foreground.opacity(0.2), lineWidth: 1) }
+                            .padding(10)
+                        if let repo = mapHeaderRepo, SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+                            HStack {
+                                Spacer()
+                                addWorktreeButton(repo, showsLabel: true,
+                                    hasArtwork: worktreeIcons.images[WorktreeMapLayout.headerPath(repo: repo.path)] != nil)
+                            }
+                                .frame(height: 44).padding(.horizontal, 6)
+                        }
+                    }
+                    .background {
+                        if let repo = mapHeaderRepo,
+                           let image = worktreeIcons.images[WorktreeMapLayout.headerPath(repo: repo.path)] {
+                            WorktreeMapHeaderBackground(image: image, backgroundColor: theme.sidebarBackground)
+                                .ignoresSafeArea(.container, edges: .top)
+                        }
+                    }
                     ScrollViewReader { proxy in
                         Group {
-                            if showsProjectRail {
-                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
+                            if showsProjectRail || artworkEnabled {
+                                ProjectWorktreeColumn(rowSpacing: artworkEnabled ? 0 : 3, horizontalInset: artworkEnabled ? 0 : 6, emptySpaceBackground: mapTailBackground, onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
                                     worktreeRows
                                 }
                             }
@@ -284,11 +395,27 @@ struct SidebarView: View {
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
+        .background { if artworkEnabled { theme.sidebarBackground.ignoresSafeArea() } }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
                 try? await Task.sleep(for: .seconds(1))
             }
+        }
+        .onChange(of: WorktreeArtworkTheme(theme: theme), initial: true) { _, artworkTheme in
+            worktreeIcons.configure(theme: artworkTheme)
+        }
+        .onChange(of: appState.repos.map(\.path), initial: true) { _, paths in
+            projectArtworkStyles.register(paths)
+        }
+        .onChange(of: worktreeArtworkRequests, initial: true) { _, requests in
+            worktreeIcons.update(worktrees: requests, isActive: NSApplication.shared.isActive)
+        }
+        .onChange(of: artworkEnabled, initial: true) { _, enabled in
+            worktreeIcons.configure(enabled: enabled, style: WorktreeArtworkStyle(rawValue: artworkStyle) ?? .illustration)
+        }
+        .onChange(of: artworkStyle) { _, style in
+            worktreeIcons.configure(enabled: artworkEnabled, style: WorktreeArtworkStyle(rawValue: style) ?? .illustration)
         }
         .onChange(of: appState.selectedWorktreePath) { old, new in
             rememberSelection(old)
@@ -448,7 +575,11 @@ struct SidebarView: View {
                     expansion: $worktreeFolderExpansion,
                     statsByWorktreePath: statsStore.stats,
                     theme: theme,
-                    projectColumn: showsProjectRail
+                    projectColumn: showsProjectRail,
+                    mapImages: artworkEnabled ? worktreeIcons.images : [:],
+                    mapRepoPath: repo.path,
+                    mapLastPath: lastMapPath(in: repo),
+                    mapEnabled: artworkEnabled
                 ) { worktree, displayName in
                     worktreeBlock(
                         worktree,
@@ -457,11 +588,11 @@ struct SidebarView: View {
                         activityCounts: attentionCounts
                     )
                 }
-                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
+                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail || artworkEnabled))
             }
         }
         if showsProjectRail {
-            if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+            if mapHeaderRepo?.id != repo.id, SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                 HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
                     .frame(height: 44)
             }
@@ -475,7 +606,11 @@ struct SidebarView: View {
                     }
                 }
             )) {
-                rows
+                if artworkEnabled {
+                    VStack(spacing: 0) { rows }
+                } else {
+                    rows
+                }
             } label: {
                 HStack(spacing: 6) {
                     Text(repo.displayName).foregroundColor(theme.foreground).fontWeight(.semibold)
@@ -489,21 +624,26 @@ struct SidebarView: View {
                     if let forge = forgeLink {
                         Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
                     }
+                    projectMapStyleMenu(repo)
                     Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
         }
     }
 
-    private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool) -> some View {
+    private func addWorktreeButton(_ repo: RepoEntry, showsLabel: Bool, hasArtwork: Bool = false) -> some View {
         Button { presentAddWorktree(for: repo) } label: {
             HStack(spacing: 5) {
                 Image(systemName: "plus")
                 if showsLabel { Text("Add worktree") }
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(theme.sidebarDimIcon)
+            .foregroundColor(hasArtwork ? .white.opacity(0.9) : theme.sidebarDimIcon)
             .frame(minWidth: 18, minHeight: 22).contentShape(Rectangle())
+            .padding(.horizontal, hasArtwork ? 6 : 0)
+            .background {
+                if hasArtwork { RoundedRectangle(cornerRadius: 5).fill(.black.opacity(0.6)) }
+            }
         }
         .buttonStyle(.plain)
         .help("Add worktree to \(repo.displayName)")
@@ -551,6 +691,11 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
+        let generatedArtwork = artworkEnabled ? WorktreeArtworkBackground.resolveImage(
+            isMainCheckout: worktree.path == repo.path,
+            projectIcon: iconStore.icons[repo.id.uuidString],
+            generated: worktreeIcons.images[worktree.path]
+        ) : nil
         let heading = WorktreeRow(
             entry: worktree,
             isActive: isActive,
@@ -572,7 +717,8 @@ struct SidebarView: View {
                 )
             },
             attentionStyle: attention.worktreeCapsule,
-            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
+            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
+            hasArtwork: generatedArtwork != nil
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
@@ -599,7 +745,8 @@ struct SidebarView: View {
                             attentionStyle: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? [],
                             attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            hasArtwork: generatedArtwork != nil
                         )
                     }
                     .buttonStyle(.plain)
@@ -620,7 +767,7 @@ struct SidebarView: View {
                 panes
             }
             .padding(.vertical, groupsPanes ? 8 : 0)
-            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background { worktreeBackground(image: generatedArtwork, isActive: isActive, isRegenerating: worktreeIcons.regeneratingPaths.contains(worktree.path), fadesBottom: lastMapPath(in: repo) == worktree.path) }
             .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
         )
         VStack(spacing: 0) {
@@ -649,10 +796,8 @@ struct SidebarView: View {
             panes
         }
         .padding(.vertical, groupsPanes ? 8 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
-        )
+        .frame(minHeight: generatedArtwork != nil ? artworkRequest(for: worktree, repo: repo)?.mapHeight ?? 80 : 0)
+        .background { worktreeBackground(image: generatedArtwork, isActive: isActive, isRegenerating: worktreeIcons.regeneratingPaths.contains(worktree.path), fadesBottom: lastMapPath(in: repo) == worktree.path) }
         // PWD-1.5: drop-target highlight. Stroked so it composes with
         // the active-worktree background fill above when the dragged-
         // onto row is also the active one.
@@ -660,6 +805,23 @@ struct SidebarView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
         )
+    }
+
+    @ViewBuilder
+    private func worktreeBackground(image: NSImage?, isActive: Bool, isRegenerating: Bool, fadesBottom: Bool) -> some View {
+        let selectionColor = theme.foreground.opacity(isActive ? 0.16 : 0)
+        if let image {
+            WorktreeArtworkBackground(
+                image: image,
+                backgroundColor: theme.sidebarBackground,
+                selectionColor: selectionColor,
+                isRegenerating: isRegenerating,
+                fadesBottom: fadesBottom,
+                groupsText: true
+            )
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selectionColor)
+        }
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
@@ -696,6 +858,12 @@ struct SidebarView: View {
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: worktree.path))
+            })
+            menu.addItem(.separator())
+        }
+        if artworkEnabled, let request = artworkRequest(for: worktree, repo: repo) {
+            menu.addItem(ClosureMenuItem(title: "Regenerate Background Image") {
+                worktreeIcons.regenerate(request)
             })
             menu.addItem(.separator())
         }
@@ -856,6 +1024,10 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let statsByWorktreePath: [String: WorktreeStats]
     let theme: GhosttyTheme
     var projectColumn: Bool = false
+    var mapImages: [String: NSImage] = [:]
+    var mapRepoPath = ""
+    var mapLastPath: String?
+    var mapEnabled = false
     let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
 
     @ViewBuilder
@@ -863,6 +1035,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
         switch node {
         case .worktree(let worktree, let displayName):
             worktreeContent(worktree, displayName)
+                .environment(\.worktreeMapIndent, mapEnabled ? CGFloat(depth * 12) : 0)
 
         case .folder(let path, let name, let children):
             let folderID = SidebarWorktreeFolderID(
@@ -874,6 +1047,45 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                 in: node,
                 statsByWorktreePath: statsByWorktreePath
             )
+            if mapEnabled {
+                VStack(spacing: 0) {
+                    Button {
+                        expansion.setExpanded(!isExpanded, for: folderID)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            Image(systemName: "folder")
+                            Text(name).lineLimit(1)
+                            Spacer()
+                            if !isExpanded {
+                                WorktreeRowGutter(stats: aggregate, baseRef: nil, theme: theme)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(mapImages[WorktreeMapLayout.folderPath(repo: mapRepoPath, folder: path)] == nil ? theme.foreground : .white)
+                        .padding(.leading, CGFloat(8 + depth * 12)).padding(.trailing, 8)
+                        .frame(height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(name), \(isExpanded ? "expanded" : "collapsed")")
+                    .background {
+                        let path = WorktreeMapLayout.folderPath(repo: mapRepoPath, folder: path)
+                        if let image = mapImages[path] {
+                            WorktreeArtworkBackground(image: image, backgroundColor: theme.sidebarBackground,
+                                selectionColor: .clear, fadesBottom: mapLastPath == path, groupsText: true)
+                        }
+                    }
+                    if isExpanded {
+                        ForEach(children) { child in
+                            SidebarWorktreeNodeRow(node: child, depth: depth + 1, repositoryID: repositoryID,
+                                expansion: $expansion, statsByWorktreePath: statsByWorktreePath,
+                                theme: theme, projectColumn: projectColumn, mapImages: mapImages,
+                                mapRepoPath: mapRepoPath, mapLastPath: mapLastPath, mapEnabled: true,
+                                worktreeContent: worktreeContent)
+                        }
+                    }
+                }
+            } else {
             DisclosureGroup(
                 isExpanded: Binding(
                     get: { expansion.isExpanded(folderID) },
@@ -920,6 +1132,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                 .frame(minHeight: projectColumn ? 44 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+            }
             }
         }
     }

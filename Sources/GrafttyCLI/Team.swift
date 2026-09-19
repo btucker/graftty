@@ -253,7 +253,8 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    skillManaged: skillManaged
+                    skillManaged: skillManaged,
+                    userPrompt: AgentHookPrompt.text(event: event, payload: stdinPayload)
                 )
             )
             switch response {

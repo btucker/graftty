@@ -16,6 +16,7 @@ struct BreadcrumbBar: View {
     let prInfo: PRInfo?
     let theme: GhosttyTheme
     let sidebarHidden: Bool
+    var showsWorktreeArtwork = false
     let onRefreshPR: () -> Void
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -58,7 +59,7 @@ struct BreadcrumbBar: View {
         .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
         .padding(.trailing, 12)
         .padding(.vertical, 8)
-        .background(theme.background)
+        .background(theme.background.opacity(showsWorktreeArtwork ? 0.35 : 1))
         // Animate the inset shift in lockstep with NavigationSplitView's
         // own column slide. Without this the padding flips instantly while
         // the column animates, so the breadcrumb appears to teleport.

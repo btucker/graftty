@@ -8,6 +8,25 @@ import GrafttyKit
 
 @Suite("Worktree drop reorder tests")
 struct WorktreeDropReorderTests {
+    @Test("@spec LAYOUT-2.91: When the user releases a sidebar drag, the application shall clear worktree insertion markers and pane-drop highlights even if the destination receives no drop or drag-exit callback.")
+    func releasedPointerClearsIndicatorsWithoutDropCallbacks() {
+        for placement in [WorktreeDropPlacement.before, .after] {
+            var indicator = WorktreeDropIndicator(placement: placement)
+            indicator.reconcilePointer(buttons: 1)
+            #expect(indicator.placement == placement)
+            #expect(indicator.isVisible)
+            indicator.reconcilePointer(buttons: 0)
+            #expect(!indicator.isVisible)
+            #expect(indicator.placement == nil)
+        }
+        var pane = WorktreeDropIndicator(targetsPane: true)
+        pane.reconcilePointer(buttons: 1)
+        #expect(pane.targetsPane)
+        pane.reconcilePointer(buttons: 2) // Right button doesn't continue a left-button drag.
+        #expect(!pane.targetsPane)
+        #expect(!pane.isVisible)
+    }
+
     @Test("@spec LAYOUT-2.66: When the macOS application is bundled, the application shall export its local worktree, remote worktree, and pane drag types as data so the system can recognize sidebar drag sessions.")
     func bundledAppDeclaresSidebarDragTypes() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

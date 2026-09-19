@@ -9,6 +9,8 @@ final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
     let owner = WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
     @Published private(set) var icons: [String: Data] = [:]
+    @Published private(set) var artworkSources: [UUID: ProjectArtworkSource] = [:]
+    @Published private var resolvedSignatures: [UUID: IconSignature] = [:]
     private var checked: [UUID: Date] = [:]
     private struct IconSignature: Equatable { var path: String; var iconOverride: ProjectIconOverride? }
     private var signatures: [UUID: IconSignature] = [:]
@@ -34,8 +36,17 @@ final class SidebarHostController: ObservableObject {
                 if icons[key] != image { icons[key] = image }
                 checked[repo.id] = Date()
                 loading.remove(repo.id)
+                let resolved = IconSignature(path: repo.path, iconOverride: repo.iconOverride)
+                if resolvedSignatures[repo.id] != resolved { resolvedSignatures[repo.id] = resolved }
+                let source = ProjectArtworkSource(path: repo.path, avatar: image)
+                if artworkSources[repo.id] != source { artworkSources[repo.id] = source }
             }
         }
+    }
+
+    func artworkSource(for repo: RepoEntry) -> ProjectArtworkSource? {
+        guard resolvedSignatures[repo.id] == IconSignature(path: repo.path, iconOverride: repo.iconOverride) else { return nil }
+        return artworkSources[repo.id]
     }
 
     func localProjects(_ repos: [RepoEntry], owner: WorktreeOrigin) -> [SidebarProject] {
