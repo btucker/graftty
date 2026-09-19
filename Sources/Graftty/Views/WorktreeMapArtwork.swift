@@ -7,33 +7,37 @@ struct WorktreeMapArtwork: View {
     var decorative = false
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Image(nsImage: Self.terrain(image)).resizable().interpolation(.high)
-                Image(nsImage: image).resizable().interpolation(.high)
-                    .mask {
-                        if decorative {
-                            Color.white.opacity(0.08)
-                        } else {
-                            LinearGradient(stops: [
-                                .init(color: .white.opacity(0.08), location: 0),
-                                .init(color: .white.opacity(0.08), location: 0.3),
-                                // Full detail remains inside even a 220-point column.
-                                .init(color: .white, location: 0.5),
-                            ], startPoint: .leading, endPoint: .trailing)
-                            .mask {
-                                if geometry.size.height > WorktreeMapLayout.landmarkHeight {
-                                    LinearGradient(stops: [
-                                        .init(color: .white, location: 0),
-                                        .init(color: .white, location: WorktreeMapLayout.landmarkHeight / geometry.size.height),
-                                        .init(color: .clear, location: min(1, 112 / geometry.size.height)),
-                                    ], startPoint: .top, endPoint: .bottom)
-                                } else {
-                                    Color.white
+        if image is WorktreeSVGMap.Preview {
+            Image(nsImage: image).resizable().interpolation(.high)
+        } else {
+            GeometryReader { geometry in
+                ZStack {
+                    Image(nsImage: Self.terrain(image)).resizable().interpolation(.high)
+                    Image(nsImage: image).resizable().interpolation(.high)
+                        .mask {
+                            if decorative {
+                                Color.white.opacity(0.08)
+                            } else {
+                                LinearGradient(stops: [
+                                    .init(color: .white.opacity(0.08), location: 0),
+                                    .init(color: .white.opacity(0.08), location: 0.3),
+                                    // Full detail remains inside even a 220-point column.
+                                    .init(color: .white, location: 0.5),
+                                ], startPoint: .leading, endPoint: .trailing)
+                                .mask {
+                                    if geometry.size.height > WorktreeMapLayout.landmarkHeight {
+                                        LinearGradient(stops: [
+                                            .init(color: .white, location: 0),
+                                            .init(color: .white, location: WorktreeMapLayout.landmarkHeight / geometry.size.height),
+                                            .init(color: .clear, location: min(1, 112 / geometry.size.height)),
+                                        ], startPoint: .top, endPoint: .bottom)
+                                    } else {
+                                        Color.white
+                                    }
                                 }
                             }
                         }
-                    }
+                }
             }
         }
     }

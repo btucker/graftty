@@ -23,17 +23,18 @@ import Testing
         #expect(restored.style(for: paths[0]) == original[0])
     }
 
-    @Test func projectMediumChangesArtworkCacheAndConstrainsThePrompt() {
+    @Test func projectMediumChangesArtworkCacheAndSVGRendering() async throws {
         var project = ProjectArtworkSource(path: "/project", avatar: nil)
         let oldKey = project.cacheKey
+        let rows = [WorktreeMapRow(path: "task", name: "Task", height: 80, context: "Review code")]
+        let original = try await ProjectWorktreeMapGenerator.generate(.init(rows: rows, project: project,
+            style: .illustration, theme: nil, preservedPaths: []))
         project.mapStyle = .woodcut
         #expect(project.cacheKey != oldKey)
-        let rows = [WorktreeMapRow(path: "task", name: "Task", height: 80, context: "Review code")]
-        let input = WorktreeMapGeneration(rows: rows, project: project, style: .illustration,
-            theme: nil, preservedPaths: [])
-        let prompt = ProjectWorktreeMapGenerator.regionPrompt(rows[0], input: input, direction: .harbor)
-        #expect(prompt.contains(ProjectMapStyle.woodcut.instructions))
-        #expect(prompt.contains("No 3D render"))
+        let restyled = try await ProjectWorktreeMapGenerator.generate(.init(rows: rows, project: project,
+            style: .illustration, theme: nil, preservedPaths: []))
+        #expect(original != restyled)
+        #expect(WorktreeSVGMap.districts(in: original) == WorktreeSVGMap.districts(in: restyled))
     }
 
     @Test func appleConceptsRetainProjectMediumOnRetry() {

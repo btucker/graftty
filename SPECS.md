@@ -212,7 +212,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.98** When project avatar resolution completes, the application shall make artwork requests eligible even if an override change resolves to the same image or no image.
 
-**LAYOUT-2.99** While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.
+**LAYOUT-2.99** While raster worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.
 
 **LAYOUT-2.100** When worktrees are reordered, the application shall rebuild their shared project map in the new order while preserving the pixels of existing regions and generating only missing or explicitly replaced regions.
 
@@ -230,7 +230,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.107** If a map provider returns incomplete transparent artwork, then the application shall retain its previous complete map and report generation failure.
 
-**LAYOUT-2.108** When generating a project map, the application shall assign every worktree a distinct region with a stable dominant color and large-scale terrain composition, including worktrees without task context, and keep connecting paths subordinate to those regions.
+**LAYOUT-2.108** When generating a project map, the application shall assign every worktree a distinct district color and terrain motif, including worktrees without task context, and retain those identities while reordering the map.
 
 **LAYOUT-2.109** When worktrees are reordered, added, hidden, or restored from cache, the application shall retain their assigned region identities and preserve their existing region pixels, including regions awaiting task context.
 
@@ -242,13 +242,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.113** When a project has an avatar, the application shall display it above the worktree-panel search field with a contrast backing and its original aspect ratio.
 
-**LAYOUT-2.114** When composing a project map, the application shall place independently generated regions within their exact worktree row boundaries, keep focal artwork in the first 80 points, and reuse saved regions during reordering without another provider call.
+**LAYOUT-2.114** When composing a project map, the application shall place SVG districts within their exact worktree row boundaries, keep focal artwork in the first 80 points, and reuse district identities during reordering.
 
 **LAYOUT-2.115** When a project first adopts an artwork medium after restart, the application shall display its previous cached map until a replacement succeeds without reusing old regions in the new medium.
 
 **LAYOUT-2.116** When the application loses focus during map generation, the application shall let the current map finish, cache successful results, and defer retries and subsequent projects until the application becomes active.
 
 **LAYOUT-2.117** While sidebar artwork is displayed, the application shall suppress fine detail behind labels, pane lists, and decorative terrain while retaining regional color and clear landmark detail on the right.
+
+**LAYOUT-2.118** When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and patterns, and shared routes across row boundaries.
+
+**LAYOUT-2.119** When an SVG map is reordered or regenerated, the application shall preserve unchanged district identities, rebuild shared connections, and change only explicitly replaced or newly contextualized districts.
+
+**LAYOUT-2.120** When the Ghostty foreground changes, the application shall regenerate SVG map ink even when the background color is unchanged.
+
+**LAYOUT-2.121** While an SVG map appears in a narrow sidebar, the application shall retain its connected route through the full height of every worktree and its pane rows.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1002,7 +1010,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SETTINGS-1.1** When worktree artwork preferences have not been saved, the application shall enable worktree backgrounds and use Illustration; an unrecognized saved style shall fall back to Illustration.
 
-**SETTINGS-1.2** When the user changes worktree artwork preferences, the application shall persist the enabled state and chosen Illustration, Animation, or Sketch style independently so disabling artwork preserves the style.
+**SETTINGS-1.2** When the user changes worktree artwork preferences, the application shall persist the enabled state and chosen Atlas, Bold, or Linework style independently so disabling artwork preserves the style.
 
 ## DIVERGE — Worktree Divergence Indicator
 

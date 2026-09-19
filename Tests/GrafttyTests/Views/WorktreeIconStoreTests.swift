@@ -40,7 +40,7 @@ struct WorktreeIconStoreTests {
         #expect(restored.images["new-tabs"] != nil)
     }
 
-    @Test("@spec LAYOUT-2.99: While worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.")
+    @Test("@spec LAYOUT-2.99: While raster worktree artwork uses a project palette, the application shall reuse its image when only Ghostty foreground or ANSI colors change, and regenerate when the configured backdrop changes.")
     func projectArtworkIgnoresUnconsumedThemeAccents() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -28,6 +28,10 @@ struct WorktreeArtworkTheme: Equatable, Sendable {
         "backdrop-v1-" + Self.hex(background).dropFirst()
     }
 
+    var svgBackground: String { Self.hex(background) }
+    var svgForeground: String { Self.hex(foreground) }
+    var svgCacheKey: String { "svg-v1-" + svgBackground.dropFirst() + "-" + svgForeground.dropFirst() }
+
     var colorCacheKey: String {
         let bytes = ([background, foreground] + accents).flatMap { color in
             [color.r, color.g, color.b].map { UInt8((min(1, max(0, $0)) * 255).rounded()) }

@@ -17,7 +17,7 @@ struct WorktreeArtworkPreferencesTests {
         #expect(preferences.style == .illustration)
     }
 
-    @Test("@spec SETTINGS-1.2: When the user changes worktree artwork preferences, the application shall persist the enabled state and chosen Illustration, Animation, or Sketch style independently so disabling artwork preserves the style.")
+    @Test("@spec SETTINGS-1.2: When the user changes worktree artwork preferences, the application shall persist the enabled state and chosen Atlas, Bold, or Linework style independently so disabling artwork preserves the style.")
     func persistsSelectionAcrossEnableChanges() throws {
         let suiteName = "WorktreeArtworkPreferencesTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -25,7 +25,7 @@ struct WorktreeArtworkPreferencesTests {
         let preferences = WorktreeArtworkPreferences(defaults: defaults)
 
         #expect(WorktreeArtworkStyle.allCases.map(\.rawValue) == ["illustration", "animation", "sketch"])
-        #expect(WorktreeArtworkStyle.allCases.map(\.label) == ["Illustration", "Animation", "Sketch"])
+        #expect(WorktreeArtworkStyle.allCases.map(\.svgLabel) == ["Atlas", "Bold", "Linework"])
         for style in WorktreeArtworkStyle.allCases {
             preferences.style = style
             preferences.isEnabled = false

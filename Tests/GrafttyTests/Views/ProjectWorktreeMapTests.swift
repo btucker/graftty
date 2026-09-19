@@ -5,72 +5,48 @@ import Testing
 @Suite("Project worktree maps")
 @MainActor
 struct ProjectWorktreeMapTests {
-    @Test("@spec LAYOUT-2.114: When composing a project map, the application shall place independently generated regions within their exact worktree row boundaries, keep focal artwork in the first 80 points, and reuse saved regions during reordering without another provider call.")
-    func independentRegionsAlignToRowsAndReuseSavedArtwork() async throws {
-        let rows = [WorktreeMapRow(path: "a", name: "A", height: 104, context: "A"),
-                    WorktreeMapRow(path: "b", name: "B", height: 160, context: "B")]
+    @Test("@spec LAYOUT-2.114: When composing a project map, the application shall place SVG districts within their exact worktree row boundaries, keep focal artwork in the first 80 points, and reuse district identities during reordering.")
+    func svgDistrictsAlignToRowsAndRetainFocalArtworkOnReorder() async throws {
+        let rows = [WorktreeMapRow(path: "a", name: "Notifications", height: 104, context: "Notify people"),
+                    WorktreeMapRow(path: "b", name: "Security", height: 160, context: "Secure access")]
         let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
             style: .illustration, theme: nil, preservedPaths: [])
-        let data = try await ProjectWorktreeMapGenerator.alignedRegions(input, direction: .harbor, preferred: { row, prompt in
-            #expect(prompt.contains("exactly one region"))
-            return try WorktreeMapRaster.png(Self.regionColor(row.path == "a" ? .red : .blue))
-        }, fallback: { _, _ in Issue.record("Unexpected fallback"); return Data() })
+        let data = try await ProjectWorktreeMapGenerator.generate(input)
         let image = try #require(NSImage(data: data))
-        image.size = .init(width: 320, height: 264)
-        #expect(try pixel(image, y: 103).redComponent > 0.95)
-        #expect(try pixel(image, y: 104).blueComponent > 0.95)
-        #expect(try pixel(image, y: 263).blueComponent > 0.95)
+        #expect(image.size == NSSize(width: 320, height: 264))
         let slices = try WorktreeMapRaster.slices(image, rows: rows)
-        let reordered = WorktreeMapGeneration(rows: rows.reversed(), project: input.project, style: input.style,
-            theme: nil, preservedPaths: ["a", "b"],
-            preservedRegions: try slices.mapValues(WorktreeMapRaster.png))
-        let restored = try await ProjectWorktreeMapGenerator.alignedRegions(reordered, direction: .harbor,
-            preferred: { _, _ in Issue.record("Cached rows should not generate"); return Data() },
-            fallback: { _, _ in Issue.record("Cached rows should not generate"); return Data() })
-        let newImage = try #require(NSImage(data: restored))
-        newImage.size = image.size
-        #expect(try pixel(newImage, y: 159).blueComponent > 0.95)
-        #expect(try pixel(newImage, y: 160).redComponent > 0.95)
-    }
-
-    private static func regionColor(_ color: NSColor) throws -> NSImage {
-        try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: 320, height: 80))
+        for row in rows {
+            let slice = try #require(slices[row.path])
+            #expect(abs(slice.size.height - row.height) < 0.001)
+            var rect = CGRect(origin: .zero, size: slice.size)
+            let bitmap = NSBitmapImageRep(cgImage: try #require(slice.cgImage(forProposedRect: &rect, context: nil, hints: nil)))
+            var focalPixels = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                          min(color.redComponent, color.greenComponent, color.blueComponent) > 0.7 else { continue }
+                    focalPixels += 1
+                    #expect(CGFloat(y) * slice.size.height / CGFloat(bitmap.pixelsHigh) < 80)
+                }
+            }
+            #expect(focalPixels > 0)
         }
-    }
-
-    @Test func regionGenerationBoundsConcurrencyAndFallsBackOnlyForFailedRegions() async throws {
-        let rows = (0..<4).map { WorktreeMapRow(path: "\($0)", name: "Task", height: 80, context: "Task") }
-        let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
-            style: .illustration, theme: nil, preservedPaths: [])
-        var active = 0, peak = 0
-        var fallbacks: [String] = []
-        let data = try await ProjectWorktreeMapGenerator.alignedRegions(input, direction: .harbor, preferred: { row, _ in
-            active += 1
-            peak = max(peak, active)
-            defer { active -= 1 }
-            try await Task.sleep(for: .milliseconds(10))
-            if row.path == "1" { throw ImageCreatorWorktreeIcon.Failure.unavailable }
-            if row.path == "2" { return Data() }
-            return try WorktreeMapRaster.png(Self.regionColor(.red))
-        }, fallback: { row, _ in
-            #expect(active == 0)
-            fallbacks.append(row.path)
-            return try WorktreeMapRaster.png(solid(.blue))
-        })
-        #expect(peak == 2)
-        #expect(fallbacks == ["1", "2"])
-        #expect(WorktreeMapRaster.hasCompleteCanvas(try #require(NSImage(data: data))))
-    }
-
-    @Test func cancelledRegionGenerationNeverStartsAppleFallback() async throws {
-        let input = WorktreeMapGeneration(rows: [.init(path: "a", name: "A", height: 80, context: "A")],
-            project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil, preservedPaths: [])
-        await #expect(throws: CancellationError.self) {
-            try await ProjectWorktreeMapGenerator.alignedRegions(input, direction: .harbor,
-                preferred: { _, _ in throw CancellationError() },
-                fallback: { _, _ in Issue.record("Cancellation must not fall back"); return Data() })
+        let reordered = WorktreeMapGeneration(rows: rows.reversed(), project: input.project, style: input.style,
+            theme: nil, preservedPaths: ["a", "b"], previousSVG: data)
+        let restored = try await ProjectWorktreeMapGenerator.generate(reordered)
+        #expect(WorktreeSVGMap.districts(in: restored) == WorktreeSVGMap.districts(in: data))
+        let newImage = try #require(NSImage(data: restored))
+        let reorderedSlices = try WorktreeMapRaster.slices(newImage, rows: rows.reversed())
+        for row in rows {
+            // Shared boundary curves can reveal a new neighboring district;
+            // the landmark interior remains stable, within raster rounding.
+            for y in [16, 32, 48, 64] {
+                let first = try pixel(slices[row.path], y: y)
+                let second = try pixel(reorderedSlices[row.path], y: y)
+                #expect(abs(first.redComponent - second.redComponent) < 0.01)
+                #expect(abs(first.greenComponent - second.greenComponent) < 0.01)
+                #expect(abs(first.blueComponent - second.blueComponent) < 0.01)
+            }
         }
     }
 
@@ -183,33 +159,6 @@ struct ProjectWorktreeMapTests {
         #expect(WorktreeMapRaster.hasCompleteCanvas(try #require(restored.images[request.path])))
     }
 
-    @Test func appleFallbackPaintsHeaderAndQuietRowsBehindPreservedLandmarks() async throws {
-        let rows: [WorktreeMapRow] = [
-            .init(path: "header", name: "Canopy", height: 128, context: nil, isConnector: true),
-            .init(path: "task", name: "Task", height: 80, context: "Build a garden"),
-            .init(path: "quiet", name: "Waiting", height: 240, context: nil),
-        ]
-        let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
-            style: .illustration, theme: nil, preservedPaths: ["task"],
-            preservedRegions: ["task": try WorktreeMapRaster.png(solid(.red))])
-        var calls = 0
-        let data = try await ProjectWorktreeMapGenerator.alignedRegions(input, direction: .harbor,
-            preferred: { _, _ in Data() }, fallback: { row, _ in
-                calls += 1
-                #expect(["Canopy", "Waiting"].contains(row.name))
-                return try WorktreeMapRaster.png(solid(row.name == "Waiting" ? .green : .blue))
-            })
-        let image = try #require(NSImage(data: data))
-        image.size = .init(width: 320, height: 448)
-        #expect(WorktreeMapRaster.hasCompleteCanvas(image))
-        let slices = try WorktreeMapRaster.slices(image, rows: rows)
-        #expect(try pixel(slices["header"], y: 40).blueComponent > 0.95)
-        #expect(try pixel(slices["quiet"], y: 40).greenComponent > 0.95)
-        #expect(try pixel(slices["quiet"], y: 180).greenComponent > 0.95)
-        #expect(try pixel(slices["task"], y: 40).redComponent > 0.95)
-        #expect(calls == 2)
-    }
-
     @Test("@spec LAYOUT-2.109: When worktrees are reordered, added, hidden, or restored from cache, the application shall retain their assigned region identities and preserve their existing region pixels, including regions awaiting task context.")
     func regionAssignmentsAndUncontextualizedPixelsSurviveReorderingAndCache() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -287,67 +236,31 @@ struct ProjectWorktreeMapTests {
         #expect(try pixel(reused.images[request.path], y: 40).blueComponent > 0.95)
     }
 
-    @Test func regionIdentityAllocatorUsesDistinctColorsAndRetainsExistingAssignments() {
+    @Test func regionIdentityAllocatorRetainsDistinctAssignments() {
         let paths = (0..<16).map { "task-\($0)" }
         let original = WorktreeMapRegionIdentity.assign(paths: paths, preserving: [:])
         #expect(Set(original.values).count == paths.count)
-        #expect(Set(original.values.map(WorktreeMapRegionIdentity.design)).count == paths.count)
         let updated = WorktreeMapRegionIdentity.assign(paths: ["new"] + paths.reversed(), preserving: original)
         for path in paths { #expect(updated[path] == original[path]) }
         #expect(updated["new"] == 16)
     }
 
-    @Test("@spec LAYOUT-2.108: When generating a project map, the application shall assign every worktree a distinct region with a stable dominant color and large-scale terrain composition, including worktrees without task context, and keep connecting paths subordinate to those regions.")
-    func mapPromptPrioritizesWholeRegionIdentityOverConnectingRoads() {
-        let input = WorktreeMapGeneration(rows: [
-            .init(path: "a", name: "Review", height: 80, context: "Review code"),
-            .init(path: "b", name: "Notifications", height: 80, context: nil),
-        ], project: .init(path: "/project", avatar: nil), style: .illustration, theme: nil,
-           preservedPaths: [])
-        let prompt = ProjectWorktreeMapGenerator.regionPrompt(input.rows[0], input: input, direction: .harbor)
-        #expect(prompt.contains(WorktreeMapRegionIdentity.design(0)))
-        #expect(prompt.contains("at least 70%"))
-        #expect(prompt.contains("Connections occupy at most 10%"))
-        #expect(prompt.contains("left 40%"))
-        #expect(prompt.contains("between 45% and 65%"))
-        #expect(prompt.contains("one landmark"))
-        #expect(WorktreeMapRegionIdentity.design(0).contains("sparse"))
-        #expect(!prompt.contains("No task context yet: draw quiet connecting terrain"))
-    }
-
-    @Test func fittingTallRowsKeepsTheFocalAreaAtTheTop() throws {
-        let original = try WorktreeMapRaster.draw(size: .init(width: 320, height: 80)) { context in
-            context.setFillColor(NSColor.red.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: 320, height: 40))
-            context.setFillColor(NSColor.blue.cgColor)
-            context.fill(CGRect(x: 0, y: 40, width: 320, height: 40))
-        }
-        let tall = try WorktreeMapRaster.fitRegion(original, height: 400)
-        #expect(try pixel(tall, y: 20).redComponent > 0.95)
-        #expect(try pixel(tall, y: 60).blueComponent > 0.95)
-        #expect(try pixel(tall, y: 250).blueComponent > 0.95)
-        #expect(WorktreeMapRaster.hasCompleteCanvas(tall))
-    }
-
-    @Test func extendingAndRestoringRegionsDoesNotRestartTheirTerrain() throws {
-        func gradient(height: CGFloat) throws -> NSImage {
-            try WorktreeMapRaster.draw(size: .init(width: 320, height: height)) { context in
-                for y in 0..<Int(height * 2) {
-                    let fraction = CGFloat(y) / (height * 2)
-                    context.setFillColor(NSColor(deviceRed: fraction, green: 0, blue: 1 - fraction, alpha: 1).cgColor)
-                    context.fill(CGRect(x: 0, y: CGFloat(y) / 2, width: 320, height: 0.5))
-                }
-            }
-        }
-        let short = try WorktreeMapRaster.fitRegion(gradient(height: 80), height: 160)
-        #expect(abs(try pixel(short, y: 79).redComponent - pixel(short, y: 80).redComponent) < 0.03)
-        let original = try gradient(height: 104)
-        let fitted = try WorktreeMapRaster.fitRegion(original, height: 160)
-        let composed = try WorktreeMapRaster.compose(rows: [.init(path: "a", name: "A", height: 160, context: "A")],
-            generated: fitted, preserving: ["a": original])
-        for y in [85, 95, 103, 104, 120] {
-            #expect(abs(try pixel(composed, y: y).redComponent - pixel(fitted, y: y).redComponent) < 0.01)
-        }
+    @Test("@spec LAYOUT-2.108: When generating a project map, the application shall assign every worktree a distinct district color and terrain motif, including worktrees without task context, and retain those identities while reordering the map.")
+    func svgDistrictIdentitiesIncludeRowsWithoutTaskContext() async throws {
+        let rows = [WorktreeMapRow(path: "a", name: "Security", height: 80, context: "Secure access"),
+                    WorktreeMapRow(path: "b", name: "Notifications", height: 80, context: nil)]
+        let input = WorktreeMapGeneration(rows: rows, project: .init(path: "/project", avatar: nil),
+            style: .illustration, theme: nil, preservedPaths: [])
+        let data = try await ProjectWorktreeMapGenerator.generate(input)
+        let districts = try #require(WorktreeSVGMap.districts(in: data))
+        #expect(Set(districts.keys) == ["a", "b"])
+        #expect(districts["a"]?.motif == .gate)
+        #expect(districts["b"]?.motif == .beacon)
+        #expect(districts["a"]?.palette != districts["b"]?.palette)
+        let reordered = WorktreeMapGeneration(rows: rows.reversed(), project: input.project, style: input.style,
+            theme: nil, preservedPaths: ["a", "b"], previousSVG: data)
+        let restored = try await ProjectWorktreeMapGenerator.generate(reordered)
+        #expect(WorktreeSVGMap.districts(in: restored) == districts)
     }
 
     @Test("@spec LAYOUT-2.102: When a project map changes order or gains task context, the application shall generate one replacement from the ordered worktrees, retain existing landmarks, reuse its cache across launches, and discard results for obsolete layouts.")
@@ -427,7 +340,6 @@ struct ProjectWorktreeMapTests {
         var calls = 0
         let restored = ProjectWorktreeMapStore(directory: directory, debounce: .zero, history: { _ in nil }) { input in
             calls += 1
-            #expect(input.preservedRegions.isEmpty)
             #expect(input.preservedPaths.isEmpty)
             if replacementFails { throw ImageCreatorWorktreeIcon.Failure.unavailable }
             return try WorktreeMapRaster.png(solid(.blue))

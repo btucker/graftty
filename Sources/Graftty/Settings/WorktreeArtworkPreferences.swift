@@ -14,6 +14,14 @@ enum WorktreeArtworkStyle: String, CaseIterable, Identifiable, Sendable {
         case .sketch: "Sketch"
         }
     }
+
+    var svgLabel: String {
+        switch self {
+        case .illustration: "Atlas"
+        case .animation: "Bold"
+        case .sketch: "Linework"
+        }
+    }
 }
 
 struct WorktreeArtworkPreferences {

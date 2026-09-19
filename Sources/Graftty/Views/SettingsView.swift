@@ -52,12 +52,12 @@ struct SettingsView: View {
 
             Picker("Style:", selection: $worktreeArtworkStyle) {
                 ForEach(WorktreeArtworkStyle.allCases) { style in
-                    Text(style.label).tag(style)
+                    Text(style.svgLabel).tag(style)
                 }
             }
             .disabled(!worktreeArtworkEnabled)
 
-            Text("Creates a connected map for each project from recent agent prompts. Choose each project's medium in its Map Style menu. Reordering keeps each landmark and rebuilds its connections. Terminal backgrounds use colors sampled from the map. Tries Codex, then Apple ImageCreator.")
+            Text("Creates a connected SVG map with distinct districts based on worktree names and recent agent prompts. Reordering preserves each district and redraws its connections. Terminal backgrounds use colors from the map. Generated locally without an image service.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

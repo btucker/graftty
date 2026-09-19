@@ -32,39 +32,6 @@ enum WorktreeMapLayout {
 
 @MainActor
 enum WorktreeMapRaster {
-    /// Keep the focal first 80 points fixed; extend only the lower terrain when a row grows.
-    static func fitRegion(_ image: NSImage, height: CGFloat) throws -> NSImage {
-        let sourceHeight = image.size.height
-        let focalHeight = min(WorktreeMapLayout.landmarkHeight, sourceHeight, height)
-        return try draw(size: .init(width: WorktreeMapLayout.width, height: height)) { context in
-            if height > focalHeight {
-                let terrainTop = sourceHeight > focalHeight ? focalHeight : max(0, sourceHeight - 0.5)
-                let terrainHeight = max(0.5, sourceHeight - terrainTop)
-                let scale = (height - focalHeight) / terrainHeight
-                context.saveGState()
-                context.clip(to: CGRect(x: 0, y: focalHeight, width: WorktreeMapLayout.width, height: height - focalHeight))
-                paint(image, in: CGRect(x: 0, y: focalHeight - terrainTop * scale,
-                    width: WorktreeMapLayout.width, height: sourceHeight * scale), context: context)
-                context.restoreGState()
-            }
-            context.saveGState()
-            context.clip(to: CGRect(x: 0, y: 0, width: WorktreeMapLayout.width, height: focalHeight))
-            paint(image, in: CGRect(x: 0, y: 0, width: WorktreeMapLayout.width, height: sourceHeight), context: context)
-            context.restoreGState()
-        }
-    }
-
-    static func stack(rows: [WorktreeMapRow], regions: [String: NSImage]) throws -> NSImage {
-        try draw(size: .init(width: WorktreeMapLayout.width, height: rows.reduce(0) { $0 + $1.height })) { context in
-            var top: CGFloat = 0
-            for row in rows {
-                defer { top += row.height }
-                guard let image = regions[row.path] else { continue }
-                paint(image, in: CGRect(x: 0, y: top, width: WorktreeMapLayout.width, height: row.height), context: context)
-            }
-        }
-    }
-
     static func hasCompleteCanvas(_ image: NSImage) -> Bool {
         var rect = CGRect(origin: .zero, size: image.size)
         guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),

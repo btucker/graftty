@@ -9,7 +9,8 @@ struct WorktreeMapGeneration: Sendable {
     let style: WorktreeArtworkStyle
     let theme: WorktreeArtworkTheme?
     let preservedPaths: Set<String>
-    var preservedRegions: [String: Data] = [:]
+    var previousSVG: Data? = nil
+    var registeredPaths: Set<String>? = nil
 }
 
 /// One serial worker for project maps. Prompt text is never written to the map cache.
@@ -35,6 +36,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
         var regionIDs: [String: Int]? = nil
         var contextualPaths: Set<String>? = nil
         var regionRevision: Int? = nil
+        var svg: Data? = nil
     }
     private struct Map {
         var slots: [Slot]
@@ -43,6 +45,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
         var regionIDs: [String: Int] = [:]
         var contextualPaths = Set<String>()
         var regionRevision = 0
+        var svg: Data? = nil
     }
     private let directory: URL
     private let history: @MainActor (WorktreeArtworkRequest) async -> String?
@@ -74,8 +77,8 @@ final class ProjectWorktreeMapStore: ObservableObject {
         self.generate = generate
     }
 
-    private func key(_ project: ProjectArtworkSource) -> String {
-        project.cacheKey + "-" + style.rawValue + "-" + (theme?.backdropCacheKey ?? "unthemed")
+    private func key(_ project: ProjectArtworkSource, legacyTheme: Bool = false) -> String {
+        project.cacheKey + "-" + style.rawValue + "-" + ((legacyTheme ? theme?.backdropCacheKey : theme?.svgCacheKey) ?? "unthemed")
     }
     private var projects: [ProjectArtworkSource] {
         var seen = Set<String>()
@@ -141,7 +144,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
     }
 
     func configure(theme: WorktreeArtworkTheme) {
-        let changed = self.theme?.backdropCacheKey != theme.backdropCacheKey
+        let changed = self.theme?.svgCacheKey != theme.svgCacheKey
         self.theme = theme
         guard changed else { return }
         worker?.cancel()
@@ -249,13 +252,16 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let preserved = previousRegions.filter { visiblePaths.contains($0.key) && !changing.contains($0.key) }
             let data = try await generate(.init(rows: rows, project: project, style: style, theme: theme,
                 preservedPaths: Set(preserved.keys),
-                preservedRegions: try preserved.mapValues(WorktreeMapRaster.png)))
+                previousSVG: existing?.svg, registeredPaths: Set(worktrees.map(\.path))))
             try Task.checkCancellation()
             guard revisions[k, default: 0] == revision, projects.contains(project) else { return }
             guard let generated = NSImage(data: data), WorktreeMapRaster.hasCompleteCanvas(generated) else {
                 throw ImageCreatorWorktreeIcon.Failure.invalidImage
             }
-            let composed = try WorktreeMapRaster.compose(rows: rows, generated: generated, preserving: preserved)
+            let svg = WorktreeSVGMap.districts(in: data) != nil ? data : nil
+            // SVG districts preserve their descriptors, not raster patches. This
+            // keeps the shared route continuous and the saved SVG true to the display.
+            let composed = try svg != nil ? generated : WorktreeMapRaster.compose(rows: rows, generated: generated, preserving: preserved)
             let slices = try WorktreeMapRaster.slices(composed, rows: rows)
             let registeredPaths = Set(worktrees.map(\.path))
             var landmarks = previousRegions.filter { registeredPaths.contains($0.key) && !changing.contains($0.key) }
@@ -263,9 +269,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let contextualPaths = (existing?.contextualPaths ?? []).union(layout.filter { contexts[$0.path] != nil }.map(\.path))
                 .intersection(registeredPaths)
             let map = Map(slots: layout, image: composed, landmarks: landmarks, regionIDs: regionIDs,
-                contextualPaths: contextualPaths, regionRevision: WorktreeMapRegionIdentity.revision)
+                contextualPaths: contextualPaths, regionRevision: WorktreeMapRegionIdentity.revision, svg: svg)
             maps[k] = map
-            for (path, image) in slices { images[path] = image }
+            for (path, image) in slices { images[path] = svg != nil ? WorktreeSVGMap.preview(image) : image }
             dirty.remove(k)
             replaced.subtract(changing)
             refreshHistory.subtract(changing)
@@ -291,13 +297,16 @@ final class ProjectWorktreeMapStore: ObservableObject {
     }
     private func load(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false) {
         loadCached(project, restoreDisplayedPixels: restoreDisplayedPixels)
+        if members(project).contains(where: { images[$0.path] == nil }) {
+            loadCached(project, legacyTheme: true)
+        }
         guard project.mapStyle != nil, members(project).contains(where: { images[$0.path] == nil }) else { return }
         // Per-project media added a cache-key component. Show the pre-medium map
         // during migration, but keep it under its own key so none of its regions
         // are reused when generating the new medium.
         var legacy = project
         legacy.mapStyle = nil
-        loadCached(legacy)
+        loadCached(legacy, legacyTheme: true)
     }
 
     private func publish(_ map: Map, for project: ProjectArtworkSource, replacing: Bool) {
@@ -306,12 +315,12 @@ final class ProjectWorktreeMapStore: ObservableObject {
         guard map.slots.contains(where: { paths.contains($0.path) && (replacing || images[$0.path] == nil) }),
               let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) else { return }
         for (path, image) in slices where paths.contains(path) && (replacing || images[path] == nil) {
-            images[path] = image
+            images[path] = map.svg != nil ? WorktreeSVGMap.preview(image) : image
         }
     }
 
-    private func loadCached(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false) {
-        let k = key(project)
+    private func loadCached(_ project: ProjectArtworkSource, restoreDisplayedPixels: Bool = false, legacyTheme: Bool = false) {
+        let k = key(project, legacyTheme: legacyTheme)
         if let map = maps[k] {
             publish(map, for: project, replacing: restoreDisplayedPixels)
             return
@@ -335,7 +344,7 @@ final class ProjectWorktreeMapStore: ObservableObject {
         }
         let map = Map(slots: saved.slots, image: image, landmarks: landmarks, regionIDs: saved.regionIDs ?? [:],
             contextualPaths: saved.contextualPaths ?? Set(saved.slots.filter(\.hasLandmark).map(\.path)),
-            regionRevision: saved.regionRevision ?? 0)
+            regionRevision: saved.regionRevision ?? 0, svg: saved.svg)
         maps[k] = map
         // Earlier Apple fallbacks could save only landmark patches. Keep those
         // originals for repair, but do not publish the incomplete canvas.
@@ -345,9 +354,12 @@ final class ProjectWorktreeMapStore: ObservableObject {
         do {
             let saved = Saved(slots: map.slots, image: try WorktreeMapRaster.png(map.image),
                 landmarks: try map.landmarks.mapValues(WorktreeMapRaster.png), heights: map.landmarks.mapValues { $0.size.height },
-                regionIDs: map.regionIDs, contextualPaths: map.contextualPaths, regionRevision: map.regionRevision)
+                regionIDs: map.regionIDs, contextualPaths: map.contextualPaths, regionRevision: map.regionRevision, svg: map.svg)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONEncoder().encode(saved).write(to: file(key), options: .atomic)
+            if let svg = map.svg {
+                try svg.write(to: file(key).deletingPathExtension().appendingPathExtension("svg"), options: .atomic)
+            }
         } catch { /* A cache write must not discard successfully generated artwork. */ }
     }
 
