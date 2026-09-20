@@ -675,6 +675,14 @@ struct SingleSessionView: View {
                     }
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if isPaneFocused, scenePhase == .active, gate?.state == .unlocked,
+                   connection == .live, let worktree = step.worktreePath, let coordinator {
+                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator)
+                        .padding(.top, 64)
+                        .padding(.trailing, 12)
+                }
+            }
             .overlay(alignment: .bottom) {
                 // Keyboard-hidden affordances (Take Control / show-keyboard)
                 // float over the edge-to-edge terminal. When the keyboard is up
@@ -1157,6 +1165,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
+            addsVerticalRowPadding: true,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)

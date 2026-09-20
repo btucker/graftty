@@ -2636,6 +2636,18 @@ struct GrafttyApp: App {
                 }
 
                 switch request {
+                case let .openResource(worktreeID, request):
+                    do {
+                        switch request {
+                        case .list:
+                            return .openResource(.offers(await RemoteOpenStore.shared.list(worktree: worktreeID)))
+                        case let .read(id, offset):
+                            return .openResource(.chunk(try await RemoteOpenStore.shared.read(id: id, worktree: worktreeID, offset: offset)))
+                        }
+                    } catch {
+                        return .error(code: "file-preview", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
+                    }
+
                 case let .moveProject(id, relativeTo, after):
                     return await MainActor.run {
                         var navigation = appStateBinding.wrappedValue.sidebarNavigation ?? .init()
@@ -3797,7 +3809,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
+        case .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
@@ -3830,6 +3842,17 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
+        case let .offerResource(path, target):
+            guard appState.wrappedValue.repos.contains(where: { repo in
+                repo.worktrees.contains { $0.path == path }
+            }) else { return .error("Run graftty open from a tracked worktree.") }
+            do {
+                _ = try await RemoteOpenStore.shared.offer(file: try OpenResourceTarget.resolve(target), worktree: path)
+                return .ok
+            } catch {
+                return .error(error.localizedDescription)
+            }
+
         case .reconnectRemoteMac(let target):
             return await remoteMacsModel.reconnectRemoteMac(target: target)
         case .remoteWorktree:
@@ -6012,7 +6035,7 @@ struct GrafttyApp: App {
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
              .moveWorktree(let repositoryID, _, _, _):
             return repositoryID.hasPrefix("relay-repository-")
-        case .open(let worktreeID),
+        case .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")

@@ -1626,7 +1626,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.7** While a terminal pane is rendered in the iOS app, `UITerminalView` shall remain the sole terminal keyboard responder and its supported `showsInputAccessory` property shall be false, so the GhosttyKit accessory is absent without Objective-C runtime swizzling. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 
-**IOS-6.8** While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
+**IOS-6.8** While no authoritative checkpoint grid is set, the terminal shall fill the padded viewport, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 
 **IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
@@ -1657,6 +1657,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
 
 **IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
+
+**IOS-6.24** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
 
 ### IOS-7.x — Lifecycle
 
@@ -1763,6 +1765,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-11.21** When the user sends Ctrl+V with an image on the mobile clipboard, the application shall upload that image; if the clipboard has no image, then Ctrl+V shall retain its terminal control-byte behavior.
 
 **IOS-11.22** While an image paste awaits host confirmation, the mobile application shall queue subsequent terminal input in order and send it only after a successful confirmation; if image paste fails or the input queue exceeds its limit, then the application shall discard queued input and explain the failure.
+
+### IOS-12.x
+
+**IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.
+
+**IOS-12.2** When a user opens an offered host file on mobile, the application shall download its bounded snapshot to a temporary local file and reject invalid names and incomplete transfers.
+
+**IOS-12.3** When the user runs graftty open with a file path, the CLI shall offer that file for native preview in the caller's tracked worktree and report request failures.
+
+**IOS-12.4** When graftty open receives an HTTP or HTTPS URL on a directly paired host, the application shall preserve its origin, offer it to mobile, and carry its browser connections through the authenticated host connection so localhost and DNS resolve on the host.
+
+**IOS-12.5** When a mobile browser requests a URL through its authenticated SOCKS proxy, the application shall relay HTTP bytes through SSH over WebRTC to a TCP connection on the paired host.
+
+**IOS-12.6** If a browser tunnel cannot connect before its deadline, then the application shall fail that browser connection without disconnecting terminal panes sharing the host transport.
+
+**IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
 
 ## IPAD — iPad Layout
 
@@ -2290,9 +2308,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-4.x — Port Tunnels
 
-**REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
+**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL before connecting to the target.
 
-**REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
+**REMOTE-4.2** While a paired client has loopback-only port-tunnel permission, the host shall reject non-loopback targets before connecting to them.
 
 ### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
@@ -2374,7 +2392,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.5** While Graftty uses non-trickle SDP signaling, the application shall configure both peers to gather ICE candidates once so offer and answer generation can finish when the initial candidates have been collected.
 
-**REMOTE-11.6** If an SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
+**REMOTE-11.6** If a terminal or control SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
 
 **REMOTE-11.7** When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation while preserving the shared parent transport and sibling channels.
 

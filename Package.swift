@@ -99,8 +99,17 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .target(
+            name: "GrafttyTunnel",
+            dependencies: [
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
+            ],
+            swiftSettings: strictWarnings
+        ),
+        .target(
             name: "GrafttyHostAgent",
             dependencies: [
+                "GrafttyTunnel",
                 "GrafttyKit",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
@@ -113,6 +122,7 @@ let package = Package(
         .target(
             name: "GrafttyRemoteClient",
             dependencies: [
+                "GrafttyTunnel",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),

@@ -8,16 +8,6 @@ import Testing
 
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
-    @Test("""
-@spec REMOTE-4.1: If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
-""", .disabled("not yet implemented"))
-    func remote_4_1() async throws { }
-
-    @Test("""
-@spec REMOTE-4.2: If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
-""", .disabled("not yet implemented"))
-    func remote_4_2() async throws { }
-
     // MARK: - REMOTE-8.x — SSH session layer
 
     @Test("""
