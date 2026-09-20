@@ -2292,6 +2292,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
 
+**REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

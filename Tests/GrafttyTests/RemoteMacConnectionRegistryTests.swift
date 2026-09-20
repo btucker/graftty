@@ -233,7 +233,8 @@ struct RemoteMacConnectionRegistryTests {
             AuthenticatedSignalingOffer.self,
             from: body
         )
-        #expect(offer.sdp == "v=0\nreplacement\n")
+        #expect(offer.sdp.hasPrefix("v=0\nreplacement\n"))
+        #expect(offer.hasSignedReplacementIntentMarker)
         #expect(offer.replacesExistingConnection == true)
         #expect(await firstConnection.closeCount == 1)
         #expect(await replacementConnection.createOfferCallCount == 1)

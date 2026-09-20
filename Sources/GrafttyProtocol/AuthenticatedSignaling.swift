@@ -195,6 +195,16 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
     public let replacementSignature: Data?
     public let signature: Data
 
+    /// Replacement intent is also carried inside the legacy-signed SDP. A
+    /// route can remove optional JSON fields, but it cannot remove this SDP
+    /// attribute without invalidating the base signature that protocol-v2
+    /// hosts already verify.
+    public var hasSignedReplacementIntentMarker: Bool {
+        sdp.split(whereSeparator: { $0.isNewline }).contains {
+            $0 == Substring(Self.replacementIntentSDPAttribute)
+        }
+    }
+
     public init(
         challenge: SignalingChallengeResponse,
         sdp: String,
@@ -207,7 +217,9 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
         self.clientNonce = challenge.clientNonce
         self.hostNonce = challenge.hostNonce
         self.expiresAt = challenge.expiresAt
-        self.sdp = sdp
+        self.sdp = replacesExistingConnection
+            ? Self.appendingReplacementIntentMarker(to: sdp)
+            : sdp
         self.replacesExistingConnection = replacesExistingConnection ? true : nil
         let baseTranscript = Self.transcript(
             version: version,
@@ -216,7 +228,7 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             clientNonce: clientNonce,
             hostNonce: hostNonce,
             expiresAt: expiresAt,
-            sdp: sdp
+            sdp: self.sdp
         )
         self.signature = try signingKey.signature(for: baseTranscript)
         self.replacementSignature = replacesExistingConnection
@@ -293,6 +305,14 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             .appending(baseTranscript)
             .appending("replace-existing-connection")
             .data
+    }
+
+    private static let replacementIntentSDPAttribute =
+        "a=x-graftty-replacement-intent:1"
+
+    private static func appendingReplacementIntentMarker(to sdp: String) -> String {
+        let separator = sdp.last?.isNewline == true ? "" : "\r\n"
+        return sdp + separator + replacementIntentSDPAttribute + "\r\n"
     }
 
     private enum CodingKeys: String, CodingKey {

@@ -162,11 +162,11 @@ public actor AuthenticatedSignalingServer {
             offer.replacesExistingConnection,
             offer.replacementSignature
         ) {
-        case (nil, nil):
+        case (nil, nil) where !offer.hasSignedReplacementIntentMarker:
             authorizesReplacement = false
-        case (.some(true), .some) where offer.hasValidReplacementIntent(
-            using: peer.publicKey
-        ):
+        case (.some(true), .some)
+            where offer.hasSignedReplacementIntentMarker
+                && offer.hasValidReplacementIntent(using: peer.publicKey):
             authorizesReplacement = true
         default:
             return .failure(

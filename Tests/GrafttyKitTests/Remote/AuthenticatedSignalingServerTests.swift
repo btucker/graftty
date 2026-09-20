@@ -251,7 +251,69 @@ struct AuthenticatedSignalingServerTests {
             from: JSONSerialization.data(withJSONObject: json)
         )
         #expect(legacyHostView.replacesExistingConnection == nil)
+        #expect(legacyHostView.hasSignedReplacementIntentMarker)
         #expect(legacyHostView.isValid(using: clientPublicKey))
+    }
+
+    @Test("""
+    @spec REMOTE-2.17: When a route removes the optional replacement fields \
+    from a signed replacement offer, the application shall reject the \
+    downgraded offer without claiming its challenge so an intact route can \
+    still deliver the authenticated replacement.
+    """)
+    func strippedReplacementFieldsDoNotClaimChallenge() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x28, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\r\n",
+            replacesExistingConnection: true,
+            signingKey: fixture.clientKey
+        )
+        var json = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder.iso8601().encode(offer)
+            ) as? [String: Any]
+        )
+        json.removeValue(forKey: "replacesExistingConnection")
+        json.removeValue(forKey: "replacementSignature")
+        let downgraded = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
+
+        guard case .failure(let failure) =
+            await fixture.server.authenticateOffer(downgraded)
+        else {
+            Issue.record("Expected stripped replacement intent to fail")
+            return
+        }
+        #expect(failure.code == .authenticationFailed)
+
+        let intact = try #require(
+            await fixture.server.authenticateOffer(offer).success
+        )
+        guard case .new(let verified) = intact else {
+            Issue.record("Expected the intact replacement to claim the challenge")
+            return
+        }
+        #expect(verified.authorizesReplacement)
+
+        let retry = try #require(
+            await fixture.server.authenticateOffer(offer).success
+        )
+        guard case .pending = retry else {
+            Issue.record("Expected the exact replacement retry to deduplicate")
+            return
+        }
     }
 
     @Test("a new host accepts a legacy client offer as ordinary but not as replacement")
