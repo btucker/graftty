@@ -2290,6 +2290,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.15** When a host advertises wake addresses, the application shall include each eligible interface's valid active link-layer and permanent hardware addresses for its IPv4 address without duplicates.
 
+**REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -2392,9 +2394,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
 
-**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection, the application shall replace that connection immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
+**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection lifecycle, the application shall replace that negotiating or connected lifecycle immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
 
-**REMOTE-11.11** When the current host ICE connection remains disconnected past a five-second recovery grace period, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
+
+**REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
+
+**REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -2429,6 +2435,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.15** When `graftty remote reconnect <name-or-id>` identifies a saved Remote Mac by its exact name or device ID, the application shall request reconnect through its existing connection flow without requiring a current worktree, reject unknown or ambiguous targets and Macs needing pairing, and acknowledge the request without waiting for connection establishment.
 
 **REMOTE-12.16** When `graftty remote reconnect-client <name-or-id>` runs on a host Mac, the application shall target one authenticated connected viewing Mac by exact name or device ID, obtain its reconnect acknowledgement before closing that control channel, and have the viewer reconnect only that host through its existing connection flow; unknown, ambiguous, disconnected, or unsupported clients shall produce an error without disconnecting another peer.
+
+**REMOTE-12.17** When the user selects an offline or discovered saved Remote Mac, the application shall authenticate the connection as a same-device replacement; if a live local connection exists, it shall reuse that connection without starting another transport.
+
+**REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects.
 
 ### REMOTE-13.x
 

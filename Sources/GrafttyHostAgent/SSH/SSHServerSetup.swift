@@ -21,6 +21,7 @@ public enum SSHServerSetup {
     public static func makeHandler(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
+        expectedDeviceID: RemoteDeviceID? = nil,
         activePeerRegistry: ActiveRemotePeerRegistry? = nil,
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
@@ -33,6 +34,7 @@ public enum SSHServerSetup {
             hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
             userAuthDelegate: SSHUserAuthDelegate(
                 store: trustedPeerStore,
+                expectedDeviceID: expectedDeviceID,
                 activePeerRegistry: activePeerRegistry,
                 closeActiveTransport: closeActiveTransport,
                 onActivePeerRegistered: onActivePeerRegistered,

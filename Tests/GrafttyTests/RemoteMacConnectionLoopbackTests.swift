@@ -107,7 +107,7 @@ struct RemoteMacConnectionLoopbackTests {
                         RTCSessionDescription(type: .offer, sdp: offer.sdp),
                         clientDeviceID: verified.offer.clientDeviceID,
                         replacingExistingConnection:
-                            verified.offer.replacesExistingConnection == true
+                            verified.authorizesReplacement
                     )
                     switch await signalingServer.makeAnswer(
                         sdp: answer.sdp,

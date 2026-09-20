@@ -210,8 +210,13 @@ struct AuthenticatedSignalingServerTests {
         #expect(cached == answer)
     }
 
-    @Test("replacement intent is covered by the client signature")
-    func replacementIntentCannotBeAddedOrRemovedAfterSigning() async throws {
+    @Test("""
+    @spec REMOTE-2.16: When a protocol-v2 client requests same-device \
+    replacement, the application shall keep the base offer signature \
+    compatible with older hosts and shall authenticate eviction authority \
+    with a separate optional signature.
+    """)
+    func replacementOfferIsCompatibleWithLegacyHosts() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let request = try SignalingChallengeRequest(
@@ -232,6 +237,7 @@ struct AuthenticatedSignalingServerTests {
             rawRepresentation: fixture.clientKey.publicKey.rawRepresentation
         )
         #expect(offer.isValid(using: clientPublicKey))
+        #expect(offer.replacementSignature != nil)
 
         var json = try #require(
             JSONSerialization.jsonObject(
@@ -239,12 +245,124 @@ struct AuthenticatedSignalingServerTests {
             ) as? [String: Any]
         )
         json.removeValue(forKey: "replacesExistingConnection")
-        let stripped = try JSONDecoder.iso8601().decode(
+        json.removeValue(forKey: "replacementSignature")
+        let legacyHostView = try JSONDecoder.iso8601().decode(
             AuthenticatedSignalingOffer.self,
             from: JSONSerialization.data(withJSONObject: json)
         )
-        #expect(stripped.replacesExistingConnection == nil)
-        #expect(!stripped.isValid(using: clientPublicKey))
+        #expect(legacyHostView.replacesExistingConnection == nil)
+        #expect(legacyHostView.isValid(using: clientPublicKey))
+    }
+
+    @Test("a new host accepts a legacy client offer as ordinary but not as replacement")
+    func legacyClientOfferRemainsValidWithoutReplacementAuthority() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x25, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let legacyOffer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\nlegacy\n",
+            signingKey: fixture.clientKey
+        )
+
+        let disposition = try #require(
+            await fixture.server.authenticateOffer(legacyOffer).success
+        )
+        guard case .new(let verified) = disposition else {
+            Issue.record("Expected a new offer")
+            return
+        }
+        #expect(!verified.authorizesReplacement)
+    }
+
+    @Test("replacement authority requires the separate replacement proof")
+    func replacementProofCannotBeForged() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x26, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\nreplace\n",
+            replacesExistingConnection: true,
+            signingKey: fixture.clientKey
+        )
+        var json = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder.iso8601().encode(offer)
+            ) as? [String: Any]
+        )
+        json["replacementSignature"] = Data(repeating: 0x99, count: 64).base64EncodedString()
+        let forged = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
+
+        guard case .failure(let failure) = await fixture.server.authenticateOffer(forged) else {
+            Issue.record("Expected the forged replacement proof to fail")
+            return
+        }
+        #expect(failure.code == PairingErrorResponse.Code.authenticationFailed)
+    }
+
+    @Test("an explicit false replacement flag canonicalizes to an ordinary offer")
+    func explicitFalseReplacementFlagDeduplicatesWithAnOmittedFlag() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x27, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\nordinary\n",
+            signingKey: fixture.clientKey
+        )
+        var json = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder.iso8601().encode(offer)
+            ) as? [String: Any]
+        )
+        json["replacesExistingConnection"] = false
+
+        let canonical = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
+        #expect(canonical.replacesExistingConnection == nil)
+        #expect(canonical == offer)
+
+        let first = try #require(
+            await fixture.server.authenticateOffer(canonical).success
+        )
+        guard case .new = first else {
+            Issue.record("Expected the canonical offer to claim the challenge")
+            return
+        }
+        let retry = try #require(
+            await fixture.server.authenticateOffer(offer).success
+        )
+        guard case .pending = retry else {
+            Issue.record("Expected the original offer to deduplicate")
+            return
+        }
     }
 
     @Test("a definitively failed offer can be released and retried")
