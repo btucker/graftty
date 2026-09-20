@@ -185,11 +185,16 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
     public let hostNonce: Data
     public let expiresAt: Date
     public let sdp: String
+    /// Present only when the user explicitly asked to replace this device's
+    /// prior host connection. `nil` preserves the original protocol-v2 wire
+    /// shape and signing transcript for ordinary connects.
+    public let replacesExistingConnection: Bool?
     public let signature: Data
 
     public init(
         challenge: SignalingChallengeResponse,
         sdp: String,
+        replacesExistingConnection: Bool = false,
         signingKey: Curve25519.Signing.PrivateKey
     ) throws {
         self.version = RemoteAccessProtocol.version
@@ -199,6 +204,7 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
         self.hostNonce = challenge.hostNonce
         self.expiresAt = challenge.expiresAt
         self.sdp = sdp
+        self.replacesExistingConnection = replacesExistingConnection ? true : nil
         self.signature = try signingKey.signature(
             for: Self.transcript(
                 version: version,
@@ -207,7 +213,8 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
                 clientNonce: clientNonce,
                 hostNonce: hostNonce,
                 expiresAt: expiresAt,
-                sdp: sdp
+                sdp: sdp,
+                replacesExistingConnection: replacesExistingConnection
             ))
     }
 
@@ -232,7 +239,8 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             clientNonce: clientNonce,
             hostNonce: hostNonce,
             expiresAt: expiresAt,
-            sdp: sdp
+            sdp: sdp,
+            replacesExistingConnection: replacesExistingConnection == true
         )
     }
 
@@ -243,9 +251,10 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
         clientNonce: Data,
         hostNonce: Data,
         expiresAt: Date,
-        sdp: String
+        sdp: String,
+        replacesExistingConnection: Bool
     ) -> Data {
-        SignalingTranscript(domain: "graftty.signaling.v2.offer")
+        var transcript = SignalingTranscript(domain: "graftty.signaling.v2.offer")
             .appending(version)
             .appending(hostDeviceID.value)
             .appending(clientDeviceID.value)
@@ -253,7 +262,10 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             .appending(hostNonce)
             .appending(expiresAt)
             .appending(sdp)
-            .data
+        if replacesExistingConnection {
+            transcript = transcript.appending("replace-existing-connection")
+        }
+        return transcript.data
     }
 }
 

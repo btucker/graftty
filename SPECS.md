@@ -2374,7 +2374,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-11.x
 
-**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active and the offer is not a signed explicit reconnect from that same client, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 **REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
 
@@ -2391,6 +2391,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.8** When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.
 
 **REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
+
+**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection, the application shall replace that connection immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
+
+**REMOTE-11.11** When the current host ICE connection remains disconnected past a five-second recovery grace period, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 

@@ -161,6 +161,32 @@ struct RemoteMacConnectionRegistryTests {
         #expect(registry.activeConnectionCount == 1)
     }
 
+    @Test("explicit reconnect signs replacement intent into its signaling offer")
+    func explicitReconnectSignsReplacementIntent() async throws {
+        let captured = CapturedSignalingRequest()
+        let registry = makeRegistry(
+            signalingTransport: { request, body in
+                captured.record(request: request, body: body)
+                return try signalingResponse(
+                    url: request.url!,
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            }
+        )
+
+        _ = try await registry.connect(
+            to: makeRemoteMac(),
+            replacingExistingHostConnection: true
+        )
+
+        let body = try #require(captured.body)
+        let offer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: body
+        )
+        #expect(offer.replacesExistingConnection == true)
+    }
+
     @Test("entry opens terminal sessions on demand")
     func entryOpensTerminalSessionsOnDemand() async throws {
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")

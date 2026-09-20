@@ -207,13 +207,19 @@ final class RemoteMacConnectionRegistry {
         self.now = now
     }
 
-    func connect(to remoteMac: RemoteMac) async throws -> Entry {
+    func connect(
+        to remoteMac: RemoteMac,
+        replacingExistingHostConnection: Bool = false
+    ) async throws -> Entry {
         try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
             let state = await existing.connection.currentState()
             guard entries[identity]?.id == existing.id else {
-                return try await connect(to: remoteMac)
+                return try await connect(
+                    to: remoteMac,
+                    replacingExistingHostConnection: replacingExistingHostConnection
+                )
             }
             if state.isTerminal {
                 entries[identity] = nil
@@ -245,7 +251,8 @@ final class RemoteMacConnectionRegistry {
                 entry = try await dial(
                     remoteMac: remoteMac,
                     identity: identity,
-                    attemptID: attemptID
+                    attemptID: attemptID,
+                    replacingExistingHostConnection: replacingExistingHostConnection
                 )
             }
             try ensureCurrentAttempt(attemptID, identity: identity)
@@ -330,7 +337,8 @@ final class RemoteMacConnectionRegistry {
     private func dial(
         remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
-        attemptID: UUID
+        attemptID: UUID,
+        replacingExistingHostConnection: Bool
     ) async throws -> Entry {
         guard let baseURL = remoteMac.lastKnownBaseURL else {
             throw ConnectionError.missingBaseURL(identity)
@@ -369,6 +377,7 @@ final class RemoteMacConnectionRegistry {
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
                 sdp: offerSDP,
+                replacesExistingConnection: replacingExistingHostConnection,
                 wakeOnLAN: pinnedHost.wakeOnLAN
             )
             var refreshed = pinnedHost

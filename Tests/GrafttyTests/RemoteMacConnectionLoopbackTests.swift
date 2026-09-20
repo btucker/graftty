@@ -104,7 +104,10 @@ struct RemoteMacConnectionLoopbackTests {
                 }
                 do {
                     let answer = try await hostAgent.acceptOffer(
-                        RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                        RTCSessionDescription(type: .offer, sdp: offer.sdp),
+                        clientDeviceID: verified.offer.clientDeviceID,
+                        replacingExistingConnection:
+                            verified.offer.replacesExistingConnection == true
                     )
                     switch await signalingServer.makeAnswer(
                         sdp: answer.sdp,

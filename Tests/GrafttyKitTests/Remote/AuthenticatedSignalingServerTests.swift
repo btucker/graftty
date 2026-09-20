@@ -176,8 +176,10 @@ struct AuthenticatedSignalingServerTests {
         let offer = try AuthenticatedSignalingOffer(
             challenge: challenge,
             sdp: "v=0\n",
+            replacesExistingConnection: true,
             signingKey: fixture.clientKey
         )
+        #expect(offer.replacesExistingConnection == true)
         let first = try #require(await fixture.server.authenticateOffer(offer).success)
         guard case .new(let verified) = first else {
             Issue.record("Expected a new offer")
@@ -206,6 +208,43 @@ struct AuthenticatedSignalingServerTests {
             return
         }
         #expect(cached == answer)
+    }
+
+    @Test("replacement intent is covered by the client signature")
+    func replacementIntentCannotBeAddedOrRemovedAfterSigning() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let request = try SignalingChallengeRequest(
+            clientDeviceID: fixture.clientDeviceID,
+            clientNonce: Data(repeating: 0x23, count: 32),
+            signingKey: fixture.clientKey
+        )
+        let challenge = try #require(
+            await fixture.server.issueChallenge(request).success
+        )
+        let offer = try AuthenticatedSignalingOffer(
+            challenge: challenge,
+            sdp: "v=0\nreplace\n",
+            replacesExistingConnection: true,
+            signingKey: fixture.clientKey
+        )
+        let clientPublicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: fixture.clientKey.publicKey.rawRepresentation
+        )
+        #expect(offer.isValid(using: clientPublicKey))
+
+        var json = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder.iso8601().encode(offer)
+            ) as? [String: Any]
+        )
+        json.removeValue(forKey: "replacesExistingConnection")
+        let stripped = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
+        #expect(stripped.replacesExistingConnection == nil)
+        #expect(!stripped.isValid(using: clientPublicKey))
     }
 
     @Test("a definitively failed offer can be released and retried")

@@ -281,7 +281,8 @@ final class RemoteMacsModel: ObservableObject {
             return try await self.performConnect(
                 to: remoteMac,
                 identity: identity,
-                attemptID: attemptID
+                attemptID: attemptID,
+                replacingExistingHostConnection: disconnectExistingFirst
             )
         }
         connectAttempts[identity] = ConnectAttempt(id: attemptID, task: task)
@@ -299,10 +300,14 @@ final class RemoteMacsModel: ObservableObject {
     private func performConnect(
         to remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
-        attemptID: UUID
+        attemptID: UUID,
+        replacingExistingHostConnection: Bool
     ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
-            let entry = try await connectionRegistry.connect(to: remoteMac)
+            let entry = try await connectionRegistry.connect(
+                to: remoteMac,
+                replacingExistingHostConnection: replacingExistingHostConnection
+            )
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }
