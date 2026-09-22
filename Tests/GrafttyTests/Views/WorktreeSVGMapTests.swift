@@ -6,6 +6,26 @@ import Testing
 @Suite("Worktree SVG atlas")
 @MainActor
 struct WorktreeSVGMapTests {
+    @Test func reviewContextSelectsCodeReviewIllustration() throws {
+        for task in ["Review the current changes", "Inspect the implementation", "Audit the code"] {
+            let data = try WorktreeSVGMap.generate(.init(
+                rows: [.init(path: "/project/review", name: "code-review", height: 104, context: task)],
+                project: .init(path: "/project", avatar: nil), style: .illustration,
+                theme: nil, preservedPaths: []))
+            #expect(WorktreeSVGMap.districts(in: data)?["/project/review"]?.motif == .forge)
+            #expect(String(decoding: data, as: UTF8.self).contains("data-task=\"code-review\""))
+        }
+    }
+
+    @Test func previewDoesNotImplyCodeReview() throws {
+        let data = try WorktreeSVGMap.generate(.init(
+            rows: [.init(path: "/project/browser", name: "image-browser", height: 104, context: "Add a preview pane")],
+            project: .init(path: "/project", avatar: nil), style: .illustration,
+            theme: nil, preservedPaths: []))
+        #expect(WorktreeSVGMap.districts(in: data)?["/project/browser"]?.motif == .garden)
+        #expect(String(decoding: data, as: UTF8.self).contains("data-task=\"image-browser\""))
+    }
+
     @Test("@spec LAYOUT-2.118: When generating a worktree map, the application shall create a contiguous SVG world with task-grounded districts, distinct regional colors and filled landmarks, and shared routes across row boundaries.")
     func contiguousMapHasGroundedDistinctDistricts() throws {
         let rows = [WorktreeMapRow(path: "a", name: "notifications", height: 104, context: "Notify people when reviews finish"),
@@ -54,7 +74,7 @@ struct WorktreeSVGMapTests {
         #expect(WorktreeSVGMap.districts(in: replaced)?["a"] != WorktreeSVGMap.districts(in: first)?["a"])
     }
 
-    @Test("@spec LAYOUT-2.122: When worktrees share a task metaphor, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.")
+    @Test("@spec LAYOUT-2.122: When worktrees share a task category, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.")
     func relatedTasksHaveDifferentSilhouettes() throws {
         for motif in WorktreeSVGMap.Motif.allCases {
             let rows = (0..<3).map { WorktreeMapRow(path: "\($0)", name: "notifications", height: 104, context: nil) }
@@ -135,7 +155,7 @@ struct WorktreeSVGMapTests {
         #expect(updated["b"] == old["b"])
     }
 
-    @Test(arguments: [3, 4]) func legacySVGCacheUpgradesOnceWithoutChangingColors(revision: Int) async throws {
+    @Test(arguments: [3, 4, 5]) func legacySVGCacheUpgradesOnceWithoutChangingColors(revision: Int) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let request = WorktreeArtworkRequest(path: "/project", name: "main", firstPaneSessionName: nil,
@@ -164,7 +184,7 @@ struct WorktreeSVGMapTests {
             #expect(upgraded[request.path]?.palette == original[request.path]?.palette)
             #expect(upgraded[request.path]?.variation == original[request.path]?.variation)
             #expect(upgraded[request.path]?.variant != nil)
-            if revision == 4 { #expect(upgraded == original) }
+            if revision >= 4 { #expect(upgraded == original) }
             return data
         }
         restored.update(worktrees: [request], isActive: true)
@@ -425,7 +445,7 @@ struct WorktreeSVGMapTests {
         await restored.waitUntilIdle()
         #expect(generationCalls == 0)
         #expect(restored.images.count == 2)
-        #expect(restored.images.values.allSatisfy { $0 is WorktreeSVGMap.Preview })
+        #expect(restored.images.values.allSatisfy { ($0 as? WorktreeSVGMap.Preview)?.territoryColor != nil })
         restored.update(worktrees: requests.reversed(), isActive: true)
         await restored.waitUntilIdle()
         #expect(generationCalls == 1)

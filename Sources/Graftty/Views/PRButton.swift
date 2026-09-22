@@ -5,6 +5,7 @@ import GrafttyProtocol
 import GrafttyCommandUI
 
 struct PRButton: View {
+    @Environment(\.worktreeWindowColor) private var windowColor
     let info: PRInfo
     let theme: GhosttyTheme
     let onRefresh: () -> Void
@@ -23,11 +24,11 @@ struct PRButton: View {
             Text("#\(info.number)\(terminalSuffix)")
                 .font(.caption)
                 .fontWeight(.medium)
-                .foregroundColor(info.state.isTerminal ? info.state.statusColor : theme.foreground)
+                .foregroundColor(info.state.isTerminal ? info.state.statusColor : neutralText())
 
             Text(info.title)
                 .font(.caption)
-                .foregroundColor(theme.foreground.opacity(0.55))
+                .foregroundColor(neutralText(opacity: 0.55))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 260, alignment: .leading)
@@ -62,6 +63,14 @@ struct PRButton: View {
             Button("Refresh now") { onRefresh() }
             Button("Copy URL") { Pasteboard.copy(info.url.absoluteString) }
         }
+    }
+
+    private func neutralText(opacity: Double = 1) -> Color {
+        guard let windowColor else { return theme.foreground.opacity(opacity) }
+        let fill = NSColor(background).usingColorSpace(.deviceRGB) ?? .clear
+        let surface = WorktreeVisualColors.mix(NSColor(windowColor), fill, amount: fill.alphaComponent)
+        return Color(nsColor: WorktreeVisualColors.headerText(NSColor(theme.foreground),
+            on: surface, opacity: opacity))
     }
 
     private var background: Color {

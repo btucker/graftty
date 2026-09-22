@@ -76,22 +76,27 @@ struct WorktreeArtworkBackground: View {
 /// A terrain-only map section reaches behind search and window chrome.
 /// Only this decorative section fits the header height; landmarks keep their scale.
 struct WorktreeMapHeaderBackground: View {
+    @Environment(\.worktreeWindowColor) private var windowColor
     let image: NSImage
     let backgroundColor: Color
 
     var body: some View {
         GeometryReader { geometry in
-            WorktreeMapArtwork(image: image, decorative: true)
-                .frame(width: WorktreeMapLayout.width, height: geometry.size.height)
-                .overlay(.black.opacity(0.14))
-                .mask {
-                    LinearGradient(stops: [.init(color: .white, location: 0.8),
-                                           .init(color: .white.opacity(WorktreeMapLayout.trailingOpacity(availableWidth: geometry.size.width)), location: 1)],
-                                   startPoint: .leading, endPoint: .trailing)
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-                .background(backgroundColor)
-                .clipped()
+            if let windowColor {
+                windowColor.frame(width: geometry.size.width, height: geometry.size.height)
+            } else {
+                WorktreeMapArtwork(image: image, decorative: true)
+                    .frame(width: WorktreeMapLayout.width, height: geometry.size.height)
+                    .overlay(.black.opacity(0.14))
+                    .mask {
+                        LinearGradient(stops: [.init(color: .white, location: 0.8),
+                            .init(color: .white.opacity(WorktreeMapLayout.trailingOpacity(availableWidth: geometry.size.width)), location: 1)],
+                            startPoint: .leading, endPoint: .trailing)
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                    .background(backgroundColor)
+                    .clipped()
+            }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

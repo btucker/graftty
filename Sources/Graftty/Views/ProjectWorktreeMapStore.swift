@@ -272,7 +272,8 @@ final class ProjectWorktreeMapStore: ObservableObject {
             let map = Map(slots: layout, image: composed, landmarks: landmarks, regionIDs: regionIDs,
                 contextualPaths: contextualPaths, regionRevision: WorktreeMapRegionIdentity.revision, svg: svg)
             maps[k] = map
-            for (path, image) in slices { images[path] = svg != nil ? WorktreeSVGMap.preview(image) : image }
+            let descriptors = svg.flatMap(WorktreeSVGMap.districts) ?? [:]
+            for (path, image) in slices { images[path] = svg != nil ? WorktreeSVGMap.preview(image, district: descriptors[path]) : image }
             dirty.remove(k)
             replaced.subtract(changing)
             refreshHistory.subtract(changing)
@@ -315,8 +316,9 @@ final class ProjectWorktreeMapStore: ObservableObject {
         let paths = Set(requests.filter { $0.project?.path == project.path }.map(\.path))
         guard map.slots.contains(where: { paths.contains($0.path) && (replacing || images[$0.path] == nil) }),
               let slices = try? WorktreeMapRaster.slices(map.image, rows: map.slots.map(\.row)) else { return }
+        let descriptors = map.svg.flatMap(WorktreeSVGMap.districts) ?? [:]
         for (path, image) in slices where paths.contains(path) && (replacing || images[path] == nil) {
-            images[path] = map.svg != nil ? WorktreeSVGMap.preview(image) : image
+            images[path] = map.svg != nil ? WorktreeSVGMap.preview(image, district: descriptors[path]) : image
         }
     }
 

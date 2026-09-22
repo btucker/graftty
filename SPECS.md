@@ -258,11 +258,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.121** While an SVG map appears in a narrow sidebar, the application shall retain its connected route through the full height of every worktree and its pane rows.
 
-**LAYOUT-2.122** When worktrees share a task metaphor, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.
+**LAYOUT-2.122** When worktrees share a task category, the application shall allocate different landmark silhouettes while unused variants remain, preserving existing identities during cache upgrades and reordering.
 
 **LAYOUT-2.123** While SVG map artwork extends above or below the worktrees, the application shall use straight continuous routes without repeated bends or decorative tiles.
 
 **LAYOUT-2.124** While an SVG district is displayed, the application shall keep its title band and extended pane terrain free of repeating artwork, place its landmark below the title, and retain a subdued connecting route.
+
+**LAYOUT-2.125** While a worktree has SVG artwork, the application shall use its persistent territory color for its name and related pane text, adjusting contrast for the theme and selection without recoloring Git or attention indicators.
+
+**LAYOUT-2.126** When the selected worktree changes, the application shall carry its persistent color across the native titlebar, sidebar header, and workspace header while retaining a single theme-fading gradient across terminal panes.
+
+**LAYOUT-2.127** When composing SVG worktree artwork, the application shall illustrate the task directly using code, messages, terminals, data, or artwork rather than architectural metaphors, preserving existing color and illustration assignments during migration.
 
 ### LAYOUT-3.x — Adding Repositories
 

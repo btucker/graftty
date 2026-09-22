@@ -15,6 +15,9 @@ enum WorktreeArtworkPalette {
     }()
 
     static func colors(_ image: NSImage) -> [Color] {
+        if let accent = (image as? WorktreeSVGMap.Preview)?.territoryColor {
+            return [Color(nsColor: accent), Color(nsColor: accent)]
+        }
         if let entry = cache.object(forKey: image) { return entry.colors }
         var rect = CGRect(origin: .zero, size: image.size)
         guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),

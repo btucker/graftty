@@ -14,13 +14,10 @@ extension EnvironmentValues {
 /// Light shading keeps each worktree grouped without obscuring its map colors.
 struct ArtworkBlockBacking: View {
     var showsSeparator = true
+    static let shadingOpacity = 0.14
 
     var body: some View {
-        LinearGradient(stops: [
-            .init(color: .black.opacity(0.22), location: 0),
-            .init(color: .black.opacity(0.14), location: 0.7),
-            .init(color: .black.opacity(0.06), location: 1),
-        ], startPoint: .leading, endPoint: .trailing)
+        Color.black.opacity(Self.shadingOpacity)
         .overlay(alignment: .top) {
             if showsSeparator {
                 Color.white.opacity(0.2).frame(height: 0.5)

@@ -72,6 +72,8 @@ struct PaneTitleRow: View {
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
     var hasArtwork = false
+    var artworkTitleColor: Color? = nil
+    var artworkPaneColor: Color? = nil
     @Environment(\.worktreeMapIndent) private var mapIndent
 
     var shouldRenderPortChips: Bool {
@@ -106,11 +108,11 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.9) : theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : (isFocusedPane ? artworkTitleColor : artworkPaneColor) ?? (hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.9) : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty
-            ))
+            )))
     }
 
     var body: some View {
@@ -256,6 +258,8 @@ struct WorktreeRow: View {
     let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
     var hasArtwork = false
+    var artworkTitleColor: Color? = nil
+    var artworkPaneColor: Color? = nil
     @Environment(\.worktreeMapIndent) private var mapIndent
 
     var body: some View {
@@ -337,10 +341,10 @@ struct WorktreeRow: View {
                 // identity rather than a generic placeholder.
                 Text(displayName)
                     .italic()
-                    .foregroundColor(hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(artworkTitleColor ?? (hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive)))
             } else {
                 Text(displayName)
-                    .foregroundColor(hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(artworkTitleColor ?? (hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive)))
             }
 
             // Secondary label: git branch, dimmed. Skip when it duplicates
@@ -352,7 +356,7 @@ struct WorktreeRow: View {
             if entry.displayBranch != displayName {
                 Text(entry.displayBranch)
                     .font(.caption)
-                    .foregroundColor(hasArtwork ? .white.opacity(0.85) : theme.sidebarSecondaryText)
+                    .foregroundColor(artworkPaneColor ?? (hasArtwork ? .white.opacity(0.85) : theme.sidebarSecondaryText))
             }
         }
         .lineLimit(1)

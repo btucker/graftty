@@ -12,20 +12,24 @@ import AppKit
 /// of white chrome and the traffic lights render with the wrong contrast.
 struct WindowBackgroundTint: NSViewRepresentable {
     let theme: GhosttyTheme
+    var headerColor: NSColor? = nil
 
     func makeNSView(context: Context) -> NSView {
         let view = TintView()
         view.theme = theme
+        view.headerColor = headerColor
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         (nsView as? TintView)?.theme = theme
+        (nsView as? TintView)?.headerColor = headerColor
         (nsView as? TintView)?.apply()
     }
 
     private final class TintView: NSView {
         var theme: GhosttyTheme = .fallback
+        var headerColor: NSColor?
         private var applyGate = WindowTintApplyGate()
 
         override func viewDidMoveToWindow() {
@@ -35,8 +39,8 @@ struct WindowBackgroundTint: NSViewRepresentable {
 
         func apply() {
             guard let window else { return }
-            guard applyGate.shouldApply(theme: theme, window: window) else { return }
-            window.backgroundColor = theme.backgroundNSColor
+            guard applyGate.shouldApply(theme: theme, window: window, headerColor: headerColor) else { return }
+            window.backgroundColor = headerColor ?? theme.backgroundNSColor
             window.titlebarAppearsTransparent = true
             // Extend the content view under the title bar so the
             // breadcrumb row can sit alongside the traffic lights
@@ -56,12 +60,13 @@ struct WindowTintApplyGate {
     private struct Token: Equatable {
         let theme: GhosttyTheme
         let windowID: ObjectIdentifier
+        let headerColor: NSColor?
     }
 
     private var lastApplied: Token?
 
-    mutating func shouldApply(theme: GhosttyTheme, window: AnyObject) -> Bool {
-        let token = Token(theme: theme, windowID: ObjectIdentifier(window))
+    mutating func shouldApply(theme: GhosttyTheme, window: AnyObject, headerColor: NSColor? = nil) -> Bool {
+        let token = Token(theme: theme, windowID: ObjectIdentifier(window), headerColor: headerColor)
         guard token != lastApplied else { return false }
         lastApplied = token
         return true
@@ -72,7 +77,7 @@ extension View {
     /// Apply ghostty-derived chrome to the host NSWindow: background tint,
     /// transparent titlebar, full-size content view, and light/dark
     /// appearance. Use with `.windowStyle(.hiddenTitleBar)`.
-    func windowBackgroundTint(theme: GhosttyTheme) -> some View {
-        background(WindowBackgroundTint(theme: theme))
+    func windowBackgroundTint(theme: GhosttyTheme, headerColor: NSColor? = nil) -> some View {
+        background(WindowBackgroundTint(theme: theme, headerColor: headerColor))
     }
 }

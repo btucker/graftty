@@ -281,7 +281,8 @@ struct MainWindow: View {
         // transparent titlebar + full-size content view, and NSAppearance
         // matching the theme's dark/light-ness so system chrome (traffic
         // lights, context menus, alerts) renders with correct contrast.
-        .windowBackgroundTint(theme: terminalManager.theme)
+        .windowBackgroundTint(theme: terminalManager.theme, headerColor: selectedWorktreeHeaderColor)
+        .environment(\.worktreeWindowColor, selectedWorktreeHeaderColor.map { Color(nsColor: $0) })
         .installUpdateBadgeAccessory(controller: updaterController)
         .sheet(item: remotePairingRequestBinding) { request in
             RemotePairingRequestSheet(
@@ -510,6 +511,10 @@ struct MainWindow: View {
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    private var selectedWorktreeHeaderColor: NSColor? {
+        selectedWorktreeArtwork.map { WorktreeVisualColors.headerColor(image: $0, theme: terminalManager.theme) }
     }
 
     private var selectedWorktreeArtwork: NSImage? {

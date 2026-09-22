@@ -9,6 +9,7 @@ import GrafttyCommandUI
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
 struct SidebarView: View {
+    @Environment(\.worktreeWindowColor) private var windowColor
     @Binding var appState: AppState
     /// Used to read pane titles. Title change invalidation is deliberately
     /// scoped to `paneTitleInvalidations` below so MainWindow does not
@@ -395,7 +396,17 @@ struct SidebarView: View {
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
-        .background { if artworkEnabled { theme.sidebarBackground.ignoresSafeArea() } }
+        .background {
+            if artworkEnabled {
+                theme.sidebarBackground.overlay(alignment: .top) {
+                    if let windowColor {
+                        LinearGradient(stops: [.init(color: windowColor, location: 0),
+                            .init(color: windowColor, location: 0.35), .init(color: .clear, location: 1)],
+                            startPoint: .top, endPoint: .bottom).frame(height: 180)
+                    }
+                }.ignoresSafeArea()
+            }
+        }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
@@ -696,6 +707,7 @@ struct SidebarView: View {
             projectIcon: iconStore.icons[repo.id.uuidString],
             generated: worktreeIcons.images[worktree.path]
         ) : nil
+        let artworkColors = generatedArtwork.map { WorktreeVisualColors(image: $0, theme: theme, isActive: isActive) }
         let heading = WorktreeRow(
             entry: worktree,
             isActive: isActive,
@@ -718,7 +730,8 @@ struct SidebarView: View {
             },
             attentionStyle: attention.worktreeCapsule,
             attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
-            hasArtwork: generatedArtwork != nil
+            hasArtwork: generatedArtwork != nil,
+            artworkTitleColor: artworkColors?.title, artworkPaneColor: artworkColors?.pane
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
@@ -746,7 +759,8 @@ struct SidebarView: View {
                             portBindings: portBindings.bindings[terminalID] ?? [],
                             attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
                                 + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
-                            hasArtwork: generatedArtwork != nil
+                            hasArtwork: generatedArtwork != nil,
+                            artworkTitleColor: artworkColors?.title, artworkPaneColor: artworkColors?.pane
                         )
                     }
                     .buttonStyle(.plain)

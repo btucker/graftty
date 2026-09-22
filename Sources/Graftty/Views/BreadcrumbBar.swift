@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import GrafttyKit
 import GrafttyProtocol
 
@@ -8,6 +9,7 @@ import GrafttyProtocol
 /// the worktree name in italic to distinguish it from feature worktrees.
 /// The worktree-name carries a tooltip with the full filesystem path.
 struct BreadcrumbBar: View {
+    @Environment(\.worktreeWindowColor) private var windowColor
     let repoName: String?
     let worktreeDisplayName: String?
     let worktreePath: String?
@@ -33,7 +35,7 @@ struct BreadcrumbBar: View {
         HStack(spacing: 4) {
             if let repoName {
                 Text(repoName)
-                    .foregroundColor(theme.foreground.opacity(0.6))
+                    .foregroundColor(headerText(opacity: 0.6))
             }
             if worktreeDisplayName != nil {
                 Text("/")
@@ -45,7 +47,7 @@ struct BreadcrumbBar: View {
             if let branchName {
                 Text("(\(branchName))")
                     .font(.caption)
-                    .foregroundColor(theme.foreground.opacity(0.55))
+                    .foregroundColor(headerText(opacity: 0.55))
                     .padding(.leading, 2)
             }
 
@@ -59,18 +61,24 @@ struct BreadcrumbBar: View {
         .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
         .padding(.trailing, 12)
         .padding(.vertical, 8)
-        .background(theme.background.opacity(showsWorktreeArtwork ? 0.35 : 1))
+        .background(windowColor ?? theme.background.opacity(showsWorktreeArtwork ? 0.35 : 1))
         // Animate the inset shift in lockstep with NavigationSplitView's
         // own column slide. Without this the padding flips instantly while
         // the column animates, so the breadcrumb appears to teleport.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
     }
 
+    private func headerText(opacity: Double = 1) -> Color {
+        guard let windowColor else { return theme.foreground.opacity(opacity) }
+        return Color(nsColor: WorktreeVisualColors.headerText(NSColor(theme.foreground),
+            on: NSColor(windowColor), opacity: opacity))
+    }
+
     private func worktreeLabel(_ name: String) -> some View {
         Text(name)
             .italic(isHomeCheckout)
             .fontWeight(isHomeCheckout ? .regular : .medium)
-            .foregroundColor(theme.foreground)
+            .foregroundColor(headerText())
             .help(worktreePath ?? "")
             .overlay(underline, alignment: .bottom)
     }
