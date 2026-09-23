@@ -10,7 +10,7 @@ import WebKit
 struct HostBrowserProxyTests {
     @Test(
         "WebKit proxies local and public hostnames through the paired Mac",
-        .timeLimit(.minutes(1)),
+        .timeLimit(.minutes(2)),
         arguments: ["http://localhost:39381", "http://example.invalid:39382"]
     )
     func requestedHostUsesProxy(urlText: String) async throws {
@@ -44,7 +44,9 @@ struct HostBrowserProxyTests {
         let result = BrowserNavigationResult()
         view.navigationDelegate = result
         view.load(URLRequest(url: url))
-        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        // A cold WebKit network process can take more than 15 seconds to
+        // become responsive on a newly booted CI simulator.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         while !result.finished && result.error == nil && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -110,6 +112,9 @@ private final class BrowserNavigationResult: NSObject, WKNavigationDelegate {
     var error: String?
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        self.error = error.localizedDescription
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         self.error = error.localizedDescription
     }
 }
