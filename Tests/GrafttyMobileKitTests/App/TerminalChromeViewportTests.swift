@@ -165,8 +165,23 @@ struct MobileTerminalControlBarTests {
         let container = TerminalInputContainerView(frame: .zero)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
 
-        container.toggleStickyControlModifier()
-        container.toggleStickyControlModifier()
+        // The renderer uses a real 300 ms double-tap window and exposes no
+        // clock override. A simulator can preempt these synchronous calls
+        // long enough to produce two single taps. Retry only that measured
+        // case, never an incorrect transition inside the double-tap window.
+        for attempt in 0..<5 {
+            container.resetStickyModifiers()
+            let start = ContinuousClock.now
+            container.toggleStickyControlModifier()
+            container.toggleStickyControlModifier()
+            let elapsed = start.duration(to: .now)
+            if elapsed >= .milliseconds(300),
+               container.stickyControlActivation == .inactive,
+               attempt < 4 {
+                continue
+            }
+            break
+        }
         #expect(container.stickyControlActivation == .locked)
 
         container.committedSoftwareInput = nil

@@ -4,6 +4,7 @@ import Testing
 @testable import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
+import WebRTC
 
 private actor ReconnectRegistrationGate {
     private var isOpen = false
@@ -42,8 +43,8 @@ private actor ReconnectRegistrationGate {
 /// connection tears down, so a RECONNECT's fresh data channel can install
 /// SSH again. `close()` reset `sshTransport` / `authenticatedRegistration`
 /// / `peerConnection` / `dataChannel` / `state` but NOT `sshInstallStarted`,
-/// so a reconnect (`acceptOffer` after `close()`, which the busy-guard at
-/// `acceptOffer`'s top explicitly permits from `.closed`) opened a new data
+/// so a reconnect (`acceptOffer` after `close()`, which admission explicitly
+/// permits from `.closed`) opened a new data
 /// channel whose `onOpen` called `installSSHHandler`, which saw the stale
 /// `true` left over from the PRIOR connection and returned immediately —
 /// SSH never re-installed, leaving the reconnected peer with a dead
@@ -59,6 +60,214 @@ private actor ReconnectRegistrationGate {
 /// or NIOSSH work — see `installSSHHandler`'s doc comment.
 @Suite("WebRTCHostAgent re-arms the sshInstallStarted latch on close (W4 follow-up)")
 struct WebRTCHostAgentReconnectTests {
+
+    @Test("""
+    @spec REMOTE-11.10: When a signed signaling offer explicitly requests a \
+    reconnect for the paired device that owns the current host connection \
+    lifecycle, the application shall replace that negotiating or connected \
+    lifecycle immediately; offers from another device and ordinary offers \
+    shall remain busy without disturbing it.
+    """)
+    func explicitReconnectOnlyReplacesTheSameViewingMac() async throws {
+        let agent = Self.makeHostAgent()
+        let originalViewer = RemoteDeviceID(value: "original-viewer")
+        let otherViewer = RemoteDeviceID(value: "other-viewer")
+
+        await agent.beginConnectionLifecycle(clientDeviceID: originalViewer)
+        await agent.setStateForTesting(.connected)
+
+        await #expect(throws: WebRTCHostAgent.HostError.busy) {
+            try await agent.prepareToAcceptOffer(
+                clientDeviceID: originalViewer,
+                replacingExistingConnection: false
+            )
+        }
+        #expect(await agent.state == .connected)
+
+        await #expect(throws: WebRTCHostAgent.HostError.busy) {
+            try await agent.prepareToAcceptOffer(
+                clientDeviceID: otherViewer,
+                replacingExistingConnection: true
+            )
+        }
+        #expect(await agent.state == .connected)
+
+        try await agent.prepareToAcceptOffer(
+            clientDeviceID: originalViewer,
+            replacingExistingConnection: true
+        )
+        #expect(
+            await agent.state == .answering,
+            "the replacement must reserve the slot before teardown yields"
+        )
+
+        let supersededGeneration = await agent.connectionGenerationForTesting
+        await agent.setStateForTesting(.answering)
+        await #expect(throws: WebRTCHostAgent.HostError.busy) {
+            try await agent.prepareToAcceptOffer(
+                clientDeviceID: originalViewer,
+                replacingExistingConnection: false
+            )
+        }
+        await #expect(throws: WebRTCHostAgent.HostError.busy) {
+            try await agent.prepareToAcceptOffer(
+                clientDeviceID: otherViewer,
+                replacingExistingConnection: true
+            )
+        }
+        try await agent.prepareToAcceptOffer(
+            clientDeviceID: originalViewer,
+            replacingExistingConnection: true
+        )
+        await agent.close(ifGeneration: supersededGeneration)
+        #expect(
+            await agent.state == .answering,
+            "the superseded negotiation must not close its replacement"
+        )
+    }
+
+    @Test("""
+    @spec REMOTE-11.13: If peer-connection allocation fails after an offer \
+    reserves the host slot, then the application shall close that lifecycle \
+    so a later authenticated offer can connect immediately.
+    """)
+    func allocationFailureDoesNotWedgeTheHostBusy() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.failPeerConnectionAllocationForTesting()
+
+        let offer = RTCSessionDescription(type: .offer, sdp: "")
+        await #expect(throws: WebRTCHostAgent.HostError.peerConnectionInitFailed) {
+            _ = try await agent.acceptOffer(
+                offer,
+                clientDeviceID: RemoteDeviceID(value: "viewer")
+            )
+        }
+        #expect(await agent.state == .closed)
+
+        try await agent.prepareToAcceptOffer(
+            clientDeviceID: RemoteDeviceID(value: "viewer"),
+            replacingExistingConnection: false
+        )
+        #expect(await agent.state == .answering)
+    }
+
+    @Test("SSH authentication must match the identity that claimed signaling")
+    func sshIdentityMismatchClosesTheReplacementConnection() async throws {
+        let registry = SSHConnectionRegistry()
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        let signalingDevice = RemoteDeviceID(value: "signaling-device")
+        let sshDevice = RemoteDeviceID(value: "ssh-device")
+        try store.add(Self.makePeer(id: signalingDevice))
+        try store.add(Self.makePeer(id: sshDevice))
+        let agent = Self.makeHostAgent(
+            trustedPeerStore: store,
+            registry: registry
+        )
+
+        await agent.beginConnectionLifecycle(clientDeviceID: signalingDevice)
+        await agent.setStateForTesting(.connected)
+        await agent.registerAuthenticatedConnection(deviceID: sshDevice)
+
+        #expect(await agent.state == .closed)
+        #expect(await registry.count == 0)
+    }
+
+    @Test("""
+    @spec REMOTE-11.11: When the current host ICE connection does not return \
+    to a connected state within five seconds after disconnecting, the \
+    application shall close it and release the single-client slot; if ICE \
+    recovers first, the application shall keep the connection.
+    """)
+    func staleDisconnectedTransportReleasesTheHostSlotAfterGrace() async throws {
+        let agent = Self.makeHostAgent()
+
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.connected)
+        await agent.noteIceDisconnectedForTesting(timeout: .milliseconds(20))
+
+        for _ in 0..<100 {
+            if await agent.state == .closed { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(
+            await agent.state == .closed,
+            "a stale disconnected transport must stop returning hostBusy forever"
+        )
+    }
+
+    @Test("ICE recovery cancels the stale-connection deadline")
+    func recoveredDisconnectedTransportKeepsTheHostSlot() async throws {
+        let agent = Self.makeHostAgent()
+
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.connected)
+        await agent.noteIceDisconnectedForTesting(timeout: .milliseconds(20))
+        await agent.noteIceRecoveredForTesting()
+        try await Task.sleep(for: .milliseconds(40))
+
+        #expect(await agent.state == .connected)
+    }
+
+    @Test("an older disconnected callback cannot override newer ICE recovery")
+    func reorderedIceRecoveryDoesNotArmAStaleDeadline() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.connected)
+
+        await agent.applyIceStateForTesting(
+            .connected,
+            sequence: 2,
+            timeout: .milliseconds(10)
+        )
+        await agent.applyIceStateForTesting(
+            .disconnected,
+            sequence: 1,
+            timeout: .milliseconds(10)
+        )
+        try await Task.sleep(for: .milliseconds(25))
+
+        #expect(await agent.state == .connected)
+    }
+
+    @Test("an expired ICE deadline cannot consume a newer grace window")
+    func oldIceDeadlineCannotCloseANewerDisconnectWindow() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.connected)
+
+        let firstToken = await agent.noteIceDisconnectedForTesting(
+            timeout: .seconds(30)
+        )
+        await agent.noteIceRecoveredForTesting()
+        let secondToken = await agent.noteIceDisconnectedForTesting(
+            timeout: .seconds(30)
+        )
+
+        await agent.fireIceDisconnectedDeadlineForTesting(token: firstToken)
+        #expect(await agent.state == .connected)
+        await agent.fireIceDisconnectedDeadlineForTesting(token: secondToken)
+        #expect(await agent.state == .closed)
+    }
+
+    @Test("ICE checking does not strand an expired disconnect deadline")
+    func checkingAfterDisconnectStillReleasesTheHostSlotAtDeadline() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.connected)
+
+        let token = await agent.noteIceDisconnectedForTesting(
+            timeout: .seconds(30)
+        )
+        await agent.applyIceStateForTesting(
+            .checking,
+            sequence: 1,
+            timeout: .seconds(30)
+        )
+        await agent.fireIceDisconnectedDeadlineForTesting(token: token)
+
+        #expect(await agent.state == .closed)
+    }
 
     /// Regression guard for the `sshInstallStarted` reconnect-latch bug
     /// (W4 follow-up) — not a new spec ID. It protects the reconnect

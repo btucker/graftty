@@ -16,7 +16,12 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     private var closed = false
     private var registered = false
     private var knownSize: (UInt16, UInt16)?
-    private var requestedSize: (UInt16, UInt16)?
+    private struct RequestedSize: Equatable {
+        let windowSize: PtyProcess.WindowSize
+        let includesPixels: Bool
+    }
+    private var requestedSize: RequestedSize?
+    private var supportsPixels = false
     private var sizeCallback: ((UInt16, UInt16) -> Void)?
     public var attachmentRegistry: RemoteAttachmentRegistry?
     public var inputState: ZmxInputState?
@@ -85,8 +90,8 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         defer {
             if !handedToReader { lock.withLock { descriptor = -1 } }
         }
-        // Bit 3 alone prevents older snapshot daemons from selecting a full snapshot.
-        var capabilities = Data(); capabilities.appendLE(UInt64(8))
+        // Advertise paging and pixel metadata without either full-snapshot bit.
+        var capabilities = Data(); capabilities.appendLE(UInt64(9))
         try sendFrame(tag: 23, payload: capabilities)
         let negotiationDeadline = Date().addingTimeInterval(2)
         var negotiated = false
@@ -94,6 +99,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
             let frame = try Self.readFrame(fd: fd, deadline: negotiationDeadline)
             if frame.tag == 23 {
                 guard PagedZmxWire.supportsPaging(frame.payload) else { throw Error.unsupported }
+                lock.withLock { supportsPixels = frame.payload.le(0, 8) & 1 != 0 }
                 negotiated = true
             } else if frame.tag == 1 || frame.tag == 22 { throw Error.unsupported }
         }
@@ -144,9 +150,10 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         inputState?.recordInput(bytes, forSession: config.sessionName)
     }
     public func resize(cols: UInt16, rows: UInt16) {
-        guard cols > 0, rows > 0 else { return }
-        var payload = Data(); payload.appendLE(rows); payload.appendLE(cols)
-        try? sendFrame(tag: 2, payload: payload, requestedSize: (cols, rows))
+        try? resize(cols: cols, rows: rows, pixels: nil)
+    }
+    public func resize(windowSize: PtyProcess.WindowSize) throws {
+        try resize(cols: windowSize.cols, rows: windowSize.rows, pixels: windowSize)
     }
     public func resize(cols: Int, rows: Int) async {
         resize(cols: UInt16(clamping: cols), rows: UInt16(clamping: rows))
@@ -178,18 +185,39 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         continuation.finish()
     }
 
-    private func sendFrame(tag: UInt8, payload: Data, requestedSize: (UInt16, UInt16)? = nil) throws {
+    private func sendFrame(tag: UInt8, payload: Data) throws {
         let frame = PagedZmxWire.frame(tag: tag, payload: payload)
         try withWritableSocket { fd in
-            if let requestedSize {
-                // A daemon grid notification can prompt the ownership bridge
-                // to synchronize this follower again. Echoing an unchanged
-                // resize produces another grid notification indefinitely.
-                if let previous = self.requestedSize, previous == requestedSize { return }
-                self.requestedSize = requestedSize
-            }
             try Self.write(frame, to: fd)
         }
+    }
+
+    private func resize(cols: UInt16, rows: UInt16, pixels: PtyProcess.WindowSize?) throws {
+        guard cols > 0, rows > 0 else { return }
+        try withWritableSocket { fd in
+            let includesPixels = supportsPixels && (pixels != nil || requestedSize?.includesPixels == true)
+            let size = RequestedSize(windowSize: .init(cols: cols, rows: rows,
+                xpixel: includesPixels ? (pixels?.xpixel ?? requestedSize?.windowSize.xpixel ?? 0) : 0,
+                ypixel: includesPixels ? (pixels?.ypixel ?? requestedSize?.windowSize.ypixel ?? 0) : 0),
+                includesPixels: includesPixels)
+            // Ownership synchronization must not echo unchanged daemon grids.
+            // Pixel-only changes are distinct when the peer supports them.
+            guard size != requestedSize else { return }
+            try Self.writeResize(size, to: fd)
+            requestedSize = size
+        }
+    }
+
+    private static func writeResize(_ request: RequestedSize, to fd: Int32) throws {
+        let size = request.windowSize
+        var frames = Data()
+        if request.includesPixels {
+            var pixels = Data(); pixels.appendLE(size.xpixel); pixels.appendLE(size.ypixel)
+            frames.append(PagedZmxWire.frame(tag: 24, payload: pixels))
+        }
+        var grid = Data(); grid.appendLE(size.rows); grid.appendLE(size.cols)
+        frames.append(PagedZmxWire.frame(tag: 2, payload: grid))
+        try write(frames, to: fd)
     }
 
     private func replyToSizeRequest() throws {
@@ -198,9 +226,8 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
             // leads. zmx asks again after the first input transfers leadership.
             // Read and write under one lock so an older reply cannot overtake
             // a new owner resize. Passive attachments never invent a size.
-            guard let (cols, rows) = requestedSize else { return }
-            var payload = Data(); payload.appendLE(rows); payload.appendLE(cols)
-            try Self.write(PagedZmxWire.frame(tag: 2, payload: payload), to: fd)
+            guard let requestedSize else { return }
+            try Self.writeResize(requestedSize, to: fd)
         }
     }
 

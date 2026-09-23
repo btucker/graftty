@@ -29,8 +29,22 @@ final class RemoteMacsModel: ObservableObject {
     let relayRouter: RemoteWorktreeRelayRouter
     var onRemoteNotification: ((RemoteNotificationEvent) -> Void)?
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
+    private enum ConnectionIntent: Int {
+        case ordinary
+        case selectionRecovery
+        case forcedReconnect
+
+        var replacesExistingHostConnection: Bool {
+            self != .ordinary
+        }
+
+        var disconnectsLocalConnection: Bool {
+            self == .forcedReconnect
+        }
+    }
     private struct ConnectAttempt {
         let id: UUID
+        let intent: ConnectionIntent
         let task: Task<RemoteMacConnectionRegistry.Entry, Error>
     }
     private struct PaneControlOperation {
@@ -219,8 +233,6 @@ final class RemoteMacsModel: ObservableObject {
     private func beginReconnect(to remoteMac: RemoteMac) -> WorktreeManagementResponse {
         let identity = RemoteMacIdentity(remoteMac)
         switch connectionState(for: identity) {
-        case .connecting:
-            return .ok
         case .needsPairing:
             return .error(
                 code: "pairing-required",
@@ -228,13 +240,13 @@ final class RemoteMacsModel: ObservableObject {
                 forceAllowed: false,
                 shortStatus: nil
             )
-        case .offline, .discovered, .connected, .failed:
+        case .offline, .discovered, .connecting, .connected, .failed:
             prepareForExplicitReconnect(identity: identity)
         }
 
         let attempt = connectionTask(
             to: remoteMac,
-            disconnectExistingFirst: true
+            intent: .forcedReconnect
         )
         Task {
             do {
@@ -257,34 +269,59 @@ final class RemoteMacsModel: ObservableObject {
         try await connectionTask(to: remoteMac).value
     }
 
+    @discardableResult
+    func connectFromUserSelection(
+        to remoteMac: RemoteMac
+    ) async throws -> RemoteMacConnectionRegistry.Entry {
+        try await connectionTask(
+            to: remoteMac,
+            intent: .selectionRecovery
+        ).value
+    }
+
     private func connectionTask(
         to remoteMac: RemoteMac,
-        disconnectExistingFirst: Bool = false
+        intent: ConnectionIntent = .ordinary
     ) -> Task<RemoteMacConnectionRegistry.Entry, Error> {
         let identity = RemoteMacIdentity(remoteMac)
+        var supersededAttempt: ConnectAttempt?
         if let pending = connectAttempts[identity] {
-            return pending.task
+            if intent.rawValue > pending.intent.rawValue {
+                supersededAttempt = pending
+            } else {
+                return pending.task
+            }
         }
         let attemptID = UUID()
         connectAttemptIDs[identity] = attemptID
         connectionStates[identity] = .connecting
         let registry = connectionRegistry
+        let attemptToSupersede = supersededAttempt
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
-            if disconnectExistingFirst {
+            if let attemptToSupersede {
+                attemptToSupersede.task.cancel()
+            }
+            if intent.disconnectsLocalConnection {
                 await registry.disconnectAndWait(identity: identity)
-                try Task.checkCancellation()
-                guard self.connectAttemptIDs[identity] == attemptID else {
-                    throw CancellationError()
-                }
+            }
+            try Task.checkCancellation()
+            guard self.connectAttemptIDs[identity] == attemptID else {
+                throw CancellationError()
             }
             return try await self.performConnect(
                 to: remoteMac,
                 identity: identity,
-                attemptID: attemptID
+                attemptID: attemptID,
+                replacingExistingHostConnection:
+                    intent.replacesExistingHostConnection
             )
         }
-        connectAttempts[identity] = ConnectAttempt(id: attemptID, task: task)
+        connectAttempts[identity] = ConnectAttempt(
+            id: attemptID,
+            intent: intent,
+            task: task
+        )
         return task
     }
 
@@ -299,10 +336,14 @@ final class RemoteMacsModel: ObservableObject {
     private func performConnect(
         to remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
-        attemptID: UUID
+        attemptID: UUID,
+        replacingExistingHostConnection: Bool
     ) async throws -> RemoteMacConnectionRegistry.Entry {
         do {
-            let entry = try await connectionRegistry.connect(to: remoteMac)
+            let entry = try await connectionRegistry.connect(
+                to: remoteMac,
+                replacingExistingHostConnection: replacingExistingHostConnection
+            )
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }

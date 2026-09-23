@@ -430,6 +430,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.22** While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.
 
+**TERM-12.23** When a Mac attachment prefetches older history, the application shall install the current screen first and fetch at most one bounded history page at a time, including history on the inactive screen.
+
+**TERM-12.25** When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.
+
+**TERM-12.26** When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.
+
+**TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
+
+**TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1002,7 +1012,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-4.x — Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned attachment only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. Existing paging-capable sessions use native snapshot restoration; new sessions and older daemons use a `zmx attach` PTY. Shell exit remains wired to `close_surface_cb` through `ghostty_surface_process_exit`.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 
@@ -2298,6 +2308,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.15** When a host advertises wake addresses, the application shall include each eligible interface's valid active link-layer and permanent hardware addresses for its IPv4 address without duplicates.
 
+**REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
+
+**REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -2382,7 +2396,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-11.x
 
-**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active and the offer is not a signed explicit reconnect from that same client, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 **REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
 
@@ -2399,6 +2413,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.8** When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.
 
 **REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
+
+**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection lifecycle, the application shall replace that negotiating or connected lifecycle immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
+
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
+
+**REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
+
+**REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -2433,6 +2455,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.15** When `graftty remote reconnect <name-or-id>` identifies a saved Remote Mac by its exact name or device ID, the application shall request reconnect through its existing connection flow without requiring a current worktree, reject unknown or ambiguous targets and Macs needing pairing, and acknowledge the request without waiting for connection establishment.
 
 **REMOTE-12.16** When `graftty remote reconnect-client <name-or-id>` runs on a host Mac, the application shall target one authenticated connected viewing Mac by exact name or device ID, obtain its reconnect acknowledgement before closing that control channel, and have the viewer reconnect only that host through its existing connection flow; unknown, ambiguous, disconnected, or unsupported clients shall produce an error without disconnecting another peer.
+
+**REMOTE-12.17** When the user selects an offline or discovered saved Remote Mac, the application shall authenticate the connection as a same-device replacement; if a live local connection exists, it shall reuse that connection without starting another transport.
+
+**REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects.
 
 ### REMOTE-13.x
 

@@ -75,6 +75,7 @@ public struct SignalingClient: Sendable {
         clientDeviceID: RemoteDeviceID,
         clientKey: Curve25519.Signing.PrivateKey,
         sdp: String,
+        replacesExistingConnection: Bool = false,
         wakeOnLAN: WakeOnLANAdvertisement? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) async throws -> AuthenticatedExchange {
@@ -119,6 +120,7 @@ public struct SignalingClient: Sendable {
         let offer = try AuthenticatedSignalingOffer(
             challenge: challenge,
             sdp: sdp,
+            replacesExistingConnection: replacesExistingConnection,
             signingKey: clientKey
         )
         let offerRoutes = [route] + uniqueRoutes.filter {

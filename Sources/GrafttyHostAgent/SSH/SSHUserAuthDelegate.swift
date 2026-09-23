@@ -26,6 +26,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
     private let store: TrustedPeerStore
+    private let expectedDeviceID: RemoteDeviceID?
     private let activePeerRegistry: ActiveRemotePeerRegistry?
     private let closeActiveTransport: (@Sendable () async -> Void)?
     private let onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)?
@@ -41,6 +42,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
 
     public init(
         store: TrustedPeerStore,
+        expectedDeviceID: RemoteDeviceID? = nil,
         activePeerRegistry: ActiveRemotePeerRegistry? = nil,
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
@@ -48,6 +50,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         onAuthenticatedPeer: (@Sendable (TrustedPeer) -> Void)? = nil
     ) {
         self.store = store
+        self.expectedDeviceID = expectedDeviceID
         self.activePeerRegistry = activePeerRegistry
         self.closeActiveTransport = closeActiveTransport
         self.onActivePeerRegistered = onActivePeerRegistered
@@ -65,7 +68,8 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
             do {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
                 if let peer = try store.get(fingerprint: fingerprint),
-                   peer.capabilities.terminalControl == .allowed {
+                   peer.capabilities.terminalControl == .allowed,
+                   expectedDeviceID == nil || peer.id == expectedDeviceID {
                     if let activePeerRegistry, let closeActiveTransport {
                         let entryID = activePeerRegistry.register(
                             peerID: peer.id,

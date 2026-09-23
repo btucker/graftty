@@ -97,10 +97,10 @@ public actor WebRTCHostAgent {
     /// comment), that unguarded closure tears down the new connection's
     /// live state mid-lifetime.
     ///
-    /// Bumped exactly once per accepted connection, in `acceptOffer`,
-    /// guarded by the same busy-check (`.idle || .closed`) that gates every
-    /// other per-connection reset there — this is the single "a fresh
-    /// connection lifecycle begins" checkpoint, well before
+    /// Bumped exactly once per accepted connection by
+    /// `prepareToAcceptOffer`. That admission step also reserves the
+    /// `.answering` state, making it the single "a fresh connection lifecycle
+    /// begins" checkpoint, well before
     /// `registerAuthenticatedConnection` can possibly run (which requires a
     /// data channel to open and SSH userauth to complete on top of this).
     /// `registerAuthenticatedConnection` captures the value current AT
@@ -156,10 +156,30 @@ public actor WebRTCHostAgent {
     /// Bound that pre-auth lifetime so an abandoned LAN offer cannot reserve
     /// this single-connection host forever.
     private var authenticationDeadlineTask: Task<Void, Never>?
+    /// ICE can report `.disconnected` during a brief interface handoff. Give
+    /// it a short recovery window, then release the singleton host slot if it
+    /// never returns to a connected state.
+    private var iceDisconnectedDeadline: (
+        token: UInt64,
+        task: Task<Void, Never>
+    )?
+    private var nextIceDisconnectedDeadlineToken: UInt64 = 0
+    private var currentIceState: RTCIceConnectionState?
+    private var lastIceEventSequence: UInt64 = 0
+    /// The client identity was already verified by authenticated signaling
+    /// before this connection allocated WebRTC resources. It is separate from
+    /// `authenticatedRegistration`, which is established later by SSH userauth.
+    private var signalingClientDeviceID: RemoteDeviceID?
+    /// Keeps the host reserved while an explicit reconnect waits for the old
+    /// SSH transport to finish closing. `close()` marks the state `.closed`
+    /// before that await, so state alone cannot protect this short interval.
+    private var replacementInProgress = false
+    private var failNextPeerConnectionAllocationForTesting = false
 
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
     private static let authenticationDeadline: Duration = .seconds(30)
+    private static let iceDisconnectedGrace: Duration = .seconds(5)
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
@@ -234,9 +254,8 @@ public actor WebRTCHostAgent {
         self.worktreeManagementMutator = mutator
     }
 
-    /// Test-only seam mirroring `acceptOffer`'s busy-guard precondition
-    /// surface (`state == .idle || state == .closed`), so a test can put
-    /// the agent into `.answering` / `.connected` and exercise the guard
+    /// Test-only seam for `acceptOffer`'s admission policy, so a test can put
+    /// the agent into `.answering` / `.connected` and exercise rejection
     /// without driving any native WebRTC negotiation to get there — see
     /// `SignalingHandlerOutcomeTests.busyOfferDoesNotTearDownActiveConnection`.
     /// `internal` so `@testable import GrafttyHostAgent` can reach it.
@@ -245,34 +264,40 @@ public actor WebRTCHostAgent {
     }
 
     /// Accept an incoming offer and return the answer.
-    public func acceptOffer(_ offer: RTCSessionDescription) async throws -> RTCSessionDescription {
-        // Reject concurrent / re-entered offers — two parallel offers
-        // would otherwise clobber `peerConnection`, `dataChannel`, and
-        // the delegate's onDataChannel closure.
-        guard state == .idle || state == .closed else {
-            throw HostError.busy
-        }
-        sshInstallStarted = false
-        // Generation-guard fix (W5): a fresh connection lifecycle begins
-        // here, exactly once per accepted offer — see `connectionGeneration`'s
-        // doc comment for why this is the right site and what it protects
-        // against.
-        beginConnectionLifecycle()
-        let config = Self.defaultConfig()
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: nil,
-            optionalConstraints: nil
+    public func acceptOffer(
+        _ offer: RTCSessionDescription,
+        clientDeviceID: RemoteDeviceID? = nil,
+        replacingExistingConnection: Bool = false
+    ) async throws -> RTCSessionDescription {
+        // This reserves `.answering` before native WebRTC work begins. Exact
+        // route retries never reach this method because authenticated
+        // signaling returns `.pending` or a cached answer for identical bytes.
+        let generation = try await prepareToAcceptOffer(
+            clientDeviceID: clientDeviceID,
+            replacingExistingConnection: replacingExistingConnection
         )
-        guard let pc = factory.peerConnection(
-            with: config,
-            constraints: constraints,
-            delegate: delegate
-        ) else {
-            throw HostError.peerConnectionInitFailed
-        }
-        self.peerConnection = pc
-        let generation = connectionGeneration
-        let peerConnectionID = ObjectIdentifier(pc)
+        do {
+            let config = Self.defaultConfig()
+            let constraints = RTCMediaConstraints(
+                mandatoryConstraints: nil,
+                optionalConstraints: nil
+            )
+            let pc: RTCPeerConnection?
+            if failNextPeerConnectionAllocationForTesting {
+                failNextPeerConnectionAllocationForTesting = false
+                pc = nil
+            } else {
+                pc = factory.peerConnection(
+                    with: config,
+                    constraints: constraints,
+                    delegate: delegate
+                )
+            }
+            guard let pc else {
+                throw HostError.peerConnectionInitFailed
+            }
+            self.peerConnection = pc
+            let peerConnectionID = ObjectIdentifier(pc)
 
         // The mobile side is the data-channel creator; the host receives
         // the data channel via `didOpen dataChannel` (handled in
@@ -287,18 +312,17 @@ public actor WebRTCHostAgent {
                 )
             }
         }
-        delegate.onIceStateChange = { [weak self] sourceID, iceState in
+        delegate.onIceStateChange = { [weak self] sourceID, iceState, sequence in
             Task {
                 await self?.handleIceStateChange(
                     iceState,
                     sourceID: sourceID,
-                    generation: generation
+                    generation: generation,
+                    sequence: sequence
                 )
             }
         }
 
-        do {
-            state = .answering
             startAuthenticationDeadline(
                 generation: generation,
                 timeout: Self.authenticationDeadline
@@ -329,6 +353,10 @@ public actor WebRTCHostAgent {
             await close(ifGeneration: generation)
             throw error
         }
+    }
+
+    internal func failPeerConnectionAllocationForTesting() {
+        failNextPeerConnectionAllocationForTesting = true
     }
 
     /// Block until the peer connection's ICE gathering reaches `.complete`.
@@ -442,6 +470,9 @@ public actor WebRTCHostAgent {
     public func close() async {
         authenticationDeadlineTask?.cancel()
         authenticationDeadlineTask = nil
+        iceDisconnectedDeadline?.task.cancel()
+        iceDisconnectedDeadline = nil
+        currentIceState = .closed
         if let pending = iceGatheringContinuation {
             iceGatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
@@ -453,8 +484,8 @@ public actor WebRTCHostAgent {
         // W4 follow-up: `sshInstallStarted` is a per-connection one-shot
         // latch guarding `installSSHHandler` against a double-install on
         // the SAME data channel. Left unreset here, a reconnect (a fresh
-        // `acceptOffer` after `close()`, which `acceptOffer`'s busy-guard
-        // permits from `.closed`) opens a brand-new data channel whose
+        // `acceptOffer` after `close()`, which admission permits from
+        // `.closed`) opens a brand-new data channel whose
         // `onOpen` calls `installSSHHandler` — which would see the stale
         // `true` from the PRIOR connection and return immediately, so SSH
         // never installs on the new channel and the reconnected peer gets
@@ -472,6 +503,7 @@ public actor WebRTCHostAgent {
         sshTransport = nil
         let registration = authenticatedRegistration
         authenticatedRegistration = nil
+        signalingClientDeviceID = nil
         let pc = peerConnection
         peerConnection = nil
         let dc = dataChannel
@@ -503,11 +535,51 @@ public actor WebRTCHostAgent {
     ///
     /// `internal` so `WebRTCHostAgentReconnectTests` can exercise the re-arm
     /// without driving native WebRTC through `acceptOffer`.
-    internal func beginConnectionLifecycle() {
+    internal func beginConnectionLifecycle(
+        clientDeviceID: RemoteDeviceID? = nil
+    ) {
         authenticationDeadlineTask?.cancel()
         authenticationDeadlineTask = nil
+        iceDisconnectedDeadline?.task.cancel()
+        iceDisconnectedDeadline = nil
+        currentIceState = nil
         connectionGeneration += 1
         sshInstallStarted = false
+        signalingClientDeviceID = clientDeviceID
+    }
+
+    /// Applies the one-active-client admission policy and reserves the host for
+    /// the accepted offer. A signed replacement request may evict only a
+    /// lifecycle that belongs to the same signaling identity. This includes a
+    /// superseded negotiation; exact multi-route retries are deduplicated by
+    /// authenticated signaling before they reach this admission point.
+    @discardableResult
+    internal func prepareToAcceptOffer(
+        clientDeviceID: RemoteDeviceID?,
+        replacingExistingConnection: Bool
+    ) async throws -> UInt64 {
+        guard !replacementInProgress else { throw HostError.busy }
+
+        switch state {
+        case .idle, .closed:
+            break
+        case .answering, .connected:
+            guard replacingExistingConnection,
+                  let clientDeviceID,
+                  clientDeviceID == signalingClientDeviceID
+            else {
+                throw HostError.busy
+            }
+            replacementInProgress = true
+            await close()
+        case .failed:
+            throw HostError.busy
+        }
+
+        beginConnectionLifecycle(clientDeviceID: clientDeviceID)
+        state = .answering
+        replacementInProgress = false
+        return connectionGeneration
     }
 
     /// Generation-guarded teardown used ONLY by the closure registered with
@@ -603,6 +675,7 @@ public actor WebRTCHostAgent {
         let teamOnConnect = self.teamOnConnect
         let teamOnDisconnect = self.teamOnDisconnect
         let activeRemotePeers = self.activeRemotePeers
+        let expectedSignalingDeviceID = signalingClientDeviceID
         transport.channel.closeFuture.whenComplete { [weak self, transport] _ in
             Task {
                 await self?.handleTransportClosed(
@@ -624,6 +697,7 @@ public actor WebRTCHostAgent {
                 let handler = SSHServerSetup.makeHandler(
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
+                    expectedDeviceID: expectedSignalingDeviceID,
                     activePeerRegistry: activeRemotePeers,
                     closeActiveTransport: {
                         await transport.close()
@@ -762,6 +836,14 @@ public actor WebRTCHostAgent {
         guard isCurrentLifecycle(generation: generation, transport: transport) else {
             return
         }
+        // The replacement decision trusted the signed signaling identity.
+        // Do not let a client finish SSH userauth as a different paired peer
+        // after using that identity to evict a connection.
+        if let signalingClientDeviceID,
+           signalingClientDeviceID != deviceID {
+            await close(ifGeneration: generation)
+            return
+        }
         authenticationDeadlineTask?.cancel()
         authenticationDeadlineTask = nil
         // Generation-guard fix (W5): capture the generation CURRENT at
@@ -851,7 +933,8 @@ public actor WebRTCHostAgent {
     private func handleIceStateChange(
         _ iceState: RTCIceConnectionState,
         sourceID: ObjectIdentifier,
-        generation: UInt64
+        generation: UInt64,
+        sequence: UInt64
     ) async {
         guard generation == connectionGeneration,
               let currentPeerConnection = peerConnection,
@@ -859,12 +942,117 @@ public actor WebRTCHostAgent {
         else {
             return
         }
+        await applyIceStateChange(
+            iceState,
+            sequence: sequence,
+            generation: generation,
+            disconnectedTimeout: Self.iceDisconnectedGrace
+        )
+    }
+
+    private func applyIceStateChange(
+        _ iceState: RTCIceConnectionState,
+        sequence: UInt64,
+        generation: UInt64,
+        disconnectedTimeout: Duration
+    ) async {
+        guard sequence > lastIceEventSequence else { return }
+        lastIceEventSequence = sequence
+        currentIceState = iceState
         switch iceState {
+        case .disconnected:
+            noteIceDisconnected(
+                generation: generation,
+                timeout: disconnectedTimeout
+            )
+        case .connected, .completed:
+            noteIceRecovered()
         case .failed, .closed:
-            await close()
+            noteIceRecovered()
+            await close(ifGeneration: generation)
         default:
             break
         }
+    }
+
+    @discardableResult
+    private func noteIceDisconnected(
+        generation: UInt64,
+        timeout: Duration
+    ) -> UInt64 {
+        currentIceState = .disconnected
+        if let existing = iceDisconnectedDeadline {
+            return existing.token
+        }
+        nextIceDisconnectedDeadlineToken &+= 1
+        let token = nextIceDisconnectedDeadlineToken
+        let task = Task { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            await self?.handleIceDisconnectedDeadline(
+                generation: generation,
+                token: token
+            )
+        }
+        iceDisconnectedDeadline = (token, task)
+        return token
+    }
+
+    private func noteIceRecovered() {
+        iceDisconnectedDeadline?.task.cancel()
+        iceDisconnectedDeadline = nil
+    }
+
+    private func handleIceDisconnectedDeadline(
+        generation: UInt64,
+        token: UInt64
+    ) async {
+        guard generation == connectionGeneration,
+              state != .closed,
+              currentIceState != .connected,
+              currentIceState != .completed,
+              iceDisconnectedDeadline?.token == token
+        else {
+            return
+        }
+        iceDisconnectedDeadline = nil
+        await close()
+    }
+
+    @discardableResult
+    internal func noteIceDisconnectedForTesting(timeout: Duration) -> UInt64 {
+        noteIceDisconnected(
+            generation: connectionGeneration,
+            timeout: timeout
+        )
+    }
+
+    internal func noteIceRecoveredForTesting() {
+        currentIceState = .connected
+        noteIceRecovered()
+    }
+
+    internal func applyIceStateForTesting(
+        _ iceState: RTCIceConnectionState,
+        sequence: UInt64,
+        timeout: Duration
+    ) async {
+        await applyIceStateChange(
+            iceState,
+            sequence: sequence,
+            generation: connectionGeneration,
+            disconnectedTimeout: timeout
+        )
+    }
+
+    internal func fireIceDisconnectedDeadlineForTesting(token: UInt64) async {
+        await handleIceDisconnectedDeadline(
+            generation: connectionGeneration,
+            token: token
+        )
     }
 
     private enum WebRTCHostAgentError: Error {
@@ -952,10 +1140,17 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     nonisolated(unsafe) var onIceStateChange: (@Sendable (
         ObjectIdentifier,
-        RTCIceConnectionState
+        RTCIceConnectionState,
+        UInt64
     ) -> Void)?
+    private let iceEventSequenceLock = NSLock()
+    private var iceEventSequence: UInt64 = 0
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        onIceStateChange?(ObjectIdentifier(peerConnection), newState)
+        let sequence = iceEventSequenceLock.withLock {
+            iceEventSequence &+= 1
+            return iceEventSequence
+        }
+        onIceStateChange?(ObjectIdentifier(peerConnection), newState, sequence)
     }
     nonisolated(unsafe) var onIceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {

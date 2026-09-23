@@ -114,9 +114,11 @@ private final class FakePagedDaemon: @unchecked Sendable {
         return data
     }
 
-    static func negotiate(_ fd: Int32) throws {
-        try send(fd, tag: 23, payload: Data([8, 0, 0, 0, 0, 0, 0, 0]))
-        #expect(try receive(fd).0 == 23)
+    static func negotiate(_ fd: Int32, capabilities: UInt8 = 8) throws {
+        try send(fd, tag: 23, payload: Data([capabilities, 0, 0, 0, 0, 0, 0, 0]))
+        let advertised = try receive(fd)
+        #expect(advertised.0 == 23)
+        #expect(advertised.1 == Data([9, 0, 0, 0, 0, 0, 0, 0]))
         let (tag, codec) = try receive(fd)
         #expect(tag == 26)
         #expect(String(decoding: codec, as: UTF8.self) == PagedTerminalLimits.codec)
@@ -129,6 +131,60 @@ private final class FakePagedDaemon: @unchecked Sendable {
 }
 
 extension PagedZmxAttachEngineTests {
+    @Test("@spec TERM-12.25: When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.", arguments: [UInt8(8), UInt8(9)])
+    func windowResizePreservesNegotiatedPixelMetadata(capabilities: UInt8) async throws {
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd, capabilities: capabilities)
+            func expectSize(xpixel: UInt16, ypixel: UInt16) throws {
+                if capabilities & 1 != 0 {
+                    let pixels = try FakePagedDaemon.receive(fd)
+                    var expected = Data(); expected.appendLE(xpixel); expected.appendLE(ypixel)
+                    #expect(pixels.0 == 24)
+                    #expect(pixels.1 == expected)
+                }
+                let grid = try FakePagedDaemon.receive(fd)
+                #expect(grid.0 == 2)
+                #expect(grid.1 == Data([24, 0, 80, 0]))
+            }
+            try expectSize(xpixel: 960, ypixel: 576)
+            if capabilities & 1 != 0 { try expectSize(xpixel: 1280, ypixel: 720) }
+            // Unchanged resizes must not precede this input marker.
+            #expect(try FakePagedDaemon.receive(fd).0 == 0)
+            try FakePagedDaemon.send(fd, tag: 2, payload: Data())
+            try expectSize(xpixel: 1280, ypixel: 720)
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        try engine.resize(windowSize: .init(cols: 80, rows: 24, xpixel: 960, ypixel: 576))
+        let changed = PtyProcess.WindowSize(cols: 80, rows: 24, xpixel: 1280, ypixel: 720)
+        try engine.resize(windowSize: changed)
+        try engine.resize(windowSize: changed)
+        engine.resize(cols: UInt16(80), rows: UInt16(24))
+        try await engine.send(Data("input".utf8))
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
+    @Test func gridOnlyResizeDoesNotInventPixelMetadata() async throws {
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd, capabilities: 9)
+            #expect(try FakePagedDaemon.receive(fd).0 == 2)
+            try FakePagedDaemon.send(fd, tag: 2, payload: Data())
+            #expect(try FakePagedDaemon.receive(fd).0 == 2)
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        engine.resize(cols: UInt16(80), rows: UInt16(24))
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test("@spec TERM-12.15: When zmx requests a paged client's size after transferring leadership, the application shall resend its latest explicitly requested grid without resizing a passive attachment.")
     func leadershipResizeRequestUsesLatestRequestedGrid() async throws {
         let request = PagedTerminalHistoryRequest(incarnation: 9, checkpointID: 7, requestID: 1, ordinal: 0, screen: 0)

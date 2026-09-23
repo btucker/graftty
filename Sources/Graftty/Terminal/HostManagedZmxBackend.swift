@@ -5,6 +5,7 @@ import GrafttyProtocol
 import os
 
 protocol HostManagedZmxSession: AnyObject {
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
     func start() throws
     func write(_ data: Data) throws
     func resize(cols: UInt16, rows: UInt16) throws
@@ -13,6 +14,7 @@ protocol HostManagedZmxSession: AnyObject {
 }
 
 extension HostManagedZmxSession {
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func resize(windowSize: PtyProcess.WindowSize) throws {
         try resize(cols: windowSize.cols, rows: windowSize.rows)
     }
@@ -320,6 +322,12 @@ final class HostManagedZmxBackend {
     /// and pixel dimensions in one atomic libghostty snapshot.
     private var currentGridSize: () -> (cols: UInt16, rows: UInt16)? = { nil }
     private var requestRefresh: () -> Void = {}
+    private var attachmentGrid: DisplayGrid?
+    private var prepareAttachmentGrid: (DisplayGrid?) -> Void = { _ in }
+
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
+        lock.withLock { prepareAttachmentGrid = prepareGrid }
+    }
 
     /// Flips true (once) when the owning NSView first receives a nonzero
     /// frame. Pre-settle viewport callbacks are never forwarded; they are
@@ -333,7 +341,10 @@ final class HostManagedZmxBackend {
         ownership: HostManagedZmxOwnership? = nil,
         scheduleCoalescedResize: @escaping ResizeCoalescingScheduler = HostManagedZmxBackend.defaultResizeCoalescingScheduler,
         sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
-            NativePtySession(
+            if MacPagedTerminalRenderer.isSupported {
+                return MacPagedZmxSession(surface: surface, configuration: configuration, initialSize: initialSize)
+            }
+            return NativePtySession(
                 surface: surface,
                 argv: configuration.argv,
                 env: configuration.env,
@@ -414,6 +425,14 @@ final class HostManagedZmxBackend {
             grid: spawnSize.flatMap { Self.displayGrid(from: $0) } ?? .daemonFallback
         )
         let newSession = sessionFactory(surface, spawnConfiguration, spawnSize)
+        newSession.bindAttachmentGrid { [weak self] grid in
+            guard let self else { return }
+            let prepare = self.lock.withLock {
+                self.attachmentGrid = grid
+                return self.prepareAttachmentGrid
+            }
+            prepare(grid)
+        }
 
         lock.lock()
         if case .closed = lifecycle {
@@ -851,6 +870,7 @@ final class HostManagedZmxBackend {
         let currentSession: HostManagedZmxSession?
 
         lock.lock()
+        if attachmentGrid != nil { lock.unlock(); return }
         latestPixelSize = (xpixel: resize.xpixel, ypixel: resize.ypixel)
         // TERM-11.7: withhold while layout hasn't settled. These
         // callbacks are pre-layout placeholder noise and must never reach
@@ -1087,6 +1107,7 @@ final class HostManagedZmxBackend {
     }
 
     private func authorizeOwnerResizeLocked(_ resize: PendingResize) -> AuthorizedResize? {
+        guard attachmentGrid == nil else { return nil }
         guard let ownership else { return AuthorizedResize(resize: resize, epoch: 0) }
         guard Self.displayGrid(from: resize) != nil else { return nil }
         let fallback = fallbackDisplayGridLocked()
