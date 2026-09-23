@@ -13,7 +13,7 @@ struct TerminalCopyTextTests {
     }
 
     @Test("""
-    @spec TERM-8.12: When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+    @spec TERM-8.12: When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
     """)
     func joinsTranscriptDiagnosticsWithoutMergingEntries() {
         let copied = """
@@ -32,6 +32,49 @@ struct TerminalCopyTextTests {
     @Test func copiesSingleVisibleDiagnosticWithoutExpansionHint() {
         let copied = " └ 6912:􀢄 Test failed\n    +7 lines (ctrl+t to view transcript)"
         #expect(TerminalCopyText.clean(copied, columns: 120) == "6912:􀢄 Test failed")
+    }
+
+    @Test func joinsTranscriptDiagnosticWithAlternateMarker() {
+        let copied = """
+         ⎿ 6912:􀢄  Test "Claude session binding mutations are serialized within a process." recorded an issue at
+            TeamPresenceStorageTests.swift:276:9: Expectation failed
+            +7 lines (ctrl+t to view transcript)
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 120) ==
+            "6912:􀢄  Test \"Claude session binding mutations are serialized within a process.\" recorded an issue at TeamPresenceStorageTests.swift:276:9: Expectation failed")
+    }
+
+    @Test("@spec TERM-8.13: When a selected code diff starts after the first line's number gutter and subsequent lines include numbered diff rows, the application shall omit the later gutter numbers while preserving diff markers and code indentation.")
+    func removesLaterCodeLineNumbersWhenFirstLineStartsAfterGutter() {
+        let copied = #"""
+        @Test("""
+            16 -    @spec old requirement
+            16 +    @spec new requirement
+            17      """)
+               ⋮
+            36
+            37 +    @Test func newCase() { }
+        """#
+        let expected = #"""
+        @Test("""
+        -    @spec old requirement
+        +    @spec new requirement
+             """)
+               ⋮
+
+        +    @Test func newCase() { }
+        """#
+        #expect(TerminalCopyText.clean(copied, columns: 120) == expected)
+    }
+
+    @Test func keepsCodeLineNumbersWhenSelectionStartsInGutter() {
+        let copied = """
+         63                let first = lines.first?.trimmingCharacters(in: .whitespaces),
+            64 -              first.hasPrefix("└ "), numberedDiagnostic(in: first) != nil else { return text }
+            64 +              hasTranscriptMarker(first), numberedDiagnostic(in: first) != nil else { return text }
+            65          lines.removeLast()
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 70) == copied)
     }
 
     @Test func joinsUnbulletedProseAtTerminalEdge() {

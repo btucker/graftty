@@ -344,7 +344,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.11** When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.
 
-**TERM-8.12** When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+**TERM-8.12** When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
+**TERM-8.13** When a selected code diff starts after the first line's number gutter and subsequent lines include numbered diff rows, the application shall omit the later gutter numbers while preserving diff markers and code indentation.") func removesLaterCodeLineNumbersWhenFirstLineStartsAfterGutter() { let copied = #
 
 ### TERM-9.x
 

@@ -21,6 +21,7 @@ enum TerminalCopyText {
     }
 
     static func clean(_ text: String, columns: Int) -> String {
+        if let codeSelection = cleanCodeLineNumberGutter(text) { return codeSelection }
         let withoutChrome = withoutTranscriptChrome(text)
         let lines = withoutChrome.components(separatedBy: "\n")
         guard lines.count > 1 else { return withoutChrome }
@@ -56,12 +57,58 @@ enum TerminalCopyText {
         return result
     }
 
+    private struct NumberedCodeRow {
+        let number: Int
+        let gutterIndent: Int
+        let content: String
+
+        var hasDiffMarker: Bool { content.hasPrefix("+") || content.hasPrefix("-") }
+    }
+
+    /// A linear selection begun inside the code column includes the full
+    /// number gutter on later rows. Require repeated, ordered diff rows so
+    /// ordinary numbered output keeps its original text.
+    private static func cleanCodeLineNumberGutter(_ text: String) -> String? {
+        let lines = text.components(separatedBy: "\n")
+        let numbered = lines.enumerated().compactMap { index, line in
+            numberedCodeRow(line).map { (index, $0) }
+        }
+        guard numbered.count >= 2, numbered.contains(where: { $0.1.hasDiffMarker }),
+              numbered.indices.dropFirst().allSatisfy({ numbered[$0].1.number >= numbered[$0 - 1].1.number }) else {
+            return nil
+        }
+        // A selection that begins in the gutter intentionally includes the
+        // numbers, including those on later lines.
+        if numbered[0].0 == 0 { return text }
+        guard numbered[0].0 == 1,
+              !lines[0].trimmingCharacters(in: .whitespaces).isEmpty,
+              numbered.allSatisfy({ $0.1.gutterIndent == numbered[0].1.gutterIndent }) else {
+            return nil
+        }
+        return lines.enumerated().map { index, line in
+            index == 0 ? line : (numberedCodeRow(line)?.content ?? line)
+        }.joined(separator: "\n")
+    }
+
+    private static func numberedCodeRow(_ line: String) -> NumberedCodeRow? {
+        let indent = line.prefix(while: { $0 == " " }).count
+        let row = line.dropFirst(indent)
+        let digits = row.prefix(while: { ("0"..."9").contains($0) })
+        guard !digits.isEmpty, digits.count <= 7, let number = Int(digits) else { return nil }
+        let rest = row.dropFirst(digits.count)
+        guard rest.isEmpty || rest.first == " " else { return nil }
+        return NumberedCodeRow(
+            number: number, gutterIndent: indent,
+            content: rest.isEmpty ? "" : String(rest.dropFirst())
+        )
+    }
+
     private static func withoutTranscriptChrome(_ text: String) -> String {
         var lines = text.components(separatedBy: "\n")
         while lines.last == "" { lines.removeLast() }
         guard let hint = lines.last, isTranscriptExpansionHint(hint),
               let first = lines.first?.trimmingCharacters(in: .whitespaces),
-              first.hasPrefix("└ "), numberedDiagnostic(in: first) != nil else { return text }
+              hasTranscriptMarker(first), numberedDiagnostic(in: first) != nil else { return text }
         lines.removeLast()
         return lines.map { line in
             numberedDiagnostic(in: line.trimmingCharacters(in: .whitespaces)) ?? line
@@ -69,10 +116,14 @@ enum TerminalCopyText {
     }
 
     private static func numberedDiagnostic(in content: String) -> String? {
-        let entry = content.hasPrefix("└ ") ? String(content.dropFirst(2)) : content
+        let entry = hasTranscriptMarker(content) ? String(content.dropFirst(2)) : content
         guard let colon = entry.firstIndex(of: ":"), colon != entry.startIndex,
               entry[..<colon].allSatisfy(\.isNumber) else { return nil }
         return entry
+    }
+
+    private static func hasTranscriptMarker(_ content: String) -> Bool {
+        content.hasPrefix("└ ") || content.hasPrefix("⎿ ")
     }
 
     private static func isTranscriptExpansionHint(_ line: String) -> Bool {
