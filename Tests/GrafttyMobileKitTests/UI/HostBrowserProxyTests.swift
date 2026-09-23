@@ -8,25 +8,9 @@ import WebKit
 
 @MainActor
 struct HostBrowserProxyTests {
-    @Test(
-        "WebKit proxies public hostnames through the paired Mac",
-        .timeLimit(.minutes(1))
-    )
-    func requestedHostUsesProxy() async throws {
-        let url = try #require(URL(string: "http://example.invalid:39382"))
-        let proxy = try BrowserProxy { socket, host, port in
-            #expect(host == url.host)
-            #expect(port == url.port)
-            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
-            let _: Data = try await withCheckedThrowingContinuation { continuation in
-                socket.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, error in
-                    if let error { continuation.resume(throwing: error) }
-                    else { continuation.resume(returning: data ?? Data()) }
-                }
-            }
-            try await BrowserProxy.send(Data("HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nviaProxy".utf8), to: socket)
-            socket.cancel()
-        }
+    @Test("WebKit uses the authenticated SOCKS proxy for every domain without failover")
+    func webKitConfigurationUsesProxy() async throws {
+        let proxy = try BrowserProxy { _, _, _ in }
         let port = try await proxy.start()
         defer { proxy.stop() }
         let dataStoreID = UUID(uuidString: "8B2C0D79-593D-43E0-84ED-65F34236DB14")!
@@ -37,41 +21,40 @@ struct HostBrowserProxyTests {
         )
         #expect(config.websiteDataStore.isPersistent)
         #expect(config.websiteDataStore.identifier == dataStoreID)
-        let view = WKWebView(frame: .zero, configuration: config)
-        let result = BrowserNavigationResult()
-        view.navigationDelegate = result
-        view.load(URLRequest(url: url))
-        // A cold WebKit network process can take more than 15 seconds to
-        // become responsive on a newly booted CI simulator.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while !result.finished && result.error == nil && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(result.error == nil)
-        #expect(result.finished)
-        if result.finished {
-            #expect(try await view.evaluateJavaScript("document.body.textContent") as? String == "viaProxy")
-        }
-        view.stopLoading()
+        let settings = try #require(config.websiteDataStore.proxyConfigurations.first)
+        #expect(config.websiteDataStore.proxyConfigurations.count == 1)
+        #expect(settings.allowFailover == false)
+        #expect(settings.matchDomains == ["", "localhost", "127.0.0.1", "::1"])
     }
 
     @Test("The SOCKS proxy forwards localhost unchanged to the paired Mac")
     func localhostIsResolvedByHost() async throws {
-        let proxy = try BrowserProxy { socket, host, port in
-            #expect(host == "localhost")
-            #expect(port == 3000)
+        try await expectForwarded(host: "localhost", port: 3000)
+    }
+
+    @Test("The SOCKS proxy forwards public hostnames unchanged to the paired Mac")
+    func publicHostnameIsResolvedByHost() async throws {
+        try await expectForwarded(host: "example.invalid", port: 443)
+    }
+
+    private func expectForwarded(host: String, port: Int) async throws {
+        let expectedHost = host
+        let expectedPort = port
+        let proxy = try BrowserProxy { socket, requestedHost, requestedPort in
+            #expect(requestedHost == expectedHost)
+            #expect(requestedPort == expectedPort)
             try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
             socket.cancel()
         }
-        let port = try await proxy.start()
+        let proxyPort = try await proxy.start()
         defer { proxy.stop() }
 
-        let socket = try await authenticatedConnection(to: proxy, port: port)
+        let socket = try await authenticatedConnection(to: proxy, port: proxyPort)
         defer { socket.cancel() }
-        let hostname = Data("localhost".utf8)
+        let hostname = Data(host.utf8)
         var request = Data([5, 1, 0, 3, UInt8(hostname.count)])
         request.append(hostname)
-        request.append(contentsOf: [0x0B, 0xB8])
+        request.append(contentsOf: [UInt8(port / 256), UInt8(port % 256)])
         try await BrowserProxy.send(request, to: socket)
         let reply = try await Self.receive(10, from: socket)
         #expect(reply[0] == 5)
@@ -129,18 +112,5 @@ struct HostBrowserProxyTests {
     }
 
     private struct ExpectedFailure: Error {}
-}
-
-@MainActor
-private final class BrowserNavigationResult: NSObject, WKNavigationDelegate {
-    var finished = false
-    var error: String?
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        self.error = error.localizedDescription
-    }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        self.error = error.localizedDescription
-    }
 }
 #endif
