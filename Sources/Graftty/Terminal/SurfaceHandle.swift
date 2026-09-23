@@ -897,6 +897,11 @@ final class SurfaceNSView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // The full-size content view extends beneath the transparent titlebar.
+    // AppKit lets nonopaque views move the window by default, which steals
+    // selection drags from the first terminal row near the titlebar edge.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
