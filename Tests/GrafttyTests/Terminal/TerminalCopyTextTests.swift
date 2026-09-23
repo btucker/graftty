@@ -3,6 +3,15 @@ import Testing
 
 @Suite("@spec TERM-8.11: When a terminal selection contains visually wrapped prose, the application shall join continuation lines and remove their display indentation while preserving separate paragraphs, list items, and code indentation.")
 struct TerminalCopyTextTests {
+    @Test func joinsUnbulletedProseEvenWhenPaneIsWiderThanCopiedLine() {
+        let copied = """
+        all in the same two existing timing sensitive areas. All three new copy tests passed in that
+          run. The generated spec is current,
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 120) ==
+            "all in the same two existing timing sensitive areas. All three new copy tests passed in that run. The generated spec is current,")
+    }
+
     @Test func joinsAgentBulletContinuation() {
         let copied = """
         • For Claude and Codex selections, should the usual Cmd+C and Copy action clean wrapped prose

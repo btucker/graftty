@@ -31,7 +31,8 @@ enum TerminalCopyText {
             let continuation = String(line.dropFirst(startsWithTwoSpaces ? 2 : 0))
             let joinsWrappedProse = startsWithTwoSpaces
                 && columns > 0
-                && previous.count >= max(15, columns - 16)
+                // A copied line may have been drawn before the pane was widened.
+                && previous.count >= max(15, min(70, columns - 16))
                 && looksLikeProse(previous)
                 && looksLikeProse(continuation)
                 && !isListItem(continuation)
