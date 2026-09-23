@@ -1,9 +1,20 @@
 import Testing
 @testable import Graftty
 
-@Suite("@spec TERM-8.11: When a terminal selection contains visually wrapped prose, the application shall join continuation lines and remove their display indentation while preserving separate paragraphs, list items, and code indentation.")
+@Suite("@spec TERM-8.11: When a selected terminal line has an indented continuation whose first word would not fit at the inferred wrap width, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.")
 struct TerminalCopyTextTests {
-    @Test("@spec TERM-8.12: When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.")
+    @Test func joinsIndentedContinuationWhenNextWordCouldNotFit() {
+        let copied = """
+        The build command reported a diagnostic near the terminal's right edge at
+            SourceFile.swift:120:9: Expected a value here.
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 90) ==
+            "The build command reported a diagnostic near the terminal's right edge at SourceFile.swift:120:9: Expected a value here.")
+    }
+
+    @Test("""
+    @spec TERM-8.12: When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+    """)
     func joinsTranscriptDiagnosticsWithoutMergingEntries() {
         let copied = """
          └ 6912:􀢄  Test "Claude session binding mutations are serialized within a process." recorded an issue at
@@ -45,8 +56,16 @@ struct TerminalCopyTextTests {
 
         A separate paragraph.
         """
-        #expect(TerminalCopyText.clean(copied, columns: 35) ==
+        #expect(TerminalCopyText.clean(copied, columns: 32) ==
             "• First item that wraps here onto another line\n• Second item\n\nA separate paragraph.")
+    }
+
+    @Test func keepsNumberedItemAfterLongLine() {
+        let copied = """
+        A long explanation fills this display row before the next numbered list item begins
+          1. Keep this as a separate item
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 90) == copied)
     }
 
     @Test func keepsCodeAndShortIntentionalLines() {

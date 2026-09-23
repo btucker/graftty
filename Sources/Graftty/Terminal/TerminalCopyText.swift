@@ -21,50 +21,51 @@ enum TerminalCopyText {
     }
 
     static func clean(_ text: String, columns: Int) -> String {
-        if let transcript = cleanTranscriptDiagnostics(text) { return transcript }
-        let lines = text.components(separatedBy: "\n")
+        let lines = withoutTranscriptChrome(text).components(separatedBy: "\n")
         guard lines.count > 1 else { return text }
 
+        // The pane may have grown since these rows were drawn. Use the
+        // longest selected row as a lower estimate of its former width.
+        let observedWidth = lines.map(\.count).max() ?? columns
+        let wrapWidth = min(columns, max(min(columns, 40), observedWidth))
         var result = lines[0]
         var previous = lines[0]
+        var previousWasJoined = false
         for line in lines.dropFirst() {
-            let startsWithTwoSpaces = line.hasPrefix("  ") && !line.hasPrefix("   ")
-            let continuation = String(line.dropFirst(startsWithTwoSpaces ? 2 : 0))
-            let joinsWrappedProse = startsWithTwoSpaces
-                && columns > 0
-                // A copied line may have been drawn before the pane was widened.
-                && previous.count >= max(15, min(70, columns - 16))
-                && looksLikeProse(previous)
-                && looksLikeProse(continuation)
+            let indentation = line.prefix(while: { $0 == " " }).count
+            let continuation = line.trimmingCharacters(in: .whitespaces)
+            let previousContent = previous.trimmingCharacters(in: .whitespaces)
+            let previousIndentation = previous.prefix(while: { $0 == " " }).count
+            let nextWordWidth = continuation.prefix(while: { !$0.isWhitespace }).count
+            let joinsWrappedLine = columns > 0
+                && indentation >= 2
+                && !previousContent.isEmpty
+                && !continuation.isEmpty
                 && !isListItem(continuation)
-            if joinsWrappedProse {
+                && numberedDiagnostic(in: continuation) == nil
+                && !previousContent.hasSuffix(":")
+                && (previousIndentation < 4 || previousWasJoined || numberedDiagnostic(in: previousContent) != nil)
+                && previous.count + 1 + nextWordWidth > wrapWidth
+            if joinsWrappedLine {
                 while result.last == " " { result.removeLast() }
                 result += " " + continuation
             } else {
                 result += "\n" + line
             }
+            previousWasJoined = joinsWrappedLine
             previous = line
         }
         return result
     }
 
-    private static func cleanTranscriptDiagnostics(_ text: String) -> String? {
+    private static func withoutTranscriptChrome(_ text: String) -> String {
         var lines = text.components(separatedBy: "\n")
         while lines.last == "" { lines.removeLast() }
-        guard let hint = lines.last, isTranscriptExpansionHint(hint) else { return nil }
-
-        var entries: [String] = []
-        for line in lines.dropLast() {
-            let content = line.trimmingCharacters(in: .whitespaces)
-            if let entry = numberedDiagnostic(in: content) {
-                entries.append(entry)
-            } else if !content.isEmpty, !entries.isEmpty {
-                entries[entries.count - 1] += " " + content
-            } else {
-                return nil
-            }
-        }
-        return entries.count >= 2 ? entries.joined(separator: "\n") : nil
+        guard let hint = lines.last, isTranscriptExpansionHint(hint) else { return text }
+        lines.removeLast()
+        return lines.map { line in
+            numberedDiagnostic(in: line.trimmingCharacters(in: .whitespaces)) ?? line
+        }.joined(separator: "\n")
     }
 
     private static func numberedDiagnostic(in content: String) -> String? {
@@ -83,14 +84,11 @@ enum TerminalCopyText {
     }
 
     private static func isListItem(_ line: String) -> Bool {
-        line.hasPrefix("• ") || line.hasPrefix("- ") || line.hasPrefix("* ")
-    }
-
-    private static func looksLikeProse(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.contains(" "),
-              trimmed.count >= 12,
-              !trimmed.hasPrefix("```") else { return false }
-        return true
+        if line.hasPrefix("• ") || line.hasPrefix("- ") || line.hasPrefix("* ") { return true }
+        guard let marker = line.firstIndex(where: { $0 == "." || $0 == ")" }),
+              marker != line.startIndex,
+              line[..<marker].allSatisfy(\.isNumber) else { return false }
+        let afterMarker = line.index(after: marker)
+        return afterMarker < line.endIndex && line[afterMarker] == " "
     }
 }
