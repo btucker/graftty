@@ -1,7 +1,7 @@
 import Testing
 @testable import Graftty
 
-@Suite("@spec TERM-8.11: When a selected terminal line has an indented continuation whose first word would not fit at the inferred wrap width, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.")
+@Suite("@spec TERM-8.11: When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.")
 struct TerminalCopyTextTests {
     @Test func joinsIndentedContinuationWhenNextWordCouldNotFit() {
         let copied = """
@@ -29,13 +29,37 @@ struct TerminalCopyTextTests {
         #expect(TerminalCopyText.clean(copied, columns: 120) == expected)
     }
 
-    @Test func joinsUnbulletedProseEvenWhenPaneIsWiderThanCopiedLine() {
+    @Test func copiesSingleVisibleDiagnosticWithoutExpansionHint() {
+        let copied = " └ 6912:􀢄 Test failed\n    +7 lines (ctrl+t to view transcript)"
+        #expect(TerminalCopyText.clean(copied, columns: 120) == "6912:􀢄 Test failed")
+    }
+
+    @Test func joinsUnbulletedProseAtTerminalEdge() {
         let copied = """
         all in the same two existing timing sensitive areas. All three new copy tests passed in that
           run. The generated spec is current,
         """
-        #expect(TerminalCopyText.clean(copied, columns: 120) ==
+        #expect(TerminalCopyText.clean(copied, columns: 96) ==
             "all in the same two existing timing sensitive areas. All three new copy tests passed in that run. The generated spec is current,")
+    }
+
+    @Test func keepsIntentionalIndentedLineBeforeTerminalEdge() {
+        let copied = """
+        let result = aVeryLongMethodCall(with: severalArguments, and: moreArguments)
+            .map(transform)
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 120) == copied)
+    }
+
+    @Test func keepsLiteralTranscriptHintInOrdinaryOutput() {
+        let copied = "header\nbody\n+7 lines (ctrl+t to view transcript)"
+        #expect(TerminalCopyText.clean(copied, columns: 120) == copied)
+    }
+
+    @Test func joinsFullWidthCharactersAtTerminalEdge() {
+        let copied = String(repeating: "界", count: 10) + "\n  next word"
+        #expect(TerminalCopyText.clean(copied, columns: 20) ==
+            String(repeating: "界", count: 10) + " next word")
     }
 
     @Test func joinsAgentBulletContinuation() {
