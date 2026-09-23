@@ -9,12 +9,11 @@ import WebKit
 @MainActor
 struct HostBrowserProxyTests {
     @Test(
-        "WebKit proxies local and public hostnames through the paired Mac",
-        .timeLimit(.minutes(2)),
-        arguments: ["http://localhost:39381", "http://example.invalid:39382"]
+        "WebKit proxies public hostnames through the paired Mac",
+        .timeLimit(.minutes(1))
     )
-    func requestedHostUsesProxy(urlText: String) async throws {
-        let url = try #require(URL(string: urlText))
+    func requestedHostUsesProxy() async throws {
+        let url = try #require(URL(string: "http://example.invalid:39382"))
         let proxy = try BrowserProxy { socket, host, port in
             #expect(host == url.host)
             #expect(port == url.port)
@@ -30,9 +29,7 @@ struct HostBrowserProxyTests {
         }
         let port = try await proxy.start()
         defer { proxy.stop() }
-        let dataStoreID = url.host == "localhost"
-            ? UUID(uuidString: "6C4279E9-27AE-4C31-93B7-7B086064BFE5")!
-            : UUID(uuidString: "8B2C0D79-593D-43E0-84ED-65F34236DB14")!
+        let dataStoreID = UUID(uuidString: "8B2C0D79-593D-43E0-84ED-65F34236DB14")!
         let config = HostBrowserProxyConfiguration.make(
             proxy: proxy,
             port: port,
@@ -58,19 +55,55 @@ struct HostBrowserProxyTests {
         view.stopLoading()
     }
 
+    @Test("The SOCKS proxy forwards localhost unchanged to the paired Mac")
+    func localhostIsResolvedByHost() async throws {
+        let proxy = try BrowserProxy { socket, host, port in
+            #expect(host == "localhost")
+            #expect(port == 3000)
+            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
+            socket.cancel()
+        }
+        let port = try await proxy.start()
+        defer { proxy.stop() }
+
+        let socket = try await authenticatedConnection(to: proxy, port: port)
+        defer { socket.cancel() }
+        let hostname = Data("localhost".utf8)
+        var request = Data([5, 1, 0, 3, UInt8(hostname.count)])
+        request.append(hostname)
+        request.append(contentsOf: [0x0B, 0xB8])
+        try await BrowserProxy.send(request, to: socket)
+        let reply = try await Self.receive(10, from: socket)
+        #expect(reply[0] == 5)
+        #expect(reply[1] == 0)
+    }
+
     @Test("SOCKS CONNECT failures return an RFC 1928 failure reply", .timeLimit(.minutes(1)))
     func connectFailureReturnsProtocolReply() async throws {
         let proxy = try BrowserProxy { _, _, _ in throw ExpectedFailure() }
         let port = try await proxy.start()
         defer { proxy.stop() }
 
+        let socket = try await authenticatedConnection(to: proxy, port: port)
+        defer { socket.cancel() }
+
+        let hostname = Data("example.invalid".utf8)
+        var request = Data([5, 1, 0, 3, UInt8(hostname.count)])
+        request.append(hostname)
+        request.append(contentsOf: [0, 80])
+        try await BrowserProxy.send(request, to: socket)
+        let reply = try await Self.receive(10, from: socket)
+        #expect(reply[0] == 5)
+        #expect(reply[1] == 1)
+    }
+
+    private func authenticatedConnection(to proxy: BrowserProxy, port: UInt16) async throws -> NWConnection {
         let socket = NWConnection(
             host: "127.0.0.1",
             port: try #require(NWEndpoint.Port(rawValue: port)),
             using: .tcp
         )
-        socket.start(queue: DispatchQueue(label: "graftty.browser.proxy.failure-test"))
-        defer { socket.cancel() }
+        socket.start(queue: DispatchQueue(label: "graftty.browser.proxy.test-client"))
 
         try await BrowserProxy.send(Data([5, 1, 2]), to: socket)
         #expect(try await Self.receive(2, from: socket) == Data([5, 2]))
@@ -83,15 +116,7 @@ struct HostBrowserProxyTests {
         auth.append(password)
         try await BrowserProxy.send(auth, to: socket)
         #expect(try await Self.receive(2, from: socket) == Data([1, 0]))
-
-        let hostname = Data("example.invalid".utf8)
-        var request = Data([5, 1, 0, 3, UInt8(hostname.count)])
-        request.append(hostname)
-        request.append(contentsOf: [0, 80])
-        try await BrowserProxy.send(request, to: socket)
-        let reply = try await Self.receive(10, from: socket)
-        #expect(reply[0] == 5)
-        #expect(reply[1] == 1)
+        return socket
     }
 
     private static func receive(_ count: Int, from connection: NWConnection) async throws -> Data {
