@@ -3,6 +3,21 @@ import Testing
 
 @Suite("@spec TERM-8.11: When a terminal selection contains visually wrapped prose, the application shall join continuation lines and remove their display indentation while preserving separate paragraphs, list items, and code indentation.")
 struct TerminalCopyTextTests {
+    @Test("@spec TERM-8.12: When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.")
+    func joinsTranscriptDiagnosticsWithoutMergingEntries() {
+        let copied = """
+         └ 6912:􀢄  Test "Claude session binding mutations are serialized within a process." recorded an issue at
+            TeamPresenceStorageTests.swift:276:9: Expectation failed: (firstEntered.wait(timeout: .now() + 1) → .timedOut) == .success
+            7120:􀢄  Test "Returns root + spawned child" recorded an issue at ProcessTreeWalkerTests.swift:63:9: Expectation failed: (pids.count →
+            +7 lines (ctrl+t to view transcript)
+        """
+        let expected = """
+        6912:􀢄  Test "Claude session binding mutations are serialized within a process." recorded an issue at TeamPresenceStorageTests.swift:276:9: Expectation failed: (firstEntered.wait(timeout: .now() + 1) → .timedOut) == .success
+        7120:􀢄  Test "Returns root + spawned child" recorded an issue at ProcessTreeWalkerTests.swift:63:9: Expectation failed: (pids.count →
+        """
+        #expect(TerminalCopyText.clean(copied, columns: 120) == expected)
+    }
+
     @Test func joinsUnbulletedProseEvenWhenPaneIsWiderThanCopiedLine() {
         let copied = """
         all in the same two existing timing sensitive areas. All three new copy tests passed in that

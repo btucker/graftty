@@ -344,6 +344,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.11** When a terminal selection contains visually wrapped prose, the application shall join continuation lines and remove their display indentation while preserving separate paragraphs, list items, and code indentation.
 
+**TERM-8.12** When a selected agent transcript contains wrapped line-numbered diagnostic entries and an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"

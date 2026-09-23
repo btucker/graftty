@@ -21,6 +21,7 @@ enum TerminalCopyText {
     }
 
     static func clean(_ text: String, columns: Int) -> String {
+        if let transcript = cleanTranscriptDiagnostics(text) { return transcript }
         let lines = text.components(separatedBy: "\n")
         guard lines.count > 1 else { return text }
 
@@ -45,6 +46,40 @@ enum TerminalCopyText {
             previous = line
         }
         return result
+    }
+
+    private static func cleanTranscriptDiagnostics(_ text: String) -> String? {
+        var lines = text.components(separatedBy: "\n")
+        while lines.last == "" { lines.removeLast() }
+        guard let hint = lines.last, isTranscriptExpansionHint(hint) else { return nil }
+
+        var entries: [String] = []
+        for line in lines.dropLast() {
+            let content = line.trimmingCharacters(in: .whitespaces)
+            if let entry = numberedDiagnostic(in: content) {
+                entries.append(entry)
+            } else if !content.isEmpty, !entries.isEmpty {
+                entries[entries.count - 1] += " " + content
+            } else {
+                return nil
+            }
+        }
+        return entries.count >= 2 ? entries.joined(separator: "\n") : nil
+    }
+
+    private static func numberedDiagnostic(in content: String) -> String? {
+        let entry = content.hasPrefix("└ ") ? String(content.dropFirst(2)) : content
+        guard let colon = entry.firstIndex(of: ":"), colon != entry.startIndex,
+              entry[..<colon].allSatisfy(\.isNumber) else { return nil }
+        return entry
+    }
+
+    private static func isTranscriptExpansionHint(_ line: String) -> Bool {
+        let content = line.trimmingCharacters(in: .whitespaces)
+        let suffix = " lines (ctrl+t to view transcript)"
+        guard content.hasPrefix("+"), content.hasSuffix(suffix) else { return false }
+        let count = content.dropFirst().dropLast(suffix.count)
+        return !count.isEmpty && count.allSatisfy(\.isNumber)
     }
 
     private static func isListItem(_ line: String) -> Bool {
