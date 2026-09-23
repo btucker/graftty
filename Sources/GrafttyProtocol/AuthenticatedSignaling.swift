@@ -185,11 +185,30 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
     public let hostNonce: Data
     public let expiresAt: Date
     public let sdp: String
+    /// Present only when the user explicitly asked to replace this device's
+    /// prior host connection. `nil` preserves the original protocol-v2 wire
+    /// shape and signing transcript for ordinary connects.
+    public let replacesExistingConnection: Bool?
+    /// Optional proof over the replacement extension. The base `signature`
+    /// remains bound to the released protocol-v2 transcript so older hosts can
+    /// still authenticate a newer client's offer when their slot is idle.
+    public let replacementSignature: Data?
     public let signature: Data
+
+    /// Replacement intent is also carried inside the legacy-signed SDP. A
+    /// route can remove optional JSON fields, but it cannot remove this SDP
+    /// attribute without invalidating the base signature that protocol-v2
+    /// hosts already verify.
+    public var hasSignedReplacementIntentMarker: Bool {
+        sdp.split(whereSeparator: { $0.isNewline }).contains {
+            $0 == Substring(Self.replacementIntentSDPAttribute)
+        }
+    }
 
     public init(
         challenge: SignalingChallengeResponse,
         sdp: String,
+        replacesExistingConnection: Bool = false,
         signingKey: Curve25519.Signing.PrivateKey
     ) throws {
         self.version = RemoteAccessProtocol.version
@@ -198,17 +217,25 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
         self.clientNonce = challenge.clientNonce
         self.hostNonce = challenge.hostNonce
         self.expiresAt = challenge.expiresAt
-        self.sdp = sdp
-        self.signature = try signingKey.signature(
-            for: Self.transcript(
-                version: version,
-                hostDeviceID: hostDeviceID,
-                clientDeviceID: clientDeviceID,
-                clientNonce: clientNonce,
-                hostNonce: hostNonce,
-                expiresAt: expiresAt,
-                sdp: sdp
-            ))
+        self.sdp = replacesExistingConnection
+            ? Self.appendingReplacementIntentMarker(to: sdp)
+            : sdp
+        self.replacesExistingConnection = replacesExistingConnection ? true : nil
+        let baseTranscript = Self.transcript(
+            version: version,
+            hostDeviceID: hostDeviceID,
+            clientDeviceID: clientDeviceID,
+            clientNonce: clientNonce,
+            hostNonce: hostNonce,
+            expiresAt: expiresAt,
+            sdp: self.sdp
+        )
+        self.signature = try signingKey.signature(for: baseTranscript)
+        self.replacementSignature = replacesExistingConnection
+            ? try signingKey.signature(
+                for: Self.replacementTranscript(baseTranscript: baseTranscript)
+            )
+            : nil
     }
 
     public func isValid(using publicKey: RemoteIdentityPublicKey) -> Bool {
@@ -222,6 +249,23 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             return false
         }
         return key.isValidSignature(signature, for: signingTranscript)
+    }
+
+    public func hasValidReplacementIntent(
+        using publicKey: RemoteIdentityPublicKey
+    ) -> Bool {
+        guard replacesExistingConnection == true,
+              let replacementSignature,
+              let key = try? Curve25519.Signing.PublicKey(
+                rawRepresentation: publicKey.rawRepresentation
+              )
+        else {
+            return false
+        }
+        return key.isValidSignature(
+            replacementSignature,
+            for: Self.replacementTranscript(baseTranscript: signingTranscript)
+        )
     }
 
     fileprivate var signingTranscript: Data {
@@ -254,6 +298,74 @@ public struct AuthenticatedSignalingOffer: Codable, Sendable, Equatable {
             .appending(expiresAt)
             .appending(sdp)
             .data
+    }
+
+    private static func replacementTranscript(baseTranscript: Data) -> Data {
+        SignalingTranscript(domain: "graftty.signaling.v2.offer.replacement")
+            .appending(baseTranscript)
+            .appending("replace-existing-connection")
+            .data
+    }
+
+    private static let replacementIntentSDPAttribute =
+        "a=x-graftty-replacement-intent:1"
+
+    private static func appendingReplacementIntentMarker(to sdp: String) -> String {
+        let separator = sdp.last?.isNewline == true ? "" : "\r\n"
+        return sdp + separator + replacementIntentSDPAttribute + "\r\n"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case hostDeviceID
+        case clientDeviceID
+        case clientNonce
+        case hostNonce
+        case expiresAt
+        case sdp
+        case replacesExistingConnection
+        case replacementSignature
+        case signature
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        hostDeviceID = try container.decode(RemoteDeviceID.self, forKey: .hostDeviceID)
+        clientDeviceID = try container.decode(RemoteDeviceID.self, forKey: .clientDeviceID)
+        clientNonce = try container.decode(Data.self, forKey: .clientNonce)
+        hostNonce = try container.decode(Data.self, forKey: .hostNonce)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        sdp = try container.decode(String.self, forKey: .sdp)
+        replacesExistingConnection = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .replacesExistingConnection
+        ) == true ? true : nil
+        replacementSignature = try container.decodeIfPresent(
+            Data.self,
+            forKey: .replacementSignature
+        )
+        signature = try container.decode(Data.self, forKey: .signature)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(hostDeviceID, forKey: .hostDeviceID)
+        try container.encode(clientDeviceID, forKey: .clientDeviceID)
+        try container.encode(clientNonce, forKey: .clientNonce)
+        try container.encode(hostNonce, forKey: .hostNonce)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(sdp, forKey: .sdp)
+        try container.encodeIfPresent(
+            replacesExistingConnection,
+            forKey: .replacesExistingConnection
+        )
+        try container.encodeIfPresent(
+            replacementSignature,
+            forKey: .replacementSignature
+        )
+        try container.encode(signature, forKey: .signature)
     }
 }
 

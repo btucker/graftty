@@ -531,7 +531,12 @@ final class AppServices {
                 }
                 let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
                 do {
-                    let answer = try await hostAgent.acceptOffer(rtcOffer)
+                    let answer = try await hostAgent.acceptOffer(
+                        rtcOffer,
+                        clientDeviceID: verified.offer.clientDeviceID,
+                        replacingExistingConnection:
+                            verified.authorizesReplacement
+                    )
                     switch await signalingServer.makeAnswer(
                         sdp: answer.sdp,
                         for: verified

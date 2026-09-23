@@ -83,6 +83,30 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
         XCTAssertTrue(registry.entries.isEmpty)
     }
 
+    /// @spec REMOTE-11.12: When signaling authenticates a connection for one
+    /// paired device, the host shall reject SSH user authentication from a
+    /// different device before it can open a subsystem channel.
+    func testSignalingIdentityMismatchFailsBeforeSSHAuthenticationSucceeds() throws {
+        let expectedKey = Curve25519.Signing.PrivateKey()
+        let otherKey = Curve25519.Signing.PrivateKey()
+        let expectedPeer = makePeer(key: expectedKey, terminalControl: .allowed)
+        let otherPeer = makePeer(key: otherKey, terminalControl: .allowed)
+        let store = makeStore()
+        let registry = ActiveRemotePeerRegistry()
+        try store.add(expectedPeer)
+        try store.add(otherPeer)
+
+        let outcome = try runUserAuth(
+            key: otherKey,
+            store: store,
+            activePeerRegistry: registry,
+            expectedDeviceID: expectedPeer.id
+        )
+
+        XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+        XCTAssertTrue(registry.entries.isEmpty)
+    }
+
     // MARK: - helpers
 
     private func makeStore() -> TrustedPeerStore {
@@ -117,12 +141,14 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     private func runUserAuth(
         key: Curve25519.Signing.PrivateKey,
         store: TrustedPeerStore,
-        activePeerRegistry: ActiveRemotePeerRegistry? = nil
+        activePeerRegistry: ActiveRemotePeerRegistry? = nil,
+        expectedDeviceID: RemoteDeviceID? = nil
     ) throws -> NIOSSHUserAuthenticationOutcome {
         let loop = EmbeddedEventLoop()
         defer { try! loop.syncShutdownGracefully() }
         let delegate = SSHUserAuthDelegate(
             store: store,
+            expectedDeviceID: expectedDeviceID,
             activePeerRegistry: activePeerRegistry,
             closeActiveTransport: {}
         )
