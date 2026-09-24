@@ -189,13 +189,13 @@ public struct SidebarAttentionList: View {
                 titleLine(card.title, badge: item.prBadge, font: .subheadline, limit: 1)
                     .foregroundStyle(.secondary)
                 if let need = card.sections.first(where: { $0.kind == .needsYou }) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("NEEDS YOU").font(.system(size: 10, weight: .bold)).tracking(0.8)
                             .foregroundStyle(viewed ? Color.secondary : .orange)
-                            .fixedSize()
                         Text(need.text).font(.system(size: wide ? 15 : 14, weight: .semibold))
-                            .lineLimit(3).help(need.text)
+                            .lineLimit(wide ? 3 : 4).help(need.text)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         case .stopped:

@@ -107,7 +107,7 @@ struct SidebarNavigationStateTests {
 
     #if os(macOS)
     @Test("""
-@spec LAYOUT-2.49: While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column and omit the visible filter label.
+@spec LAYOUT-2.49: While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column, omit the visible filter label, and stack compact Needs You labels above their questions.
 """)
     func attentionFitsNarrowColumns() async throws {
         let suite = "AttentionLayout." + UUID().uuidString
@@ -135,13 +135,24 @@ struct SidebarNavigationStateTests {
                 completed: "Client integration and tests are committed.", next: "Verify APNs on a locked phone.",
                 need: "Should done mean merged code or a real device notification?"))
         incoming.occurrence = .init(timestamp: Date().addingTimeInterval(1), text: incoming.title, source: .agentStop)
+        var secondQuestion = incoming
+        secondQuestion.id = "second-question"
+        secondQuestion.worktreeID = "second-question"
+        secondQuestion.worktreeName = "bottom-scroll-button"
+        secondQuestion.worktreeEmoji = nil
+        secondQuestion.prBadge = nil
+        secondQuestion.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date().addingTimeInterval(-3600),
+            recap: .init(title: "Terminal bottom row clipping", context: "The terminal bottom row is clipped.",
+                completed: "Reproduced the clipping.", next: "Inspect the affected pane layout.",
+                need: "Is this a local Mac pane, a pane following another display, or the mobile client?"))
+        secondQuestion.occurrence = .init(timestamp: Date().addingTimeInterval(-3600), text: secondQuestion.title, source: .agentStop)
         for width in [220.0, 300, 420] {
-            let content = SidebarAttentionList(navigation: navigation, items: [incoming], projects: [project],
+            let content = SidebarAttentionList(navigation: navigation, items: [incoming, secondQuestion], projects: [project],
                 selectionColor: Color.white.opacity(0.16), onOpen: { _ in true })
-                .frame(width: width, height: 520)
+                .frame(width: width, height: 850)
                 .background(Color(red: 0.21, green: 0.23, blue: 0.25)).environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: content)
-            let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 520), styleMask: .borderless, backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 850), styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = hosting
             window.orderFront(nil)
             defer { window.orderOut(nil) }
