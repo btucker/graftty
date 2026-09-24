@@ -133,7 +133,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.33: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that explains when to offer host files or URLs, how the caller's worktree scopes the offer, and the mobile preview's limits and user action.
+    @spec AGENT-6.33: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
     """)
     func preparesOpenSkillForBothProviders() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -151,6 +151,8 @@ struct AgentPluginInstallerTests {
             let skill = try String(contentsOf: file, encoding: .utf8)
             #expect(skill.contains("name: graftty-open"))
             #expect(skill.contains("graftty open"))
+            #expect(skill.contains("finished artifact"))
+            #expect(skill.contains("pane leader"))
             #expect(skill.contains("tracked worktree"))
             #expect(skill.contains("20 MB"))
             #expect(skill.contains("15 minutes"))

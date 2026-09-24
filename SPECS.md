@@ -1782,7 +1782,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-12.2** When a user opens an offered host file on mobile, the application shall download its bounded snapshot to a temporary local file and reject invalid names and incomplete transfers.
 
-**IOS-12.3** When the user runs graftty open with a file path, the CLI shall offer that file for native preview in the caller's tracked worktree and report request failures.
+**IOS-12.3** When the user runs graftty open with a file path, the CLI shall send the caller's pane session with the file in its tracked worktree and report request failures.
 
 **IOS-12.4** When graftty open receives an HTTP or HTTPS URL on a directly paired host, the application shall preserve its origin, offer it to mobile, and carry its browser connections through the authenticated host connection so localhost and DNS resolve on the host.
 
@@ -1791,6 +1791,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-12.6** If a browser tunnel cannot connect before its deadline, then the application shall fail that browser connection without disconnecting terminal panes sharing the host transport.
 
 **IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
+
+**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or the pane is unknown, the host shall open it with macOS.
 
 ## IPAD — iPad Layout
 
@@ -2704,7 +2706,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that explains when to offer host files or URLs, how the caller's worktree scopes the offer, and the mobile preview's limits and user action.
+**AGENT-6.33** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 
 ## CLI — CLI
 

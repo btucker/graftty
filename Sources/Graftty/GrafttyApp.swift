@@ -3847,12 +3847,30 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
-        case let .offerResource(path, target):
-            guard appState.wrappedValue.repos.contains(where: { repo in
-                repo.worktrees.contains { $0.path == path }
-            }) else { return .error("Run graftty open from a tracked worktree.") }
+        case let .offerResource(path, target, paneSessionName):
+            guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
+                return .error("Run graftty open from a tracked worktree.")
+            }
             do {
-                _ = try await RemoteOpenStore.shared.offer(file: try OpenResourceTarget.resolve(target), worktree: path)
+                let url = try OpenResourceTarget.resolve(target)
+                let destination: OpenResourceRouting.Destination
+                if let ownershipStore = terminalManager.displayOwnershipStore {
+                    destination = OpenResourceRouting.destination(
+                        paneSessionName: paneSessionName,
+                        belongsToWorktree: paneSessionName.flatMap { worktree.paneSlot(forSessionName: $0) } != nil,
+                        ownershipStore: ownershipStore
+                    )
+                } else {
+                    destination = .mac
+                }
+                switch destination {
+                case .mobile:
+                    _ = try await RemoteOpenStore.shared.offer(file: url, worktree: path)
+                case .mac:
+                    guard NSWorkspace.shared.open(url) else {
+                        return .error("macOS could not open this resource.")
+                    }
+                }
                 return .ok
             } catch {
                 return .error(error.localizedDescription)

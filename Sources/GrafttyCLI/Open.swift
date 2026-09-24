@@ -4,17 +4,23 @@ import GrafttyKit
 
 struct Open: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Open a file or host-tunneled URL in GrafttyMobile"
+        abstract: "Open a file or URL on the device leading this pane"
     )
 
-    @Argument(help: "File up to 20 MB, or an http:// or https:// URL. HTML files include only that file.")
+    @Argument(help: "File path or HTTP(S) URL. Mobile file previews are limited to 20 MB; HTML includes only that file.")
     var target: String
 
     func run() throws {
         let resource = try OpenResourceTarget.resolve(target)
         let path = resource.isFileURL ? resource.path : resource.absoluteString
         let worktree = try CLIEnv.resolveWorktree()
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.offerResource(path: worktree, target: path)))
-        print("Resource offered to GrafttyMobile for 15 minutes. Open this worktree on mobile to preview it.")
+        try CLIEnv.expectOk(CLIEnv.sendRequest(Self.request(
+            path: worktree, target: path, environment: ProcessInfo.processInfo.environment
+        )))
+        print("Resource routed for review.")
+    }
+
+    static func request(path: String, target: String, environment: [String: String]) -> NotificationMessage {
+        .offerResource(path: path, target: target, paneSessionName: environment["ZMX_SESSION"])
     }
 }
