@@ -27,6 +27,7 @@ struct RemoteMacIdentity: Hashable, Sendable {
 final class RemoteMacConnectionRegistry {
     private struct InFlightAttempt {
         let id: UUID
+        let replacesExistingHostConnection: Bool
         let task: Task<Entry, Error>
     }
 
@@ -102,6 +103,11 @@ final class RemoteMacConnectionRegistry {
     }
 
     typealias ConnectionFactory = @MainActor @Sendable (RemoteMac, RemoteMacIdentity) async throws -> Entry
+    typealias IntentAwareConnectionFactory = @MainActor @Sendable (
+        RemoteMac,
+        RemoteMacIdentity,
+        Bool
+    ) async throws -> Entry
     typealias IdentityProvider = @MainActor @Sendable () throws -> Curve25519.Signing.PrivateKey
     typealias PinnedHostProvider = @Sendable (RemoteDeviceID) -> PinnedHost?
     typealias PinnedHostUpdater = @Sendable (PinnedHost) throws -> Void
@@ -136,7 +142,7 @@ final class RemoteMacConnectionRegistry {
     var onReconnectFromHost: @MainActor (Entry) async -> Void = { _ in }
     weak var teamRouter: RemoteTeamRouter?
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
-    private let legacyFactory: ConnectionFactory?
+    private var legacyFactory: IntentAwareConnectionFactory?
     private let identityProvider: IdentityProvider
     private let clientDeviceID: RemoteDeviceID
     private let pinnedHostProvider: PinnedHostProvider
@@ -155,7 +161,13 @@ final class RemoteMacConnectionRegistry {
     init(factory: ConnectionFactory? = nil) {
         let identityStore = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
         let pinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
-        self.legacyFactory = factory
+        if let factory {
+            self.legacyFactory = { remoteMac, identity, _ in
+                try await factory(remoteMac, identity)
+            }
+        } else {
+            self.legacyFactory = nil
+        }
         self.identityProvider = {
             try identityStore.loadOrGenerateAndPersist()
         }
@@ -183,6 +195,13 @@ final class RemoteMacConnectionRegistry {
         self.now = { Date() }
     }
 
+    convenience init(
+        intentAwareFactory: @escaping IntentAwareConnectionFactory
+    ) {
+        self.init(factory: nil)
+        self.legacyFactory = intentAwareFactory
+    }
+
     init(
         identityProvider: @escaping IdentityProvider,
         clientDeviceID: RemoteDeviceID,
@@ -207,13 +226,19 @@ final class RemoteMacConnectionRegistry {
         self.now = now
     }
 
-    func connect(to remoteMac: RemoteMac) async throws -> Entry {
+    func connect(
+        to remoteMac: RemoteMac,
+        replacingExistingHostConnection: Bool = false
+    ) async throws -> Entry {
         try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
             let state = await existing.connection.currentState()
             guard entries[identity]?.id == existing.id else {
-                return try await connect(to: remoteMac)
+                return try await connect(
+                    to: remoteMac,
+                    replacingExistingHostConnection: replacingExistingHostConnection
+                )
             }
             if state.isTerminal {
                 entries[identity] = nil
@@ -225,30 +250,53 @@ final class RemoteMacConnectionRegistry {
             }
         }
 
+        var supersededAttempt: InFlightAttempt?
         if let pending = inFlight[identity] {
-            let completed = try await pending.task.value
-            guard var current = entries[identity], current.id == completed.id else {
-                throw CancellationError()
+            if replacingExistingHostConnection,
+               !pending.replacesExistingHostConnection {
+                supersededAttempt = pending
+            } else {
+                let completed = try await pending.task.value
+                guard var current = entries[identity],
+                      current.id == completed.id else {
+                    throw CancellationError()
+                }
+                current.remoteMac = remoteMac
+                entries[identity] = current
+                return current
             }
-            current.remoteMac = remoteMac
-            entries[identity] = current
-            return current
         }
 
         try Task.checkCancellation()
         let attemptID = UUID()
+        let attemptToSupersede = supersededAttempt
         let task = Task { @MainActor in
+            if let attemptToSupersede {
+                attemptToSupersede.task.cancel()
+                _ = try? await attemptToSupersede.task.value
+                try ensureCurrentAttempt(attemptID, identity: identity)
+            }
             let entry: Entry
             if let legacyFactory {
-                entry = try await legacyFactory(remoteMac, identity)
+                entry = try await legacyFactory(
+                    remoteMac,
+                    identity,
+                    replacingExistingHostConnection
+                )
             } else {
                 entry = try await dial(
                     remoteMac: remoteMac,
                     identity: identity,
-                    attemptID: attemptID
+                    attemptID: attemptID,
+                    replacingExistingHostConnection: replacingExistingHostConnection
                 )
             }
-            try ensureCurrentAttempt(attemptID, identity: identity)
+            do {
+                try ensureCurrentAttempt(attemptID, identity: identity)
+            } catch {
+                await close(entry)
+                throw error
+            }
             entries[identity] = entry
 
             let state = await entry.connection.currentState()
@@ -262,7 +310,11 @@ final class RemoteMacConnectionRegistry {
             Task { await self.openTeamChannel(for: entry) }
             return entry
         }
-        inFlight[identity] = InFlightAttempt(id: attemptID, task: task)
+        inFlight[identity] = InFlightAttempt(
+            id: attemptID,
+            replacesExistingHostConnection: replacingExistingHostConnection,
+            task: task
+        )
         do {
             let entry = try await task.value
             if inFlight[identity]?.id == attemptID {
@@ -330,7 +382,8 @@ final class RemoteMacConnectionRegistry {
     private func dial(
         remoteMac: RemoteMac,
         identity: RemoteMacIdentity,
-        attemptID: UUID
+        attemptID: UUID,
+        replacingExistingHostConnection: Bool
     ) async throws -> Entry {
         guard let baseURL = remoteMac.lastKnownBaseURL else {
             throw ConnectionError.missingBaseURL(identity)
@@ -369,6 +422,7 @@ final class RemoteMacConnectionRegistry {
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
                 sdp: offerSDP,
+                replacesExistingConnection: replacingExistingHostConnection,
                 wakeOnLAN: pinnedHost.wakeOnLAN
             )
             var refreshed = pinnedHost

@@ -12,22 +12,16 @@ import WebRTC
 /// offer before touching the active connection.
 @Suite("""
 @spec REMOTE-11.1: If the host receives a signaling offer while another \
-remote connection is active, then the application shall respond with a \
-retryable unavailable status and shall not tear down the active connection.
+remote connection is active and the offer is not a signed explicit reconnect \
+from that same client, then the application shall respond with a retryable \
+unavailable status and shall not tear down the active connection.
 """)
 struct SignalingHandlerOutcomeTests {
 
-    /// `WebRTCHostAgent.acceptOffer`'s busy guard (`guard state == .idle
-    /// || state == .closed else { throw HostError.busy }`) is the very
-    /// first statement in the function — it runs before any native
-    /// WebRTC work (peer connection creation, SDP negotiation) is
-    /// touched. Because the guard's decision depends on `state` alone,
-    /// seeding `state` directly via the test-only `setStateForTesting`
-    /// seam and observing (1) the throw and (2) `state` unchanged
-    /// afterward is a faithful proof of the EARS clause "shall not tear
-    /// down the active connection": the guard returns before
-    /// `peerConnection`/`dataChannel` are ever touched, so there is
-    /// nothing for the busy path to tear down.
+    /// `WebRTCHostAgent.acceptOffer` runs its admission policy before any
+    /// native WebRTC work. Seeding `state` through the test seam and passing
+    /// no signed replacement identity exercises the ordinary busy path. The
+    /// unchanged state proves that path cannot tear down the active transport.
     ///
     /// A prior version of this test drove a REAL negotiation (via a
     /// live or canned SDP offer) to reach `.answering`, exercising actual
@@ -37,10 +31,9 @@ struct SignalingHandlerOutcomeTests {
     /// factory/audio-device-module init or SDP setup wedged the whole
     /// `swift test` process indefinitely (GH runs 28613078943,
     /// 28617408794) — never reproduced on a dev Mac. `WebRTCHostAgent`'s
-    /// `factory` is now built lazily on first `acceptOffer` use rather
-    /// than in `init` (see `WebRTCHostAgent.swift`), and this test drives
-    /// the guard without ever calling `acceptOffer` successfully, so it
-    /// never touches native WebRTC at all. Live end-to-end negotiation,
+    /// `factory` is now built lazily on first admitted `acceptOffer` use rather
+    /// than in `init` (see `WebRTCHostAgent.swift`), and this test is rejected
+    /// before touching native WebRTC. Live end-to-end negotiation,
     /// including the busy path under real reentrancy, is still exercised
     /// by the mobile-side `RemoteHostConnectionLoopbackTests` /
     /// `SSHOverWebRTCLoopbackTests` loopback suites and W6's device smoke
@@ -50,8 +43,8 @@ struct SignalingHandlerOutcomeTests {
         let agent = makeHostAgent()
         await agent.setStateForTesting(activeState)
 
-        // The guard never inspects the offer it rejects, so a syntactically
-        // empty one is enough to prove it's rejected on `state` alone.
+        // Admission rejects this before SDP parsing, so an empty offer is
+        // enough to exercise the ordinary non-replacement path.
         let offer = RTCSessionDescription(type: .offer, sdp: "")
         do {
             _ = try await agent.acceptOffer(offer)

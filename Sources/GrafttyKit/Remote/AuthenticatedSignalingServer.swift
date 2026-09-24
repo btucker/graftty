@@ -12,9 +12,14 @@ public actor AuthenticatedSignalingServer {
 
     public struct VerifiedOffer: Sendable {
         public let offer: AuthenticatedSignalingOffer
+        public let authorizesReplacement: Bool
 
-        fileprivate init(offer: AuthenticatedSignalingOffer) {
+        fileprivate init(
+            offer: AuthenticatedSignalingOffer,
+            authorizesReplacement: Bool
+        ) {
             self.offer = offer
+            self.authorizesReplacement = authorizesReplacement
         }
     }
 
@@ -152,6 +157,22 @@ public actor AuthenticatedSignalingServer {
             return .failure(
                 error(.authenticationFailed, "signed offer does not match its challenge"))
         }
+        let authorizesReplacement: Bool
+        switch (
+            offer.replacesExistingConnection,
+            offer.replacementSignature
+        ) {
+        case (nil, nil) where !offer.hasSignedReplacementIntentMarker:
+            authorizesReplacement = false
+        case (.some(true), .some)
+            where offer.hasSignedReplacementIntentMarker
+                && offer.hasValidReplacementIntent(using: peer.publicKey):
+            authorizesReplacement = true
+        default:
+            return .failure(
+                error(.authenticationFailed, "replacement proof is invalid")
+            )
+        }
         if let acceptedOffer = record.acceptedOffer {
             guard acceptedOffer == offer else {
                 return .failure(
@@ -170,7 +191,10 @@ public actor AuthenticatedSignalingServer {
         record.acceptedOffer = offer
         record.retentionDeadline = now().addingTimeInterval(acceptedOfferLifetime)
         challengesByHostNonce[offer.hostNonce] = record
-        return .success(.new(VerifiedOffer(offer: offer)))
+        return .success(.new(VerifiedOffer(
+            offer: offer,
+            authorizesReplacement: authorizesReplacement
+        )))
     }
 
     public func makeAnswer(

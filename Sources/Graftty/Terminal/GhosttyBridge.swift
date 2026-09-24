@@ -382,7 +382,7 @@ final class GhosttyApp {
             // request OSC 52 reads will silently fail, which is the safe
             // default.
         }
-        rtConfig.write_clipboard_cb = { _, clipboardEnum, content, count, _ in
+        rtConfig.write_clipboard_cb = { userdata, clipboardEnum, content, count, _ in
             // libghostty hands us an array of `{mime, data}` pairs; we
             // currently honor the plain-text entry (UTF-8 in `data`) and
             // ignore other mime types. `count` is the array length.
@@ -406,9 +406,20 @@ final class GhosttyApp {
                 }
             }
             guard let text = plainText else { return }
+            let box = userdata.map {
+                Unmanaged<SurfaceUserdataBox>.fromOpaque($0).takeUnretainedValue()
+            }
+            let terminalID = box?.terminalID
+            let manager = box?.terminalManager
             DispatchQueue.main.async {
+                let copiedText: String
+                if let terminalID, let handle = manager?.handle(for: terminalID) {
+                    copiedText = TerminalCopyText.cleanSelectionCopy(text, surface: handle.surface)
+                } else {
+                    copiedText = text
+                }
                 pasteboard.clearContents()
-                pasteboard.setString(text, forType: .string)
+                pasteboard.setString(copiedText, forType: .string)
             }
         }
         rtConfig.close_surface_cb = { userdata, _ in

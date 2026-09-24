@@ -104,7 +104,10 @@ struct RemoteMacConnectionLoopbackTests {
                 }
                 do {
                     let answer = try await hostAgent.acceptOffer(
-                        RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                        RTCSessionDescription(type: .offer, sdp: offer.sdp),
+                        clientDeviceID: verified.offer.clientDeviceID,
+                        replacingExistingConnection:
+                            verified.authorizesReplacement
                     )
                     switch await signalingServer.makeAnswer(
                         sdp: answer.sdp,
@@ -151,7 +154,10 @@ struct RemoteMacConnectionLoopbackTests {
                 hostPublicKey: hostPublicKey,
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
-                sdp: offer.sdp
+                sdp: offer.sdp,
+                // Exercise the signed SDP intent marker through libwebrtc.
+                // The host is idle, so replacement authority is harmless.
+                replacesExistingConnection: true
             )
             try await connection.applyAnswer(
                 RTCSessionDescription(type: .answer, sdp: answer.answer.sdp)

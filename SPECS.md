@@ -16,6 +16,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.4** While the sidebar is hidden (`NavigationSplitViewVisibility.detailOnly`), the breadcrumb bar shall apply a leading inset wide enough to clear the window's traffic-light buttons and the sidebar-toggle button so its text remains legible at the window's left edge. While the sidebar is visible, the breadcrumb shall use its standard 12pt leading padding because the sidebar column already offsets the detail content past the traffic lights.
 
+**LAYOUT-1.5** When the user drags to select text in a terminal pane beneath the titlebar, the application shall deliver the drag to the terminal instead of moving the window.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
@@ -457,6 +459,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-8.9** When the user selects "Terminal Read-only", the application shall toggle the terminal's read-only state — in read-only mode the terminal renders updates but drops keyboard input from the user.
 
 **TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.10` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
+
+**TERM-8.11** When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.
+
+**TERM-8.12** When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
+**TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
 
 ### TERM-9.x
 
@@ -2202,6 +2210,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.13** When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
 
+**TEAM-10.14** When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
+
+**TEAM-10.15** When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities and retain its record until the server exits.
+
+**TEAM-10.16** When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
@@ -2418,6 +2432,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.15** When a host advertises wake addresses, the application shall include each eligible interface's valid active link-layer and permanent hardware addresses for its IPv4 address without duplicates.
 
+**REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
+
+**REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -2502,7 +2520,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-11.x
 
-**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active and the offer is not a signed explicit reconnect from that same client, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 **REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
 
@@ -2519,6 +2537,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.8** When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.
 
 **REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
+
+**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection lifecycle, the application shall replace that negotiating or connected lifecycle immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
+
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
+
+**REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
+
+**REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -2553,6 +2579,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.15** When `graftty remote reconnect <name-or-id>` identifies a saved Remote Mac by its exact name or device ID, the application shall request reconnect through its existing connection flow without requiring a current worktree, reject unknown or ambiguous targets and Macs needing pairing, and acknowledge the request without waiting for connection establishment.
 
 **REMOTE-12.16** When `graftty remote reconnect-client <name-or-id>` runs on a host Mac, the application shall target one authenticated connected viewing Mac by exact name or device ID, obtain its reconnect acknowledgement before closing that control channel, and have the viewer reconnect only that host through its existing connection flow; unknown, ambiguous, disconnected, or unsupported clients shall produce an error without disconnecting another peer.
+
+**REMOTE-12.17** When the user selects an offline or discovered saved Remote Mac, the application shall authenticate the connection as a same-device replacement; if a live local connection exists, it shall reuse that connection without starting another transport.
+
+**REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects.
 
 ### REMOTE-13.x
 
@@ -2798,7 +2828,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.
+**AGENT-6.33** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+
+**AGENT-6.34** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.
 
 ## CLI — CLI
 

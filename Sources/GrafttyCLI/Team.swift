@@ -823,8 +823,25 @@ struct TeamUnregister: ParsableCommand {
 struct TeamCodexAppServer: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "codex-app-server",
-        subcommands: [TeamCodexAppServerRegister.self, TeamCodexAppServerUnregister.self]
+        subcommands: [
+            TeamCodexAppServerRegister.self,
+            TeamCodexAppServerUnregister.self,
+            TeamCodexAppServerResolveBinary.self,
+        ]
     )
+}
+
+struct TeamCodexAppServerResolveBinary: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "resolve-binary",
+        abstract: "Print the native Codex executable when a Node launcher is installed."
+    )
+
+    @Option(name: .long) var realBinary: String
+
+    func run() {
+        print(CodexDeliveryBinaryResolver.resolve(realBinary))
+    }
 }
 
 struct TeamCodexAppServerRegister: ParsableCommand {
@@ -836,6 +853,7 @@ struct TeamCodexAppServerRegister: ParsableCommand {
     @Option(name: .long) var socket: String
     @Option(name: .long) var realBinary: String
     @Option(name: .long) var appServerPid: Int32
+    @Option(name: .long) var ownerPid: Int32
 
     func run() throws {
         guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
@@ -847,6 +865,7 @@ struct TeamCodexAppServerRegister: ParsableCommand {
             return
         }
         let identity = try TeamCodexAppServerPIDResolver.resolve(appServerPid: appServerPid)
+        let ownerIdentity = try TeamCodexAppServerPIDResolver.resolve(appServerPid: ownerPid)
         _ = try TeamCodexAppServerCore.register(
             storage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
             teamID: TeamLookup.id(of: resolved.team),
@@ -856,6 +875,8 @@ struct TeamCodexAppServerRegister: ParsableCommand {
             realBinaryPath: realBinary,
             appServerPID: identity.pid,
             appServerProcessStartTimeMicroseconds: identity.processStartTimeMicroseconds,
+            ownerPID: ownerIdentity.pid,
+            ownerProcessStartTimeMicroseconds: ownerIdentity.processStartTimeMicroseconds,
             registeredAt: Date()
         )
     }
@@ -1009,6 +1030,8 @@ enum TeamCodexAppServerCore {
         realBinaryPath: String,
         appServerPID: Int32,
         appServerProcessStartTimeMicroseconds: Int64,
+        ownerPID: Int32? = nil,
+        ownerProcessStartTimeMicroseconds: Int64? = nil,
         registeredAt: Date
     ) throws -> CodexAppServerSessionRecord {
         let deliveryBinaryPath = CodexDeliveryBinaryResolver.resolve(realBinaryPath)
@@ -1020,6 +1043,8 @@ enum TeamCodexAppServerCore {
             realBinaryPath: deliveryBinaryPath,
             appServerPID: appServerPID,
             appServerProcessStartTimeMicroseconds: appServerProcessStartTimeMicroseconds,
+            ownerPID: ownerPID,
+            ownerProcessStartTimeMicroseconds: ownerProcessStartTimeMicroseconds,
             registeredAt: registeredAt
         )
         try storage.write(record)
@@ -1046,12 +1071,7 @@ enum TeamCodexAppServerCore {
         if let expectedAppServerPID, prior.appServerPID != expectedAppServerPID {
             return nil
         }
-        try storage.delete(
-            teamID: teamID,
-            worktree: worktree,
-            paneSessionName: paneSessionName
-        )
-        return prior
+        return try storage.deleteIfMatching(prior) ? prior : nil
     }
 }
 

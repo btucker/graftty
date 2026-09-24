@@ -161,6 +161,85 @@ struct RemoteMacConnectionRegistryTests {
         #expect(registry.activeConnectionCount == 1)
     }
 
+    @Test("explicit reconnect signs replacement intent into its signaling offer")
+    func explicitReconnectSignsReplacementIntent() async throws {
+        let captured = CapturedSignalingRequest()
+        let registry = makeRegistry(
+            signalingTransport: { request, body in
+                captured.record(request: request, body: body)
+                return try signalingResponse(
+                    url: request.url!,
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            }
+        )
+
+        _ = try await registry.connect(
+            to: makeRemoteMac(),
+            replacingExistingHostConnection: true
+        )
+
+        let body = try #require(captured.body)
+        let offer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: body
+        )
+        #expect(offer.replacesExistingConnection == true)
+    }
+
+    @Test("a replacement request upgrades an ordinary in-flight connection attempt")
+    func replacementUpgradesOrdinaryInflightAttempt() async throws {
+        let gate = OfferGate()
+        let firstConnection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\nordinary\n",
+            offerGate: gate
+        )
+        let replacementConnection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\nreplacement\n"
+        )
+        let connections = RemoteMacConnectionSequence([
+            firstConnection,
+            replacementConnection,
+        ])
+        let captured = CapturedSignalingRequest()
+        let registry = makeRegistry(
+            signalingTransport: { request, body in
+                captured.record(request: request, body: body)
+                return try signalingResponse(
+                    url: request.url!,
+                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connections.next() }
+        )
+        let remote = try makeRemoteMac()
+
+        let ordinary = Task { try await registry.connect(to: remote) }
+        await gate.waitUntilOfferStarted()
+        let replacement = Task {
+            try await registry.connect(
+                to: remote,
+                replacingExistingHostConnection: true
+            )
+        }
+        await gate.releaseOffer()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await ordinary.value
+        }
+        _ = try await replacement.value
+        let body = try #require(captured.body)
+        let offer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: body
+        )
+        #expect(offer.sdp.hasPrefix("v=0\nreplacement\n"))
+        #expect(offer.hasSignedReplacementIntentMarker)
+        #expect(offer.replacesExistingConnection == true)
+        #expect(await firstConnection.closeCount == 1)
+        #expect(await replacementConnection.createOfferCallCount == 1)
+    }
+
     @Test("entry opens terminal sessions on demand")
     func entryOpensTerminalSessionsOnDemand() async throws {
         let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")

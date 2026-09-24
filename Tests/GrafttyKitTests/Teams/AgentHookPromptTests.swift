@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 struct AgentHookPromptTests {
-    @Test("@spec AGENT-6.33: When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.")
+    @Test("@spec AGENT-6.34: When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.")
     func forwardsOnlySubmittedUserPrompts() throws {
         #expect(AgentHookPrompt.text(event: .userPromptSubmit, payload: ["prompt": "Build a calendar"]) == "Build a calendar")
         #expect(AgentHookPrompt.text(event: .preToolUse, payload: ["prompt": "tool input"]) == nil)

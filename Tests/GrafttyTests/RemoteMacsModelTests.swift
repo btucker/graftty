@@ -628,6 +628,179 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
+    @spec REMOTE-12.17: When the user selects an offline or discovered saved \
+    Remote Mac, the application shall authenticate the connection as a \
+    same-device replacement; if a live local connection exists, it shall \
+    reuse that connection without starting another transport.
+    """, arguments: [false, true])
+    func userSelectionCarriesReplacementIntentWithoutChurningALiveEntry(
+        discovered: Bool
+    ) async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        var intents: [Bool] = []
+        let registry = RemoteMacConnectionRegistry(
+            intentAwareFactory: { remoteMac, identity, replacing in
+                intents.append(replacing)
+                return RemoteMacConnectionRegistry.Entry(
+                    id: UUID(),
+                    identity: identity,
+                    remoteMac: remoteMac,
+                    createdAt: Date(),
+                    connection: RemoteMacsModelTestConnection(),
+                    paneEnvironment: .empty
+                )
+            }
+        )
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        if discovered {
+            try model.publishDiscoveryCandidate(try candidate())
+        }
+
+        let first = try await model.connectFromUserSelection(to: remote)
+        let reused = try await model.connectFromUserSelection(to: remote)
+
+        #expect(intents == [true])
+        #expect(reused.id == first.id)
+    }
+
+    @Test("""
+    @spec REMOTE-12.18: When an explicit reconnect arrives during an ordinary \
+    connection attempt, the application shall replace the weaker attempt with \
+    one signed replacement attempt and shall deduplicate further reconnects.
+    """)
+    func explicitReconnectUpgradesAnOrdinaryInflightAttempt() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let started = AsyncStream<Void>.makeStream()
+        var starts = started.stream.makeAsyncIterator()
+        var intents: [Bool] = []
+        let registry = RemoteMacConnectionRegistry(
+            intentAwareFactory: { remoteMac, identity, replacing in
+                intents.append(replacing)
+                if intents.count == 1 {
+                    started.continuation.yield(())
+                    try await Task.sleep(for: .seconds(30))
+                }
+                return RemoteMacConnectionRegistry.Entry(
+                    id: UUID(),
+                    identity: identity,
+                    remoteMac: remoteMac,
+                    createdAt: Date(),
+                    connection: RemoteMacsModelTestConnection(),
+                    paneEnvironment: .empty
+                )
+            }
+        )
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+
+        let ordinary = Task { try await model.connect(to: remote) }
+        _ = await starts.next()
+        started.continuation.finish()
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await ordinary.value
+        }
+        _ = try await model.connectFromUserSelection(to: remote)
+        #expect(intents == [false, true])
+    }
+
+    @Test("user selection behind a reuse check does not churn the live connection")
+    func userSelectionUpgradePreservesLiveRegistryEntry() async throws {
+        let remote = try remoteMac()
+        let stateGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(stateGate: stateGate),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: RemoteMacStore(storeURL: try tempStoreURL()),
+            connectionRegistry: registry
+        )
+        let original = try await model.connect(to: remote)
+
+        let ordinaryReuse = Task { try await model.connect(to: remote) }
+        await stateGate.waitUntilStarted()
+        let selection = Task {
+            try await model.connectFromUserSelection(to: remote)
+        }
+        await stateGate.release()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await ordinaryReuse.value
+        }
+        #expect(try await selection.value.id == original.id)
+        #expect(connections.issuedCount == 1)
+    }
+
+    @Test("forced reconnect upgrades a pending selection recovery")
+    func forcedReconnectBehindSelectionStillReplacesTheLiveEntry() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let stateGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(stateGate: stateGate),
+            RemoteMacsModelTestConnection(),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let original = try await model.connect(to: remote)
+
+        let selection = Task {
+            try await model.connectFromUserSelection(to: remote)
+        }
+        await stateGate.waitUntilStarted()
+        #expect(await model.reconnectRemoteMac(
+            deviceID: remote.id,
+            fingerprint: remote.fingerprint
+        ) == .ok)
+        for _ in 0..<100 where connections.issuedCount < 2 {
+            await Task.yield()
+        }
+        #expect(connections.issuedCount == 2)
+        await stateGate.release()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await selection.value
+        }
+        let replacement = try await model.connect(to: remote)
+        #expect(replacement.id != original.id)
+        #expect(connections.issuedCount == 2)
+    }
+
+    @Test("""
     @spec REMOTE-13.14: While a Mac displays a remote worktree, pane \
     control requests shall be serialized per owning Mac so repeated split \
     resize and layout commands cannot overlap the single-request channel, \

@@ -875,7 +875,9 @@ struct MainWindow: View {
 
         Task { @MainActor in
             do {
-                _ = try await remoteMacsModel.connect(to: remoteMac)
+                _ = try await remoteMacsModel.connectFromUserSelection(
+                    to: remoteMac
+                )
                 _ = try await remoteMacsModel.refreshRepositories(
                     on: remoteMac
                 )
