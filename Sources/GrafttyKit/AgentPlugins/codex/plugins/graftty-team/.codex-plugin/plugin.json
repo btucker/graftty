@@ -1,21 +1,22 @@
 {
   "name": "graftty-team",
   "version": "0.3.2",
-  "description": "Coordinate Codex and Claude agents through Graftty's durable worktree inbox and instructions.",
+  "description": "Coordinate agents and investigate CI failures in Graftty worktrees.",
   "author": {
     "name": "Graftty"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Graftty Team",
-    "shortDescription": "Coordinate agents and durable worktree instructions.",
-    "longDescription": "Adds provider-neutral Graftty team routing, exact agent addresses, forwarding guidance, durable worktree instructions, and lifecycle hooks.",
+    "shortDescription": "Coordinate agents and investigate CI failures.",
+    "longDescription": "Adds Graftty team routing, durable worktree instructions, CI failure guidance, and lifecycle hooks.",
     "developerName": "Graftty",
     "category": "Productivity",
-    "capabilities": ["Agent coordination"],
+    "capabilities": ["Agent coordination", "CI troubleshooting"],
     "defaultPrompt": [
       "Show my Graftty team roster.",
-      "Send a message to another worktree."
+      "Send a message to another worktree.",
+      "Investigate the current PR's CI failure."
     ]
   }
 }

@@ -2704,6 +2704,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
+**AGENT-6.33** When Graftty prepares provider plugins, the application shall bundle a CI skill for both providers that directs agents to check the current PR run before acting on a forge notice, inspect failing checks, and verify the replacement run through completion.
+
 ## CLI — CLI
 
 ### CLI-1.x
