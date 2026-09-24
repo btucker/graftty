@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyCommandUI
 
 struct SidebarAttentionCardContentTests {
-    @Test("@spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.")
+    @Test("@spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.")
     func stoppedCardUsesChosenHierarchy() {
         let recap = AttentionRecap(
             title: "Paired-device push notifications",
@@ -40,5 +40,24 @@ struct SidebarAttentionCardContentTests {
         #expect(fallback.sections.map(\.kind) == [.context, .upNext])
         #expect(fallback.sections[0].text == old.completed)
         #expect(fallback.sections[0].detail == nil)
+    }
+
+    @Test("@spec LAYOUT-2.79: While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.")
+    func groupsQuestionsAndRoutineStops() {
+        func item(_ id: String, need: String? = nil, stopped: Bool = true) -> SidebarActivityItem {
+            let stop = stopped ? SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+                recap: .init(title: id, context: "Context", completed: "Done", next: "Next", need: need)) : nil
+            return SidebarActivityItem(id: id, projectID: "p", worktreeID: id, paneID: nil,
+                projectName: "graftty", worktreeName: id, title: id,
+                occurrence: .init(timestamp: .now, text: id, source: stopped ? .agentStop : .userNotify),
+                isBusy: false, agentStop: stop)
+        }
+        let buckets = SidebarAttentionBuckets(items: [
+            item("routine-1"), item("question-1", need: "Which device?"),
+            item("notify", stopped: false), item("question-2", need: "Which build?"), item("routine-2")
+        ])
+        #expect(buckets.questions.map(\.id) == ["question-1", "question-2"])
+        #expect(buckets.stopped.map(\.id) == ["routine-1", "routine-2"])
+        #expect(buckets.other.map(\.id) == ["notify"])
     }
 }

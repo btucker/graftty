@@ -162,7 +162,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
 
-**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree name, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
+**LAYOUT-2.73** When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.
 
 **LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
 
@@ -173,6 +173,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.77** When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.
 
 **LAYOUT-2.78** When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
+
+**LAYOUT-2.79** While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2750,7 +2752,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
