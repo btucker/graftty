@@ -166,7 +166,6 @@ public struct AgentPluginInstaller: Sendable {
             // Read through the original links before replacing staged copies.
             for path in [
                 "plugins/graftty-team/skills/graftty-team/SKILL.md",
-                "plugins/graftty-team/skills/graftty-ci/SKILL.md",
                 "plugins/graftty-team/.\(provider.rawValue)-plugin/plugin.json",
             ] {
                 var contents = try Data(contentsOf: source.appendingPathComponent(path))

@@ -91,7 +91,6 @@ struct AgentPluginInstallerTests {
         let claudeRoot = source.appendingPathComponent("claude/plugins/graftty-team")
         let links = [
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-team/SKILL.md",
-            "skills/graftty-ci/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-ci/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty-team/.codex-plugin/plugin.json",
         ]
         for (path, target) in links {
@@ -101,8 +100,6 @@ struct AgentPluginInstallerTests {
         }
         let expectedSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-team/SKILL.md"))
-        let expectedCISkill = try Data(contentsOf: claudeRoot
-            .appendingPathComponent("skills/graftty-ci/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -121,7 +118,6 @@ struct AgentPluginInstallerTests {
             let cached = temporary.appendingPathComponent("cached-\(provider)")
             for (path, expected) in [
                 "skills/graftty-team/SKILL.md": expectedSkill,
-                "skills/graftty-ci/SKILL.md": expectedCISkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -129,30 +125,6 @@ struct AgentPluginInstallerTests {
                 #expect(attributes[.type] as? FileAttributeType == .typeRegular)
                 #expect(try Data(contentsOf: file) == expected)
             }
-        }
-    }
-
-    @Test("""
-    @spec AGENT-6.33: When Graftty prepares provider plugins, the application shall bundle a CI skill for both providers that directs agents to check the current PR run before acting on a forge notice, inspect failing checks, and verify the replacement run through completion.
-    """)
-    func preparesCISkillForBothProviders() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-ci-plugin-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let file = destination.appendingPathComponent(
-                "\(provider)/plugins/graftty-team/skills/graftty-ci/SKILL.md"
-            )
-            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
-            let skill = try String(contentsOf: file, encoding: .utf8)
-            #expect(skill.contains("name: graftty-ci"))
-            #expect(skill.contains("current PR"))
-            #expect(skill.contains("gh run view <run-id> --log-failed"))
-            #expect(skill.contains("replacement run"))
         }
     }
 

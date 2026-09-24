@@ -105,7 +105,7 @@ Graftty resolves the original sender from the stored message, preserving its Mac
 
 Older messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">` without a reply command. Reply to `agent` unchanged if the roster shows it reachable; otherwise use `fallback-agent` unchanged to queue for that provider's next agent. Preserve the full `graftty-mac://` prefix for remote addresses. A bare filesystem path targets the Mac where the command runs.
 
-`<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not peer reply addresses. For a CI failure notice, use the bundled `graftty-ci` skill to check the live PR run before acting.
+`<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not peer reply addresses.
 
 Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` to resolve Graftty recipients by name; they use a separate roster. Identically named worktrees on two Macs can contain different agents. Native delivery success to a name does not establish delivery to the intended Graftty address. If a native message includes an explicit Graftty reply socket, replying directly to that socket preserves the original sender; do not substitute a display name.
 
