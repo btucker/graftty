@@ -1,7 +1,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// @spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree beside a project icon, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no project icon exists it shall retain the project name, and if no question exists it shall omit Needs You.
+/// @spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name beside its emoji, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
 struct SidebarAttentionCardContent {
     struct Section: Identifiable {
         enum Kind: Hashable {
@@ -21,9 +21,8 @@ struct SidebarAttentionCardContent {
     let title: String
     let sections: [Section]
 
-    init(item: SidebarActivityItem, hasProjectIcon: Bool) {
-        headerName = hasProjectIcon || item.projectName == item.worktreeName
-            ? item.worktreeName : "\(item.projectName) · \(item.worktreeName)"
+    init(item: SidebarActivityItem) {
+        headerName = item.worktreeName
         let recap = item.agentStop?.recap
         title = recap?.title ?? (item.agentStop == nil ? item.worktreeName : item.title)
         if let paneTitle = item.agentStop?.paneTitle,

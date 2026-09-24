@@ -27,6 +27,31 @@ public enum ProjectIconOverride: Codable, Sendable, Equatable {
 }
 
 public enum SidebarHostNavigation {
+    private static let emojiPool = Array("🌱 🌿 🍀 🌻 🌵 🌲 🌴 🍄 🪴 🌾 🐝 🦋 🐙 🐢 🦊 🐻 🐼 🐨 🐸 🦉 🐧 🐳 🦀 🐬 🦎 🦄 🐞 🐌 🐚 🪼 🍋 🍉 🍓 🍒 🍑 🥑 🌶️ 🥨 🧀 🥐 🍕 🍣 🧁 ☕️ 🫖 🧭 🗺️ 🧩 🎯 🎨 🎭 🎮 🎲 🎸 🎹 🎺 🎻 🥁 📚 📝 💡 🔦 🔭 🔬 🧪 🧬 🧲 🧰 🛠️ ⚙️ 🔑 🔒 🚀 🛸 ✈️ 🚂 🚲 ⛵️ 🏔️ 🌋 🏝️ 🌊 🌈 ☀️ 🌙 ⭐️ ❄️ 🔥 💎 🪐 🎈 🎁 🏆 🏁".split(separator: " ").map(String.init))
+
+    public static func assignMissingEmojis(in worktrees: inout [WorktreeEntry]) {
+        var used = Set(worktrees.compactMap(\.emoji))
+        assignMissingEmojis(in: &worktrees, used: &used)
+    }
+
+    public static func assignMissingEmojis(in repos: inout [RepoEntry]) {
+        var used = Set(repos.flatMap(\.worktrees).compactMap(\.emoji))
+        for index in repos.indices { assignMissingEmojis(in: &repos[index].worktrees, used: &used) }
+    }
+
+    private static func assignMissingEmojis(in worktrees: inout [WorktreeEntry], used: inout Set<String>) {
+        for index in worktrees.indices where worktrees[index].emoji == nil {
+            let start = Int(worktrees[index].id.uuidString.utf8.reduce(UInt64(14695981039346656037)) {
+                ($0 ^ UInt64($1)) &* 1099511628211
+            } % UInt64(emojiPool.count))
+            let choice = (0..<emojiPool.count).lazy.map { emojiPool[(start + $0) % emojiPool.count] }.first { !used.contains($0) }
+            var emoji = choice ?? "✨"
+            while used.contains(emoji) { emoji += "✨" }
+            worktrees[index].emoji = emoji
+            used.insert(emoji)
+        }
+    }
+
     public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         repo.worktrees.filter { $0.path == repo.path }
             + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path })
@@ -38,7 +63,7 @@ public enum SidebarHostNavigation {
         return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
-                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop)
+                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop, emoji: worktree.emoji)
     }
 
     @discardableResult

@@ -61,14 +61,15 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var name: String
     public var owner: WorktreeOrigin?
     public var iconRevision: String?
+    public var accentHex: String?
     public var initials: String?
     public var isAvailable: Bool
     public var supportsWorktreeEditing: Bool?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
-                iconRevision: String? = nil, initials: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil) {
+                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil) {
         self.id = id; self.repositoryID = repositoryID; self.name = name; self.owner = owner
-        self.iconRevision = iconRevision; self.initials = initials; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing
+        self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing
     }
 
     public var displayInitials: String {
@@ -177,8 +178,9 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop
+    public var emoji: String?
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, emoji: String? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.emoji = emoji
     }
 
     public func folderID(at depth: Int) -> String? {
@@ -244,6 +246,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var paneID: String?
     public var projectName: String
     public var worktreeName: String
+    public var worktreeEmoji: String?
     public var title: String
     public var occurrence: SidebarAttentionOccurrence?
     public var isBusy: Bool
@@ -251,10 +254,10 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var prBadge: PRBadge?
     public init(id: String, projectID: String, worktreeID: String, paneID: String?,
                 projectName: String, worktreeName: String, title: String,
-                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil) {
+                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil, worktreeEmoji: String? = nil) {
         self.id = id; self.projectID = projectID; self.worktreeID = worktreeID; self.paneID = paneID
         self.projectName = projectName; self.worktreeName = worktreeName; self.title = title
-        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge
+        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge; self.worktreeEmoji = worktreeEmoji
     }
     public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
 }
@@ -344,6 +347,7 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
             updated.item.paneID = pane ?? (worktree.state == .closed ? entry.item.paneID : nil)
             updated.item.projectName = worktree.repoDisplayName
             updated.item.worktreeName = worktree.displayBranch
+            updated.item.worktreeEmoji = worktree.sidebar?.emoji
             updated.item.prBadge = worktree.prBadge
             return updated
         }
@@ -389,19 +393,19 @@ public enum SidebarProjection {
             if let stop = wt.sidebar?.unseenAgentStop {
                 items.append(.init(id: stable + ":stop", projectID: projectID, worktreeID: wt.path, paneID: nil,
                     projectName: wt.repoDisplayName, worktreeName: wt.displayBranch, title: stop.title,
-                    occurrence: stop.occurrence, isBusy: false, agentStop: stop))
+                    occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.sidebar?.emoji))
             }
             if let text = wt.attentionText {
                 items.append(.init(id: stable, projectID: projectID, worktreeID: wt.path, paneID: nil,
                                    projectName: wt.repoDisplayName, worktreeName: wt.displayBranch, title: text,
-                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false))
+                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.sidebar?.emoji))
             }
             for leaf in wt.layout?.leaves ?? [] where leaf.attentionText != nil || leaf.isBusy {
                 items.append(.init(id: "\(stable):\(wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName)", projectID: projectID, worktreeID: wt.path,
                                    paneID: leaf.sessionName, projectName: wt.repoDisplayName, worktreeName: wt.displayBranch,
                                    title: leaf.attentionText ?? leaf.displayTitle,
                                    occurrence: leaf.attentionText.map { .init(timestamp: wt.sidebar?.attentionTimestamps?[wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName].map(Date.init(timeIntervalSinceReferenceDate:)) ?? leaf.attentionTimestamp, text: $0, source: leaf.attentionSource) },
-                                   isBusy: leaf.isBusy))
+                                   isBusy: leaf.isBusy, worktreeEmoji: wt.sidebar?.emoji))
             }
             return items.map { item in
                 var item = item

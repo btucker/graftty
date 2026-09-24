@@ -45,7 +45,8 @@ final class SidebarHostController: ObservableObject {
             if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
             return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
                                   name: repo.displayName, owner: owner,
-                                  iconRevision: icons[repo.id.uuidString].map(ProjectIconDiscovery.revision), initials: initials, supportsWorktreeEditing: true)
+                                  iconRevision: icons[repo.id.uuidString].map(ProjectIconDiscovery.revision), initials: initials,
+                                  accentHex: icons[repo.id.uuidString].flatMap(ProjectIconDiscovery.accentHex), supportsWorktreeEditing: true)
         }
     }
 
@@ -54,6 +55,7 @@ final class SidebarHostController: ObservableObject {
             let ordered = SidebarHostNavigation.canonicalWorktrees(in: state.repos[index])
             if state.repos[index].worktrees != ordered { state.repos[index].worktrees = ordered }
         }
+        SidebarHostNavigation.assignMissingEmojis(in: &state.repos)
         var navigation = state.sidebarNavigation ?? .init()
         let local = localProjects(state.repos, owner: owner)
         let localIDs = Set(local.map(\.id))

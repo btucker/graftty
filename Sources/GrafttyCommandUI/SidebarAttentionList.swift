@@ -12,16 +12,15 @@ public struct SidebarAttentionList: View {
     @Bindable public var navigation: SidebarNavigationState
     public var items: [SidebarActivityItem]
     public var projects: [SidebarProject]
-    public var icons: [String: Data]
     public var onOpen: (SidebarActivityItem) async -> Bool
     public var selectionColor: Color
     public var isCurrentWorktree: (SidebarActivityItem) -> Bool
     public init(navigation: SidebarNavigationState, items: [SidebarActivityItem], projects: [SidebarProject],
-                icons: [String: Data], selectionColor: Color = .primary.opacity(0.16),
+                selectionColor: Color = .primary.opacity(0.16),
                 isCurrentWorktree: @escaping (SidebarActivityItem) -> Bool = { _ in true },
                 onOpen: @escaping (SidebarActivityItem) async -> Bool) {
         self.selectionColor = selectionColor; self.isCurrentWorktree = isCurrentWorktree
-        self.navigation = navigation; self.items = items; self.projects = projects; self.icons = icons; self.onOpen = onOpen
+        self.navigation = navigation; self.items = items; self.projects = projects; self.onOpen = onOpen
     }
     public var body: some View {
         GeometryReader { geometry in
@@ -42,7 +41,8 @@ public struct SidebarAttentionList: View {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     let rows = navigation.attentionItems(live: items, projects: projects)
                     if rows.isEmpty {
-                        Text(navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
+                        let allExcluded = !projects.isEmpty && projects.allSatisfy { navigation.excludedAttentionProjectIDs.contains($0.id) }
+                        Text(allExcluded ? "Select a project to see its attention." : navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
                             .font(.callout).foregroundStyle(.secondary).padding(12)
                     }
                     ForEach(rows) { item in row(item).id(item.id) }
@@ -58,7 +58,8 @@ public struct SidebarAttentionList: View {
 
     private func row(_ item: SidebarActivityItem) -> some View {
         let project = projects.first { $0.id == item.projectID }
-        let card = SidebarAttentionCardContent(item: item, hasProjectIcon: project.flatMap { icons[$0.id] } != nil)
+        let card = SidebarAttentionCardContent(item: item)
+        let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
         let viewed = navigation.hasViewed(item)
         let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
         return Button {
@@ -70,10 +71,11 @@ public struct SidebarAttentionList: View {
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .top, spacing: 7) {
-                    if let project {
-                        ProjectIdentityView(project: project, imageData: icons[project.id])
-                            .help(project.name)
-                    }
+                    Text(item.worktreeEmoji ?? "🗂️")
+                        .font(.system(size: 23))
+                        .frame(width: 34, height: 34)
+                        .background(accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(card.headerName).font(.caption).fontWeight(.semibold)
                             .lineLimit(1).help(card.headerName)
@@ -119,7 +121,14 @@ public struct SidebarAttentionList: View {
                 }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .background(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : 0.12), in: RoundedRectangle(cornerRadius: 6))
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : 0.12))
+                        .overlay(RoundedRectangle(cornerRadius: 8).fill(accent.opacity(viewed ? 0.05 : 0.13)))
+                        .overlay(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 3).padding(.vertical, 8)
+                        }
+                }
         }.buttonStyle(.plain)
             .disabled(project?.isAvailable == false)
             .accessibilityAddTraits(selected ? .isSelected : [])

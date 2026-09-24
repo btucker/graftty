@@ -9,6 +9,30 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
+    @Test("@spec LAYOUT-2.75: When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.")
+    func attentionProjectOrderIsFrozen() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        let projects = ["a", "b", "c"].map { SidebarProject(id: $0, repositoryID: $0, name: $0) }
+        func item(_ id: String, _ project: String, need: String? = nil) -> SidebarActivityItem {
+            let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+                recap: .init(title: "Task", completed: "Done", next: "Next", need: need))
+            return .init(id: id, projectID: project, worktreeID: id, paneID: nil,
+                projectName: project, worktreeName: id, title: stop.title,
+                occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        }
+        navigation.enterAttention(projects: projects, items: [item("a1", "a"), item("a2", "a"), item("b1", "b", need: "Choose")])
+        #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
+        #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).count == 2)
+        #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
+        navigation.toggleAttentionProject("b")
+        #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).map(\.projectID) == ["a"])
+        navigation.leaveAttention()
+        #expect(navigation.orderedProjects(projects).map(\.id) == ["a", "b", "c"])
+        navigation.enterAttention(projects: projects, items: [item("c1", "c")])
+        #expect(navigation.excludedAttentionProjectIDs.isEmpty)
+        #expect(navigation.orderedProjects(projects).first?.id == "c")
+    }
     @Test("@spec LAYOUT-2.57: When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.")
     func openingAttentionPreservesPosition() throws {
         let suite = "AttentionOrder." + UUID().uuidString
@@ -90,13 +114,14 @@ struct SidebarNavigationStateTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
-        let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty-server")
-        let item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "w", paneID: nil,
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty-server", accentHex: "54A86C")
+        var item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "w", paneID: nil,
             projectName: project.name, worktreeName: "deploy-to-cloudflare", title: "Claude stopped",
             occurrence: .init(timestamp: Date(), text: "Claude stopped", source: .agentStop), isBusy: false,
             agentStop: SidebarAgentStop(agentName: "Claude", stoppedAt: Date().addingTimeInterval(-120)),
             prBadge: .init(number: 5000, state: .open, checks: .failure,
                            url: URL(string: "https://gitlab.example/team/project/-/merge_requests/5000")!))
+        item.worktreeEmoji = "🌿"
         let visit = navigation.beginOpening(item)
         navigation.finishOpening(visit, succeeded: true)
         var incoming = item
@@ -104,10 +129,14 @@ struct SidebarNavigationStateTests {
         incoming.worktreeID = "new"
         incoming.worktreeName = "newer-request"
         incoming.title = "Codex needs input"
-        incoming.agentStop = nil
+        incoming.worktreeEmoji = "🧪"
+        incoming.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+            recap: .init(title: "Device notification relay", context: "Pairing devices for release push notifications.",
+                completed: "Client integration and tests are committed.", next: "Verify APNs on a locked phone.",
+                need: "Should done mean merged code or a real device notification?"))
         incoming.occurrence = .init(timestamp: Date().addingTimeInterval(1), text: incoming.title, source: .agentStop)
         for width in [220.0, 300, 420] {
-            let content = SidebarAttentionList(navigation: navigation, items: [incoming], projects: [project], icons: [:],
+            let content = SidebarAttentionList(navigation: navigation, items: [incoming], projects: [project],
                 selectionColor: Color.white.opacity(0.16), onOpen: { _ in true })
                 .frame(width: width, height: 520)
                 .background(Color(red: 0.21, green: 0.23, blue: 0.25)).environment(\.colorScheme, .dark)

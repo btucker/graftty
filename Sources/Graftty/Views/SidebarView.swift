@@ -136,6 +136,10 @@ struct SidebarView: View {
         navigation.rememberedWorktrees[SidebarProjection.projectID(row)] = path
     }
     private func selectProject(_ project: SidebarProject) {
+        if navigation.showsAttention {
+            navigation.toggleAttentionProject(project.id)
+            return
+        }
         onNavigationIntent()
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
@@ -231,10 +235,15 @@ struct SidebarView: View {
         let counts = SidebarActivityCounts(items: activity)
         HStack(spacing: 0) {
             if showsProjectRail {
-                ProjectNavigationRail(projects: projects, counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
+                ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
+                                      excludedAttentionProjectIDs: navigation.excludedAttentionProjectIDs,
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
-                                      onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
+                                      onAttention: {
+                                          onNavigationIntent()
+                                          if navigation.showsAttention { navigation.leaveAttention() }
+                                          else { navigation.enterAttention(projects: projects, items: activity) }
+                                      },
                                       onMove: moveProject, localDeviceID: owner.deviceID,
                                       management: { AnyView(HStack(spacing: 0) {
                                           addRepositoryIconButton
@@ -248,7 +257,7 @@ struct SidebarView: View {
                 }
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
-                                         icons: projectIcons, selectionColor: theme.foreground.opacity(0.16),
+                                         selectionColor: theme.foreground.opacity(0.16),
                                          isCurrentWorktree: isCurrentAttentionWorktree) { item in
                         let opened = await onOpenAttention(item)
                         if !opened { navigationError = "This target is unavailable or its request has changed." }
@@ -279,7 +288,9 @@ struct SidebarView: View {
                         Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
                         Spacer()
                         Button(navigation.showsAttention ? "Projects" : "Attention") {
-                            onNavigationIntent(); navigation.showsAttention.toggle(); navigation.query = ""
+                            onNavigationIntent()
+                            if navigation.showsAttention { navigation.leaveAttention() }
+                            else { navigation.enterAttention(projects: projects, items: activity) }
                         }
                         remoteManagementButton
                     }.buttonStyle(.plain).font(.caption).padding(10)
@@ -708,6 +719,10 @@ struct SidebarView: View {
         if worktree.state.isInFlight {
             return menu
         }
+        menu.addItem(ClosureMenuItem(title: "Edit Worktree Emoji…") {
+            editWorktreeEmoji(worktree)
+        })
+        menu.addItem(.separator())
         if navigation.query.isEmpty {
             for (title, offset) in [("Move Up", -1), ("Move Down", 1)] {
                 if let target = worktreeNeighbor(worktree, repo: repo, offset: offset) {
@@ -759,6 +774,33 @@ struct SidebarView: View {
             })
         }
         return menu
+    }
+
+    private func editWorktreeEmoji(_ worktree: WorktreeEntry) {
+        let alert = NSAlert()
+        alert.messageText = "Worktree emoji"
+        alert.informativeText = "Choose one emoji for \(worktree.branch). It will appear beside this worktree and on its Attention cards."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: worktree.emoji ?? "")
+        field.placeholderString = "Emoji"
+        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let chosen = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard chosen.count == 1, chosen.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation }),
+              !appState.repos.flatMap(\.worktrees).contains(where: { $0.id != worktree.id && $0.emoji == chosen }) else {
+            let error = NSAlert()
+            error.messageText = "Choose one unused emoji"
+            error.runModal()
+            return
+        }
+        for repoIndex in appState.repos.indices {
+            if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
+                appState.repos[repoIndex].worktrees[index].emoji = chosen
+                return
+            }
+        }
     }
 
     /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7

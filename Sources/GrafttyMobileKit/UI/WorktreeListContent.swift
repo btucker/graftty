@@ -502,7 +502,7 @@ public struct WorktreeListContent: View {
                     }
                 }.padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
@@ -515,8 +515,9 @@ public struct WorktreeListContent: View {
             }
         } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
-                ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
+                ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
+                                      excludedAttentionProjectIDs: navigation.excludedAttentionProjectIDs,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
                 }, set: { navigation.railCollapsed = $0 }),
@@ -524,8 +525,11 @@ public struct WorktreeListContent: View {
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
-                                      onSelect: { selectProject($0, worktrees: worktrees) },
-                                      onAttention: { setNavigationMode(showsAttention: true) },
+                                      onSelect: { project in
+                                          if navigation.showsAttention { navigation.toggleAttentionProject(project.id) }
+                                          else { selectProject(project, worktrees: worktrees) }
+                                      },
+                                      onAttention: { setNavigationMode(showsAttention: !navigation.showsAttention) },
                                       onMove: moveProject)
                 Divider()
                 projectDetail(worktrees, projects: projects, items: items)
@@ -538,7 +542,7 @@ public struct WorktreeListContent: View {
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
                 }.pickerStyle(.segmented).padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
@@ -583,7 +587,7 @@ public struct WorktreeListContent: View {
     @ViewBuilder
     private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem]) -> some View {
         if navigation.showsAttention {
-            SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+            SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                 await openAttention(item, worktrees: worktrees)
@@ -637,7 +641,13 @@ public struct WorktreeListContent: View {
     }
 
     private func setNavigationMode(showsAttention: Bool) {
+        if showsAttention, case .loaded(let worktrees) = state {
+            selectionIntentGeneration &+= 1
+            navigation.enterAttention(projects: projects(for: worktrees), items: SidebarProjection.activity(worktrees))
+            return
+        }
         Self.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
+        if !showsAttention { navigation.leaveAttention() }
     }
 
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {

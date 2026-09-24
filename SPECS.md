@@ -162,9 +162,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
 
-**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree beside a project icon, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no project icon exists it shall retain the project name, and if no question exists it shall omit Needs You.
+**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree name beside its emoji, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
 
 **LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
+
+**LAYOUT-2.75** When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.
+
+**LAYOUT-2.76** When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2887,6 +2891,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-3.3** When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.
 
 **PROJECT-3.4** When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.
+
+**PROJECT-3.5** When a project icon has colored pixels, the application shall derive a stable accent from the icon for matching project halos and Attention cards.
 
 ## SSH — SSH
 

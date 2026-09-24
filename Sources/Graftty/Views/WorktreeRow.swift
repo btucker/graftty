@@ -315,6 +315,9 @@ struct WorktreeRow: View {
     @ViewBuilder
     private var branchLabel: some View {
         HStack(spacing: 6) {
+            if let emoji = entry.emoji {
+                Text(emoji).font(.system(size: 15)).accessibilityHidden(true)
+            }
             // Primary label: directory name (possibly disambiguated with
             // parent) — the identity of the worktree as the user set it up.
             if entry.state == .stale {

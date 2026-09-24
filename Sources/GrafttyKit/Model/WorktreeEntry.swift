@@ -65,6 +65,7 @@ public enum WorktreeState: String, Codable, Sendable {
     }
 }
 
+/// @spec LAYOUT-2.76: When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.
 public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public let id: UUID
     /// The worktree's absolute path on disk. Mutable so the relocate
@@ -74,6 +75,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// the relocate cascade, callers treat this as write-once.
     public var path: String
     public var branch: String
+    /// User-editable, worktree-scoped identity shown in navigation and Attention.
+    public var emoji: String?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -124,6 +127,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.id = UUID()
         self.path = path
         self.branch = branch
+        self.emoji = nil
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -143,7 +147,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, state, staleSince, attention, unseenAgentStop, paneAttention,
+        case id, path, branch, emoji, state, staleSince, attention, unseenAgentStop, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
@@ -163,6 +167,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.path = try container.decode(String.self, forKey: .path)
         self.branch = try container.decode(String.self, forKey: .branch)
+        self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)

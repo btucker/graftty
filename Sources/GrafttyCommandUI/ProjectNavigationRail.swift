@@ -6,20 +6,32 @@ import AppKit
 import UIKit
 #endif
 
+public enum ProjectAccentColor {
+    private static let palette: [Color] = [.purple, .orange, .pink, .green, .gray, .teal, .blue, .indigo]
+    public static func color(for project: SidebarProject) -> Color {
+        guard let hex = project.accentHex, hex.count == 6, let value = UInt32(hex, radix: 16) else {
+            return palette[project.colorIndex]
+        }
+        return Color(red: Double((value >> 16) & 255) / 255,
+                     green: Double((value >> 8) & 255) / 255,
+                     blue: Double(value & 255) / 255)
+    }
+}
+
 public struct ProjectIdentityView: View {
     public let project: SidebarProject
     public var imageData: Data?
     public init(project: SidebarProject, imageData: Data? = nil) { self.project = project; self.imageData = imageData }
-    private let palette: [Color] = [.purple, .orange, .pink, .green, .gray, .teal, .blue, .indigo]
+    private var accent: Color { ProjectAccentColor.color(for: project) }
     public var body: some View {
         Group {
             if let image = decodedImage {
                 image.resizable().scaledToFit().padding(2)
             } else {
                 Text(project.displayInitials).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(palette[project.colorIndex])
+                    .foregroundStyle(accent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(palette[project.colorIndex].opacity(0.16))
+                    .background(accent.opacity(0.16))
             }
         }
         .frame(width: 28, height: 28)
@@ -46,6 +58,7 @@ public struct ProjectNavigationRail: View {
     public var icons: [String: Data]
     public var selectedID: String?
     public var showsAttention: Bool
+    public var excludedAttentionProjectIDs: Set<String>
     @Binding public var collapsed: Bool
     @Binding public var expandedWidth: Double
     public var onSelect: (SidebarProject) -> Void
@@ -61,7 +74,7 @@ public struct ProjectNavigationRail: View {
     @State private var resizeStartWidth: Double?
 
     public init(projects: [SidebarProject], counts: [String: Int], workingCounts: [String: Int] = [:], icons: [String: Data], selectedID: String?,
-                showsAttention: Bool, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
+                showsAttention: Bool, excludedAttentionProjectIDs: Set<String> = [], collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
                 localDeviceID: RemoteDeviceID? = nil,
@@ -70,7 +83,7 @@ public struct ProjectNavigationRail: View {
         self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
         self.workingCounts = workingCounts
         self.localDeviceID = localDeviceID; self.management = management
-        self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
+        self.showsAttention = showsAttention; self.excludedAttentionProjectIDs = excludedAttentionProjectIDs; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
     }
     public var body: some View {
@@ -94,7 +107,7 @@ public struct ProjectNavigationRail: View {
                 .background(showsAttention ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
             }.buttonStyle(.plain).padding(.horizontal, 6)
                 .accessibilityLabel("Attention, \(counts.values.reduce(0, +)) pending requests")
-                .help("Attention across all projects")
+                .help(showsAttention ? "Show worktrees" : "Attention across all projects")
             Divider().padding(.vertical, 8)
             ScrollView {
                 LazyVStack(spacing: 3) {
@@ -103,7 +116,7 @@ public struct ProjectNavigationRail: View {
                             .overlay(alignment: .top) { if dropTarget == project.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
                             .draggable("graftty-project:" + project.id)
                             .dropDestination(for: String.self) { values, location in
-                                guard allowsReordering, let value = values.first, value.hasPrefix("graftty-project:") else { return false }
+                                guard allowsReordering && !showsAttention, let value = values.first, value.hasPrefix("graftty-project:") else { return false }
                                 onMove(String(value.dropFirst("graftty-project:".count)), project.id, location.y > 22)
                                 return true
                             } isTargeted: { dropTarget = $0 ? project.id : nil }
@@ -162,6 +175,10 @@ public struct ProjectNavigationRail: View {
         Button { onSelect(project) } label: {
             HStack(spacing: 9) {
                 ProjectIdentityView(project: project, imageData: icons[project.id])
+                    .padding(3)
+                    .background(ProjectAccentColor.color(for: project).opacity(showsAttention ? 0.25 : 0.17), in: RoundedRectangle(cornerRadius: 9))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ProjectAccentColor.color(for: project).opacity(showsAttention ? 0.8 : 0.55), lineWidth: showsAttention ? 2 : 1))
+                    .opacity(showsAttention && excludedAttentionProjectIDs.contains(project.id) ? 0.35 : 1)
                     .overlay(alignment: .bottomLeading) {
                         if collapsed, let owner = project.owner, owner.deviceID != localDeviceID {
                             Image(systemName: "desktopcomputer").font(.system(size: 8))
@@ -196,12 +213,12 @@ public struct ProjectNavigationRail: View {
             .overlay(alignment: .bottomTrailing) { if collapsed { SidebarActivityBadge(workingCounts[project.id, default: 0], kind: .working) } }
             .padding(.horizontal, collapsed ? 0 : 8)
             .contentShape(Rectangle())
-            .background(!showsAttention && selectedID == project.id ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(!showsAttention && selectedID == project.id ? selectionColor : showsAttention && !excludedAttentionProjectIDs.contains(project.id) ? ProjectAccentColor.color(for: project).opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
             .help(project.name + (project.owner.map { " on " + $0.deviceLabel } ?? "") + (project.isAvailable ? "" : " · Offline"))
-            .accessibilityLabel(project.name + ", \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
+            .accessibilityLabel(project.name + (showsAttention ? (excludedAttentionProjectIDs.contains(project.id) ? ", excluded from Attention" : ", included in Attention") : "") + ", \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
             .contextMenu {
-                if allowsReordering, let index = projects.firstIndex(where: { $0.id == project.id }) {
+                if allowsReordering && !showsAttention, let index = projects.firstIndex(where: { $0.id == project.id }) {
                     if index > 0 { Button("Move Up") { onMove(project.id, projects[index-1].id, false) } }
                     if index+1 < projects.count { Button("Move Down") { onMove(project.id, projects[index+1].id, true) } }
                 }
@@ -211,7 +228,7 @@ public struct ProjectNavigationRail: View {
             .accessibilityAction(named: "Move Down") { move(project.id, offset: 1) }
     }
     private func move(_ id: String, offset: Int) {
-        guard allowsReordering, let index = projects.firstIndex(where: { $0.id == id }), projects.indices.contains(index + offset) else { return }
+        guard allowsReordering && !showsAttention, let index = projects.firstIndex(where: { $0.id == id }), projects.indices.contains(index + offset) else { return }
         onMove(id, projects[index + offset].id, offset > 0)
     }
 }

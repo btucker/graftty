@@ -5,6 +5,23 @@ import GrafttyProtocol
 import Darwin
 
 struct SidebarHostNavigationTests {
+    @Test("@spec LAYOUT-2.76: When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.")
+    func worktreeEmojiIdentityPersists() throws {
+        var entries = [WorktreeEntry(path: "/repo", branch: "main"),
+                       WorktreeEntry(path: "/repo/one", branch: "one"),
+                       WorktreeEntry(path: "/repo/two", branch: "two")]
+        SidebarHostNavigation.assignMissingEmojis(in: &entries)
+        #expect(Set(entries.compactMap(\.emoji)).count == entries.count)
+        entries[1].emoji = "🧪"
+        let restored = try JSONDecoder().decode([WorktreeEntry].self, from: JSONEncoder().encode(entries))
+        #expect(restored[1].emoji == "🧪")
+        let metadata = SidebarHostNavigation.metadata(for: restored[1], projectID: "p", folders: [])
+        #expect(metadata.emoji == "🧪")
+        var repos = [RepoEntry(path: "/a", displayName: "A", worktrees: [WorktreeEntry(path: "/a", branch: "main")]),
+                     RepoEntry(path: "/b", displayName: "B", worktrees: [WorktreeEntry(path: "/b", branch: "main")])]
+        SidebarHostNavigation.assignMissingEmojis(in: &repos)
+        #expect(Set(repos.flatMap(\.worktrees).compactMap(\.emoji)).count == 2)
+    }
     @Test("@spec LAYOUT-2.60: When a worktree is stopped and reopened, the application shall retain recent Attention pane targets for saved layout slots and resolve them to their new sessions without following reused routes.")
     func recentPaneSurvivesStop() throws {
         let slot = PaneSlotID()
