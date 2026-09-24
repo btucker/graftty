@@ -8,6 +8,23 @@ import Testing
 
 @Suite("SSH child channel open deadlines")
 struct SSHChildChannelOpenerTests {
+    @Test("@spec IOS-12.6: If a browser tunnel cannot connect before its deadline, then the application shall fail that browser connection without disconnecting terminal panes sharing the host transport.")
+    func browserTimeoutPreservesParent() async throws {
+        let fixture = try await StalledSSHParent.make()
+        let watchdog = fixture.closeAfterDelay()
+        defer { watchdog.cancel() }
+        await #expect(throws: SSHChildChannelOpenError.timedOut) {
+            _ = try await openChildChannel(
+                parentChannel: fixture.channel,
+                parentHandler: fixture.handler,
+                timeout: .milliseconds(25),
+                closeParentOnTimeout: false
+            ) { child, _ in child.eventLoop.makeSucceededVoidFuture() }
+        }
+        #expect(fixture.channel.isActive)
+        try await fixture.channel.close().get()
+    }
+
     @Test("an already cancelled open leaves the parent available")
     func cancellationBeforeOpenPreservesParent() async throws {
         let fixture = try await StalledSSHParent.make()
@@ -25,7 +42,7 @@ struct SSHChildChannelOpenerTests {
         try await fixture.channel.close().get()
     }
 
-    @Test("@spec REMOTE-11.6: If an SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.")
+    @Test("@spec REMOTE-11.6: If a terminal or control SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.")
     func stalledOpenTimesOutWithoutAdvancingEventLoopClock() async throws {
         let fixture = try await StalledSSHParent.make()
         let watchdog = fixture.closeAfterDelay()

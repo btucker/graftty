@@ -1,21 +1,22 @@
 {
   "name": "graftty-team",
   "version": "0.3.2",
-  "description": "Coordinate Codex and Claude agents through Graftty's durable worktree inbox and instructions.",
+  "description": "Coordinate agents and open host files or URLs on Graftty Mobile.",
   "author": {
     "name": "Graftty"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Graftty Team",
-    "shortDescription": "Coordinate agents and durable worktree instructions.",
-    "longDescription": "Adds provider-neutral Graftty team routing, exact agent addresses, forwarding guidance, durable worktree instructions, and lifecycle hooks.",
+    "shortDescription": "Coordinate agents and preview host resources on mobile.",
+    "longDescription": "Adds Graftty team routing, durable worktree instructions, mobile file and URL preview guidance, and lifecycle hooks.",
     "developerName": "Graftty",
     "category": "Productivity",
-    "capabilities": ["Agent coordination"],
+    "capabilities": ["Agent coordination", "Mobile preview"],
     "defaultPrompt": [
       "Show my Graftty team roster.",
-      "Send a message to another worktree."
+      "Send a message to another worktree.",
+      "Open a host file or URL on Graftty Mobile."
     ]
   }
 }

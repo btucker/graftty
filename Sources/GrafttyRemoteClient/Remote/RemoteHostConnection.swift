@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
+import GrafttyTunnel
+import Network
 import NIOCore
 import NIOSSH
 import WebRTC
@@ -483,6 +485,31 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             parentChannel: transport.channel,
             parentHandler: box.handler
         )
+    }
+
+    /// The TCP destination and DNS lookup both live on the paired host.
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+        guard let transport = sshTransport, let box = sshHandlerBox,
+              (1...65535).contains(port) else { throw ConnectionError.notConnected }
+        let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
+        let channel = try await openChildChannel(
+            parentChannel: transport.channel,
+            parentHandler: box.handler,
+            channelType: .directTCPIP(.init(targetHost: host, targetPort: port,
+                                          originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))),
+            closeParentOnTimeout: false
+        ) { child, _ in
+            child.setOption(ChannelOptions.autoRead, value: false).flatMap {
+                child.pipeline.addHandler(bridge)
+            }
+        }
+        do {
+            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
+            try await channel.eventLoop.submit { bridge.activate() }.get()
+        } catch {
+            channel.close(promise: nil)
+            throw error
+        }
     }
 
     public func openWorktreeManagementChannel() async throws

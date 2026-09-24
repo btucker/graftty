@@ -1,6 +1,7 @@
 #if os(macOS)
 import CryptoKit
 import Foundation
+import Network
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
@@ -15,6 +16,7 @@ struct RemoteMacConnectionLoopbackTests {
     // A real Mac can run this gate with:
     // GRAFTTY_RUN_WEBRTC_LOOPBACK=1 swift test --filter RemoteMacConnectionLoopbackTests
     @Test(
+        "@spec IOS-12.5: When a mobile browser requests a URL through its authenticated SOCKS proxy, the application shall relay HTTP bytes through SSH over WebRTC to a TCP connection on the paired host.",
         .enabled(
             if: ProcessInfo.processInfo.environment["GRAFTTY_RUN_WEBRTC_LOOPBACK"] == "1",
             "Set GRAFTTY_RUN_WEBRTC_LOOPBACK=1 to run the native WebRTC smoke test."
@@ -54,7 +56,12 @@ struct RemoteMacConnectionLoopbackTests {
                     rawRepresentation: clientKey.publicKey.rawRepresentation
                 ),
                 displayName: "Loopback Client",
-                capabilities: .defaultsAfterPairing,
+                capabilities: PairedDeviceCapabilities(
+                    terminalControl: .allowed,
+                    portTunnel: .allowedLoopback,
+                    screenView: .disabled,
+                    screenControl: .disabled
+                ),
                 pairedAt: Date(),
                 lastSeenAt: nil
             )
@@ -174,6 +181,32 @@ struct RemoteMacConnectionLoopbackTests {
             #expect(frame == .binary(payload))
             #expect(await connection.state == RemoteHostConnection.State.connected)
             #expect(await hostAgent.state == WebRTCHostAgent.State.connected)
+            let destinations = BrowserTunnelDestinations()
+            let proxy = try BrowserProxy { socket, host, requestedPort in
+                await destinations.record(host)
+                #expect(host == "host-only.invalid")
+                #expect(requestedPort == port)
+                // The synthetic name is deliberately unresolvable locally.
+                // Map it here to the in-process host's HTTP server.
+                try await connection.openBrowserTunnel(socket, host: "127.0.0.1", port: requestedPort)
+            }
+            let proxyPort = try await proxy.start()
+            defer { proxy.stop() }
+            let configuration = URLSessionConfiguration.ephemeral
+            var settings = ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!))
+            settings.applyCredential(username: proxy.username, password: proxy.password)
+            settings.allowFailover = false
+            settings.matchDomains = ["", "localhost", "127.0.0.1", "::1"]
+            settings.excludedDomains = []
+            configuration.proxyConfigurations = [settings]
+            configuration.timeoutIntervalForRequest = 15
+            let browser = URLSession(configuration: configuration)
+            defer { browser.invalidateAndCancel() }
+            let (_, response) = try await browser.data(from: URL(string: "http://host-only.invalid:\(port)/not-a-route")!)
+            #expect((response as? HTTPURLResponse)?.statusCode == 404)
+            #expect(await destinations.contains("host-only.invalid"))
+
+
         } catch {
             terminal?.close()
             await connection.close()
@@ -230,5 +263,10 @@ private final class EchoTerminalStream: GrafttyKit.TerminalByteStream, @unchecke
     func close() async {
         continuation.finish()
     }
+}
+private actor BrowserTunnelDestinations {
+    private var hosts: Set<String> = []
+    func record(_ host: String) { hosts.insert(host) }
+    func contains(_ host: String) -> Bool { hosts.contains(host) }
 }
 #endif

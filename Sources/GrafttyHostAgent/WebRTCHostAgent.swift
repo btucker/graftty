@@ -2,6 +2,8 @@ import CryptoKit
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyTunnel
+import Network
 import NIOCore
 import NIOSSH
 import WebRTC
@@ -729,6 +731,12 @@ public actor WebRTCHostAgent {
                         }
                     },
                     inboundChildChannelInitializer: { child, channelType in
+                        if case .directTCPIP(let destination) = channelType {
+                            guard peerBox.browserTunnelAllowed(host: destination.targetHost) else {
+                                return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
+                            }
+                            return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
+                        }
                         guard case .session = channelType else {
                             return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
                         }
@@ -1199,5 +1207,38 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return _peer?.capabilities.worktreeManagement == .allowed
+    }
+
+    func browserTunnelAllowed(host: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let capability = _peer?.capabilities.portTunnel else { return false }
+        return BrowserTunnelAuthorization.allows(
+            capability: capability,
+            host: host,
+            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved()
+        )
+    }
+}
+
+enum BrowserTunnelAuthorization {
+    static func allows(
+        capability: PairedDeviceCapabilities.PortTunnel,
+        host: String,
+        hasUserApproval: Bool
+    ) -> Bool {
+        switch capability {
+        case .disabled:
+            return false
+        case .askEachTime:
+            return hasUserApproval
+        case .allowedLoopback:
+            let normalized = host.lowercased()
+            let ipv4Loopback = IPv4Address(normalized)?.rawValue.first == 127
+            return normalized == "localhost"
+                || normalized.hasSuffix(".localhost")
+                || ipv4Loopback
+                || IPv6Address(normalized)?.isLoopback == true
+        }
     }
 }

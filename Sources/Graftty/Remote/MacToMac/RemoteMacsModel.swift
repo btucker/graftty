@@ -761,6 +761,20 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case let .openResource(worktreeID, request):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            let response = await forwardManagement(
+                identity: route.identity,
+                request: .openResource(worktreeID: route.path, request: request)
+            )
+            // A direct-tcpip browser channel terminates on this intermediary,
+            // not the Mac that owns the relayed worktree. Files can be relayed
+            // safely; hide URL offers until the tunnel protocol carries a route.
+            if case .openResource(.offers(let offers)) = response {
+                return .openResource(.offers(offers.filter { $0.url == nil }))
+            }
+            return response
+
         case .hostPresentation, .listRemoteMacConnections, .moveProject,
              .connectRemoteMac:
             return nil
