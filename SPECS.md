@@ -2740,6 +2740,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, and remaining work, and shall make a user question optional.
 
+**AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+
 ## CLI — CLI
 
 ### CLI-1.x
