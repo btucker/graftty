@@ -2076,6 +2076,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.13** When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
 
+**TEAM-10.14** When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
+
+**TEAM-10.15** When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.

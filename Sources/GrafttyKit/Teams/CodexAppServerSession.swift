@@ -8,6 +8,8 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
     public let realBinaryPath: String
     public let appServerPID: Int32
     public let appServerProcessStartTimeMicroseconds: Int64?
+    public let ownerPID: Int32?
+    public let ownerProcessStartTimeMicroseconds: Int64?
     public let registeredAt: Date
     public let agentID: String?
     public let threadID: String?
@@ -21,6 +23,8 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
         realBinaryPath: String,
         appServerPID: Int32,
         appServerProcessStartTimeMicroseconds: Int64? = nil,
+        ownerPID: Int32? = nil,
+        ownerProcessStartTimeMicroseconds: Int64? = nil,
         registeredAt: Date,
         agentID: String? = nil,
         threadID: String? = nil,
@@ -33,6 +37,8 @@ public struct CodexAppServerSessionRecord: Codable, Equatable, Sendable {
         self.realBinaryPath = realBinaryPath
         self.appServerPID = appServerPID
         self.appServerProcessStartTimeMicroseconds = appServerProcessStartTimeMicroseconds
+        self.ownerPID = ownerPID
+        self.ownerProcessStartTimeMicroseconds = ownerProcessStartTimeMicroseconds
         self.registeredAt = registeredAt
         self.agentID = agentID
         self.threadID = threadID
@@ -145,5 +151,53 @@ public struct CodexAppServerSessionStorage: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+}
+
+/// @spec TEAM-10.15: When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities.
+public enum CodexAppServerSessionMonitor {
+    public static func cleanupOrphans(
+        storage: CodexAppServerSessionStorage,
+        processStartTimeMicroseconds: (Int32) -> Int64? = { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) },
+        isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },
+        terminate: ((Int32, Int64) -> Void)? = nil
+    ) {
+        guard let records = try? storage.listAll() else { return }
+        for record in records {
+            guard let ownerPID = record.ownerPID,
+                  let ownerStart = record.ownerProcessStartTimeMicroseconds,
+                  let serverStart = record.appServerProcessStartTimeMicroseconds
+            else { continue }
+
+            let currentOwnerStart = processStartTimeMicroseconds(ownerPID)
+            if currentOwnerStart == ownerStart || (currentOwnerStart == nil && isAlive(ownerPID)) {
+                continue
+            }
+            // A new session can replace a pane's record between the list and
+            // this sweep. Never terminate its server using the old record.
+            guard (try? storage.read(
+                teamID: record.teamID,
+                worktree: record.worktree,
+                paneSessionName: record.paneSessionName
+            )) == record else { continue }
+
+            if processStartTimeMicroseconds(record.appServerPID) == serverStart {
+                (terminate ?? terminateOrphan)(record.appServerPID, serverStart)
+            }
+            try? storage.delete(
+                teamID: record.teamID,
+                worktree: record.worktree,
+                paneSessionName: record.paneSessionName
+            )
+        }
+    }
+
+    private static func terminateOrphan(pid: Int32, start: Int64) {
+        guard ProcessIdentityReader.startTimeMicroseconds(ofPID: pid) == start else { return }
+        _ = kill(pid, SIGTERM)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            guard ProcessIdentityReader.startTimeMicroseconds(ofPID: pid) == start else { return }
+            _ = kill(pid, SIGKILL)
+        }
     }
 }
