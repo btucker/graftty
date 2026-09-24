@@ -35,6 +35,7 @@ enum TerminalCopyText {
             let previousContent = previous.trimmingCharacters(in: .whitespaces)
             let previousIndentation = previous.prefix(while: { $0 == " " }).count
             let nextWordWidth = cellWidth(continuation.prefix(while: { !$0.isWhitespace }))
+            let diagnosticContinuation = previousWasJoined || numberedDiagnostic(in: previousContent) != nil
             let joinsWrappedLine = columns > 0
                 && indentation >= 2
                 && !previousContent.isEmpty
@@ -43,6 +44,7 @@ enum TerminalCopyText {
                 && !continuation.hasPrefix(".")
                 && numberedDiagnostic(in: continuation) == nil
                 && !previousContent.hasSuffix(":")
+                && (diagnosticContinuation || (!isStructuredLine(previousContent) && !isStructuredLine(continuation)))
                 && (previousIndentation < 4 || previousWasJoined || numberedDiagnostic(in: previousContent) != nil)
                 && cellWidth(previous) + 1 + nextWordWidth > columns
             if joinsWrappedLine {
@@ -60,28 +62,39 @@ enum TerminalCopyText {
     private struct NumberedCodeRow {
         let number: Int
         let gutterIndent: Int
+        let spacingAfterNumber: Int
         let content: String
 
         var hasDiffMarker: Bool { content.hasPrefix("+") || content.hasPrefix("-") }
     }
 
     /// A linear selection begun inside the code column includes the full
-    /// number gutter on later rows. Require repeated, ordered diff rows so
+    /// number gutter on later rows. Require repeated, ordered code rows so
     /// ordinary numbered output keeps its original text.
     private static func cleanCodeLineNumberGutter(_ text: String) -> String? {
         let lines = text.components(separatedBy: "\n")
         let numbered = lines.enumerated().compactMap { index, line in
             numberedCodeRow(line).map { (index, $0) }
         }
-        guard numbered.count >= 2, numbered.contains(where: { $0.1.hasDiffMarker }),
+        guard numbered.count >= 2,
               numbered.indices.dropFirst().allSatisfy({ numbered[$0].1.number >= numbered[$0 - 1].1.number }) else {
             return nil
         }
+        let hasDiff = numbered.contains(where: { $0.1.hasDiffMarker })
+        let plainCodeGutter = numbered.allSatisfy { $0.1.content.isEmpty || $0.1.spacingAfterNumber >= 2 }
+            && numbered.indices.dropFirst().allSatisfy({ numbered[$0].1.number == numbered[$0 - 1].1.number + 1 })
+        guard hasDiff || plainCodeGutter else { return nil }
         // A selection that begins in the gutter intentionally includes the
         // numbers, including those on later lines.
         if numbered[0].0 == 0 { return text }
+        let firstLooksLikeCode = isStrongCodeLine(lines[0]) || (
+            isStructuredLine(lines[0]) && numbered.contains { _, row in
+                let code = row.hasDiffMarker ? String(row.content.dropFirst()) : row.content
+                return isStrongCodeLine(code)
+            }
+        )
         guard numbered[0].0 == 1,
-              !lines[0].trimmingCharacters(in: .whitespaces).isEmpty,
+              firstLooksLikeCode,
               numbered.allSatisfy({ $0.1.gutterIndent == numbered[0].1.gutterIndent }) else {
             return nil
         }
@@ -96,11 +109,27 @@ enum TerminalCopyText {
         let digits = row.prefix(while: { ("0"..."9").contains($0) })
         guard !digits.isEmpty, digits.count <= 7, let number = Int(digits) else { return nil }
         let rest = row.dropFirst(digits.count)
-        guard rest.isEmpty || rest.first == " " else { return nil }
+        let spaces = rest.prefix(while: { $0 == " " }).count
+        guard rest.isEmpty || spaces > 0 else { return nil }
         return NumberedCodeRow(
-            number: number, gutterIndent: indent,
+            number: number, gutterIndent: indent, spacingAfterNumber: spaces,
             content: rest.isEmpty ? "" : String(rest.dropFirst())
         )
+    }
+
+    private static func isStructuredLine(_ line: String) -> Bool {
+        let content = line.trimmingCharacters(in: .whitespaces)
+        if content.hasPrefix("at ") && content.contains(":") { return true }
+        return isStrongCodeLine(content) || content.contains("(") || content.contains("{")
+    }
+
+    private static func isStrongCodeLine(_ line: String) -> Bool {
+        let content = line.trimmingCharacters(in: .whitespaces)
+        if content.hasPrefix("@") || content.hasPrefix("#") { return true }
+        let keywords = ["let ", "var ", "func ", "return ", "throw ", "if ", "guard ",
+                        "class ", "struct ", "enum ", "import "]
+        if keywords.contains(where: content.hasPrefix) { return true }
+        return content.contains(" = ") || content.contains("{") || content.contains("}")
     }
 
     private static func withoutTranscriptChrome(_ text: String) -> String {

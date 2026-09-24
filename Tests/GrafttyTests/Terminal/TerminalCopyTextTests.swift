@@ -44,7 +44,9 @@ struct TerminalCopyTextTests {
             "6912:􀢄  Test \"Claude session binding mutations are serialized within a process.\" recorded an issue at TeamPresenceStorageTests.swift:276:9: Expectation failed")
     }
 
-    @Test("@spec TERM-8.13: When a selected code diff starts after the first line's number gutter and subsequent lines include numbered diff rows, the application shall omit the later gutter numbers while preserving diff markers and code indentation.")
+    @Test("""
+    @spec TERM-8.13: When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
+    """)
     func removesLaterCodeLineNumbersWhenFirstLineStartsAfterGutter() {
         let copied = #"""
         @Test("""
@@ -75,6 +77,32 @@ struct TerminalCopyTextTests {
             65          lines.removeLast()
         """
         #expect(TerminalCopyText.clean(copied, columns: 70) == copied)
+    }
+
+    @Test func removesLaterPlainCodeLineNumbers() {
+        let copied = "let first = 1\n    64     let second = 2\n    65     let third = 3"
+        let expected = "let first = 1\n    let second = 2\n    let third = 3"
+        #expect(TerminalCopyText.clean(copied, columns: 80) == expected)
+    }
+
+    @Test func keepsPlainCodeLineNumbersWhenSelectionStartsInGutter() {
+        let copied = " 63     let first = 1\n    64     let second = 2\n    65     let third = 3"
+        #expect(TerminalCopyText.clean(copied, columns: 20) == copied)
+    }
+
+    @Test func keepsNumberedRowsAfterAnIntro() {
+        let copied = "Changes:\n    16 - failed\n    17 + fixed"
+        #expect(TerminalCopyText.clean(copied, columns: 80) == copied)
+    }
+
+    @Test func keepsNumberedDiffRowsAfterAParenthesizedIntro() {
+        let copied = "Summary (active)\n    16 - failed\n    17 + fixed"
+        #expect(TerminalCopyText.clean(copied, columns: 80) == copied)
+    }
+
+    @Test func keepsNumberedLogRows() {
+        let copied = "Summary\n    64  process started\n    65  process exited"
+        #expect(TerminalCopyText.clean(copied, columns: 80) == copied)
     }
 
     @Test func joinsUnbulletedProseAtTerminalEdge() {
@@ -144,5 +172,15 @@ struct TerminalCopyTextTests {
           deliberate indent
         """
         #expect(TerminalCopyText.clean(copied, columns: 100) == copied)
+    }
+
+    @Test func keepsCodeContinuationAtTerminalEdge() {
+        let copied = "let result = repository.loadRecords(matching: predicate, sortedBy: sortDescriptor)\n  return result"
+        #expect(TerminalCopyText.clean(copied, columns: 85) == copied)
+    }
+
+    @Test func keepsStackFrameAfterFullWidthLogLine() {
+        let copied = String(repeating: "x", count: 80) + "\n    at Source.swift:12:3"
+        #expect(TerminalCopyText.clean(copied, columns: 80) == copied)
     }
 }
