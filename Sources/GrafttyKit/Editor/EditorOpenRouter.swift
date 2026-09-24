@@ -1,5 +1,6 @@
 // Sources/GrafttyKit/Editor/EditorOpenRouter.swift
 import Foundation
+import UniformTypeIdentifiers
 
 /// Pure logic that decides what to do with a URL string handed to us by
 /// libghostty's `GHOSTTY_ACTION_OPEN_URL` event. `classify` produces a
@@ -156,6 +157,9 @@ public enum EditorOpenRouter {
         /// Hand `file` to the GUI app at `app` via NSWorkspace.
         case openWithApp(file: URL, app: URL)
 
+        /// Open a file with its system default app, like `open <file>`.
+        case openWithDefaultApp(URL)
+
         /// Hand `url` to NSWorkspace.shared.open (default URL handler).
         case openInBrowser(URL)
 
@@ -167,7 +171,7 @@ public enum EditorOpenRouter {
     /// to produce a concrete action for the caller to execute.
     public static func resolve(
         target: ClassifiedTarget,
-        editor: ResolvedEditor
+        editor: ResolvedEditor?
     ) -> EditorAction {
         switch target {
         case .browser(let url):
@@ -177,6 +181,10 @@ public enum EditorOpenRouter {
             return .noOp
 
         case .editorOpen(let absolutePath, let line, _):
+            if isBinaryFile(absolutePath) {
+                return .openWithDefaultApp(absolutePath)
+            }
+            guard let editor else { return .noOp }
             switch editor.kind {
             case .app(let bundleURL):
                 return .openWithApp(file: absolutePath, app: bundleURL)
@@ -189,5 +197,61 @@ public enum EditorOpenRouter {
                 return .openInPane(initialInput: initialInput)
             }
         }
+    }
+
+    /// Check a small prefix so extensionless files and mislabeled binary
+    /// files do not get sent to a text editor. A known non-text file type
+    /// also catches formats whose headers happen to be valid UTF-8.
+    private static func isBinaryFile(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else { return false }
+
+        if let handle = try? FileHandle(forReadingFrom: url) {
+            defer { try? handle.close() }
+            if let sample = try? handle.read(upToCount: 8 * 1024),
+               !sample.isEmpty,
+               !hasUnicodeByteOrderMark(sample) {
+                if sample.contains(0) { return true }
+                if !isValidUTF8Sample(sample) { return true }
+            }
+        }
+
+        guard let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+              !type.identifier.hasPrefix("dyn.") else { return false }
+        return type != .data && !type.conforms(to: .text)
+    }
+
+    private static func hasUnicodeByteOrderMark(_ sample: Data) -> Bool {
+        sample.starts(with: [0xEF, 0xBB, 0xBF])
+            || sample.starts(with: [0xFF, 0xFE])
+            || sample.starts(with: [0xFE, 0xFF])
+            || sample.starts(with: [0x00, 0x00, 0xFE, 0xFF])
+    }
+
+    private static func isValidUTF8Sample(_ sample: Data) -> Bool {
+        if String(data: sample, encoding: .utf8) != nil { return true }
+        // Only a full sample can end halfway through a UTF-8 character.
+        guard sample.count == 8 * 1024 else { return false }
+        let bytes = [UInt8](sample)
+        for suffixLength in 1...3 {
+            let start = bytes.count - suffixLength
+            let leading = bytes[start]
+            let sequenceLength: Int
+            switch leading {
+            case 0xC2...0xDF: sequenceLength = 2
+            case 0xE0...0xEF: sequenceLength = 3
+            case 0xF0...0xF4: sequenceLength = 4
+            default: continue
+            }
+            guard suffixLength < sequenceLength,
+                  bytes[(start + 1)...].allSatisfy({ (0x80...0xBF).contains($0) }) else {
+                continue
+            }
+            if String(data: Data(bytes[..<start]), encoding: .utf8) != nil {
+                return true
+            }
+        }
+        return false
     }
 }
