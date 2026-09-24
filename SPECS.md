@@ -1942,15 +1942,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-1.x — Settings & Enablement
 
-**TEAM-1.1** The application shall provide a Settings tab named "Agent Teams" containing one boolean toggle, *Enable agent teams*, persisted via `@AppStorage("agentTeamsEnabled")` (Bool, default false).
+**TEAM-1.1** When Graftty starts, the application shall make Agent Teams available without an enable switch, including for users who previously disabled them.
 
-**TEAM-1.2** While `agentTeamsEnabled` is false, the application shall not write any team event rows to the inbox and `graftty team hook` shall return no-op responses; the agent team feature is fully gated by this flag.
-
-**TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
+**TEAM-1.5** When the application routes a team event, it shall select recipients from the `teamEventRoutingPreferences` matrix (see TEAM-1.8) without consulting the retired `teamPRNotificationsEnabled` flag.
 
 **TEAM-1.6** The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain a non-empty compact automated-event default that renders the event body first, adds only event-specific actionable guidance, and omits generic delivery and same-worktree preambles; it shall render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
 
-**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
+**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between provider integration and the prompt sections.
 
 **TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable team event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `teamEventRoutingPreferences` for the corresponding row and write one inbox row per recipient resolved by `TeamEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
 
@@ -1970,7 +1968,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-2.3** A team's main worktree shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). Every other member is a linked worktree.
 
-**TEAM-2.4** Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
+**TEAM-2.4** Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist a separate team membership registry.
 
 **TEAM-2.5** TeamMembershipEvents.fireJoined writes a team_member_joined inbox row through the dispatcher.
 
@@ -1984,9 +1982,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.1** The application shall provide a `graftty team` CLI group with direct-message, broadcast, inbox, and member-list commands. Direct-message and broadcast commands shall accept message text from standard input via `--stdin`.
 
-**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, (c) `<member-name>` is not a teammate of the caller, or (d) no non-empty body is supplied. In case (c) the error shall list the current teammates' member names.
+**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) the calling worktree has no team, (b) `<member-name>` is not a teammate of the caller, or (c) no non-empty body is supplied. In case (b) the error shall list the current teammates' member names.
 
-**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if the calling worktree has no team.
 
 **TEAM-4.4** The built-in session-start template shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.
 
@@ -2008,9 +2006,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
 
-**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a tracked repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 
-**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 
 **TEAM-5.4** When constructing a system endpoint, the application shall produce an endpoint with member='system', worktree=<repoPath>, and runtime=nil.
 
@@ -2662,7 +2660,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.9** When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
 
-**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
+**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing separate Graftty Attention and team skills plus lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
 
 **AGENT-6.11** While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
 
@@ -2670,7 +2668,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
 
-**AGENT-6.15** When Graftty launches with agent teams enabled, no previously completed provider installation, and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
+**AGENT-6.15** When Graftty launches with no previously completed provider installation and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
@@ -2698,13 +2696,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.29** When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
 
-**AGENT-6.30** When a new Graftty build launches with agent teams enabled and a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
+**AGENT-6.30** When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
 
 **AGENT-6.31** When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
 **AGENT-6.33** When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill even when no team primer is present.
+
+**AGENT-6.34** When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
 
 ## CLI — CLI
 

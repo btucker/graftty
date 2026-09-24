@@ -1,0 +1,18 @@
+---
+name: graftty
+description: Use in Graftty agent sessions to report a short Attention recap before stopping.
+---
+
+# Graftty
+
+## Report the stopped turn
+
+Before ending a top-level turn in a tracked worktree, report what the user will need to recognize it later. Run `graftty attention report --stdin` with one small JSON object. Graftty stages the report and displays it when this agent stops. A SessionStart hook asks you to load this skill; if that was missed, the Stop hook may request this report once before allowing the turn to end.
+
+```sh
+graftty attention report --stdin <<'GRAFTTY_ATTENTION_7F3A91C2'
+{"title":"Posting detail model evals","completed":"v3 scored 0.910 against a700's 0.935.","next":"Run four evals on the new holdout, prod200, and us1000."}
+GRAFTTY_ATTENTION_7F3A91C2
+```
+
+Use a recognizable task title, not the worktree name or a generic status. State only work actually completed, then the concrete next step. Add `"need":"<brief question or action for the user>"` only when the user must decide or provide something; preserve the real question instead of inventing one. If results or validation are unknown, say so. Keep each field brief. If the report command fails, mention the failure in your final response; Graftty will still show a generic stopped card.

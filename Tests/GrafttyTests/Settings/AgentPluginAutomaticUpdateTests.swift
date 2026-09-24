@@ -7,13 +7,13 @@ import Testing
 @MainActor
 struct AgentPluginAutomaticUpdateTests {
     @Test("""
-    @spec AGENT-6.30: When a new Graftty build launches with agent teams enabled and a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
+    @spec AGENT-6.30: When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
     """)
     func updatesOncePerBuildAndRetriesAfterFailure() async {
         let suite = "AgentPluginAutoUpdate-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(true, forKey: SettingsKeys.agentTeamsEnabled)
+        defaults.set(false, forKey: SettingsKeys.agentTeamsEnabled)
         defaults.set(AgentPluginInstaller.integrationRevision, forKey: SettingsKeys.agentPluginInstalledRevision)
         defaults.set(false, forKey: SettingsKeys.nativeAgentMessagingEnabled)
         var attempts = 0
@@ -59,19 +59,17 @@ struct AgentPluginAutomaticUpdateTests {
         #expect(defaults.string(forKey: SettingsKeys.agentPluginInstalledBuildVersion) == "100.61.00")
     }
 
-    @Test("Uninstalled, declined, disabled, and unversioned development launches never auto-install.")
+    @Test("Uninstalled, declined, and unversioned development launches never auto-install.")
     func respectsInstallationAndLaunchEligibility() async {
-        for (enabled, installed, build) in [
-            (true, Optional<Int>.none, Optional("100.60.00")),
-            (true, 0, "100.60.00"),
-            (false, 7, "100.60.00"),
-            (true, 7, nil),
-            (true, 7, ""),
+        for (installed, build) in [
+            (Optional<Int>.none, Optional("100.60.00")),
+            (0, "100.60.00"),
+            (7, nil),
+            (7, ""),
         ] {
             let suite = "AgentPluginAutoUpdateEligibility-\(UUID().uuidString)"
             let defaults = UserDefaults(suiteName: suite)!
             defer { defaults.removePersistentDomain(forName: suite) }
-            defaults.set(enabled, forKey: SettingsKeys.agentTeamsEnabled)
             defaults.set(installed, forKey: SettingsKeys.agentPluginInstalledRevision)
             AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
             await AgentPluginAutomaticUpdate().runIfNeeded(defaults: defaults, buildVersion: build, update: {

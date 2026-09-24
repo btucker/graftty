@@ -165,8 +165,9 @@ public struct AgentPluginInstaller: Sendable {
             // Source links can cross provider roots; cached plugins cannot.
             // Read through the original links before replacing staged copies.
             for path in [
-                "plugins/graftty-team/skills/graftty/SKILL.md",
-                "plugins/graftty-team/.\(provider.rawValue)-plugin/plugin.json",
+                "plugins/graftty/skills/graftty/SKILL.md",
+                "plugins/graftty/skills/graftty-team/SKILL.md",
+                "plugins/graftty/.\(provider.rawValue)-plugin/plugin.json",
             ] {
                 var contents = try Data(contentsOf: source.appendingPathComponent(path))
                 if path.hasSuffix("plugin.json"), let pluginVersion {
@@ -203,7 +204,7 @@ public struct AgentPluginInstaller: Sendable {
                 AgentPluginInstallStep(
                     provider: .codex,
                     executable: "codex",
-                    arguments: ["plugin", "add", "graftty-team@graftty"]
+                    arguments: ["plugin", "add", "graftty@graftty"]
                 ),
                 AgentPluginInstallStep(
                     provider: .claude,
@@ -213,12 +214,12 @@ public struct AgentPluginInstaller: Sendable {
                 AgentPluginInstallStep(
                     provider: .claude,
                     executable: "claude",
-                    arguments: ["plugin", "install", "graftty-team@graftty", "--scope", "user"]
+                    arguments: ["plugin", "install", "graftty@graftty", "--scope", "user"]
                 ),
                 AgentPluginInstallStep(
                     provider: .claude,
                     executable: "claude",
-                    arguments: ["plugin", "update", "graftty-team@graftty", "--scope", "user"]
+                    arguments: ["plugin", "update", "graftty@graftty", "--scope", "user"]
                 ),
             ]
         )
@@ -226,7 +227,7 @@ public struct AgentPluginInstaller: Sendable {
 
     private func materializeHookCommands(in providerRoot: URL) throws {
         let hooksURL = providerRoot
-            .appendingPathComponent("plugins/graftty-team/hooks/hooks.json")
+            .appendingPathComponent("plugins/graftty/hooks/hooks.json")
         let data = try Data(contentsOf: hooksURL)
         let document = try JSONSerialization.jsonObject(with: data)
         let commandPrefix = AgentPluginInstallStep.shellToken(grafttyCLIPath)
@@ -315,17 +316,24 @@ public struct AgentPluginInstaller: Sendable {
                 )
                 let data = Data(output.stdout.utf8)
                 let installed: Bool
+                let legacyInstalled: Bool
+                let newPluginDisabled: Bool
                 switch provider {
                 case .codex:
-                    installed = try JSONDecoder().decode(CodexPluginInventory.self, from: data)
-                        .installed.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled }
+                    let entries = try JSONDecoder().decode(CodexPluginInventory.self, from: data).installed
+                    installed = entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && $0.enabled }
+                    legacyInstalled = entries.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled }
+                    newPluginDisabled = entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && !$0.enabled }
                 case .claude:
-                    installed = try JSONDecoder().decode([ClaudePluginEntry].self, from: data)
-                        .contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled }
+                    let entries = try JSONDecoder().decode([ClaudePluginEntry].self, from: data)
+                    installed = entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && $0.enabled }
+                    legacyInstalled = entries.contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled }
+                    newPluginDisabled = entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && !$0.enabled }
                 }
-                guard installed else { continue }
+                guard !newPluginDisabled else { continue }
+                guard installed || legacyInstalled else { continue }
                 let steps = plan.installSteps.filter {
-                    $0.provider == provider && $0.arguments.prefix(2) != ["plugin", "install"]
+                    $0.provider == provider && (!installed || $0.arguments.prefix(2) != ["plugin", "install"])
                 }
                 let report = await install(
                     AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: steps),
@@ -333,6 +341,21 @@ public struct AgentPluginInstaller: Sendable {
                     timeout: timeout
                 )
                 results.append(contentsOf: report.results)
+                if report.succeeded && legacyInstalled {
+                    let remove = AgentPluginInstallStep(
+                        provider: provider,
+                        executable: provider.rawValue,
+                        arguments: provider == .codex
+                            ? ["plugin", "remove", "graftty-team@graftty"]
+                            : ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"]
+                    )
+                    let removal = await install(
+                        AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: [remove]),
+                        executor: executor,
+                        timeout: timeout
+                    )
+                    results.append(contentsOf: removal.results)
+                }
             } catch {
                 results.append(AgentPluginInstallResult(
                     step: listStep, output: nil, errorDescription: Self.describe(error)

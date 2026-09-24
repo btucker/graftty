@@ -3,18 +3,16 @@ import GrafttyKit
 
 enum AgentPluginInstallOfferPolicy {
     static func shouldOffer(
-        agentTeamsEnabled: Bool,
         lastAcknowledgedRevision: Int?,
         installedRevision: Int?
     ) -> Bool {
-        guard agentTeamsEnabled, (installedRevision ?? 0) <= 0 else { return false }
+        guard (installedRevision ?? 0) <= 0 else { return false }
         let current = AgentPluginInstaller.integrationRevision
         return (lastAcknowledgedRevision ?? 0) < current
     }
 
     static func shouldOffer(in defaults: UserDefaults) -> Bool {
         shouldOffer(
-            agentTeamsEnabled: defaults.bool(forKey: SettingsKeys.agentTeamsEnabled),
             lastAcknowledgedRevision: defaults.object(
                 forKey: SettingsKeys.agentPluginInstallOfferRevision
             ) as? Int,

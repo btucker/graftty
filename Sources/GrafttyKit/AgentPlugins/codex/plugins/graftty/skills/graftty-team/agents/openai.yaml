@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graftty team"
+  short_description: "Coordinate worktree agents"
+  default_prompt: "Use Graftty to send a message to another worktree agent."

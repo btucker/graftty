@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graftty"
+  short_description: "Report Attention recaps"
+  default_prompt: "Report this turn to Graftty Attention."

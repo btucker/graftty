@@ -1,5 +1,5 @@
 {
-  "description": "Register Claude's native peer socket with Graftty while the plugin skill owns team instructions.",
+  "description": "Connect agent lifecycle events to Graftty Attention and worktree coordination.",
   "hooks": {
     "SessionStart": [
       {
