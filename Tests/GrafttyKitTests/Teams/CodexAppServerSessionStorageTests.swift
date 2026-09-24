@@ -137,7 +137,9 @@ struct CodexAppServerSessionStorageTests {
         #expect(try storage.listAll() == [live])
     }
 
-    @Test("@spec TEAM-10.15: When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities.")
+    @Test("""
+    @spec TEAM-10.15: When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities and retain its record until the server exits.
+    """)
     func orphanedServerIsTerminatedOnlyWithMatchingIdentity() throws {
         let storage = try makeStorage()
         defer { try? FileManager.default.removeItem(at: storage.rootDirectory) }
@@ -145,15 +147,26 @@ struct CodexAppServerSessionStorageTests {
                             ownerPID: 100, ownerProcessStartTimeMicroseconds: 10)
         try storage.write(orphan)
         var terminated: [Int32] = []
+        var serverAlive = true
 
         CodexAppServerSessionMonitor.cleanupOrphans(
             storage: storage,
-            processStartTimeMicroseconds: { pid in pid == 100 ? nil : 20 },
+            processStartTimeMicroseconds: { pid in pid == 200 && serverAlive ? 20 : nil },
             isAlive: { _ in false },
             terminate: { pid, _ in terminated.append(pid) }
         )
 
         #expect(terminated == [200])
+        #expect(try storage.listAll() == [orphan])
+
+        serverAlive = false
+        CodexAppServerSessionMonitor.cleanupOrphans(
+            storage: storage,
+            processStartTimeMicroseconds: { pid in pid == 200 && serverAlive ? 20 : nil },
+            isAlive: { _ in false },
+            terminate: { pid, _ in terminated.append(pid) }
+        )
+
         #expect(try storage.listAll().isEmpty)
     }
 
@@ -187,5 +200,30 @@ struct CodexAppServerSessionStorageTests {
 
         #expect(terminated.isEmpty)
         #expect(try storage.listAll() == [liveOwner])
+    }
+
+    @Test("Orphan cleanup preserves a replacement record registered during the sweep.")
+    func orphanCleanupDoesNotDeleteReplacement() throws {
+        let storage = try makeStorage()
+        defer { try? FileManager.default.removeItem(at: storage.rootDirectory) }
+        let orphan = record(appServerPID: 200, appServerProcessStartTimeMicroseconds: 20,
+                            ownerPID: 100, ownerProcessStartTimeMicroseconds: 10)
+        let replacement = record(appServerPID: 201, appServerProcessStartTimeMicroseconds: 21,
+                                 ownerPID: 101, ownerProcessStartTimeMicroseconds: 11)
+        try storage.write(orphan)
+
+        CodexAppServerSessionMonitor.cleanupOrphans(
+            storage: storage,
+            processStartTimeMicroseconds: { pid in
+                if pid == 200 {
+                    try! storage.write(replacement)
+                }
+                return nil
+            },
+            isAlive: { _ in false },
+            terminate: { _, _ in }
+        )
+
+        #expect(try storage.listAll() == [replacement])
     }
 }

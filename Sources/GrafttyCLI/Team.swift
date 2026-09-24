@@ -1070,12 +1070,7 @@ enum TeamCodexAppServerCore {
         if let expectedAppServerPID, prior.appServerPID != expectedAppServerPID {
             return nil
         }
-        try storage.delete(
-            teamID: teamID,
-            worktree: worktree,
-            paneSessionName: paneSessionName
-        )
-        return prior
+        return try storage.deleteIfMatching(prior) ? prior : nil
     }
 }
 

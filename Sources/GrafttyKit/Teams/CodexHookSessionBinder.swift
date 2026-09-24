@@ -96,7 +96,9 @@ public enum CodexHookSessionBinder {
         // Hooks fire on every tool call; skip the two file writes when the
         // binding is already exactly what we would write.
         if boundSession != session {
-            try sessionStorage.write(boundSession)
+            guard try sessionStorage.writeIfMatching(boundSession, expected: session) else {
+                return nil
+            }
         }
         if boundPresence != presence {
             try presenceStorage.write(boundPresence)
