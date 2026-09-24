@@ -2232,7 +2232,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### EDITOR-1.x
 
-**EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+**EDITOR-1.1** When the user cmd-clicks a text file path in a terminal pane, the application shall open the file via the configured editor.
 
 **EDITOR-1.2** If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
 
@@ -2247,6 +2247,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **EDITOR-1.7** When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
 
 **EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
+
+**EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
 ## REMOTE — Secure Remote Access
 
