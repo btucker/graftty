@@ -35,10 +35,6 @@ struct AttentionReport: ParsableCommand {
         guard let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree) else {
             throw ValidationError("an active Graftty agent session is required")
         }
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.attentionReport(
-            callerWorktree: worktree,
-            callerAgentID: agentID,
-            recap: recap
-        )))
+        try AttentionFileHandoff().stage(recap, worktree: worktree, agentID: agentID)
     }
 }

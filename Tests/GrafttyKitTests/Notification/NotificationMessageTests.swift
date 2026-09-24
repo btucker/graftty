@@ -159,7 +159,7 @@ struct NotificationMessageTests {
         #expect(decoded == original)
     }
 
-    @Test("@spec AGENT-3.12: When an agent submits an Attention report through the CLI, the application shall transmit its structured recap with the calling worktree and agent identity.")
+    @Test("@spec AGENT-3.12: When a legacy socket client sends an Attention report message, the protocol shall preserve its structured recap, calling worktree, and agent identity.")
     func attentionReportRoundTrips() throws {
         let recap = AttentionRecap(title: "Model evals", completed: "v3 scored 0.910.",
                                    next: "Run holdout evals.", need: "Choose a target score.")

@@ -244,6 +244,19 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
+        if event == .stop,
+           let action = try? AttentionFileHandoff().stop(
+                worktree: worktreePath,
+                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                runtime: runtime,
+                sessionID: resolvedSessionID,
+                paneSessionName: paneSessionName,
+                stopHookActive: stopHookActive,
+                turnID: stdinPayload["turn_id"] as? String
+           ) {
+            print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
+            return
+        }
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
@@ -268,7 +281,14 @@ struct TeamHook: ParsableCommand {
                 print("{}")
             }
         } catch {
-            print("{}")
+            if event == .sessionStart, skillManaged,
+               let output = try? TeamHookRenderer.sessionStart(
+                   runtime: runtime, teamContext: "", skillManaged: true
+               ) {
+                print(output)
+            } else {
+                print("{}")
+            }
         }
     }
 

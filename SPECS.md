@@ -2606,7 +2606,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.11** While several agents share a worktree, the application shall accept only a recap from the agent whose stopped turn is being handled.
 
-**AGENT-3.12** When an agent submits an Attention report through the CLI, the application shall transmit its structured recap with the calling worktree and agent identity.
+**AGENT-3.12** When a legacy socket client sends an Attention report message, the protocol shall preserve its structured recap, calling worktree, and agent identity.
+
+**AGENT-3.13** When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.
+
+**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall request one recap once and then queue a generic stopped card if the continued turn still has none.
+
+**AGENT-3.15** When stopped-turn files exist before or arrive after the Attention watcher starts, the application shall process both through directory events with a periodic scan as backup.
+
+**AGENT-3.16** When duplicate Stop hooks run for the same Codex turn, the application shall queue one stopped card and shall not request another recap after the first hook consumes it.
 
 ### AGENT-4.x
 
@@ -2718,7 +2726,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.34** When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
 
-**AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.") func manualInstallMigratesLegacyPlugins() async throws { let destination = FileManager.default.temporaryDirectory .appendingPathComponent("graftty-plugin-manual-migration-\(UUID().uuidString)") defer { try? FileManager.default.removeItem(at: destination) } let installer = AgentPluginInstaller() let plan = try installer.prepare(destinationRoot: destination) let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"# let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"# let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude) let report = await installer.installReplacingLegacy(plan, executor: executor) #expect(report.succeeded) #expect(await executor.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [ ["plugin", "remove", "graftty-team@graftty"], ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"], ]) let failing = InventoryPluginCLIExecutor(codex: codex, claude: claude, failingMutation: 1) let failed = await installer.installReplacingLegacy(plan, executor: failing) #expect(!failed.succeeded) #expect(await failing.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [ ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"], ]) } @Test(
+**AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+
+**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+
+**AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
 ## CLI — CLI
 

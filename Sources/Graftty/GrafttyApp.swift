@@ -257,6 +257,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
+    var attentionFileObserver: AttentionFileHandoffObserver?
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
@@ -1659,6 +1660,41 @@ struct GrafttyApp: App {
             }
         } catch {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
+        }
+
+        let attentionHandoff = AttentionFileHandoff()
+        let attentionObserver = AttentionFileHandoffObserver(handoff: attentionHandoff)
+        do {
+            try attentionObserver.start {
+                Task { @MainActor in
+                    do {
+                        try attentionHandoff.consumeStops { event in
+                            guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                            if let pane = event.paneSessionName,
+                               binding.wrappedValue.worktree(forPath: event.worktree)?
+                                .paneSlot(forSessionName: pane) != nil {
+                                services.claudeSessionRegistry.recordHook(
+                                    runtime: event.runtime, event: .stop,
+                                    sessionID: event.sessionID ?? event.agentID,
+                                    paneSessionName: pane, attentionReason: nil
+                                )
+                            }
+                            Self.recordStoppedTurn(
+                                callerPath: event.worktree, runtime: event.runtime,
+                                paneSessionName: event.paneSessionName, recap: event.recap,
+                                stoppedAt: event.stoppedAt, appState: binding,
+                                terminalManager: tm
+                            )
+                            Self.persistAppState(binding.wrappedValue)
+                        }
+                    } catch {
+                        NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
+                    }
+                }
+            }
+            services.attentionFileObserver = attentionObserver
+        } catch {
+            NSLog("[Graftty] Attention file observer failed: %@", String(describing: error))
         }
 
         let remoteBranchStore = services.remoteBranchStore
@@ -4416,22 +4452,12 @@ struct GrafttyApp: App {
                 return .teamHookOutput(TeamHookRenderer.requestRecap())
             }
             guard case .record(let recap) = outcome else { return .teamHookOutput("{}") }
-            let paneTitle = paneSessionName
-                .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
-                .map { terminalManager.displayTitle(for: $0) }
-                .flatMap { $0.isEmpty ? nil : $0 }
-            let stop = SidebarAgentStop(
-                agentName: AgentStopNotification.displayName(runtime),
-                stoppedAt: Date(),
-                recap: recap,
-                paneTitle: paneTitle
+            recordStoppedTurn(
+                callerPath: callerPath, runtime: runtime,
+                paneSessionName: paneSessionName, recap: recap,
+                stoppedAt: Date(), appState: appState,
+                terminalManager: terminalManager
             )
-            for ri in appState.wrappedValue.repos.indices {
-                if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
-                    appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
-                    break
-                }
-            }
         case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,
@@ -4589,6 +4615,34 @@ struct GrafttyApp: App {
             return .error(error.description)
         } catch {
             return .error("failed to render team hook context: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func recordStoppedTurn(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?,
+        recap: AttentionRecap?,
+        stoppedAt: Date,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) {
+        let paneTitle = paneSessionName
+            .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
+            .map { terminalManager.displayTitle(for: $0) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let stop = SidebarAgentStop(
+            agentName: AgentStopNotification.displayName(runtime),
+            stoppedAt: stoppedAt,
+            recap: recap,
+            paneTitle: paneTitle
+        )
+        for ri in appState.wrappedValue.repos.indices {
+            if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
+                appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
+                break
+            }
         }
     }
 

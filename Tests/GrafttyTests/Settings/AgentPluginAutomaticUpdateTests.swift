@@ -6,6 +6,30 @@ import Testing
 @Suite("Automatic provider plugin updates")
 @MainActor
 struct AgentPluginAutomaticUpdateTests {
+    @Test("@spec AGENT-6.37: When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.")
+    func changedIntegrationRefreshesSameDevelopmentBuild() async {
+        let suite = "AgentPluginSameBuildMigration-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(7, forKey: SettingsKeys.agentPluginInstalledRevision)
+        defaults.set("0.0.0-dev", forKey: SettingsKeys.agentPluginInstalledBuildVersion)
+        var attempts = 0
+
+        await AgentPluginAutomaticUpdate().runIfNeeded(
+            defaults: defaults,
+            buildVersion: "0.0.0-dev",
+            update: {
+                attempts += 1
+                return Self.report(succeeded: true)
+            },
+            refreshHookAssets: {}
+        )
+
+        #expect(attempts == 1)
+        #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision)
+            == AgentPluginInstaller.integrationRevision)
+    }
+
     @Test("""
     @spec AGENT-6.30: When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
     """)

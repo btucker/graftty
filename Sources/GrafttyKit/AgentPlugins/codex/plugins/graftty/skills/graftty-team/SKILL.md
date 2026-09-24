@@ -145,10 +145,10 @@ Graftty must be running; no current worktree is required. Success acknowledges t
 
 ### Sandboxed control socket access
 
-If a sandboxed `graftty team` command reports `EPERM` or `errno 1`:
+Attention recaps and Stop events use a private file handoff and do not need this socket. Team, pane, and worktree commands use the main Graftty control socket. If one of those commands reports `EPERM` or `errno 1`:
 
 1. Use read-only checks to confirm `$GRAFTTY_SOCK` exists and a Graftty process owns or listens on it.
-2. Request narrowly scoped elevated permission and retry the same `graftty team` command outside the sandbox.
+2. Request narrowly scoped elevated permission to use the main socket, then retry the same command outside the sandbox.
 3. Do not delete or recreate the socket, change its permissions, or restart Graftty as a first response.
 
 If retry fails, continue socket diagnosis. Timeouts and connection-refused errors do not establish sandbox denial. Graftty owns native transports; leave queued messages for retry or compatibility fallback when native delivery is unavailable.

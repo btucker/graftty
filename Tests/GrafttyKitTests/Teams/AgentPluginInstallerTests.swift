@@ -110,7 +110,9 @@ struct AgentPluginInstallerTests {
         ) == false)
     }
 
-    @Test("@spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.")
+    @Test("""
+    @spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+    """)
     func manualInstallMigratesLegacyPlugins() async throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-manual-migration-\(UUID().uuidString)")
@@ -382,6 +384,25 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("read-only checks"))
             #expect(skill.contains("narrowly scoped elevated permission"))
             #expect(skill.contains("Do not delete or recreate the socket"))
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.36: When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+    """)
+    func materializedSkillsSeparateAttentionHandoffFromMainSocket() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-attention-skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let skills = destination.appendingPathComponent("\(provider)/plugins/graftty/skills")
+            let recap = try String(contentsOf: skills.appendingPathComponent("graftty/SKILL.md"))
+            let team = try String(contentsOf: skills.appendingPathComponent("graftty-team/SKILL.md"))
+            #expect(recap.contains("private file"))
+            #expect(recap.contains("Do not request socket permission for `graftty attention report`"))
+            #expect(team.contains("main Graftty control socket"))
+            #expect(team.contains("Request narrowly scoped elevated permission to use the main socket"))
         }
     }
 
