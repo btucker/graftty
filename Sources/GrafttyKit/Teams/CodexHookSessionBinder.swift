@@ -65,6 +65,10 @@ public enum CodexHookSessionBinder {
             realBinaryPath: session.realBinaryPath,
             appServerPID: session.appServerPID,
             appServerProcessStartTimeMicroseconds: session.appServerProcessStartTimeMicroseconds,
+            ownerPID: session.ownerPID ?? presence.pid,
+            ownerProcessStartTimeMicroseconds: session.ownerPID == nil
+                ? presence.processStartTimeMicroseconds
+                : session.ownerProcessStartTimeMicroseconds,
             registeredAt: session.registeredAt,
             agentID: agentID,
             threadID: threadID,

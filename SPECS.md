@@ -2080,6 +2080,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.15** When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities.
 
+**TEAM-10.16** When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
