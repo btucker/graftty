@@ -91,6 +91,7 @@ struct AgentPluginInstallerTests {
         let claudeRoot = source.appendingPathComponent("claude/plugins/graftty-team")
         let links = [
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-team/SKILL.md",
+            "skills/graftty-open/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-open/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty-team/.codex-plugin/plugin.json",
         ]
         for (path, target) in links {
@@ -100,6 +101,8 @@ struct AgentPluginInstallerTests {
         }
         let expectedSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-team/SKILL.md"))
+        let expectedOpenSkill = try Data(contentsOf: claudeRoot
+            .appendingPathComponent("skills/graftty-open/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -118,6 +121,7 @@ struct AgentPluginInstallerTests {
             let cached = temporary.appendingPathComponent("cached-\(provider)")
             for (path, expected) in [
                 "skills/graftty-team/SKILL.md": expectedSkill,
+                "skills/graftty-open/SKILL.md": expectedOpenSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -125,6 +129,32 @@ struct AgentPluginInstallerTests {
                 #expect(attributes[.type] as? FileAttributeType == .typeRegular)
                 #expect(try Data(contentsOf: file) == expected)
             }
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.33: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that explains when to offer host files or URLs, how the caller's worktree scopes the offer, and the mobile preview's limits and user action.
+    """)
+    func preparesOpenSkillForBothProviders() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-open-plugin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let file = destination.appendingPathComponent(
+                "\(provider)/plugins/graftty-team/skills/graftty-open/SKILL.md"
+            )
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
+            let skill = try String(contentsOf: file, encoding: .utf8)
+            #expect(skill.contains("name: graftty-open"))
+            #expect(skill.contains("graftty open"))
+            #expect(skill.contains("tracked worktree"))
+            #expect(skill.contains("20 MB"))
+            #expect(skill.contains("15 minutes"))
+            #expect(skill.contains("Open menu"))
         }
     }
 
