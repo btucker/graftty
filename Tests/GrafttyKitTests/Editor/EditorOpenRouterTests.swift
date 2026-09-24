@@ -291,6 +291,7 @@ final class EditorOpenRouterResolveTests: XCTestCase {
         let cases: [(String, Data)] = [
             ("program", Data([0x7f, 0x45, 0x4c, 0x46, 0, 0xff])),
             ("mislabeled.txt", Data([0xff])),
+            ("bom-then-binary.txt", Data([0xEF, 0xBB, 0xBF, 0xFF])),
             ("document.pdf", Data("%PDF-1.7\n1 0 obj\n".utf8)),
         ]
         for (name, contents) in cases {

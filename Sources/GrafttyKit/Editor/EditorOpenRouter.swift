@@ -1,5 +1,6 @@
 // Sources/GrafttyKit/Editor/EditorOpenRouter.swift
 import Foundation
+import Darwin
 import UniformTypeIdentifiers
 
 /// Pure logic that decides what to do with a URL string handed to us by
@@ -203,18 +204,8 @@ public enum EditorOpenRouter {
     /// files do not get sent to a text editor. A known non-text file type
     /// also catches formats whose headers happen to be valid UTF-8.
     private static func isBinaryFile(_ url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-              !isDirectory.boolValue else { return false }
-
-        if let handle = try? FileHandle(forReadingFrom: url) {
-            defer { try? handle.close() }
-            if let sample = try? handle.read(upToCount: 8 * 1024),
-               !sample.isEmpty,
-               !hasUnicodeByteOrderMark(sample) {
-                if sample.contains(0) { return true }
-                if !isValidUTF8Sample(sample) { return true }
-            }
+        if let sample = sampleIfMaterialized(url), !isTextSample(sample) {
+            return true
         }
 
         guard let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
@@ -222,11 +213,47 @@ public enum EditorOpenRouter {
         return type != .data && !type.conforms(to: .text)
     }
 
-    private static func hasUnicodeByteOrderMark(_ sample: Data) -> Bool {
-        sample.starts(with: [0xEF, 0xBB, 0xBF])
-            || sample.starts(with: [0xFF, 0xFE])
-            || sample.starts(with: [0xFE, 0xFF])
-            || sample.starts(with: [0x00, 0x00, 0xFE, 0xFF])
+    /// `stat` does not materialize iCloud placeholders. `O_NONBLOCK` avoids
+    /// blocking if the path becomes a pipe before `open`; `fstat` rejects it.
+    private static func sampleIfMaterialized(_ url: URL) -> Data? {
+        var before = stat()
+        guard stat(url.path, &before) == 0,
+              MaterializedFilesystemEntry.isRegularFile(before),
+              (try? url.resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal) != false else {
+            return nil
+        }
+
+        let fd = open(url.path, O_RDONLY | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var after = stat()
+        guard fstat(fd, &after) == 0,
+              MaterializedFilesystemEntry.isRegularFile(after) else { return nil }
+
+        var bytes = [UInt8](repeating: 0, count: 8 * 1024)
+        let count = read(fd, &bytes, bytes.count)
+        return count > 0 ? Data(bytes.prefix(count)) : nil
+    }
+
+    private static func isTextSample(_ sample: Data) -> Bool {
+        if sample.starts(with: [0xEF, 0xBB, 0xBF]) {
+            return !sample.contains(0) && isValidUTF8Sample(sample)
+        }
+        let decoded: String?
+        if sample.starts(with: [0xFF, 0xFE, 0x00, 0x00]) {
+            decoded = String(data: sample, encoding: .utf32LittleEndian)
+        } else if sample.starts(with: [0x00, 0x00, 0xFE, 0xFF]) {
+            decoded = String(data: sample, encoding: .utf32BigEndian)
+        } else if sample.starts(with: [0xFF, 0xFE]) {
+            decoded = String(data: sample, encoding: .utf16LittleEndian)
+        } else if sample.starts(with: [0xFE, 0xFF]) {
+            decoded = String(data: sample, encoding: .utf16BigEndian)
+        } else {
+            guard !sample.contains(0) else { return false }
+            return isValidUTF8Sample(sample)
+        }
+        guard let decoded else { return false }
+        return !decoded.unicodeScalars.contains { $0.value == 0 }
     }
 
     private static func isValidUTF8Sample(_ sample: Data) -> Bool {
