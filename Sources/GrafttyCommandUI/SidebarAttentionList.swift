@@ -24,11 +24,12 @@ public struct SidebarAttentionList: View {
     }
     public var body: some View {
         GeometryReader { geometry in
-            content.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            content(wide: geometry.size.width >= 360)
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
     }
 
-    private var content: some View {
+    private func content(wide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Attention").font(.headline).padding(.horizontal, 12)
             TextField("Find a request or project", text: $navigation.query)
@@ -45,7 +46,7 @@ public struct SidebarAttentionList: View {
                         Text(allExcluded ? "Select a project to see its attention." : navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
                             .font(.callout).foregroundStyle(.secondary).padding(12)
                     }
-                    ForEach(rows) { item in row(item).id(item.id) }
+                    ForEach(rows) { item in row(item, wide: wide).id(item.id) }
                 }.padding(.horizontal, 10).padding(.bottom, 12).scrollTargetLayout()
             }.scrollPosition(id: Binding(get: { navigation.scrollAnchors["attention"] }, set: { navigation.scrollAnchors["attention"] = $0 }))
         }.padding(.top, 12)
@@ -56,7 +57,7 @@ public struct SidebarAttentionList: View {
         }.labelsHidden().fixedSize(horizontal: false, vertical: true)
     }
 
-    private func row(_ item: SidebarActivityItem) -> some View {
+    private func row(_ item: SidebarActivityItem, wide: Bool) -> some View {
         let project = projects.first { $0.id == item.projectID }
         let card = SidebarAttentionCardContent(item: item)
         let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
@@ -71,13 +72,19 @@ public struct SidebarAttentionList: View {
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .top, spacing: 7) {
-                    Text(item.worktreeEmoji ?? "🗂️")
-                        .font(.system(size: 23))
-                        .frame(width: 34, height: 34)
-                        .background(accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
-                        .accessibilityHidden(true)
+                    Group {
+                        if let emoji = item.worktreeEmoji {
+                            Text(emoji).font(.system(size: 23))
+                        } else {
+                            Image(systemName: "square.dashed")
+                                .font(.system(size: 18)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .frame(width: 34, height: 34)
+                    .background(accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(card.headerName).font(.caption).fontWeight(.semibold)
+                        Text(card.headerName).font(wide ? .callout : .subheadline).fontWeight(.semibold)
                             .lineLimit(1).help(card.headerName)
                         if let paneTitle = card.paneTitle {
                             Text(paneTitle).font(.caption2).foregroundStyle(.secondary)
@@ -102,19 +109,15 @@ public struct SidebarAttentionList: View {
                             .anchorPreference(key: AttentionPRBadgeAnchor.self, value: .bounds) { $0 }
                     }
                     Text(card.title)
-                        .font(.callout)
+                        .font(wide ? .headline : .subheadline)
                         .fontWeight(item.agentStop?.recap == nil && item.agentStop?.paneTitle == nil ? .regular : .semibold)
                         .lineLimit(2)
                 }
                 if !card.sections.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(card.sections) { section in
-                            recapSection(section, viewed: viewed)
+                            recapSection(section, viewed: viewed, wide: wide)
                         }
-                    }
-                    .background(alignment: .leading) {
-                        Rectangle().fill(Color.secondary.opacity(0.5))
-                            .frame(width: 2).padding(.leading, 4)
                     }
                 } else if item.agentStop == nil {
                     Text(item.title).font(.caption).foregroundStyle(viewed ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
@@ -125,9 +128,6 @@ public struct SidebarAttentionList: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : 0.12))
                         .overlay(RoundedRectangle(cornerRadius: 8).fill(accent.opacity(viewed ? 0.05 : 0.13)))
-                        .overlay(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 3).padding(.vertical, 8)
-                        }
                 }
         }.buttonStyle(.plain)
             .disabled(project?.isAvailable == false)
@@ -148,7 +148,7 @@ public struct SidebarAttentionList: View {
             }
     }
 
-    private func recapSection(_ section: SidebarAttentionCardContent.Section, viewed: Bool) -> some View {
+    private func recapSection(_ section: SidebarAttentionCardContent.Section, viewed: Bool, wide: Bool) -> some View {
         let color: Color = switch section.kind {
         case .context: .secondary
         case .needsYou: viewed ? .secondary : .orange
@@ -160,21 +160,16 @@ public struct SidebarAttentionList: View {
         case .upNext: "UP NEXT"
         }
         return VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.system(size: 10, weight: .bold)).tracking(1)
+            Text(label).font(.system(size: wide ? 11 : 10, weight: .bold)).tracking(1)
                 .foregroundStyle(color)
-            Text(section.text).font(.caption)
+            Text(section.text).font(wide ? .body : .callout)
                 .fontWeight(section.kind == .needsYou ? .semibold : .regular)
                 .fixedSize(horizontal: false, vertical: true)
             if let detail = section.detail {
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                Text(detail).font(wide ? .callout : .subheadline).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.leading, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .topLeading) {
-            Circle().fill(color).frame(width: 7, height: 7)
-                .offset(x: 2, y: 3)
-        }
     }
 }

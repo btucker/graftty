@@ -44,7 +44,7 @@ public enum TeamHookRenderer {
     public static func requestRecap() -> String {
         let payload = [
             "decision": "block",
-            "reason": "Before finishing, load the Graftty skill if available and run `graftty attention report --stdin` with a brief JSON recap: title, context, completed, next, and optional need. Then finish your response. If the command fails, say so in the response; Graftty will stop without asking again."
+            "reason": "Before finishing, load the Graftty skill if available and run `graftty attention report --stdin` with a brief JSON recap: title, context, completed, next, a task-specific emoji with alternatives, and optional need. Then finish your response. If the command fails, say so in the response; Graftty will stop without asking again."
         ]
         let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"

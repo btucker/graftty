@@ -1,7 +1,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// @spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name beside its emoji, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
+/// @spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
 struct SidebarAttentionCardContent {
     struct Section: Identifiable {
         enum Kind: Hashable {

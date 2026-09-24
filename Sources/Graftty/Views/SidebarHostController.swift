@@ -55,7 +55,7 @@ final class SidebarHostController: ObservableObject {
             let ordered = SidebarHostNavigation.canonicalWorktrees(in: state.repos[index])
             if state.repos[index].worktrees != ordered { state.repos[index].worktrees = ordered }
         }
-        SidebarHostNavigation.assignMissingEmojis(in: &state.repos)
+        SidebarHostNavigation.migrateLegacyEmojis(in: &state.repos)
         var navigation = state.sidebarNavigation ?? .init()
         let local = localProjects(state.repos, owner: owner)
         let localIDs = Set(local.map(\.id))

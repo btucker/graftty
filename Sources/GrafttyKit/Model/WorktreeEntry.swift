@@ -65,7 +65,12 @@ public enum WorktreeState: String, Codable, Sendable {
     }
 }
 
-/// @spec LAYOUT-2.76: When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.
+public enum WorktreeEmojiSource: String, Codable, Sendable {
+    case agent
+    case manual
+}
+
+/// @spec LAYOUT-2.76: When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.
 public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public let id: UUID
     /// The worktree's absolute path on disk. Mutable so the relocate
@@ -77,6 +82,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var branch: String
     /// User-editable, worktree-scoped identity shown in navigation and Attention.
     public var emoji: String?
+    /// Nil for pre-migration state. Current identities record their source.
+    public var emojiSource: WorktreeEmojiSource?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -128,6 +135,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.path = path
         self.branch = branch
         self.emoji = nil
+        self.emojiSource = nil
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -147,7 +155,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, state, staleSince, attention, unseenAgentStop, paneAttention,
+        case id, path, branch, emoji, emojiSource, state, staleSince, attention, unseenAgentStop, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
@@ -168,6 +176,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.path = try container.decode(String.self, forKey: .path)
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
+        self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)

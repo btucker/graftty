@@ -12,7 +12,8 @@ struct AttentionFileHandoffTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let handoff = AttentionFileHandoff(rootDirectory: root)
         let recap = AttentionRecap(title: "Posting eval", context: "Testing a smaller extraction model.",
-                                   completed: "Ran the holdout.", next: "Review the results.")
+                                   completed: "Ran the holdout.", next: "Review the results.",
+                                   emoji: "🧪", emojiAlternatives: ["🔬", "📊"])
 
         try handoff.stage(recap, worktree: "/repo/one", agentID: "codex-1")
         #expect(try handoff.stop(

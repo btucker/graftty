@@ -722,6 +722,17 @@ struct SidebarView: View {
         menu.addItem(ClosureMenuItem(title: "Edit Worktree Emoji…") {
             editWorktreeEmoji(worktree)
         })
+        if worktree.emoji != nil {
+            menu.addItem(ClosureMenuItem(title: "Clear Worktree Emoji") {
+                for repoIndex in appState.repos.indices {
+                    if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
+                        appState.repos[repoIndex].worktrees[index].emoji = nil
+                        appState.repos[repoIndex].worktrees[index].emojiSource = nil
+                        return
+                    }
+                }
+            })
+        }
         menu.addItem(.separator())
         if navigation.query.isEmpty {
             for (title, offset) in [("Move Up", -1), ("Move Down", 1)] {
@@ -788,7 +799,7 @@ struct SidebarView: View {
         alert.accessoryView = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let chosen = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard chosen.count == 1, chosen.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation }),
+        guard AttentionRecap.isSingleEmoji(chosen),
               !appState.repos.flatMap(\.worktrees).contains(where: { $0.id != worktree.id && $0.emoji == chosen }) else {
             let error = NSAlert()
             error.messageText = "Choose one unused emoji"
@@ -798,6 +809,7 @@ struct SidebarView: View {
         for repoIndex in appState.repos.indices {
             if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
                 appState.repos[repoIndex].worktrees[index].emoji = chosen
+                appState.repos[repoIndex].worktrees[index].emojiSource = .manual
                 return
             }
         }

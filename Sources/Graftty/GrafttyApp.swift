@@ -4638,6 +4638,7 @@ struct GrafttyApp: App {
             recap: recap,
             paneTitle: paneTitle
         )
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &appState.wrappedValue.repos)
         for ri in appState.wrappedValue.repos.indices {
             if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
                 appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop

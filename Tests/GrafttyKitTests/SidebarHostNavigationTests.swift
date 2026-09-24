@@ -5,22 +5,57 @@ import GrafttyProtocol
 import Darwin
 
 struct SidebarHostNavigationTests {
-    @Test("@spec LAYOUT-2.76: When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.")
-    func worktreeEmojiIdentityPersists() throws {
-        var entries = [WorktreeEntry(path: "/repo", branch: "main"),
-                       WorktreeEntry(path: "/repo/one", branch: "one"),
-                       WorktreeEntry(path: "/repo/two", branch: "two")]
-        SidebarHostNavigation.assignMissingEmojis(in: &entries)
-        #expect(Set(entries.compactMap(\.emoji)).count == entries.count)
-        entries[1].emoji = "🧪"
-        let restored = try JSONDecoder().decode([WorktreeEntry].self, from: JSONEncoder().encode(entries))
-        #expect(restored[1].emoji == "🧪")
-        let metadata = SidebarHostNavigation.metadata(for: restored[1], projectID: "p", folders: [])
-        #expect(metadata.emoji == "🧪")
-        var repos = [RepoEntry(path: "/a", displayName: "A", worktrees: [WorktreeEntry(path: "/a", branch: "main")]),
-                     RepoEntry(path: "/b", displayName: "B", worktrees: [WorktreeEntry(path: "/b", branch: "main")])]
-        SidebarHostNavigation.assignMissingEmojis(in: &repos)
-        #expect(Set(repos.flatMap(\.worktrees).compactMap(\.emoji)).count == 2)
+    @Test("@spec LAYOUT-2.76: When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.")
+    func firstReportClaimsWorktreeEmoji() throws {
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/one", branch: "one")
+        ])]
+        #expect(repos[0].worktrees.allSatisfy { $0.emoji == nil })
+        let first = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.", emoji: "🔔")
+        SidebarHostNavigation.adoptReportedEmoji(first, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🔔")
+        #expect(repos[0].worktrees[1].emojiSource == .agent)
+        let later = AttentionRecap(title: "Push notifications", completed: "Device tested.", next: "Merge PR.", emoji: "📱")
+        SidebarHostNavigation.adoptReportedEmoji(later, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🔔")
+        let restored = try JSONDecoder().decode([RepoEntry].self, from: JSONEncoder().encode(repos))
+        #expect(restored[0].worktrees[1].emoji == "🔔")
+        #expect(SidebarHostNavigation.metadata(for: restored[0].worktrees[1], projectID: "p", folders: []).emoji == "🔔")
+        repos[0].worktrees[1].emoji = "🎱"
+        repos[0].worktrees[1].emojiSource = .manual
+        SidebarHostNavigation.adoptReportedEmoji(first, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🎱")
+        #expect(repos[0].worktrees[0].emoji == nil)
+    }
+
+    @Test("@spec LAYOUT-2.77: When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.")
+    func duplicateReportEmojiUsesAlternative() {
+        var first = WorktreeEntry(path: "/repo/one", branch: "one")
+        first.emoji = "🔔"
+        first.emojiSource = .manual
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [first,
+            WorktreeEntry(path: "/repo/two", branch: "two")])]
+        let recap = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.",
+                                   emoji: "🔔", emojiAlternatives: ["📱", "📨"])
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: "/repo/two", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "📱")
+    }
+
+    @Test("@spec LAYOUT-2.78: When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.")
+    func legacyAutomaticEmojisAreCleared() {
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/one", branch: "one")
+        ])]
+        SidebarHostNavigation.assignLegacyEmojis(in: &repos)
+        let generated = repos[0].worktrees[0].emoji
+        repos[0].worktrees[1].emoji = "🎱"
+        SidebarHostNavigation.migrateLegacyEmojis(in: &repos)
+        #expect(generated != nil)
+        #expect(repos[0].worktrees[0].emoji == nil)
+        #expect(repos[0].worktrees[1].emoji == "🎱")
+        #expect(repos[0].worktrees[1].emojiSource == .manual)
     }
     @Test("@spec LAYOUT-2.60: When a worktree is stopped and reopened, the application shall retain recent Attention pane targets for saved layout slots and resolve them to their new sessions without following reused routes.")
     func recentPaneSurvivesStop() throws {

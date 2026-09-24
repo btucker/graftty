@@ -102,20 +102,34 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 /// Short agent-authored context for the next stopped-turn card.
 /// @spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
 /// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
+/// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 public struct AttentionRecap: Codable, Sendable, Hashable {
     public var title: String
     public var context: String?
     public var completed: String
     public var next: String
     public var need: String?
+    public var emoji: String?
+    public var emojiAlternatives: [String]?
 
-    public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil) {
+    public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
+                emoji: String? = nil, emojiAlternatives: [String]? = nil) {
         self.title = title
         self.context = context
         self.completed = completed
         self.next = next
         self.need = need
+        self.emoji = emoji
+        self.emojiAlternatives = emojiAlternatives
     }
+
+    public static func isSingleEmoji(_ value: String) -> Bool {
+        guard value.count == 1, value.unicodeScalars.contains(where: { $0.properties.isEmoji }) else { return false }
+        return value.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation })
+            || value.unicodeScalars.contains(where: { $0.value == 0xFE0F || $0.value == 0x20E3 })
+    }
+
+    public var proposedEmojis: [String] { [emoji].compactMap { $0 } + (emojiAlternatives ?? []) }
 
     public var isValid: Bool {
         let fields = [(title, 100), (completed, 300), (next, 300)]
@@ -129,10 +143,17 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
                 && $0.count <= 200
                 && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
         } ?? true
-        guard let need else { return requiredValid && contextValid }
-        return requiredValid && contextValid && !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && need.count <= 300
-            && !need.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        let needValid = need.map {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.count <= 300
+                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        } ?? true
+        let candidates = proposedEmojis
+        let emojiValid = (emojiAlternatives == nil || emoji != nil)
+            && candidates.count <= 4
+            && Set(candidates).count == candidates.count
+            && candidates.allSatisfy(Self.isSingleEmoji)
+        return requiredValid && contextValid && needValid && emojiValid
     }
 }
 

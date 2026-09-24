@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 @testable import GrafttyKit
 
 struct ProjectIconDiscoveryTests {
-    @Test("@spec PROJECT-3.5: When a project icon has colored pixels, the application shall derive a stable accent from the icon for matching project halos and Attention cards.")
+    @Test("@spec PROJECT-3.5: When a project icon has colored pixels, the application shall derive a stable accent from the icon for tinted Attention cards and project initials.")
     func iconAccentFollowsColor() throws {
         let red = try #require(ProjectIconDiscovery.accentHex(png(red: 1, blue: 0)))
         let blue = try #require(ProjectIconDiscovery.accentHex(png(red: 0, blue: 1)))

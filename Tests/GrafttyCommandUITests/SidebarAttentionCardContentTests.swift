@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyCommandUI
 
 struct SidebarAttentionCardContentTests {
-    @Test("@spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name beside its emoji, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.")
+    @Test("@spec LAYOUT-2.73: When a stopped agent has a recap, the Attention card shall show the worktree name, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.")
     func stoppedCardUsesChosenHierarchy() {
         let recap = AttentionRecap(
             title: "Paired-device push notifications",

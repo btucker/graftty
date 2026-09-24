@@ -27,19 +27,53 @@ public enum ProjectIconOverride: Codable, Sendable, Equatable {
 }
 
 public enum SidebarHostNavigation {
+    /// Only used to recognize identities written by older builds.
     private static let emojiPool = Array("🌱 🌿 🍀 🌻 🌵 🌲 🌴 🍄 🪴 🌾 🐝 🦋 🐙 🐢 🦊 🐻 🐼 🐨 🐸 🦉 🐧 🐳 🦀 🐬 🦎 🦄 🐞 🐌 🐚 🪼 🍋 🍉 🍓 🍒 🍑 🥑 🌶️ 🥨 🧀 🥐 🍕 🍣 🧁 ☕️ 🫖 🧭 🗺️ 🧩 🎯 🎨 🎭 🎮 🎲 🎸 🎹 🎺 🎻 🥁 📚 📝 💡 🔦 🔭 🔬 🧪 🧬 🧲 🧰 🛠️ ⚙️ 🔑 🔒 🚀 🛸 ✈️ 🚂 🚲 ⛵️ 🏔️ 🌋 🏝️ 🌊 🌈 ☀️ 🌙 ⭐️ ❄️ 🔥 💎 🪐 🎈 🎁 🏆 🏁".split(separator: " ").map(String.init))
 
-    public static func assignMissingEmojis(in worktrees: inout [WorktreeEntry]) {
-        var used = Set(worktrees.compactMap(\.emoji))
-        assignMissingEmojis(in: &worktrees, used: &used)
+    /// @spec LAYOUT-2.78: When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
+    public static func migrateLegacyEmojis(in repos: inout [RepoEntry]) {
+        guard repos.contains(where: { $0.worktrees.contains { $0.emoji != nil && $0.emojiSource == nil } }) else { return }
+        var expected = repos
+        for repoIndex in expected.indices {
+            for worktreeIndex in expected[repoIndex].worktrees.indices where expected[repoIndex].worktrees[worktreeIndex].emojiSource == nil {
+                expected[repoIndex].worktrees[worktreeIndex].emoji = nil
+            }
+        }
+        assignLegacyEmojis(in: &expected)
+        for repoIndex in repos.indices {
+            for worktreeIndex in repos[repoIndex].worktrees.indices {
+                guard let emoji = repos[repoIndex].worktrees[worktreeIndex].emoji,
+                      repos[repoIndex].worktrees[worktreeIndex].emojiSource == nil else { continue }
+                if emoji == expected[repoIndex].worktrees[worktreeIndex].emoji {
+                    repos[repoIndex].worktrees[worktreeIndex].emoji = nil
+                } else {
+                    repos[repoIndex].worktrees[worktreeIndex].emojiSource = .manual
+                }
+            }
+        }
     }
 
-    public static func assignMissingEmojis(in repos: inout [RepoEntry]) {
+    /// @spec LAYOUT-2.77: When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.
+    public static func adoptReportedEmoji(_ recap: AttentionRecap?, worktreePath: String, in repos: inout [RepoEntry]) {
+        migrateLegacyEmojis(in: &repos)
+        guard let recap, recap.isValid else { return }
+        let used = Set(repos.flatMap(\.worktrees).compactMap(\.emoji))
+        guard let emoji = recap.proposedEmojis.first(where: { !used.contains($0) }) else { return }
+        for repoIndex in repos.indices {
+            guard let worktreeIndex = repos[repoIndex].worktrees.firstIndex(where: { $0.path == worktreePath }),
+                  repos[repoIndex].worktrees[worktreeIndex].emoji == nil else { continue }
+            repos[repoIndex].worktrees[worktreeIndex].emoji = emoji
+            repos[repoIndex].worktrees[worktreeIndex].emojiSource = .agent
+            return
+        }
+    }
+
+    static func assignLegacyEmojis(in repos: inout [RepoEntry]) {
         var used = Set(repos.flatMap(\.worktrees).compactMap(\.emoji))
-        for index in repos.indices { assignMissingEmojis(in: &repos[index].worktrees, used: &used) }
+        for index in repos.indices { assignLegacyEmojis(in: &repos[index].worktrees, used: &used) }
     }
 
-    private static func assignMissingEmojis(in worktrees: inout [WorktreeEntry], used: inout Set<String>) {
+    private static func assignLegacyEmojis(in worktrees: inout [WorktreeEntry], used: inout Set<String>) {
         for index in worktrees.indices where worktrees[index].emoji == nil {
             let start = Int(worktrees[index].id.uuidString.utf8.reduce(UInt64(14695981039346656037)) {
                 ($0 ^ UInt64($1)) &* 1099511628211

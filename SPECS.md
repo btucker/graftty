@@ -162,13 +162,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
 
-**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree name beside its emoji, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
+**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree name, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no question exists it shall omit Needs You.
 
 **LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
 
 **LAYOUT-2.75** When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.
 
-**LAYOUT-2.76** When worktrees are added or restored, the application shall assign distinct emoji identities, retain edits across relaunches, and carry each emoji into Attention snapshots.
+**LAYOUT-2.76** When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.
+
+**LAYOUT-2.77** When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.
+
+**LAYOUT-2.78** When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2626,6 +2630,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.17** When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 
+**AGENT-3.18** When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -2742,7 +2748,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, and remaining work, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
@@ -2892,7 +2898,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PROJECT-3.4** When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.
 
-**PROJECT-3.5** When a project icon has colored pixels, the application shall derive a stable accent from the icon for matching project halos and Attention cards.
+**PROJECT-3.5** When a project icon has colored pixels, the application shall derive a stable accent from the icon for tinted Attention cards and project initials.
 
 ## SSH — SSH
 

@@ -175,9 +175,6 @@ public struct ProjectNavigationRail: View {
         Button { onSelect(project) } label: {
             HStack(spacing: 9) {
                 ProjectIdentityView(project: project, imageData: icons[project.id])
-                    .padding(3)
-                    .background(ProjectAccentColor.color(for: project).opacity(showsAttention ? 0.25 : 0.17), in: RoundedRectangle(cornerRadius: 9))
-                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ProjectAccentColor.color(for: project).opacity(showsAttention ? 0.8 : 0.55), lineWidth: showsAttention ? 2 : 1))
                     .opacity(showsAttention && excludedAttentionProjectIDs.contains(project.id) ? 0.35 : 1)
                     .overlay(alignment: .bottomLeading) {
                         if collapsed, let owner = project.owner, owner.deviceID != localDeviceID {
@@ -213,7 +210,7 @@ public struct ProjectNavigationRail: View {
             .overlay(alignment: .bottomTrailing) { if collapsed { SidebarActivityBadge(workingCounts[project.id, default: 0], kind: .working) } }
             .padding(.horizontal, collapsed ? 0 : 8)
             .contentShape(Rectangle())
-            .background(!showsAttention && selectedID == project.id ? selectionColor : showsAttention && !excludedAttentionProjectIDs.contains(project.id) ? ProjectAccentColor.color(for: project).opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(!showsAttention && selectedID == project.id ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
             .help(project.name + (project.owner.map { " on " + $0.deviceLabel } ?? "") + (project.isAvailable ? "" : " · Offline"))
             .accessibilityLabel(project.name + (showsAttention ? (excludedAttentionProjectIDs.contains(project.id) ? ", excluded from Attention" : ", included in Attention") : "") + ", \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))

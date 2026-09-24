@@ -3,6 +3,18 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.")
+    func recapEmojiValidationAndCompatibility() throws {
+        let recap = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.",
+                                   emoji: "🔔", emojiAlternatives: ["📱", "📨"])
+        #expect(recap.isValid)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: JSONEncoder().encode(recap)) == recap)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "1").isValid)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "🔔🔔").isValid)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "🔔", emojiAlternatives: ["🔔"]).isValid)
+        let old = Data(#"{"title":"Push notifications","completed":"Client wired.","next":"Test devices."}"#.utf8)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: old).emoji == nil)
+    }
     @Test("@spec LAYOUT-2.72: When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.")
     func stoppedTurnRetainsPaneName() throws {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
