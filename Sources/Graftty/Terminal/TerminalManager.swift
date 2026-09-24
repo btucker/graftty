@@ -1367,20 +1367,17 @@ final class TerminalManager: ObservableObject {
 
             let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
 
-            // No editor preference (test-only) → only browser URLs are safe to
-            // dispatch; file targets beep rather than reopen the "-50 dialog" bug.
-            let editorAction: EditorOpenRouter.EditorAction
-            if let editor = editorPreference?.resolve() {
-                editorAction = EditorOpenRouter.resolve(target: classified, editor: editor)
-            } else if case .browser(let u) = classified {
-                editorAction = .openInBrowser(u)
-            } else {
-                editorAction = .noOp
-            }
+            let editorAction = EditorOpenRouter.resolve(
+                target: classified,
+                editor: editorPreference?.resolve()
+            )
 
             switch editorAction {
             case .openInBrowser(let url):
                 NSWorkspace.shared.open(url)
+
+            case .openWithDefaultApp(let file):
+                NSWorkspace.shared.open(file)
 
             case .openWithApp(let file, let app):
                 let config = NSWorkspace.OpenConfiguration()
