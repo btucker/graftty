@@ -110,6 +110,33 @@ struct AgentPluginInstallerTests {
         ) == false)
     }
 
+    @Test("@spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.")
+    func manualInstallMigratesLegacyPlugins() async throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-plugin-manual-migration-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller()
+        let plan = try installer.prepare(destinationRoot: destination)
+        let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+        let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
+        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+
+        let report = await installer.installReplacingLegacy(plan, executor: executor)
+
+        #expect(report.succeeded)
+        #expect(await executor.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [
+            ["plugin", "remove", "graftty-team@graftty"],
+            ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
+        ])
+
+        let failing = InventoryPluginCLIExecutor(codex: codex, claude: claude, failingMutation: 1)
+        let failed = await installer.installReplacingLegacy(plan, executor: failing)
+        #expect(!failed.succeeded)
+        #expect(await failing.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [
+            ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
+        ])
+    }
+
     @Test("""
     @spec AGENT-6.29: When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
     """)

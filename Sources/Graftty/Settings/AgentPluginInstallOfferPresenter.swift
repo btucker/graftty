@@ -96,7 +96,7 @@ enum AgentPluginInstallOfferPresenter {
                 .userSelectionRevision(in: defaults)
 
             Task { @MainActor in
-                let report = await installer.install(plan)
+                let report = await installer.installReplacingLegacy(plan)
                 let enabledByInstallation = report.succeeded
                     && !nativeMessagingWasEnabled
                     && AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)

@@ -208,7 +208,7 @@ struct AgentTeamsSettingsPane: View {
         Task {
             let report = await AgentPluginInstaller(
                 grafttyCLIPath: GrafttyApp.agentHookCLIPath()
-            ).install(plan)
+            ).installReplacingLegacy(plan)
             if AgentPluginIntegrationActivation.apply(
                 successfulInstallation: report.succeeded,
                 enableNativeMessagingOnSuccess: enableNativeMessagingOnSuccess,

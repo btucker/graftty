@@ -4,13 +4,15 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
-    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill even when no team primer is present.")
+    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(
                 runtime: runtime, teamContext: "", skillManaged: true
             )
-            #expect(try additionalContext(from: json).contains("Load the `graftty` skill"))
+            let context = try additionalContext(from: json)
+            #expect(context.contains("Load the `graftty` skill for Attention recaps"))
+            #expect(context.contains("`graftty-team` skill for agent coordination"))
         }
     }
 

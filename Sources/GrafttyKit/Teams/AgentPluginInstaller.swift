@@ -290,6 +290,60 @@ public struct AgentPluginInstaller: Sendable {
         return AgentPluginInstallationReport(results: results)
     }
 
+    /// Manual installation may replace an older Graftty Team plugin. Remove
+    /// its hooks only after the new plugin is installed and enabled.
+    public func installReplacingLegacy(
+        _ plan: AgentPluginSetupPlan,
+        executor: any CLIExecutor = CLIRunner(),
+        timeout: Duration = .seconds(60)
+    ) async -> AgentPluginInstallationReport {
+        let installation = await install(plan, executor: executor, timeout: timeout)
+        var results = installation.results
+        for provider in AgentPluginProvider.allCases {
+            guard installation.results.filter({ $0.step.provider == provider }).allSatisfy(\.succeeded) else {
+                continue
+            }
+            let listStep = Self.listStep(for: provider)
+            do {
+                let output = try await executor.run(
+                    command: listStep.executable,
+                    args: listStep.arguments,
+                    at: plan.rootDirectory.path,
+                    timeout: timeout
+                )
+                let state = try Self.installedPlugins(
+                    for: provider,
+                    data: Data(output.stdout.utf8)
+                )
+                guard state.legacyEnabled else { continue }
+                guard state.currentEnabled else {
+                    results.append(AgentPluginInstallResult(
+                        step: listStep,
+                        output: output,
+                        errorDescription: "new Graftty plugin is not enabled; kept the legacy plugin"
+                    ))
+                    continue
+                }
+                let removal = await install(
+                    AgentPluginSetupPlan(
+                        rootDirectory: plan.rootDirectory,
+                        installSteps: [Self.legacyRemovalStep(for: provider)]
+                    ),
+                    executor: executor,
+                    timeout: timeout
+                )
+                results.append(contentsOf: removal.results)
+            } catch {
+                results.append(AgentPluginInstallResult(
+                    step: listStep,
+                    output: nil,
+                    errorDescription: Self.describe(error)
+                ))
+            }
+        }
+        return AgentPluginInstallationReport(results: results)
+    }
+
     /// Refresh only enabled, currently installed user plugins. Replaying the
     /// initial installation unconditionally would undo provider-side removal
     /// or disabling. Inventory failures remain retryable installation errors.
@@ -300,13 +354,7 @@ public struct AgentPluginInstaller: Sendable {
     ) async -> AgentPluginInstallationReport {
         var results: [AgentPluginInstallResult] = []
         for provider in AgentPluginProvider.allCases {
-            let listStep = AgentPluginInstallStep(
-                provider: provider,
-                executable: provider.rawValue,
-                arguments: provider == .codex
-                    ? ["plugin", "list", "--marketplace", "graftty", "--json"]
-                    : ["plugin", "list", "--json"]
-            )
+            let listStep = Self.listStep(for: provider)
             do {
                 let output = try await executor.run(
                     command: listStep.executable,
@@ -314,26 +362,11 @@ public struct AgentPluginInstaller: Sendable {
                     at: plan.rootDirectory.path,
                     timeout: timeout
                 )
-                let data = Data(output.stdout.utf8)
-                let installed: Bool
-                let legacyInstalled: Bool
-                let newPluginDisabled: Bool
-                switch provider {
-                case .codex:
-                    let entries = try JSONDecoder().decode(CodexPluginInventory.self, from: data).installed
-                    installed = entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && $0.enabled }
-                    legacyInstalled = entries.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled }
-                    newPluginDisabled = entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && !$0.enabled }
-                case .claude:
-                    let entries = try JSONDecoder().decode([ClaudePluginEntry].self, from: data)
-                    installed = entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && $0.enabled }
-                    legacyInstalled = entries.contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled }
-                    newPluginDisabled = entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && !$0.enabled }
-                }
-                guard !newPluginDisabled else { continue }
-                guard installed || legacyInstalled else { continue }
+                let state = try Self.installedPlugins(for: provider, data: Data(output.stdout.utf8))
+                guard !state.currentDisabled else { continue }
+                guard state.currentEnabled || state.legacyEnabled else { continue }
                 let steps = plan.installSteps.filter {
-                    $0.provider == provider && (!installed || $0.arguments.prefix(2) != ["plugin", "install"])
+                    $0.provider == provider && (!state.currentEnabled || $0.arguments.prefix(2) != ["plugin", "install"])
                 }
                 let report = await install(
                     AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: steps),
@@ -341,16 +374,12 @@ public struct AgentPluginInstaller: Sendable {
                     timeout: timeout
                 )
                 results.append(contentsOf: report.results)
-                if report.succeeded && legacyInstalled {
-                    let remove = AgentPluginInstallStep(
-                        provider: provider,
-                        executable: provider.rawValue,
-                        arguments: provider == .codex
-                            ? ["plugin", "remove", "graftty-team@graftty"]
-                            : ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"]
-                    )
+                if report.succeeded && state.legacyEnabled {
                     let removal = await install(
-                        AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: [remove]),
+                        AgentPluginSetupPlan(
+                            rootDirectory: plan.rootDirectory,
+                            installSteps: [Self.legacyRemovalStep(for: provider)]
+                        ),
                         executor: executor,
                         timeout: timeout
                     )
@@ -363,6 +392,51 @@ public struct AgentPluginInstaller: Sendable {
             }
         }
         return AgentPluginInstallationReport(results: results)
+    }
+
+    private struct InstalledPlugins {
+        var currentEnabled: Bool
+        var legacyEnabled: Bool
+        var currentDisabled: Bool
+    }
+
+    private static func listStep(for provider: AgentPluginProvider) -> AgentPluginInstallStep {
+        AgentPluginInstallStep(
+            provider: provider,
+            executable: provider.rawValue,
+            arguments: provider == .codex
+                ? ["plugin", "list", "--marketplace", "graftty", "--json"]
+                : ["plugin", "list", "--json"]
+        )
+    }
+
+    private static func legacyRemovalStep(for provider: AgentPluginProvider) -> AgentPluginInstallStep {
+        AgentPluginInstallStep(
+            provider: provider,
+            executable: provider.rawValue,
+            arguments: provider == .codex
+                ? ["plugin", "remove", "graftty-team@graftty"]
+                : ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"]
+        )
+    }
+
+    private static func installedPlugins(for provider: AgentPluginProvider, data: Data) throws -> InstalledPlugins {
+        switch provider {
+        case .codex:
+            let entries = try JSONDecoder().decode(CodexPluginInventory.self, from: data).installed
+            return InstalledPlugins(
+                currentEnabled: entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && $0.enabled },
+                legacyEnabled: entries.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled },
+                currentDisabled: entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && !$0.enabled }
+            )
+        case .claude:
+            let entries = try JSONDecoder().decode([ClaudePluginEntry].self, from: data)
+            return InstalledPlugins(
+                currentEnabled: entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && $0.enabled },
+                legacyEnabled: entries.contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled },
+                currentDisabled: entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && !$0.enabled }
+            )
+        }
     }
 
     private struct CodexPluginInventory: Decodable {

@@ -58,7 +58,7 @@ public enum TeamHookRenderer {
     ) throws -> String {
         var sections: [String] = []
         if skillManaged {
-            sections.append("Load the `graftty` skill for Graftty agent coordination and the Attention recap command before finishing this session.")
+            sections.append("Load the `graftty` skill for Attention recaps before finishing this session. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents.")
         }
         if !teamContext.isEmpty { sections.append(teamContext) }
         if !instructions.isEmpty { sections.append(instructions) }
