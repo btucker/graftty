@@ -48,7 +48,7 @@ struct CodexHookSessionBinderTests {
         }
     }
 
-    private static func makeFixture() throws -> Fixture {
+    private static func makeFixture(storesOwnerIdentity: Bool = true) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-codex-hook-bind-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -74,6 +74,8 @@ struct CodexHookSessionBinderTests {
             realBinaryPath: "/bin/codex",
             appServerPID: 201,
             appServerProcessStartTimeMicroseconds: 2_001,
+            ownerPID: storesOwnerIdentity ? 101 : nil,
+            ownerProcessStartTimeMicroseconds: storesOwnerIdentity ? 1_001 : nil,
             registeredAt: registeredAt
         ))
         return Fixture(
@@ -108,6 +110,22 @@ struct CodexHookSessionBinderTests {
         let session = try #require(try fixture.readSession())
         #expect(session.agentID == fixture.agentID)
         #expect(session.threadID == "thread-exact")
+        #expect(session.ownerPID == 101)
+        #expect(session.ownerProcessStartTimeMicroseconds == 1_001)
+    }
+
+    @Test("""
+    @spec TEAM-10.16: When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
+    """)
+    func restoresMissingOwnerIdentityFromPresence() throws {
+        let fixture = try Self.makeFixture(storesOwnerIdentity: false)
+        defer { fixture.cleanup() }
+
+        try fixture.bind(threadID: "thread-exact", allowRebind: true)
+
+        let session = try #require(try fixture.readSession())
+        #expect(session.ownerPID == 101)
+        #expect(session.ownerProcessStartTimeMicroseconds == 1_001)
     }
 
     @Test("""

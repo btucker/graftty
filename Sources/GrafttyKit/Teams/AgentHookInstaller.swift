@@ -732,12 +732,16 @@ public struct AgentHookInstaller: Sendable {
               elif ! _graftty_codex_should_use_app_server "$@"; then
                 env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks "$@"
               else
+              _graftty_codex_native_binary="$(\(shellCommandToken(grafttyCLIPath)) team codex-app-server resolve-binary --real-binary "$real_binary" 2>/dev/null)"
+              if [ ! -x "$_graftty_codex_native_binary" ]; then
+                _graftty_codex_native_binary="$real_binary"
+              fi
               _graftty_codex_socket_dir="${TMPDIR:-/tmp}/graftty-codex-app-server"
               mkdir -p "$_graftty_codex_socket_dir"
               _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
               _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
               rm -f "$_graftty_codex_socket" "$_graftty_codex_app_server_log"
-              env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
+              env CODEX_HOME="$_graftty_codex_runtime_home" "$_graftty_codex_native_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
               _graftty_codex_app_server_pid=$!
               _graftty_wait_for_codex_socket() {
                 _graftty_wait_count=0
@@ -762,7 +766,7 @@ public struct AgentHookInstaller: Sendable {
                 cleanup_after_runtime
                 exit 1
               fi
-              \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
+              \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$" >/dev/null 2>&1 || true
               env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
               fi
             else
