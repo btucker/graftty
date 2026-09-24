@@ -4,6 +4,25 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
+    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill even when no team primer is present.")
+    func managedSessionLoadsGrafttySkill() throws {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let json = try TeamHookRenderer.sessionStart(
+                runtime: runtime, teamContext: "", skillManaged: true
+            )
+            #expect(try additionalContext(from: json).contains("Load the `graftty` skill"))
+        }
+    }
+
+    @Test("Stop recap request uses a blocking decision.")
+    func recapRequestUsesStopDecision() throws {
+        let json = try #require(JSONSerialization.jsonObject(
+            with: Data(TeamHookRenderer.requestRecap().utf8)
+        ) as? [String: String])
+        #expect(json["decision"] == "block")
+        #expect(json["reason"]?.contains("graftty attention report --stdin") == true)
+    }
+
     @Test func codexSessionStartRendersAdditionalContext() throws {
         let json = try TeamHookRenderer.codexSessionStart(teamContext: "You are feature-auth.")
         let context = try additionalContext(from: json)

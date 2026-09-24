@@ -545,7 +545,8 @@ public final class TeamInboxRequestHandler {
                 runtime: runtime,
                 teamContext: text,
                 instructions: instructions,
-                messages: pending
+                messages: pending,
+                skillManaged: skillManaged
             )
             if cursor != nil {
                 try acknowledgeDeliveredMessages(

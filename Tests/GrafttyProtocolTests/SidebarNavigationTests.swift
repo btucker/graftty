@@ -3,6 +3,38 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.70: While an agent's stopped turn has a recap, the application shall retain its recognizable title, completed work, next step, and user need in the Attention item across snapshot encoding.")
+    func stoppedTurnRetainsRecap() throws {
+        let recap = AttentionRecap(
+            title: "Posting detail model evals",
+            completed: "v3 scored 0.910 against a700's 0.935.",
+            next: "Run four holdout evals.",
+            need: "Choose the target score."
+        )
+        #expect(recap.isValid)
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        let row = WorktreePanes(path: "/r/w", displayName: "feature", repoDisplayName: "Repo",
+            displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "w", projectID: "r", unseenAgentStop: stop))
+        let item = try #require(SidebarProjection.activity([row]).first)
+        #expect(item.agentStop?.recap == recap)
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
+    }
+
+    @Test("@spec LAYOUT-2.71: When the user searches Attention, the application shall match the stopped turn's recap title, completed work, next step, and user need.")
+    func attentionSearchIncludesRecap() {
+        let recap = AttentionRecap(title: "Posting detail model evals", completed: "v3 scored 0.910.",
+                                   next: "Run holdout evals.", need: "Choose a target score.")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        let item = SidebarActivityItem(id: "stop", projectID: "p", worktreeID: "w", paneID: nil,
+            projectName: "Repo", worktreeName: "branch", title: stop.title,
+            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        for query in ["posting detail", "0.910", "holdout", "target score"] {
+            #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: query).count == 1)
+        }
+    }
+
     @Test("@spec LAYOUT-2.68: While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.")
     func attentionIncludesForgeBadge() throws {
         let badge = PRBadge(number: 342, state: .open, checks: .pending,

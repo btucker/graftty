@@ -165,7 +165,7 @@ public struct AgentPluginInstaller: Sendable {
             // Source links can cross provider roots; cached plugins cannot.
             // Read through the original links before replacing staged copies.
             for path in [
-                "plugins/graftty-team/skills/graftty-team/SKILL.md",
+                "plugins/graftty-team/skills/graftty/SKILL.md",
                 "plugins/graftty-team/.\(provider.rawValue)-plugin/plugin.json",
             ] {
                 var contents = try Data(contentsOf: source.appendingPathComponent(path))

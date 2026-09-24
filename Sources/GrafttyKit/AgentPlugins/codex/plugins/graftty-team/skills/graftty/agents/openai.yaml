@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graftty"
+  short_description: "Report Attention recaps and coordinate worktree agents"
+  default_prompt: "Use Graftty to report this turn or coordinate with another worktree agent."

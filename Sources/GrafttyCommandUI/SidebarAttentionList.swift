@@ -73,6 +73,12 @@ public struct SidebarAttentionList: View {
                     Text(item.projectName).font(.caption).lineLimit(1)
                     Spacer()
                     if project?.isAvailable == false { Text("Offline").font(.caption2) }
+                    if let stop = item.agentStop {
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Text(stop.elapsedDescription(at: context.date))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 HStack(spacing: 6) {
                     if let badge = item.prBadge {
@@ -82,14 +88,20 @@ public struct SidebarAttentionList: View {
                             .padding(.horizontal, 3).fixedSize().hidden().accessibilityHidden(true)
                             .anchorPreference(key: AttentionPRBadgeAnchor.self, value: .bounds) { $0 }
                     }
-                    Text(item.worktreeName).font(.callout).lineLimit(1)
+                    Text(item.agentStop?.recap?.title ?? item.worktreeName)
+                        .font(.callout)
+                        .fontWeight(item.agentStop?.recap == nil ? .regular : .semibold)
+                        .lineLimit(2)
                 }
-                Text(item.title).font(.caption).foregroundStyle(viewed ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
-                if let stop = item.agentStop {
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
-                        Text("Stopped " + stop.elapsedDescription(at: context.date))
-                            .font(.caption2).foregroundStyle(.secondary)
+                if let recap = item.agentStop?.recap {
+                    Text("Done: " + recap.completed).font(.caption).lineLimit(2)
+                    Text("Next: " + recap.next).font(.caption).lineLimit(2)
+                    if let need = recap.need {
+                        Text("Need: " + need).font(.caption)
+                            .foregroundStyle(viewed ? Color.secondary : .orange).lineLimit(2)
                     }
+                } else {
+                    Text(item.title).font(.caption).foregroundStyle(viewed ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
                 }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())

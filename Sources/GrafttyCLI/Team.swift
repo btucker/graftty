@@ -205,6 +205,7 @@ struct TeamHook: ParsableCommand {
             event: event,
             stdinJSON: stdinPayload
         )
+        let stopHookActive = stdinPayload["stop_hook_active"] as? Bool ?? false
 
         // TEAM-9.1
         if event == .stop, AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
@@ -253,7 +254,8 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    skillManaged: skillManaged
+                    skillManaged: skillManaged,
+                    stopHookActive: stopHookActive
                 )
             )
             switch response {
@@ -1369,7 +1371,7 @@ enum TeamPresenceCLI {
     }
 }
 
-private enum TeamMessageInput {
+enum AttentionReportIdentity {
     static func currentAgentID(worktreePath: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let explicit = environment["GRAFTTY_AGENT_ID"]
@@ -1386,6 +1388,12 @@ private enum TeamMessageInput {
             records: records,
             isReachable: TeamAgentReachability.isReachable
         )
+    }
+}
+
+private enum TeamMessageInput {
+    static func currentAgentID(worktreePath: String) -> String? {
+        AttentionReportIdentity.currentAgentID(worktreePath: worktreePath)
     }
 
     static func resolve(text: String?, stdin: Bool) throws -> String {

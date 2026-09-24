@@ -69,14 +69,45 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+/// Short agent-authored context for the next stopped-turn card.
+/// @spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+public struct AttentionRecap: Codable, Sendable, Hashable {
+    public var title: String
+    public var completed: String
+    public var next: String
+    public var need: String?
+
+    public init(title: String, completed: String, next: String, need: String? = nil) {
+        self.title = title
+        self.completed = completed
+        self.next = next
+        self.need = need
+    }
+
+    public var isValid: Bool {
+        let fields = [(title, 100), (completed, 300), (next, 300)]
+        let requiredValid = fields.allSatisfy { value, limit in
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && value.count <= limit
+                && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        }
+        guard let need else { return requiredValid }
+        return requiredValid && !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && need.count <= 300
+            && !need.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
 /// The latest completed agent turn not yet viewed in its worktree.
 /// The numeric timestamp retains precision across JSON date strategies.
 public struct SidebarAgentStop: Codable, Sendable, Hashable {
     public var agentName: String
     public var timestamp: Double
-    public init(agentName: String, stoppedAt: Date) {
+    public var recap: AttentionRecap?
+    public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil) {
         self.agentName = agentName
         self.timestamp = stoppedAt.timeIntervalSinceReferenceDate
+        self.recap = recap
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
     public var title: String { "\(agentName) stopped" }
@@ -196,7 +227,11 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
             switch self { case .needsYou: matches = item.needsAttention
             case .running: matches = item.isBusy
             case .all: matches = true }
-            return matches && (query.isEmpty || "\(item.projectName) \(item.worktreeName) \(item.title)".localizedCaseInsensitiveContains(query))
+            let recap = item.agentStop?.recap
+            let searchable = [item.projectName, item.worktreeName, item.title,
+                              recap?.title, recap?.completed, recap?.next, recap?.need]
+                .compactMap { $0 }.joined(separator: " ")
+            return matches && (query.isEmpty || searchable.localizedCaseInsensitiveContains(query))
         }.sorted {
             let lhs = $0.occurrence?.timestamp ?? .distantPast
             let rhs = $1.occurrence?.timestamp ?? .distantPast

@@ -90,7 +90,7 @@ struct AgentPluginInstallerTests {
         )
         let claudeRoot = source.appendingPathComponent("claude/plugins/graftty-team")
         let links = [
-            "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty-team/SKILL.md",
+            "skills/graftty/SKILL.md": "../../../../../codex/plugins/graftty-team/skills/graftty/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty-team/.codex-plugin/plugin.json",
         ]
         for (path, target) in links {
@@ -99,7 +99,7 @@ struct AgentPluginInstallerTests {
             try fileManager.createSymbolicLink(atPath: link.path, withDestinationPath: target)
         }
         let expectedSkill = try Data(contentsOf: claudeRoot
-            .appendingPathComponent("skills/graftty-team/SKILL.md"))
+            .appendingPathComponent("skills/graftty/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -117,7 +117,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let cached = temporary.appendingPathComponent("cached-\(provider)")
             for (path, expected) in [
-                "skills/graftty-team/SKILL.md": expectedSkill,
+                "skills/graftty/SKILL.md": expectedSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -177,7 +177,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
+    @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
     """)
     func preparesBothProviderMarketplacesAndCommands() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -189,9 +189,9 @@ struct AgentPluginInstallerTests {
         ).prepare(destinationRoot: destination)
 
         #expect(FileManager.default.fileExists(atPath: destination
-            .appendingPathComponent("codex/plugins/graftty-team/skills/graftty-team/SKILL.md").path))
+            .appendingPathComponent("codex/plugins/graftty-team/skills/graftty/SKILL.md").path))
         #expect(FileManager.default.fileExists(atPath: destination
-            .appendingPathComponent("claude/plugins/graftty-team/skills/graftty-team/SKILL.md").path))
+            .appendingPathComponent("claude/plugins/graftty-team/skills/graftty/SKILL.md").path))
         #expect(try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty-team/hooks/hooks.json"))
             .contains("--skill-managed"))
@@ -212,7 +212,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+                .appendingPathComponent("plugins/graftty-team/skills/graftty/SKILL.md"))
             #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
             #expect(skill.contains("<graftty-forge-message provider=\"<provider>\">"))
             #expect(skill.contains("<graftty-system-message>"))
@@ -252,7 +252,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+                .appendingPathComponent("plugins/graftty-team/skills/graftty/SKILL.md"))
             #expect(skill.contains("## Durable agent instructions"))
             #expect(skill.contains("`.graftty/GRAFTTY.md`"))
             #expect(skill.contains("`.graftty/<parent>/GRAFTTY.md`"))
@@ -276,7 +276,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+                .appendingPathComponent("plugins/graftty-team/skills/graftty/SKILL.md"))
             #expect(skill.contains("## Delegate work into a new worktree"))
             #expect(skill.contains("Proactively delegate"))
             #expect(skill.contains(
@@ -304,7 +304,7 @@ struct AgentPluginInstallerTests {
         for provider in ["codex", "claude"] {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty-team/skills/graftty-team/SKILL.md"))
+                .appendingPathComponent("plugins/graftty-team/skills/graftty/SKILL.md"))
             #expect(skill.contains("`EPERM` or `errno 1`"))
             #expect(skill.contains("read-only checks"))
             #expect(skill.contains("narrowly scoped elevated permission"))
@@ -334,7 +334,7 @@ struct AgentPluginInstallerTests {
         #expect(!fileManager.fileExists(atPath: staleMarker.path))
         for provider in ["codex", "claude"] {
             #expect(fileManager.fileExists(atPath: destination
-                .appendingPathComponent("\(provider)/plugins/graftty-team/skills/graftty-team/SKILL.md")
+                .appendingPathComponent("\(provider)/plugins/graftty-team/skills/graftty/SKILL.md")
                 .path))
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent("\(provider)/plugins/graftty-team/hooks/hooks.json"))
@@ -380,7 +380,7 @@ struct AgentPluginInstallerTests {
 
         #expect(try String(contentsOf: codexHooks) == hooksBeforeFailure)
         #expect(fileManager.fileExists(atPath: destination
-            .appendingPathComponent("codex/plugins/graftty-team/skills/graftty-team/SKILL.md")
+            .appendingPathComponent("codex/plugins/graftty-team/skills/graftty/SKILL.md")
             .path))
         let residue = try fileManager.contentsOfDirectory(atPath: destination.path)
             .filter { $0.hasPrefix(".staging-") }
