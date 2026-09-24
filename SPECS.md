@@ -344,6 +344,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.10` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
 
+**TERM-8.11** When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.
+
+**TERM-8.12** When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
+**TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"
