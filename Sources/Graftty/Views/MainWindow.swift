@@ -58,6 +58,7 @@ struct MainWindow: View {
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var attentionOpenGeneration: UInt64 = 0
+    @State private var attentionSidebarWidth: Double?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
     @AppStorage("sidebar.mac.railWidth") private var projectRailExpandedWidth = 196.0
@@ -118,6 +119,7 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
+                onAttentionWidthChange: { attentionSidebarWidth = $0 },
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -137,7 +139,7 @@ struct MainWindow: View {
             )
             .navigationSplitViewColumnWidth(
                 min: minimumSidebarWidth,
-                ideal: max(minimumSidebarWidth, appState.sidebarWidth),
+                ideal: max(minimumSidebarWidth, attentionSidebarWidth ?? appState.sidebarWidth),
                 max: 676
             )
             // Deliberately do NOT call ignoresSafeArea here. The sidebar
@@ -378,7 +380,7 @@ struct MainWindow: View {
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
-        ))
+        ), when: attentionSidebarWidth == nil)
         .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(

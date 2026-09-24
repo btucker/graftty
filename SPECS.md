@@ -156,11 +156,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.69** When the user double-clicks empty space after the last worktree in the project column, the application shall open Add Worktree for the selected editable project without changing a worktree row's click behavior.
 
-**LAYOUT-2.70** While an agent's stopped turn has a recap, the application shall retain its recognizable title, completed work, next step, and user need in the Attention item across snapshot encoding.
+**LAYOUT-2.70** While an agent's stopped turn has a recap, the application shall retain its recognizable title, task context, completed work, next step, and user need in the Attention item across snapshot encoding.
 
-**LAYOUT-2.71** When the user searches Attention, the application shall match the stopped turn's recap title, completed work, next step, and user need.
+**LAYOUT-2.71** When the user searches Attention, the application shall match the stopped turn's recap title, task context, completed work, next step, and user need.
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
+
+**LAYOUT-2.73** When a stopped agent has a recap, the Attention card shall show the worktree beside a project icon, a gray pane title beneath it, and Context, Needs You, Up Next in that order; if no project icon exists it shall retain the project name, and if no question exists it shall omit Needs You.
+
+**LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2616,6 +2620,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.16** When duplicate Stop hooks run for the same Codex turn, the application shall queue one stopped card and shall not request another recap after the first hook consumes it.
 
+**AGENT-3.17** When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -2731,6 +2737,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
+
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, and remaining work, and shall make a user question optional.
 
 ## CLI — CLI
 

@@ -33,18 +33,24 @@ public extension View {
     /// Persist the published `SidebarWidthKey` value into the supplied
     /// binding, debouncing by 250ms so a drag doesn't write on every layout
     /// pass. Only writes if the binding's current value differs.
-    func persistSidebarWidth(to binding: Binding<Double>) -> some View {
-        modifier(SidebarWidthPersister(binding: binding))
+    func persistSidebarWidth(to binding: Binding<Double>, when enabled: Bool = true) -> some View {
+        modifier(SidebarWidthPersister(binding: binding, enabled: enabled))
     }
 }
 
 private struct SidebarWidthPersister: ViewModifier {
     let binding: Binding<Double>
+    let enabled: Bool
     @State private var pendingTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content.onPreferenceChange(SidebarWidthKey.self) { width in
+            guard enabled else { return }
             scheduleWrite(width)
+        }
+        .onChange(of: enabled) { _, _ in
+            pendingTask?.cancel()
+            pendingTask = nil
         }
     }
 
@@ -52,7 +58,7 @@ private struct SidebarWidthPersister: ViewModifier {
         pendingTask?.cancel()
         pendingTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(250))
-            if Task.isCancelled { return }
+            if Task.isCancelled || !enabled { return }
             if binding.wrappedValue != width {
                 binding.wrappedValue = width
             }

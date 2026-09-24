@@ -23,6 +23,7 @@ struct TeamHookRendererTests {
         ) as? [String: String])
         #expect(json["decision"] == "block")
         #expect(json["reason"]?.contains("graftty attention report --stdin") == true)
+        #expect(json["reason"]?.contains("context") == true)
     }
 
     @Test func codexSessionStartRendersAdditionalContext() throws {

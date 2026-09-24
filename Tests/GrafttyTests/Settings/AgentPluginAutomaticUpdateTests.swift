@@ -11,7 +11,7 @@ struct AgentPluginAutomaticUpdateTests {
         let suite = "AgentPluginSameBuildMigration-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(7, forKey: SettingsKeys.agentPluginInstalledRevision)
+        defaults.set(8, forKey: SettingsKeys.agentPluginInstalledRevision)
         defaults.set("0.0.0-dev", forKey: SettingsKeys.agentPluginInstalledBuildVersion)
         var attempts = 0
 

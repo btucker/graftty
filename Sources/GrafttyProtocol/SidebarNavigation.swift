@@ -25,6 +25,35 @@ public enum SidebarLayoutPolicy {
     }
 }
 
+/// @spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
+public struct SidebarAttentionWidthState {
+    private var previousWidth: Double?
+    private var railWidthAtEntry = 0.0
+
+    public init() {}
+
+    public mutating func enter(currentWidth: Double, railWidth: Double, windowWidth: Double) -> Double? {
+        guard previousWidth == nil,
+              currentWidth.isFinite, railWidth.isFinite, windowWidth.isFinite else { return nil }
+        let target = min(676, railWidth + 410)
+        guard currentWidth < target, windowWidth - target >= 640 else { return nil }
+        previousWidth = currentWidth
+        railWidthAtEntry = railWidth
+        return target
+    }
+
+    public mutating func leave(currentRailWidth: Double) -> Double? {
+        guard let previousWidth else { return nil }
+        self.previousWidth = nil
+        return previousWidth + currentRailWidth - railWidthAtEntry
+    }
+
+    public func adjustedWidth(forRailWidth railWidth: Double) -> Double? {
+        guard previousWidth != nil, railWidth.isFinite else { return nil }
+        return min(676, railWidth + 410)
+    }
+}
+
 /// Stable presentation identity is separate from the live, opaque management route.
 public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -71,14 +100,17 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 
 /// Short agent-authored context for the next stopped-turn card.
 /// @spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+/// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 public struct AttentionRecap: Codable, Sendable, Hashable {
     public var title: String
+    public var context: String?
     public var completed: String
     public var next: String
     public var need: String?
 
-    public init(title: String, completed: String, next: String, need: String? = nil) {
+    public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil) {
         self.title = title
+        self.context = context
         self.completed = completed
         self.next = next
         self.need = need
@@ -91,8 +123,13 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
                 && value.count <= limit
                 && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
         }
-        guard let need else { return requiredValid }
-        return requiredValid && !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let contextValid = context.map {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.count <= 200
+                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        } ?? true
+        guard let need else { return requiredValid && contextValid }
+        return requiredValid && contextValid && !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && need.count <= 300
             && !need.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
@@ -235,7 +272,7 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
             case .all: matches = true }
             let recap = item.agentStop?.recap
             let searchable = [item.projectName, item.worktreeName, item.title,
-                              item.agentStop?.paneTitle, recap?.title, recap?.completed,
+                              item.agentStop?.paneTitle, recap?.title, recap?.context, recap?.completed,
                               recap?.next, recap?.need]
                 .compactMap { $0 }.joined(separator: " ")
             return matches && (query.isEmpty || searchable.localizedCaseInsensitiveContains(query))

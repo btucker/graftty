@@ -400,9 +400,29 @@ struct AgentPluginInstallerTests {
             let recap = try String(contentsOf: skills.appendingPathComponent("graftty/SKILL.md"))
             let team = try String(contentsOf: skills.appendingPathComponent("graftty-team/SKILL.md"))
             #expect(recap.contains("private file"))
+            #expect(recap.contains("\"context\""))
             #expect(recap.contains("Do not request socket permission for `graftty attention report`"))
             #expect(team.contains("main Graftty control socket"))
             #expect(team.contains("Request narrowly scoped elevated permission to use the main socket"))
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for task context, verified completed work, and remaining work, and shall make a user question optional.
+    """)
+    func materializedRecapSkillRequestsTaskContext() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-context-skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let skill = try String(contentsOf: destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
+            ))
+            #expect(skill.contains("\"context\""))
+            #expect(skill.contains("what this worktree is trying to accomplish"))
+            #expect(skill.contains("recent verified progress"))
+            #expect(skill.contains("only when the user must decide"))
         }
     }
 

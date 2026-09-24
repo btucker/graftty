@@ -29,6 +29,7 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     var onNavigationIntent: () -> Void = {}
+    var onAttentionWidthChange: (Double?) -> Void = { _ in }
     let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -77,6 +78,7 @@ struct SidebarView: View {
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
+    @State private var attentionWidthState = SidebarAttentionWidthState()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var remoteIcons: [String: Data] = [:]
@@ -290,6 +292,21 @@ struct SidebarView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+        .onChange(of: navigation.showsAttention) { _, showing in
+            let railWidth = showsProjectRail ? navigation.railWidth + 1 : 0
+            if showing {
+                if let expanded = attentionWidthState.enter(
+                    currentWidth: appState.sidebarWidth,
+                    railWidth: railWidth,
+                    windowWidth: appState.windowFrame.width
+                ) {
+                    onAttentionWidthChange(expanded)
+                }
+            } else if let previous = attentionWidthState.leave(currentRailWidth: railWidth) {
+                appState.sidebarWidth = previous
+                onAttentionWidthChange(nil)
+            }
+        }
         .onChange(of: appState.selectedWorktreePath) { old, new in
             rememberSelection(old)
             if !navigation.showsAttention, let new,
@@ -307,6 +324,11 @@ struct SidebarView: View {
         }
         .onChange(of: showsProjectRail) { _, enabled in
             onNavigationIntent()
+            let oldRailWidth = enabled ? 0 : navigation.railWidth + 1
+            if let previous = attentionWidthState.leave(currentRailWidth: oldRailWidth) {
+                appState.sidebarWidth = previous
+                onAttentionWidthChange(nil)
+            }
             navigation.showsAttention = false
             navigation.query = ""
             let delta = navigation.railWidth + 1
@@ -315,6 +337,9 @@ struct SidebarView: View {
         .onChange(of: navigation.railWidth) { previous, current in
             guard showsProjectRail else { return }
             appState.sidebarWidth = max(current + 221, appState.sidebarWidth + current - previous)
+            if let expanded = attentionWidthState.adjustedWidth(forRailWidth: current + 1) {
+                onAttentionWidthChange(expanded)
+            }
         }
         .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in

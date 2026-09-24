@@ -16,7 +16,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Stage an agent recap for its next stopped turn"
     )
 
-    @Flag(name: .long, help: "Read a JSON object with title, completed, next, and optional need from standard input")
+    @Flag(name: .long, help: "Read a JSON object with title, completed, next, and optional context and need from standard input")
     var stdin = false
 
     func run() throws {
@@ -26,7 +26,7 @@ struct AttentionReport: ParsableCommand {
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected JSON with title, completed, next, and optional need")
+            throw ValidationError("expected JSON with title, completed, next, and optional context and need")
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief, nonempty text")

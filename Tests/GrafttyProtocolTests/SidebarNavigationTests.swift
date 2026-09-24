@@ -17,10 +17,11 @@ struct SidebarNavigationTests {
         #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
     }
 
-    @Test("@spec LAYOUT-2.70: While an agent's stopped turn has a recap, the application shall retain its recognizable title, completed work, next step, and user need in the Attention item across snapshot encoding.")
+    @Test("@spec LAYOUT-2.70: While an agent's stopped turn has a recap, the application shall retain its recognizable title, task context, completed work, next step, and user need in the Attention item across snapshot encoding.")
     func stoppedTurnRetainsRecap() throws {
         let recap = AttentionRecap(
             title: "Posting detail model evals",
+            context: "Comparing a smaller extraction model against a700.",
             completed: "v3 scored 0.910 against a700's 0.935.",
             next: "Run four holdout evals.",
             need: "Choose the target score."
@@ -36,17 +37,41 @@ struct SidebarNavigationTests {
         #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
     }
 
-    @Test("@spec LAYOUT-2.71: When the user searches Attention, the application shall match the stopped turn's recap title, completed work, next step, and user need.")
+    @Test("@spec LAYOUT-2.71: When the user searches Attention, the application shall match the stopped turn's recap title, task context, completed work, next step, and user need.")
     func attentionSearchIncludesRecap() {
-        let recap = AttentionRecap(title: "Posting detail model evals", completed: "v3 scored 0.910.",
+        let recap = AttentionRecap(title: "Posting detail model evals", context: "Extracting job posting details.", completed: "v3 scored 0.910.",
                                    next: "Run holdout evals.", need: "Choose a target score.")
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
         let item = SidebarActivityItem(id: "stop", projectID: "p", worktreeID: "w", paneID: nil,
             projectName: "Repo", worktreeName: "branch", title: stop.title,
             occurrence: stop.occurrence, isBusy: false, agentStop: stop)
-        for query in ["posting detail", "0.910", "holdout", "target score"] {
+        for query in ["posting detail", "extracting job", "0.910", "holdout", "target score"] {
             #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: query).count == 1)
         }
+    }
+
+    @Test("@spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.")
+    func recapContextValidatesAndKeepsOldCards() throws {
+        let recap = AttentionRecap(title: "Push notifications", context: "Paired devices should notify a locked phone.",
+                                   completed: "Client committed.", next: "Verify on a device.")
+        #expect(recap.isValid)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: JSONEncoder().encode(recap)) == recap)
+        #expect(!AttentionRecap(title: "Push notifications", context: "   ",
+                                completed: "Client committed.", next: "Verify on a device.").isValid)
+        let old = Data(#"{"title":"Push notifications","completed":"Client committed.","next":"Verify on a device."}"#.utf8)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: old).context == nil)
+    }
+
+    @Test("@spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.")
+    func attentionReadingWidthRestoresPreviousWidth() {
+        var state = SidebarAttentionWidthState()
+        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 1200) == 410)
+        #expect(state.leave(currentRailWidth: 0) == 256)
+        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 900) == nil)
+        #expect(state.leave(currentRailWidth: 0) == nil)
+        #expect(state.enter(currentWidth: 460, railWidth: 197, windowWidth: 1400) == 607)
+        #expect(state.adjustedWidth(forRailWidth: 65) == 475)
+        #expect(state.leave(currentRailWidth: 65) == 328)
     }
 
     @Test("@spec LAYOUT-2.68: While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.")

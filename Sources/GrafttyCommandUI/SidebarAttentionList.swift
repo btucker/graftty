@@ -58,6 +58,7 @@ public struct SidebarAttentionList: View {
 
     private func row(_ item: SidebarActivityItem) -> some View {
         let project = projects.first { $0.id == item.projectID }
+        let card = SidebarAttentionCardContent(item: item, hasProjectIcon: project.flatMap { icons[$0.id] } != nil)
         let viewed = navigation.hasViewed(item)
         let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
         return Button {
@@ -68,10 +69,20 @@ public struct SidebarAttentionList: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    if let project { ProjectIdentityView(project: project, imageData: icons[project.id]) }
-                    Text(item.projectName).font(.caption).lineLimit(1)
-                    Spacer()
+                HStack(alignment: .top, spacing: 7) {
+                    if let project {
+                        ProjectIdentityView(project: project, imageData: icons[project.id])
+                            .help(project.name)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(card.headerName).font(.caption).fontWeight(.semibold)
+                            .lineLimit(1).help(card.headerName)
+                        if let paneTitle = card.paneTitle {
+                            Text(paneTitle).font(.caption2).foregroundStyle(.secondary)
+                                .lineLimit(1).help(paneTitle)
+                        }
+                    }
+                    Spacer(minLength: 4)
                     if project?.isAvailable == false { Text("Offline").font(.caption2) }
                     if let stop = item.agentStop {
                         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -88,22 +99,22 @@ public struct SidebarAttentionList: View {
                             .padding(.horizontal, 3).fixedSize().hidden().accessibilityHidden(true)
                             .anchorPreference(key: AttentionPRBadgeAnchor.self, value: .bounds) { $0 }
                     }
-                    Text(item.agentStop?.recap?.title ?? item.agentStop?.paneTitle ?? item.worktreeName)
+                    Text(card.title)
                         .font(.callout)
                         .fontWeight(item.agentStop?.recap == nil && item.agentStop?.paneTitle == nil ? .regular : .semibold)
                         .lineLimit(2)
                 }
-                if let recap = item.agentStop?.recap {
-                    if let paneTitle = item.agentStop?.paneTitle, paneTitle != recap.title {
-                        Text(paneTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                if !card.sections.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(card.sections) { section in
+                            recapSection(section, viewed: viewed)
+                        }
                     }
-                    Text("Done: " + recap.completed).font(.caption).lineLimit(2)
-                    Text("Next: " + recap.next).font(.caption).lineLimit(2)
-                    if let need = recap.need {
-                        Text("Need: " + need).font(.caption)
-                            .foregroundStyle(viewed ? Color.secondary : .orange).lineLimit(2)
+                    .background(alignment: .leading) {
+                        Rectangle().fill(Color.secondary.opacity(0.5))
+                            .frame(width: 2).padding(.leading, 4)
                     }
-                } else {
+                } else if item.agentStop == nil {
                     Text(item.title).font(.caption).foregroundStyle(viewed ? Color.secondary : item.needsAttention ? .orange : .green).lineLimit(2)
                 }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -126,5 +137,35 @@ public struct SidebarAttentionList: View {
                     }
                 }
             }
+    }
+
+    private func recapSection(_ section: SidebarAttentionCardContent.Section, viewed: Bool) -> some View {
+        let color: Color = switch section.kind {
+        case .context: .secondary
+        case .needsYou: viewed ? .secondary : .orange
+        case .upNext: .teal
+        }
+        let label: String = switch section.kind {
+        case .context: "CONTEXT"
+        case .needsYou: "NEEDS YOU"
+        case .upNext: "UP NEXT"
+        }
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 10, weight: .bold)).tracking(1)
+                .foregroundStyle(color)
+            Text(section.text).font(.caption)
+                .fontWeight(section.kind == .needsYou ? .semibold : .regular)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail = section.detail {
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            Circle().fill(color).frame(width: 7, height: 7)
+                .offset(x: 2, y: 3)
+        }
     }
 }
