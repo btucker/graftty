@@ -1883,6 +1883,9 @@ struct GrafttyApp: App {
         )
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
+            CodexAppServerSessionMonitor.cleanupOrphans(storage: CodexAppServerSessionStorage(
+                rootDirectory: TeamPresenceStorage.defaultRoot()
+            ))
             let records = refreshPresenceIndex()
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)

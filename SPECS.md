@@ -350,6 +350,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.10` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
 
+**TERM-8.11** When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.
+
+**TERM-8.12** When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
+**TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"
@@ -2081,6 +2087,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-10.12** If the filesystem rejects an otherwise-readable managed Codex home lock, then the application shall warn and continue durable administration without coordination rather than suppress the command.
 
 **TEAM-10.13** When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
+
+**TEAM-10.14** When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
+
+**TEAM-10.15** When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities and retain its record until the server exits.
+
+**TEAM-10.16** When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
 
 ### TEAM-11.x — Idle Delivery
 
