@@ -119,3 +119,14 @@ public enum PaneTitle {
         return ""
     }
 }
+
+/// Saved shell metadata preserves title-over-PWD precedence across reconnects.
+public struct PaneTitleMetadata: Codable, Sendable, Equatable {
+    public var title: String?
+    public var pwd: String?
+
+    public init(title: String? = nil, pwd: String? = nil) {
+        self.title = title
+        self.pwd = pwd
+    }
+}

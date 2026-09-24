@@ -95,6 +95,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// different rows and do not fall back onto one another.
     public var paneAttention: [PaneSlotID: Attention]
     public var paneSessions: [PaneSlotID: PaneSessionID]
+    /// Last title and PWD for running panes, saved at application quit.
+    public var paneTitleMetadata: [PaneSlotID: PaneTitleMetadata]
     public var splitTree: SplitTree
     public var focusedPaneSlotID: PaneSlotID?
     /// The pane that owns worktree-level startup behavior such as a
@@ -128,6 +130,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.unseenAgentStop = nil
         self.paneAttention = [:]
         self.paneSessions = [:]
+        self.paneTitleMetadata = [:]
         self.splitTree = splitTree
         self.focusedPaneSlotID = nil
         self.primaryPaneSlotID = nil
@@ -141,7 +144,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, staleSince, attention, unseenAgentStop, paneAttention,
-             paneSessions, splitTree, primaryPaneSlotID,
+             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -171,6 +174,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneSessions = try container.decodeIfPresent(
             [PaneSlotID: PaneSessionID].self,
             forKey: .paneSessions
+        ) ?? [:]
+        self.paneTitleMetadata = try container.decodeIfPresent(
+            [PaneSlotID: PaneTitleMetadata].self,
+            forKey: .paneTitleMetadata
         ) ?? [:]
         self.splitTree = try container.decode(SplitTree.self, forKey: .splitTree)
         self.focusedPaneSlotID = try container.decodeIfPresent(
@@ -461,6 +468,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForStop() {
         state = .closed
         paneAttention.removeAll()
+        paneTitleMetadata.removeAll()
         clearAllPaneSessions()
     }
 

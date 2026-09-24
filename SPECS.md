@@ -160,6 +160,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.71** When the user searches Attention, the application shall match the stopped turn's recap title, completed work, next step, and user need.
 
+**LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -773,6 +775,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERSIST-3.6** When the application launches, it shall run worktree discovery for each repository to reconcile saved state against current disk state.
 
 **PERSIST-3.7** If `state.json` exists but fails to decode at launch (corruption from a crashed mid-write, hand-edit typo, or schema mismatch across app versions), then the application shall move the file aside to a timestamped backup at `state.json.corrupt.<milliseconds-since-epoch>` and proceed with a fresh `AppState`. The corrupt file shall remain on disk so the user can recover the prior data manually; the application shall not silently overwrite it on the next save.
+
+**PERSIST-3.8** When Graftty quits and reopens with running worktrees, the application shall restore each pane's last title or PWD label and preserve title-over-PWD precedence as fresh metadata arrives.
 
 ### PERSIST-4.x — Non-Persisted State
 

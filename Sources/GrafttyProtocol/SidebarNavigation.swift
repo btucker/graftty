@@ -104,10 +104,16 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
     public var agentName: String
     public var timestamp: Double
     public var recap: AttentionRecap?
+    public var paneTitle: String?
     public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil) {
+        self.init(agentName: agentName, stoppedAt: stoppedAt, recap: recap, paneTitle: nil)
+    }
+    public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil,
+                paneTitle: String?) {
         self.agentName = agentName
         self.timestamp = stoppedAt.timeIntervalSinceReferenceDate
         self.recap = recap
+        self.paneTitle = paneTitle
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
     public var title: String { "\(agentName) stopped" }
@@ -229,7 +235,8 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
             case .all: matches = true }
             let recap = item.agentStop?.recap
             let searchable = [item.projectName, item.worktreeName, item.title,
-                              recap?.title, recap?.completed, recap?.next, recap?.need]
+                              item.agentStop?.paneTitle, recap?.title, recap?.completed,
+                              recap?.next, recap?.need]
                 .compactMap { $0 }.joined(separator: " ")
             return matches && (query.isEmpty || searchable.localizedCaseInsensitiveContains(query))
         }.sorted {

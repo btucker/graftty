@@ -1993,6 +1993,7 @@ struct GrafttyApp: App {
             }
         }
 
+        tm.restorePaneTitleMetadata(appState.savedPaneTitleMetadata)
         restoreRunningWorktrees()
 
         // Restoring running worktrees installs the durable pane-to-session
@@ -2136,7 +2137,7 @@ struct GrafttyApp: App {
                                 paneLayoutNode(
                                     from: $0,
                                     paneSessions: wt.paneSessions,
-                                    titles: terminalManager.titles,
+                                    titles: terminalManager.displayTitles,
                                     paneAttention: wt.paneAttention,
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
@@ -3026,6 +3027,7 @@ struct GrafttyApp: App {
             MainActor.assumeIsolated {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
+                stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -4409,10 +4411,15 @@ struct GrafttyApp: App {
                 return .teamHookOutput(TeamHookRenderer.requestRecap())
             }
             guard case .record(let recap) = outcome else { return .teamHookOutput("{}") }
+            let paneTitle = paneSessionName
+                .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
+                .map { terminalManager.displayTitle(for: $0) }
+                .flatMap { $0.isEmpty ? nil : $0 }
             let stop = SidebarAgentStop(
                 agentName: AgentStopNotification.displayName(runtime),
                 stoppedAt: Date(),
-                recap: recap
+                recap: recap,
+                paneTitle: paneTitle
             )
             for ri in appState.wrappedValue.repos.indices {
                 if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
@@ -6345,8 +6352,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
 /// Convert the Mac-side `SplitTree.Node` into the wire-format
 /// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
-/// current title (or the empty string if libghostty hasn't emitted
-/// one yet), and the pane-scoped attention text from the worktree's
+/// current displayed title (or the empty string if no metadata has arrived
+/// yet), and the pane-scoped attention text from the worktree's
 /// `paneAttention`.
 @MainActor
 func paneLayoutNode(

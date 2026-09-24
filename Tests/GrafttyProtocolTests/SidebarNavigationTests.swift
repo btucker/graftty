@@ -3,6 +3,20 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.72: When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.")
+    func stoppedTurnRetainsPaneName() throws {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+                                    paneTitle: "Terminal wrap cleanup")
+        let row = WorktreePanes(path: "/r/w", displayName: "feature", repoDisplayName: "Repo",
+            displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "w", projectID: "r", unseenAgentStop: stop))
+        let item = try #require(SidebarProjection.activity([row]).first)
+        #expect(item.agentStop?.paneTitle == "Terminal wrap cleanup")
+        #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: "wrap cleanup").count == 1)
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
+    }
+
     @Test("@spec LAYOUT-2.70: While an agent's stopped turn has a recap, the application shall retain its recognizable title, completed work, next step, and user need in the Attention item across snapshot encoding.")
     func stoppedTurnRetainsRecap() throws {
         let recap = AttentionRecap(

@@ -88,12 +88,15 @@ public struct SidebarAttentionList: View {
                             .padding(.horizontal, 3).fixedSize().hidden().accessibilityHidden(true)
                             .anchorPreference(key: AttentionPRBadgeAnchor.self, value: .bounds) { $0 }
                     }
-                    Text(item.agentStop?.recap?.title ?? item.worktreeName)
+                    Text(item.agentStop?.recap?.title ?? item.agentStop?.paneTitle ?? item.worktreeName)
                         .font(.callout)
-                        .fontWeight(item.agentStop?.recap == nil ? .regular : .semibold)
+                        .fontWeight(item.agentStop?.recap == nil && item.agentStop?.paneTitle == nil ? .regular : .semibold)
                         .lineLimit(2)
                 }
                 if let recap = item.agentStop?.recap {
+                    if let paneTitle = item.agentStop?.paneTitle, paneTitle != recap.title {
+                        Text(paneTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text("Done: " + recap.completed).font(.caption).lineLimit(2)
                     Text("Next: " + recap.next).font(.caption).lineLimit(2)
                     if let need = recap.need {
