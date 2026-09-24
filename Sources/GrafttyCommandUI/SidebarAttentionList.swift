@@ -162,7 +162,8 @@ public struct SidebarAttentionList: View {
         return VStack(alignment: .leading, spacing: 3) {
             Text(label).font(.system(size: wide ? 11 : 10, weight: .bold)).tracking(1)
                 .foregroundStyle(color)
-            Text(section.text).font(wide ? .body : .callout)
+            Text(section.text)
+                .font(section.kind == .needsYou ? (wide ? .title2 : .title3) : (wide ? .body : .callout))
                 .fontWeight(section.kind == .needsYou ? .semibold : .regular)
                 .fixedSize(horizontal: false, vertical: true)
             if let detail = section.detail {
