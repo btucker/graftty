@@ -178,7 +178,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
 
-**LAYOUT-2.81** While a worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
+**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
+
+**LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
+
+**LAYOUT-2.83** While a worktree row has a PR/MR badge, the application shall indent its pane titles beneath the worktree name while keeping the pane row within the available column width.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1434,9 +1438,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PR-3.x — Sidebar Indicator
 
-**PR-3.1** While a worktree has a resolved PR/MR (open or merged), no assigned emoji, and no in-flight operation, its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
+**PR-3.1** While a linked worktree has a resolved PR/MR (open or merged), no assigned emoji, and no in-flight operation, its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 
-**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading emoji or fallback icon and worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
+**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between its leading project icon, emoji, or fallback icon and its worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
 
 **PR-3.3** The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
 

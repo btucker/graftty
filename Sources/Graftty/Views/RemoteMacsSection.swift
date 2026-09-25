@@ -287,6 +287,8 @@ struct RemoteMacsSection: View {
     var showsMacHierarchy = true
     var showsRepositoryHeaders = true
     var editableProjectIDs: Set<String> = []
+    var projects: [SidebarProject] = []
+    var projectIcons: [String: Data] = [:]
 
     @ViewBuilder
     var body: some View {
@@ -459,6 +461,9 @@ struct RemoteMacsSection: View {
             && selectedRemoteWorktreePath == worktree.path
         let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
         let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]))
+        let projectID = SidebarProjection.projectID(worktree)
+        let project = projects.first { $0.id == projectID }
+            ?? SidebarProject(id: projectID, repositoryID: worktree.repositoryID ?? projectID, name: worktree.repoDisplayName)
         let heading = WorktreeRow(
             entry: sidebarEntry(for: worktree),
             isActive: isActive,
@@ -474,7 +479,8 @@ struct RemoteMacsSection: View {
                     source: worktree.attentionSource
                 )
             },
-            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0]
+            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0],
+            project: project, projectIconData: projectIcons[projectID]
         )
         .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
         .contentShape(Rectangle())
@@ -503,7 +509,8 @@ struct RemoteMacsSection: View {
                             },
                             portBindings: [],
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
-                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            prBadge: worktree.prBadge
                         )
                     }
                     .buttonStyle(.plain)
@@ -589,11 +596,13 @@ struct RemoteMacsSection: View {
     }
 
     private func sidebarEntry(for worktree: WorktreePanes) -> WorktreeEntry {
-        WorktreeEntry(
+        var entry = WorktreeEntry(
             path: worktree.path,
             branch: worktree.displayBranch,
             state: WorktreeState(worktree.state)
         )
+        entry.emoji = worktree.sidebar?.emoji
+        return entry
     }
 
     private func sidebarStats(for worktree: WorktreePanes) -> WorktreeStats? {

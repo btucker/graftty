@@ -9,6 +9,39 @@ import GrafttyProtocol
 @Suite("PaneTitleRow port chip rendering and attention precedence")
 struct PaneTitleRowPortsTests {
     @MainActor
+    @Test("@spec LAYOUT-2.83: While a worktree row has a PR/MR badge, the application shall indent its pane titles beneath the worktree name while keeping the pane row within the available column width.")
+    func paneTitleAlignsAfterPRBadge() throws {
+        let badge = PRBadge(number: 356, state: .open, checks: .success,
+                            url: URL(string: "https://github.com/btucker/graftty/pull/356")!)
+        var worktree = WorktreeEntry(path: "/repo/.worktrees/needs-attention-ai", branch: "needs-attention-ai", state: .running)
+        worktree.emoji = "🧭"
+        let heading = WorktreeRow(entry: worktree, isActive: true, displayName: "needs-attention-ai",
+                                  isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil,
+                                  prBadge: badge, attentionStyle: nil)
+        let row = PaneTitleRow(title: "Explore AI-powered Needs Attention", isActiveWorktree: true,
+                               isFocusedPane: true, isBusy: false, theme: .fallback,
+                               attentionStyle: nil, portBindings: [], prBadge: badge)
+        let width: CGFloat = 300
+        let host = NSHostingController(rootView: row)
+        #expect(host.sizeThatFits(in: CGSize(width: width, height: 1000)).width <= width + 0.5)
+        if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
+            let preview = VStack(alignment: .leading, spacing: 0) { heading; row }
+                .frame(width: width, height: 84, alignment: .topLeading)
+                .padding(10)
+                .background(Color(red: 0.3, green: 0.32, blue: 0.34))
+                .environment(\.colorScheme, .dark)
+            let hosting = NSHostingView(rootView: preview)
+            hosting.frame = NSRect(x: 0, y: 0, width: width + 20, height: 104)
+            hosting.layoutSubtreeIfNeeded()
+            let url = URL(fileURLWithPath: directory)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("worktree-pane-pr-alignment.png"))
+        }
+    }
+
+    @MainActor
     @Test("@spec LAYOUT-2.56: When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.")
     func worktreeLabelsStayOnOneLine() {
         let row = WorktreeRow(entry: .init(path: "/repo/load-team-skill", branch: "auto-update-agent-plugins"),

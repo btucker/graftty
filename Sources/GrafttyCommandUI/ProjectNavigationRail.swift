@@ -21,22 +21,25 @@ public enum ProjectAccentColor {
 public struct ProjectIdentityView: View {
     public let project: SidebarProject
     public var imageData: Data?
-    public init(project: SidebarProject, imageData: Data? = nil) { self.project = project; self.imageData = imageData }
+    public var size: CGFloat
+    public init(project: SidebarProject, imageData: Data? = nil, size: CGFloat = 28) {
+        self.project = project; self.imageData = imageData; self.size = size
+    }
     private var accent: Color { ProjectAccentColor.color(for: project) }
     public var body: some View {
         Group {
             if let image = decodedImage {
-                image.resizable().scaledToFit().padding(2)
+                image.resizable().scaledToFit().padding(size < 20 ? 1 : 2)
             } else {
-                Text(project.displayInitials).font(.system(size: 11, weight: .semibold))
+                Text(project.displayInitials).font(.system(size: size < 20 ? 8 : 11, weight: .semibold))
                     .foregroundStyle(accent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(accent.opacity(0.16))
             }
         }
-        .frame(width: 28, height: 28)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.35)))
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size < 20 ? 4 : 6))
+        .overlay(RoundedRectangle(cornerRadius: size < 20 ? 4 : 6).strokeBorder(.secondary.opacity(0.35)))
         .accessibilityHidden(true)
     }
     private var decodedImage: Image? {

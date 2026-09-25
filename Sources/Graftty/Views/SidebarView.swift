@@ -197,7 +197,8 @@ struct SidebarView: View {
                           projectFilter: projectFilter, query: query,
                           showsMacHierarchy: !showsProjectRail,
                           showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
-                          editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
+                          editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
+                          projects: projects, projectIcons: projectIcons)
     }
 
     private var addRepositoryIconButton: some View {
@@ -584,6 +585,13 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
+        let projectID = localProjectID(repo)
+        let project = projects.first { $0.id == projectID }
+            ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)
+        let prBadge = prStatusStore.infos[worktree.path].map {
+            PRBadge(number: $0.number, state: $0.state, checks: $0.checks,
+                    mergeable: $0.mergeable, url: $0.url)
+        }
         let heading = WorktreeRow(
             entry: worktree,
             isActive: isActive,
@@ -595,17 +603,10 @@ struct SidebarView: View {
                 worktreePath: worktree.path,
                 repoPath: repo.path
             ),
-            prBadge: prStatusStore.infos[worktree.path].map {
-                PRBadge(
-                    number: $0.number,
-                    state: $0.state,
-                    checks: $0.checks,
-                    mergeable: $0.mergeable,
-                    url: $0.url
-                )
-            },
+            prBadge: prBadge,
             attentionStyle: attention.worktreeCapsule,
-            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
+            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
+            project: project, projectIconData: projectIcons[projectID]
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
@@ -632,7 +633,8 @@ struct SidebarView: View {
                             attentionStyle: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? [],
                             attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            prBadge: prBadge
                         )
                     }
                     .buttonStyle(.plain)

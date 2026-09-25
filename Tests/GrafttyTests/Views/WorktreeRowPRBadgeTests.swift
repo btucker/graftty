@@ -6,7 +6,15 @@ import Testing
 
 @Suite("WorktreeRow PR/MR badge presentation")
 struct WorktreeRowPRBadgeTests {
-    @Test("@spec LAYOUT-2.81: While a worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.")
+    @Test("@spec LAYOUT-2.82: While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.")
+    func mainCheckoutUsesProjectIcon() {
+        #expect(WorktreeRow.leadingSequence(isMainCheckout: true, hasEmoji: true, hasPR: true)
+                == [.projectIcon, .prBadge, .label])
+        #expect(WorktreeRow.leadingSequence(isMainCheckout: true, hasEmoji: false, hasPR: false)
+                == [.projectIcon, .label])
+    }
+
+    @Test("@spec LAYOUT-2.81: While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.")
     func leadingIdentityPrecedesPRAndName() {
         #expect(WorktreeRow.leadingSequence(hasEmoji: true, hasPR: true) == [.emoji, .prBadge, .label])
         #expect(WorktreeRow.leadingSequence(hasEmoji: true, hasPR: false) == [.emoji, .label])

@@ -71,6 +71,9 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
+    /// Match the parent row's badge width so this pane title begins under
+    /// the worktree name rather than under its PR/MR reference.
+    var prBadge: PRBadge? = nil
 
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
@@ -113,6 +116,14 @@ struct PaneTitleRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let prBadge {
+                SidebarPRBadge(badge: prBadge)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .hidden()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .padding(.trailing, 2)
+            }
             Text("↳")
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .bold : .regular)
@@ -145,13 +156,10 @@ struct PaneTitleRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
-        // Place the `↳` glyph's vertical stroke directly under the center
-        // of the worktree row's house/branch icon above. The worktree
-        // row's leading padding is 8pt + 12pt icon = icon center at 14pt.
-        // The `↳` character's vertical stroke sits at its own left edge,
-        // so a 14pt leading padding drops that stroke onto the icon's
-        // vertical centerline.
-        .padding(.leading, 14)
+        // The identity slot is 18pt wide. The 20pt inset plus a hidden
+        // PR/MR badge of the same intrinsic width keeps pane titles aligned
+        // with their worktree label, including when the badge width varies.
+        .padding(.leading, 20)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -252,13 +260,17 @@ struct WorktreeRow: View {
     /// reachable.
     let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
+    var project: SidebarProject? = nil
+    var projectIconData: Data? = nil
 
     enum LeadingItem: Hashable {
-        case emoji, typeIcon, prBadge, label
+        case projectIcon, emoji, typeIcon, prBadge, label
     }
 
-    static func leadingSequence(hasEmoji: Bool, hasPR: Bool, isInFlight: Bool = false) -> [LeadingItem] {
-        var items: [LeadingItem] = [hasEmoji && !isInFlight ? .emoji : .typeIcon]
+    static func leadingSequence(isMainCheckout: Bool = false, hasEmoji: Bool, hasPR: Bool,
+                                isInFlight: Bool = false) -> [LeadingItem] {
+        let identity: LeadingItem = isInFlight ? .typeIcon : isMainCheckout ? .projectIcon : hasEmoji ? .emoji : .typeIcon
+        var items: [LeadingItem] = [identity]
         if hasPR { items.append(.prBadge) }
         items.append(.label)
         return items
@@ -267,13 +279,16 @@ struct WorktreeRow: View {
     var body: some View {
         HStack(spacing: 6) {
             SidebarActivityBadge(attentionCount)
-            ForEach(Self.leadingSequence(hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
+            ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
                                          isInFlight: entry.state.isInFlight), id: \.self) { item in
                 switch item {
+                case .projectIcon:
+                    ProjectIdentityView(project: project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName),
+                                        imageData: projectIconData, size: 18)
                 case .emoji:
                     if let emoji = entry.emoji {
                         Text(emoji).font(.system(size: 15))
-                            .frame(width: 12).accessibilityHidden(true)
+                            .frame(width: 18).accessibilityHidden(true)
                     }
                 case .typeIcon:
                     typeIcon
@@ -302,9 +317,8 @@ struct WorktreeRow: View {
         .contentShape(Rectangle())
     }
 
-    /// Fallback when a worktree has no emoji: `house` for the repo's main
-    /// checkout, `arrow.triangle.branch` for linked worktrees, and
-    /// `arrow.triangle.pull` once a PR/MR is associated. The icon's color encodes the
+    /// Fallback when a linked worktree has no emoji: `arrow.triangle.branch`,
+    /// or `arrow.triangle.pull` once a PR/MR is associated. The icon's color encodes the
     /// worktree's running state: dim foreground when closed, green when
     /// running, yellow when stale. In-flight rows (`.creating` /
     /// `.deleting`) get a `ProgressView` in place of the icon so the
@@ -315,7 +329,7 @@ struct WorktreeRow: View {
         if entry.state.isInFlight {
             ProgressView()
                 .controlSize(.mini)
-                .frame(width: 12)
+                .frame(width: 18)
         } else {
             Image(systemName: WorktreeRowIcon.symbolName(
                 isMainCheckout: isMainCheckout,
