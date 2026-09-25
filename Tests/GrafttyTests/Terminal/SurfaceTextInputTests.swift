@@ -139,6 +139,27 @@ struct NativeDictationDeliveryTests {
         #expect(directWrites.isEmpty)
     }
 
+    @Test("Held editing keys continue reaching AppKit while composition is active",
+          arguments: [UInt16(51), UInt16(123)])
+    func activeCompositionKeyRepeat(keyCode: UInt16) throws {
+        let fixture = TextInputFixture()
+        var interpreted: [UInt16] = []
+        fixture.view.surfaceOperations.interpretComposition = { _, event in
+            interpreted.append(event.keyCode)
+        }
+        fixture.view.setMarkedText("pending", selectedRange: .init(location: 7, length: 0), replacementRange: noReplacement)
+        fixture.view.keyDown(with: try fixture.keyEvent(keyCode, text: ""))
+        fixture.view.keyDown(with: try fixture.keyEvent(keyCode, text: "", repeatKey: true))
+        #expect(interpreted == [keyCode, keyCode])
+        #expect(fixture.keyCodes.isEmpty)
+        fixture.view.unmarkText()
+        fixture.view.keyDown(with: try fixture.keyEvent(keyCode, text: "", repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(keyCode, text: "", type: .keyUp))
+        #expect(interpreted == [keyCode, keyCode])
+        #expect(fixture.keyCodes.isEmpty)
+        #expect(fixture.writes.isEmpty)
+    }
+
     @Test("A held composition key cannot submit input after composition ends")
     func compositionKeyRepeat() throws {
         let fixture = TextInputFixture()

@@ -820,6 +820,9 @@ struct SurfaceNSViewGhosttySurfaceOperations {
         ghostty_surface_ime_point(surface, &x, &y, &width, &height)
         return NSRect(x: x, y: y, width: width, height: height)
     }
+    var interpretComposition: @MainActor (SurfaceNSView, NSEvent) -> Void = { view, event in
+        view.interpretKeyEvents([event])
+    }
     var key: (ghostty_surface_t, ghostty_input_key_s) -> Bool = { ghostty_surface_key($0, $1) }
     var setFocus: (ghostty_surface_t, Bool) -> Void = { ghostty_surface_set_focus($0, $1) }
 
@@ -1228,7 +1231,7 @@ final class SurfaceNSView: NSView {
         if event.isARepeat {
             // A key that committed composition stays consumed until release,
             // even though the marked text has already disappeared.
-            if compositionKeyCodes.contains(event.keyCode) { return }
+            if !hasMarkedText(), compositionKeyCodes.contains(event.keyCode) { return }
         } else {
             // A prior release may have gone to another window after a focus
             // change. A new physical press begins a new key lifecycle.
@@ -1243,7 +1246,7 @@ final class SurfaceNSView: NSView {
             compositionKeyCodes.insert(event.keyCode)
             interpretingComposition = true
             defer { interpretingComposition = false }
-            interpretKeyEvents([event])
+            surfaceOperations.interpretComposition(self, event)
             return
         }
         reclaimDisplayControlForUserInputIfNeeded(event)
