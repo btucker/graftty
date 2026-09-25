@@ -5,6 +5,33 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test("@spec AGENT-3.21: When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.")
+    func resumedAgentProgressFollowsStopInTimestampOrder() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-attention-progress-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let first = Date(timeIntervalSince1970: 100)
+        let second = Date(timeIntervalSince1970: 200)
+
+        try handoff.progress(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+                             sessionID: "thread-1", progressedAt: second)
+        _ = try handoff.stop(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+                             sessionID: "thread-1", paneSessionName: nil,
+                             stopHookActive: true, stoppedAt: first)
+
+        var events: [AttentionFileActivityEvent] = []
+        #expect(try handoff.consumeActivities { events.append($0) } == 2)
+        guard events.count == 2 else {
+            Issue.record("expected stop and progress events")
+            return
+        }
+        guard case .stop = events[0], case .progress = events[1] else {
+            Issue.record("stop must be applied before later progress")
+            return
+        }
+    }
+
     @Test("@spec AGENT-3.19: When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.")
     func unmanagedAgentReportAppearsWithoutStopHook() throws {
         let root = FileManager.default.temporaryDirectory

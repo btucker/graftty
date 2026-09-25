@@ -18,6 +18,26 @@ public struct AttentionFileStopEvent: Codable, Sendable {
     public let stoppedAt: Date
 }
 
+public struct AttentionFileProgressEvent: Codable, Sendable {
+    public let worktree: String
+    public let agentID: String?
+    public let runtime: TeamHookRuntime
+    public let sessionID: String?
+    public let progressedAt: Date
+}
+
+public enum AttentionFileActivityEvent: Sendable {
+    case stop(AttentionFileStopEvent)
+    case progress(AttentionFileProgressEvent)
+
+    var occurredAt: Date {
+        switch self {
+        case .stop(let event): event.stoppedAt
+        case .progress(let event): event.progressedAt
+        }
+    }
+}
+
 public enum AttentionFileHandoffError: Error {
     case unsafeDirectory
     case invalidRecap
@@ -82,7 +102,8 @@ public struct AttentionFileHandoff: Sendable {
         sessionID: String?,
         paneSessionName: String?,
         stopHookActive: Bool,
-        turnID: String? = nil
+        turnID: String? = nil,
+        stoppedAt: Date = Date()
     ) throws -> AttentionFileStopAction {
         try ensureDirectory()
         let marker = turnID.map { _ in markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID) }
@@ -116,7 +137,7 @@ public struct AttentionFileHandoff: Sendable {
             sessionID: sessionID,
             paneSessionName: paneSessionName,
             recap: recap,
-            stoppedAt: Date()
+            stoppedAt: stoppedAt
         )
         try enqueueStop(event)
         if let marker, let turnID {
@@ -126,33 +147,87 @@ public struct AttentionFileHandoff: Sendable {
         return .queued
     }
 
+    /// Turn-start hooks use this path because a sandboxed agent may be
+    /// unable to reach the control socket that clears its prior stopped card.
+    public func progress(
+        worktree: String,
+        agentID: String?,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        progressedAt: Date = Date()
+    ) throws {
+        guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
+        try ensureDirectory()
+        let event = AttentionFileProgressEvent(
+            worktree: worktree, agentID: agentID, runtime: runtime,
+            sessionID: sessionID, progressedAt: progressedAt
+        )
+        let micros = Int64(progressedAt.timeIntervalSince1970 * 1_000_000)
+        let name = "progress-\(micros)-\(UUID().uuidString).json"
+        try JSONEncoder().encode(event).write(
+            to: rootDirectory.appendingPathComponent(name), options: .atomic
+        )
+    }
+
     /// Replays durable events after a restart and removes each file only after
     /// its handler returns. Repeating a card after an app crash is safer than
     /// silently losing the stopped turn.
     @discardableResult
     public func consumeStops(_ handle: (AttentionFileStopEvent) -> Void) throws -> Int {
+        try consumeFiles(includeProgress: false) { event in
+            if case .stop(let stop) = event { handle(stop) }
+        }
+    }
+
+    @discardableResult
+    public func consumeActivities(_ handle: (AttentionFileActivityEvent) -> Void) throws -> Int {
+        try consumeFiles(includeProgress: true, handle)
+    }
+
+    private func consumeFiles(
+        includeProgress: Bool,
+        _ handle: (AttentionFileActivityEvent) -> Void
+    ) throws -> Int {
         try ensureDirectory()
         let files = try FileManager.default.contentsOfDirectory(
             at: rootDirectory,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
-        ).filter { $0.lastPathComponent.hasPrefix("stop-") && $0.pathExtension == "json" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        var count = 0
-        for file in files.prefix(100) {
+        ).filter {
+            $0.pathExtension == "json" && ($0.lastPathComponent.hasPrefix("stop-")
+                || (includeProgress && $0.lastPathComponent.hasPrefix("progress-")))
+        }
+        var events: [(URL, AttentionFileActivityEvent)] = []
+        for file in files {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
             guard values.isRegularFile == true, (values.fileSize ?? 0) <= 16_384 else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
-            let event: AttentionFileStopEvent
-            do {
-                event = try JSONDecoder().decode(AttentionFileStopEvent.self, from: Data(contentsOf: file))
-            } catch {
+            let data = try Data(contentsOf: file)
+            let event: AttentionFileActivityEvent?
+            if file.lastPathComponent.hasPrefix("stop-") {
+                event = (try? JSONDecoder().decode(AttentionFileStopEvent.self, from: data))
+                    .map { AttentionFileActivityEvent.stop($0) }
+            } else {
+                event = (try? JSONDecoder().decode(AttentionFileProgressEvent.self, from: data))
+                    .map { AttentionFileActivityEvent.progress($0) }
+            }
+            guard let event else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
-            guard !event.worktree.isEmpty, event.recap?.isValid != false else {
+            events.append((file, event))
+        }
+        events.sort { $0.1.occurredAt < $1.1.occurredAt }
+        var count = 0
+        for (file, event) in events.prefix(100) {
+            let isValid: Bool
+            switch event {
+            case .stop(let stop): isValid = !stop.worktree.isEmpty && stop.recap?.isValid != false
+            case .progress(let progress): isValid = !progress.worktree.isEmpty
+            }
+            guard isValid else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }

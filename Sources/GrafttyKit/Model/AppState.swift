@@ -138,14 +138,16 @@ public struct AppState: Codable, Sendable, Equatable {
     /// provider session, even if its pane mapping changed in the meantime.
     public mutating func clearAgentStopAttention(
         worktreePath: String,
-        providerSessionKey: String?
+        providerSessionKey: String?,
+        progressedAt: Date = Date()
     ) {
         guard let providerSessionKey else { return }
         for repoIdx in repos.indices {
             for wtIdx in repos[repoIdx].worktrees.indices
                 where repos[repoIdx].worktrees[wtIdx].path == worktreePath {
                 repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(
-                    providerSessionKey: providerSessionKey
+                    providerSessionKey: providerSessionKey,
+                    progressedAt: progressedAt
                 )
                 return
             }

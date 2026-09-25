@@ -8,6 +8,7 @@ private enum WorktreeRowGeometry {
     static let identityWidth: CGFloat = 18
     static let spacing: CGFloat = 6
     static let horizontalInset: CGFloat = 8
+    static let paneIndent: CGFloat = 14
 }
 
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
@@ -77,7 +78,7 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
-    /// Match the parent row's badge width so this pane title begins under
+    /// Match the parent row's badge width so the pane title sits just beyond
     /// the worktree name rather than under its PR/MR reference.
     var prBadge: PRBadge? = nil
 
@@ -184,6 +185,7 @@ struct PaneTitleRow: View {
         // Keep attention in the arrow slot so a count sits beside its pane
         // without pushing the title past the worktree name.
         .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
+        .padding(.leading, WorktreeRowGeometry.paneIndent)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }

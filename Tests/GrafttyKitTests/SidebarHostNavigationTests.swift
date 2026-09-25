@@ -124,13 +124,14 @@ struct SidebarHostNavigationTests {
     }
 
     @Test("""
-@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 """)
     func unseenStopSurvivesUntilVisit() throws {
         var worktree = WorktreeEntry(path: "/repo/w", branch: "feature")
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100))
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
         worktree.unseenAgentStop = stop
-        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:other")
         #expect(worktree.unseenAgentStop == stop)
         #expect(worktree.hasAttention)
         let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
@@ -141,6 +142,9 @@ struct SidebarHostNavigationTests {
         #expect(queue.count == 1)
         #expect(queue.first?.title == "Codex stopped")
         #expect(queue.first?.occurrence?.timestamp == stop.stoppedAt)
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        #expect(worktree.unseenAgentStop == nil)
+        worktree.unseenAgentStop = stop
         worktree.acknowledgeAttention()
         #expect(worktree.unseenAgentStop == nil)
         worktree.unseenAgentStop = stop

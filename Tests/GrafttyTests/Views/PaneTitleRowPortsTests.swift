@@ -10,8 +10,8 @@ import GrafttyCommandUI
 @Suite("PaneTitleRow port chip rendering and attention precedence")
 struct PaneTitleRowPortsTests {
     @MainActor
-    @Test("@spec LAYOUT-2.83: While a worktree row has a PR/MR badge, the application shall align pane titles beneath the worktree name even when a pane has an attention count, keeping each pane row within the available column width.")
-    func paneTitleAlignsAfterPRBadge() throws {
+    @Test("@spec LAYOUT-2.83: While a worktree row shows pane children, the application shall indent their titles beyond the worktree name with or without a PR/MR badge or attention count, keeping each pane row within the available column width.")
+    func paneTitleIndentsWithOrWithoutPRBadge() throws {
         let badge = PRBadge(number: 356, state: .open, checks: .pending,
                             url: URL(string: "https://github.com/btucker/graftty/pull/356")!)
         var worktree = WorktreeEntry(path: "/repo/.worktrees/needs-attention-ai", branch: "needs-attention-ai", state: .running)
@@ -25,8 +25,11 @@ struct PaneTitleRowPortsTests {
         let countedRow = PaneTitleRow(title: "Add terminal pane padding", isActiveWorktree: true,
                                       isFocusedPane: false, isBusy: false, theme: .fallback,
                                       attentionStyle: nil, portBindings: [], attentionCount: 1, prBadge: badge)
+        let noPRRow = PaneTitleRow(title: "Plan Mac speech-to-text terminal use", isActiveWorktree: false,
+                                   isFocusedPane: false, isBusy: true, theme: .fallback,
+                                   attentionStyle: nil, portBindings: [], attentionCount: 1)
         let width: CGFloat = 300
-        for paneRow in [row, countedRow] {
+        for paneRow in [row, countedRow, noPRRow] {
             let host = NSHostingController(rootView: paneRow)
             #expect(host.sizeThatFits(in: CGSize(width: width, height: 1000)).width <= width + 0.5)
         }

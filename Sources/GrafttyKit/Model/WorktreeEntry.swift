@@ -272,18 +272,31 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
     /// Finds attention by its persisted owner rather than re-resolving the
     /// provider's current pane, which may have moved since the prompt began.
-    public mutating func clearAgentStopAttention(providerSessionKey: String?) {
+    public mutating func clearAgentStopAttention(
+        providerSessionKey: String?,
+        progressedAt: Date = Date()
+    ) {
         guard let providerSessionKey else { return }
+        // Older saved stops have no owner. Since there is only one stop card
+        // per worktree, prefer clearing an ambiguous legacy card when any
+        // agent makes progress here rather than showing a false stopped state.
+        if let stop = unseenAgentStop,
+           stop.stoppedAt <= progressedAt,
+           (stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey) {
+            unseenAgentStop = nil
+        }
         if attention?.source == .agentStop,
-           attention?.providerSessionKey == providerSessionKey {
+           attention?.providerSessionKey == providerSessionKey,
+           (attention?.timestamp ?? .distantFuture) <= progressedAt {
             attention = nil
         }
         paneAttention = paneAttention.filter { _, attention in
             attention.source != .agentStop
                 || attention.providerSessionKey != providerSessionKey
+                || attention.timestamp > progressedAt
         }
     }
 

@@ -118,7 +118,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 
-**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
@@ -182,7 +182,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
 
-**LAYOUT-2.83** While a worktree row has a PR/MR badge, the application shall align pane titles beneath the worktree name even when a pane has an attention count, keeping each pane row within the available column width.
+**LAYOUT-2.83** While a worktree row shows pane children, the application shall indent their titles beyond the worktree name with or without a PR/MR badge or attention count, keeping each pane row within the available column width.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -2616,7 +2616,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
 
-**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
 
 **AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 
@@ -2649,6 +2649,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
 
 **AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
+
+**AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
 
 ### AGENT-4.x
 

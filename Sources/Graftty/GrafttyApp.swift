@@ -1668,23 +1668,37 @@ struct GrafttyApp: App {
             try attentionObserver.start {
                 Task { @MainActor in
                     do {
-                        try attentionHandoff.consumeStops { event in
-                            guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
-                            if let pane = event.paneSessionName,
-                               binding.wrappedValue.worktree(forPath: event.worktree)?
-                                .paneSlot(forSessionName: pane) != nil {
-                                services.claudeSessionRegistry.recordHook(
-                                    runtime: event.runtime, event: .stop,
-                                    sessionID: event.sessionID ?? event.agentID,
-                                    paneSessionName: pane, attentionReason: nil
+                        try attentionHandoff.consumeActivities { activity in
+                            switch activity {
+                            case .progress(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                Self.clearAgentAttention(
+                                    callerPath: event.worktree,
+                                    callerAgentID: event.agentID,
+                                    runtime: event.runtime,
+                                    sessionID: event.sessionID,
+                                    progressedAt: event.progressedAt,
+                                    appState: binding
+                                )
+                            case .stop(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                if let pane = event.paneSessionName,
+                                   binding.wrappedValue.worktree(forPath: event.worktree)?
+                                    .paneSlot(forSessionName: pane) != nil {
+                                    services.claudeSessionRegistry.recordHook(
+                                        runtime: event.runtime, event: .stop,
+                                        sessionID: event.sessionID ?? event.agentID,
+                                        paneSessionName: pane, attentionReason: nil
+                                    )
+                                }
+                                Self.recordStoppedTurn(
+                                    callerPath: event.worktree, runtime: event.runtime,
+                                    callerAgentID: event.agentID, sessionID: event.sessionID,
+                                    paneSessionName: event.paneSessionName, recap: event.recap,
+                                    stoppedAt: event.stoppedAt, appState: binding,
+                                    terminalManager: tm
                                 )
                             }
-                            Self.recordStoppedTurn(
-                                callerPath: event.worktree, runtime: event.runtime,
-                                paneSessionName: event.paneSessionName, recap: event.recap,
-                                stoppedAt: event.stoppedAt, appState: binding,
-                                terminalManager: tm
-                            )
                             Self.persistAppState(binding.wrappedValue)
                         }
                     } catch {
@@ -4454,6 +4468,7 @@ struct GrafttyApp: App {
             guard case .record(let recap) = outcome else { return .teamHookOutput("{}") }
             recordStoppedTurn(
                 callerPath: callerPath, runtime: runtime,
+                callerAgentID: callerAgentID, sessionID: sessionID,
                 paneSessionName: paneSessionName, recap: recap,
                 stoppedAt: Date(), appState: appState,
                 terminalManager: terminalManager
@@ -4622,6 +4637,8 @@ struct GrafttyApp: App {
     private static func recordStoppedTurn(
         callerPath: String,
         runtime: TeamHookRuntime,
+        callerAgentID: String?,
+        sessionID: String?,
         paneSessionName: String?,
         recap: AttentionRecap?,
         stoppedAt: Date,
@@ -4636,7 +4653,10 @@ struct GrafttyApp: App {
             agentName: AgentStopNotification.displayName(runtime),
             stoppedAt: stoppedAt,
             recap: recap,
-            paneTitle: paneTitle
+            paneTitle: paneTitle,
+            providerSessionKey: AgentHookAttentionIdentity.key(
+                runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
+            )
         )
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &appState.wrappedValue.repos)
         for ri in appState.wrappedValue.repos.indices {
@@ -4712,6 +4732,7 @@ struct GrafttyApp: App {
         callerAgentID: String?,
         runtime: TeamHookRuntime,
         sessionID: String?,
+        progressedAt: Date = Date(),
         appState: Binding<AppState>
     ) {
         let providerSessionKey = AgentHookAttentionIdentity.key(
@@ -4721,7 +4742,8 @@ struct GrafttyApp: App {
         )
         appState.wrappedValue.clearAgentStopAttention(
             worktreePath: callerPath,
-            providerSessionKey: providerSessionKey
+            providerSessionKey: providerSessionKey,
+            progressedAt: progressedAt
         )
     }
 

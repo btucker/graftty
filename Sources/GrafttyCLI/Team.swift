@@ -223,6 +223,17 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        func stageAttentionProgress() {
+            try? AttentionFileHandoff().progress(
+                worktree: worktreePath,
+                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                runtime: runtime,
+                sessionID: resolvedSessionID
+            )
+        }
+        if event == .sessionStart || event == .userPromptSubmit {
+            stageAttentionProgress()
+        }
         if runtime == .claude,
            skillManaged,
            event == .sessionStart || event == .postToolUse || event == .stop,
@@ -275,13 +286,19 @@ struct TeamHook: ParsableCommand {
             switch response {
             case .teamHookOutput(let output):
                 print(output)
-            case .error:
+            case .error, .serverBusy:
+                if event == .postToolUse || event == .postToolUseFailure {
+                    stageAttentionProgress()
+                }
                 print("{}")
-            case .serverBusy, .ok, .paneList, .paneShow, .teamList, .teamInbox,
-                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
+            case .ok, .paneList, .paneShow, .teamList, .teamInbox,
+                .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 print("{}")
             }
         } catch {
+            if event == .postToolUse || event == .postToolUseFailure {
+                stageAttentionProgress()
+            }
             if event == .sessionStart, skillManaged,
                let output = try? TeamHookRenderer.sessionStart(
                    runtime: runtime, teamContext: "", skillManaged: true

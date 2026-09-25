@@ -164,15 +164,14 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
     public var timestamp: Double
     public var recap: AttentionRecap?
     public var paneTitle: String?
-    public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil) {
-        self.init(agentName: agentName, stoppedAt: stoppedAt, recap: recap, paneTitle: nil)
-    }
+    public var providerSessionKey: String?
     public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil,
-                paneTitle: String?) {
+                paneTitle: String? = nil, providerSessionKey: String? = nil) {
         self.agentName = agentName
         self.timestamp = stoppedAt.timeIntervalSinceReferenceDate
         self.recap = recap
         self.paneTitle = paneTitle
+        self.providerSessionKey = providerSessionKey
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
     public var title: String { "\(agentName) stopped" }
