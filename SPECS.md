@@ -182,7 +182,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
 
-**LAYOUT-2.83** While a worktree row has a PR/MR badge, the application shall indent its pane titles beneath the worktree name while keeping the pane row within the available column width.
+**LAYOUT-2.83** While a worktree row has a PR/MR badge, the application shall align pane titles beneath the worktree name even when a pane has an attention count, keeping each pane row within the available column width.
 
 ### LAYOUT-3.x — Adding Repositories
 

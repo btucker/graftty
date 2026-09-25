@@ -107,6 +107,7 @@ struct PaneTitleRow: View {
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree
             ))
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -132,19 +133,30 @@ struct PaneTitleRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: WorktreeRowGeometry.spacing) {
-            SidebarActivityBadge(0)
             if let prBadge {
                 Color.clear.frame(width: WorktreeRowGeometry.identityWidth, height: 1)
                 SidebarPRBadge(badge: prBadge)
                     .fixedSize(horizontal: true, vertical: false)
                     .hidden()
-                    .overlay(alignment: .trailing) { paneArrow }
-                    .allowsHitTesting(false)
                     .accessibilityHidden(true)
+                    .overlay(alignment: .trailing) {
+                        if attentionCount > 0 {
+                            SidebarActivityBadge(attentionCount)
+                        } else {
+                            paneArrow
+                        }
+                    }
+                    .allowsHitTesting(false)
             } else {
-                paneArrow.frame(width: WorktreeRowGeometry.identityWidth, alignment: .trailing)
+                Group {
+                    if attentionCount > 0 {
+                        SidebarActivityBadge(attentionCount)
+                    } else {
+                        paneArrow
+                    }
+                }
+                .frame(width: WorktreeRowGeometry.identityWidth, alignment: .trailing)
             }
-            SidebarActivityBadge(attentionCount)
             if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
                 // intrinsic width) on one line. A plain HStack — NOT
@@ -169,8 +181,8 @@ struct PaneTitleRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
-        // Match WorktreeRow's identity and badge slots so the pane title
-        // starts at the worktree name, regardless of reference width.
+        // Keep attention in the arrow slot so a count sits beside its pane
+        // without pushing the title past the worktree name.
         .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

@@ -10,7 +10,7 @@ import GrafttyCommandUI
 @Suite("PaneTitleRow port chip rendering and attention precedence")
 struct PaneTitleRowPortsTests {
     @MainActor
-    @Test("@spec LAYOUT-2.83: While a worktree row has a PR/MR badge, the application shall indent its pane titles beneath the worktree name while keeping the pane row within the available column width.")
+    @Test("@spec LAYOUT-2.83: While a worktree row has a PR/MR badge, the application shall align pane titles beneath the worktree name even when a pane has an attention count, keeping each pane row within the available column width.")
     func paneTitleAlignsAfterPRBadge() throws {
         let badge = PRBadge(number: 356, state: .open, checks: .pending,
                             url: URL(string: "https://github.com/btucker/graftty/pull/356")!)
@@ -22,23 +22,29 @@ struct PaneTitleRowPortsTests {
         let row = PaneTitleRow(title: "Explore AI-powered Needs Attention", isActiveWorktree: true,
                                isFocusedPane: true, isBusy: false, theme: .fallback,
                                attentionStyle: nil, portBindings: [], prBadge: badge)
+        let countedRow = PaneTitleRow(title: "Add terminal pane padding", isActiveWorktree: true,
+                                      isFocusedPane: false, isBusy: false, theme: .fallback,
+                                      attentionStyle: nil, portBindings: [], attentionCount: 1, prBadge: badge)
         let width: CGFloat = 300
-        let host = NSHostingController(rootView: row)
-        #expect(host.sizeThatFits(in: CGSize(width: width, height: 1000)).width <= width + 0.5)
+        for paneRow in [row, countedRow] {
+            let host = NSHostingController(rootView: paneRow)
+            #expect(host.sizeThatFits(in: CGSize(width: width, height: 1000)).width <= width + 0.5)
+        }
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
             let preview = ProjectWorktreeColumn {
                 VStack(spacing: 0) {
                     Button {} label: { heading.frame(minHeight: 28) }.buttonStyle(.plain)
                     Button {} label: { row }.buttonStyle(.plain)
+                    Button {} label: { countedRow }.buttonStyle(.plain)
                 }
                 .padding(.vertical, 8)
                 .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
             }
-                .frame(width: width, height: 110)
+                .frame(width: width, height: 132)
                 .background(Color(red: 0.3, green: 0.32, blue: 0.34))
                 .environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: preview)
-            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 110)
+            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 132)
             hosting.layoutSubtreeIfNeeded()
             let url = URL(fileURLWithPath: directory)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
