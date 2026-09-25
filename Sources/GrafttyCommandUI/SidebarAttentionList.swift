@@ -43,8 +43,7 @@ public struct SidebarAttentionList: View {
                     let rows = navigation.attentionItems(live: items, projects: projects)
                     let buckets = SidebarAttentionBuckets(items: rows)
                     if rows.isEmpty {
-                        let allExcluded = !projects.isEmpty && projects.allSatisfy { navigation.excludedAttentionProjectIDs.contains($0.id) }
-                        Text(allExcluded ? "Select a project to see its attention." : navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
+                        Text(navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
                             .font(.callout).foregroundStyle(.secondary).padding(12)
                     }
                     if navigation.filter == .needsYou {

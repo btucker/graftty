@@ -58,7 +58,6 @@ public struct ProjectNavigationRail: View {
     public var icons: [String: Data]
     public var selectedID: String?
     public var showsAttention: Bool
-    public var excludedAttentionProjectIDs: Set<String>
     @Binding public var collapsed: Bool
     @Binding public var expandedWidth: Double
     public var onSelect: (SidebarProject) -> Void
@@ -74,7 +73,7 @@ public struct ProjectNavigationRail: View {
     @State private var resizeStartWidth: Double?
 
     public init(projects: [SidebarProject], counts: [String: Int], workingCounts: [String: Int] = [:], icons: [String: Data], selectedID: String?,
-                showsAttention: Bool, excludedAttentionProjectIDs: Set<String> = [], collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
+                showsAttention: Bool, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
                 localDeviceID: RemoteDeviceID? = nil,
@@ -83,7 +82,7 @@ public struct ProjectNavigationRail: View {
         self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
         self.workingCounts = workingCounts
         self.localDeviceID = localDeviceID; self.management = management
-        self.showsAttention = showsAttention; self.excludedAttentionProjectIDs = excludedAttentionProjectIDs; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
+        self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
     }
     public var body: some View {
@@ -172,10 +171,14 @@ public struct ProjectNavigationRail: View {
             }
     }
     private func projectButton(_ project: SidebarProject) -> some View {
-        Button { onSelect(project) } label: {
+        let ownerHelp = project.owner.map { " on " + $0.deviceLabel } ?? ""
+        let ownerAccessibility = project.owner.map { ", " + $0.deviceLabel } ?? ""
+        let statusHelp = project.isAvailable ? "" : " · Offline"
+        let helpText = "Open \(project.name) worktrees" + ownerHelp + statusHelp
+        let accessibilityText = "Open \(project.name) worktrees, \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + ownerAccessibility
+        return Button { onSelect(project) } label: {
             HStack(spacing: 9) {
                 ProjectIdentityView(project: project, imageData: icons[project.id])
-                    .opacity(showsAttention && excludedAttentionProjectIDs.contains(project.id) ? 0.35 : 1)
                     .overlay(alignment: .bottomLeading) {
                         if collapsed, let owner = project.owner, owner.deviceID != localDeviceID {
                             Image(systemName: "desktopcomputer").font(.system(size: 8))
@@ -212,8 +215,8 @@ public struct ProjectNavigationRail: View {
             .contentShape(Rectangle())
             .background(!showsAttention && selectedID == project.id ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
-            .help(project.name + (project.owner.map { " on " + $0.deviceLabel } ?? "") + (project.isAvailable ? "" : " · Offline"))
-            .accessibilityLabel(project.name + (showsAttention ? (excludedAttentionProjectIDs.contains(project.id) ? ", excluded from Attention" : ", included in Attention") : "") + ", \(counts[project.id, default: 0]) pending requests, \(workingCounts[project.id, default: 0]) agents working" + (project.owner.map { ", " + $0.deviceLabel } ?? ""))
+            .help(helpText)
+            .accessibilityLabel(accessibilityText)
             .contextMenu {
                 if allowsReordering && !showsAttention, let index = projects.firstIndex(where: { $0.id == project.id }) {
                     if index > 0 { Button("Move Up") { onMove(project.id, projects[index-1].id, false) } }

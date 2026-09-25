@@ -785,7 +785,6 @@ struct MainWindow: View {
                     // Same `acknowledgeAttention()` the notification-
                     // activation path uses, so the two can't drift.
                     if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
-                    appState.repos[repoIdx].worktrees[wtIdx].unseenAgentStop = nil
                 }
             }
         }

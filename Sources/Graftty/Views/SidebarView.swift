@@ -136,14 +136,10 @@ struct SidebarView: View {
         navigation.rememberedWorktrees[SidebarProjection.projectID(row)] = path
     }
     private func selectProject(_ project: SidebarProject) {
-        if navigation.showsAttention {
-            navigation.toggleAttentionProject(project.id)
-            return
-        }
         onNavigationIntent()
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
-        navigation.selectedProjectID = project.id; navigation.showsAttention = false; navigation.query = ""; navigationError = nil
+        navigation.showProject(project.id); navigationError = nil
         guard project.isAvailable else { navigationError = "The owning Mac is offline. Use Manage Remote Macs to reconnect."; return }
         if let index = appState.repos.firstIndex(where: { localProjectID($0) == project.id }) {
             appState.repos[index].isCollapsed = false
@@ -152,7 +148,9 @@ struct SidebarView: View {
             if let path { onSelect(path) }
         } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == project.owner?.deviceID }) {
             let rows = (remoteMacsModel.worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).filter { SidebarProjection.projectID($0) == project.id }
-            if let target = rows.first(where: { $0.path == navigation.rememberedWorktrees[project.id] }) ?? rows.first {
+            let remembered = navigation.rememberedWorktrees[project.id]
+                .flatMap { remoteMacsModel.relayRouter.resolveWorktree($0)?.path ?? $0 }
+            if let target = rows.first(where: { $0.path == remembered }) ?? rows.first {
                 onSelectRemoteWorktree(mac, target.path)
             }
         }
@@ -237,7 +235,6 @@ struct SidebarView: View {
             if showsProjectRail {
                 ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
-                                      excludedAttentionProjectIDs: navigation.excludedAttentionProjectIDs,
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
                                       onAttention: {
                                           onNavigationIntent()

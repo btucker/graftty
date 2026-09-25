@@ -7,7 +7,6 @@ import GrafttyProtocol
 public final class SidebarNavigationState {
     public var selectedProjectID: String?
     public var showsAttention = false
-    public private(set) var excludedAttentionProjectIDs: Set<String> = []
     private var attentionProjectOrder: [String] = []
     public var filter: SidebarActivityFilter = .needsYou
     public var query = ""
@@ -51,8 +50,14 @@ public final class SidebarNavigationState {
     }
     public func finishOpening(_ id: UUID, succeeded: Bool) {
         guard let visit = opening.removeValue(forKey: id) else { return }
-        if succeeded { opened(visit.item) }
-        else if selectionOpeningID == id {
+        let isCurrentSelection = selectionOpeningID == id
+        if succeeded {
+            opened(visit.item)
+            if isCurrentSelection {
+                rememberedWorktrees[visit.item.projectID] = visit.item.worktreeID
+                showProject(visit.item.projectID)
+            }
+        } else if isCurrentSelection {
             selectedAttentionID = visit.previousSelection
             selectionOpeningID = nil
         }
@@ -61,7 +66,7 @@ public final class SidebarNavigationState {
         history.entries.contains { $0.id == item.id && $0.item.occurrence == item.occurrence }
     }
     public func enterAttention(projects: [SidebarProject], items: [SidebarActivityItem]) {
-        excludedAttentionProjectIDs = []
+        selectionOpeningID = nil
         let pending = items.filter { $0.needsAttention && !hasViewed($0) }
         let counts = Dictionary(grouping: pending, by: \.projectID).mapValues { group in
             let direct = group.filter { $0.agentStop?.recap?.need != nil || $0.occurrence?.source == .userNotify }.count
@@ -79,13 +84,14 @@ public final class SidebarNavigationState {
     }
     public func leaveAttention() {
         showsAttention = false
-        excludedAttentionProjectIDs = []
+        selectionOpeningID = nil
         attentionProjectOrder = []
         query = ""
     }
-    public func toggleAttentionProject(_ id: String) {
-        guard showsAttention else { return }
-        if !excludedAttentionProjectIDs.insert(id).inserted { excludedAttentionProjectIDs.remove(id) }
+    public func showProject(_ id: String) {
+        leaveAttention()
+        selectedProjectID = id
+        compactShowsProjects = false
     }
     public func orderedProjects(_ projects: [SidebarProject]) -> [SidebarProject] {
         guard showsAttention else { return projects }
@@ -97,7 +103,7 @@ public final class SidebarNavigationState {
         }.map(\.element)
     }
     public func attentionItems(live: [SidebarActivityItem], projects: [SidebarProject]) -> [SidebarActivityItem] {
-        if filter == .running { return filter.apply(to: live.filter { !excludedAttentionProjectIDs.contains($0.projectID) }, query: query) }
+        if filter == .running { return filter.apply(to: live, query: query) }
         let projectIDs = Set(projects.map(\.id))
         var retained = Dictionary(history.entries.map { ($0.id, $0.item) }, uniquingKeysWith: { first, _ in first })
         for visit in opening.values {
@@ -111,7 +117,7 @@ public final class SidebarNavigationState {
             if item.occurrence != nil || retained[item.id] == nil { retained[item.id] = item }
             retained[item.id]?.prBadge = item.prBadge
         }
-        return filter.apply(to: retained.values.filter { projectIDs.contains($0.projectID) && !excludedAttentionProjectIDs.contains($0.projectID) }, query: query)
+        return filter.apply(to: retained.values.filter { projectIDs.contains($0.projectID) }, query: query)
     }
     public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject]) {
         var next = history

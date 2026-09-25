@@ -25,13 +25,43 @@ struct SidebarNavigationStateTests {
         #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
         #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).count == 2)
         #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
-        navigation.toggleAttentionProject("b")
-        #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).map(\.projectID) == ["a"])
         navigation.leaveAttention()
         #expect(navigation.orderedProjects(projects).map(\.id) == ["a", "b", "c"])
         navigation.enterAttention(projects: projects, items: [item("c1", "c")])
-        #expect(navigation.excludedAttentionProjectIDs.isEmpty)
         #expect(navigation.orderedProjects(projects).first?.id == "c")
+    }
+    @Test("@spec LAYOUT-2.80: When a project is chosen or the current Attention card opens successfully, the application shall leave Attention, select the target project, and remember the card's worktree.")
+    func attentionNavigationOpensWorktreeList() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "attention-navigation", defaults: defaults)
+        let projects = [SidebarProject(id: "a", repositoryID: "a", name: "A"),
+                        SidebarProject(id: "b", repositoryID: "b", name: "B")]
+        let item = SidebarActivityItem(id: "stop", projectID: "b", worktreeID: "worktree-b", paneID: nil,
+            projectName: "B", worktreeName: "worktree-b", title: "Stopped",
+            occurrence: .init(timestamp: .now, text: "Stopped", source: .agentStop), isBusy: false)
+        navigation.enterAttention(projects: projects, items: [item])
+        navigation.showProject("a")
+        #expect(!navigation.showsAttention)
+        #expect(navigation.selectedProjectID == "a")
+
+        navigation.enterAttention(projects: projects, items: [item])
+        let stale = navigation.beginOpening(item)
+        navigation.showProject("a")
+        navigation.finishOpening(stale, succeeded: true)
+        #expect(navigation.selectedProjectID == "a")
+        #expect(navigation.rememberedWorktrees["b"] == nil)
+
+        navigation.enterAttention(projects: projects, items: [item])
+        let opening = navigation.beginOpening(item)
+        navigation.finishOpening(opening, succeeded: false)
+        #expect(navigation.showsAttention)
+        let retry = navigation.beginOpening(item)
+        navigation.finishOpening(retry, succeeded: true)
+        #expect(!navigation.showsAttention)
+        #expect(navigation.selectedProjectID == "b")
+        #expect(navigation.rememberedWorktrees["b"] == "worktree-b")
+        navigation.enterAttention(projects: projects, items: [])
+        #expect(navigation.attentionItems(live: [], projects: projects).map(\.id) == ["stop"])
     }
     @Test("@spec LAYOUT-2.57: When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.")
     func openingAttentionPreservesPosition() throws {

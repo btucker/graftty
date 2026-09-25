@@ -517,7 +517,6 @@ public struct WorktreeListContent: View {
             HStack(spacing: 0) {
                 ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
-                                      excludedAttentionProjectIDs: navigation.excludedAttentionProjectIDs,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
                 }, set: { navigation.railCollapsed = $0 }),
@@ -525,10 +524,7 @@ public struct WorktreeListContent: View {
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
-                                      onSelect: { project in
-                                          if navigation.showsAttention { navigation.toggleAttentionProject(project.id) }
-                                          else { selectProject(project, worktrees: worktrees) }
-                                      },
+                                      onSelect: { project in selectProject(project, worktrees: worktrees) },
                                       onAttention: { setNavigationMode(showsAttention: !navigation.showsAttention) },
                                       onMove: moveProject)
                 Divider()
@@ -629,9 +625,8 @@ public struct WorktreeListContent: View {
     static func applyProjectSelection(_ project: SidebarProject, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
         // Invalidate before changing modes: offline and compact project picks
         // do not call beginSelectingWorktree, but must still cancel old opens.
-        applyNavigationMode(showsAttention: false, navigation: navigation, selectionGeneration: &selectionGeneration)
-        navigation.selectedProjectID = project.id
-        navigation.compactShowsProjects = false
+        selectionGeneration &+= 1
+        navigation.showProject(project.id)
     }
 
     static func applyNavigationMode(showsAttention: Bool, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
