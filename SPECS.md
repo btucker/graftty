@@ -392,6 +392,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.17** When a zmx-backed pane starts while backgrounded before its view lays out and then enters the visible set for the first time, the application shall forward the current live libghostty grid to the running zmx PTY unconditionally, without waiting for a later layout-settled or viewport callback; a same-size forward is a kernel no-op, so ordinary focus switches do not create harmful resize churn.
 
+**TERM-11.18** When a local terminal view joins a window after receiving an offscreen frame size or its backing properties change, the application shall resynchronize libghostty's content scale and backing-pixel viewport in that order even if its point size did not change.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.

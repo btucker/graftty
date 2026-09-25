@@ -808,6 +808,7 @@ struct SurfaceNSViewGhosttySurfaceOperations {
     var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var refresh: (ghostty_surface_t) -> Void
+    var setContentScale: ((ghostty_surface_t, Double, Double) -> Void)? = nil
 
     static let live = SurfaceNSViewGhosttySurfaceOperations(
         setSize: { surface, width, height in
@@ -818,6 +819,9 @@ struct SurfaceNSViewGhosttySurfaceOperations {
         },
         refresh: { surface in
             ghostty_surface_refresh(surface)
+        },
+        setContentScale: { surface, x, y in
+            ghostty_surface_set_content_scale(surface, x, y)
         }
     )
 }
@@ -917,10 +921,19 @@ final class SurfaceNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window, surface != nil else { return }
+        // The view can receive its final point size before it joins a window.
+        // Resolve backing pixels again now that AppKit knows the window's scale.
+        synchronizeSurfaceSize(frame.size)
         markVisibleForInput()
         if !(window.firstResponder is SurfaceNSView) {
             window.makeFirstResponder(self)
         }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard window != nil else { return }
+        synchronizeSurfaceSize(frame.size)
     }
 
     /// Maintain a single full-bounds tracking area so AppKit routes
@@ -986,24 +999,32 @@ final class SurfaceNSView: NSView {
     /// `scale_factor` we passed at surface-create time for HiDPI metrics.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        guard let surface else { return }
-        let pixels = followerPixelSize ?? convertToBacking(newSize)
+        guard synchronizeSurfaceSize(newSize) else { return }
+        markVisibleForInput()
+    }
+
+    @discardableResult
+    private func synchronizeSurfaceSize(_ size: NSSize) -> Bool {
+        guard let surface else { return false }
+        let pixels = followerPixelSize ?? convertToBacking(size)
         guard let proposed = SurfacePixelDimension.resizeProposal(
             width: pixels.width,
             height: pixels.height
         ) else {
-            return
+            return false
         }
+        let scale = Double(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+        surfaceOperations.setContentScale?(surface, scale, scale)
         surfaceOperations.setSize(
             surface,
             proposed.width,
             proposed.height
         )
         let grid = surfaceOperations.size(surface)
-        ResizeTrace.log.notice("setFrameSize pane=\(self.terminalIDTraceLabel, privacy: .public) \(proposed.width)x\(proposed.height)px grid=\(grid.columns)x\(grid.rows)")
+        ResizeTrace.log.notice("syncSurfaceSize pane=\(self.terminalIDTraceLabel, privacy: .public) \(proposed.width)x\(proposed.height)px grid=\(grid.columns)x\(grid.rows)")
         surfaceOperations.refresh(surface)
         hostManagedLayoutNotifier?()
-        markVisibleForInput()
+        return true
     }
 
     @available(*, unavailable)
