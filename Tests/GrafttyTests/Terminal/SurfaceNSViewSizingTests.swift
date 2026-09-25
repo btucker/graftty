@@ -45,8 +45,8 @@ struct SurfaceNSViewSizingTests {
         calls.removeAll()
         observedScale = nil
 
-        let window = NSWindow(contentRect: size, styleMask: [.borderless],
-                              backing: .buffered, defer: false)
+        let window = AdjustableBackingWindow(contentRect: size, styleMask: [.borderless],
+                                             backing: .buffered, defer: false)
         let container = NSView(frame: size)
         window.contentView = container
         container.addSubview(terminal)
@@ -66,9 +66,22 @@ struct SurfaceNSViewSizingTests {
         let attachedCalls = sizeCalls
         calls.removeAll()
         observedScale = nil
+        let changedScale: CGFloat = backingScale == 2 ? 1 : 2
+        window.backingScaleForTest = changedScale
         terminal.viewDidChangeBackingProperties()
         #expect(sizeCalls > attachedCalls)
         #expect(calls.starts(with: ["scale", "size"]))
-        if let observedScale { #expect(observedScale.0 == backingScale) }
+        if let observedScale {
+            #expect(observedScale.0 == Double(changedScale))
+            #expect(observedScale.1 == Double(changedScale))
+        }
+    }
+}
+
+private final class AdjustableBackingWindow: NSWindow {
+    var backingScaleForTest: CGFloat?
+
+    override var backingScaleFactor: CGFloat {
+        backingScaleForTest ?? super.backingScaleFactor
     }
 }

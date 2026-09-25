@@ -995,8 +995,8 @@ final class SurfaceNSView: NSView {
     /// rerendering after a split is added/removed).
     ///
     /// `convertToBacking(_:)` turns points → backing-store pixels, which is
-    /// what `ghostty_surface_set_size` expects; libghostty uses the
-    /// `scale_factor` we passed at surface-create time for HiDPI metrics.
+    /// what `ghostty_surface_set_size` expects. Synchronize content scale
+    /// first so libghostty computes its grid with the current window scale.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         guard synchronizeSurfaceSize(newSize) else { return }
