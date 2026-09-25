@@ -350,6 +350,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
 
+**TERM-8.14** When a terminal selection starts mid-line, the application shall include the starting column when checking whether the next word fits on the first row, while preserving paragraph, item, and code boundaries.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"
