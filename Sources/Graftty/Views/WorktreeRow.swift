@@ -4,6 +4,12 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+private enum WorktreeRowGeometry {
+    static let identityWidth: CGFloat = 18
+    static let spacing: CGFloat = 6
+    static let horizontalInset: CGFloat = 8
+}
+
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
 /// `PaneTitleRow` (pane-scoped shell-integration pings). Centralized so
 /// a restyle — font, padding, color — lands in one place and the two
@@ -93,6 +99,16 @@ struct PaneTitleRow: View {
         return false
     }
 
+    private var paneArrow: some View {
+        Text("↳")
+            .font(.caption)
+            .fontWeight(isFocusedPane ? .bold : .regular)
+            .foregroundColor(theme.paneArrow(
+                isFocusedPane: isFocusedPane,
+                isActiveWorktree: isActiveWorktree
+            ))
+    }
+
     @ViewBuilder
     private var titleText: some View {
         // AGENT-2.2: a busy pane renders its (already-animating) title in
@@ -115,22 +131,19 @@ struct PaneTitleRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: WorktreeRowGeometry.spacing) {
+            SidebarActivityBadge(0)
             if let prBadge {
+                Color.clear.frame(width: WorktreeRowGeometry.identityWidth, height: 1)
                 SidebarPRBadge(badge: prBadge)
                     .fixedSize(horizontal: true, vertical: false)
                     .hidden()
+                    .overlay(alignment: .trailing) { paneArrow }
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
-                    .padding(.trailing, 2)
+            } else {
+                paneArrow.frame(width: WorktreeRowGeometry.identityWidth, alignment: .trailing)
             }
-            Text("↳")
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .bold : .regular)
-                .foregroundColor(theme.paneArrow(
-                    isFocusedPane: isFocusedPane,
-                    isActiveWorktree: isActiveWorktree
-                ))
             SidebarActivityBadge(attentionCount)
             if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
@@ -156,11 +169,9 @@ struct PaneTitleRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
-        // The identity slot is 18pt wide. The 20pt inset plus a hidden
-        // PR/MR badge of the same intrinsic width keeps pane titles aligned
-        // with their worktree label, including when the badge width varies.
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
+        // Match WorktreeRow's identity and badge slots so the pane title
+        // starts at the worktree name, regardless of reference width.
+        .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -277,18 +288,18 @@ struct WorktreeRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: WorktreeRowGeometry.spacing) {
             SidebarActivityBadge(attentionCount)
             ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
                                          isInFlight: entry.state.isInFlight), id: \.self) { item in
                 switch item {
                 case .projectIcon:
                     ProjectIdentityView(project: project ?? SidebarProject(id: entry.path, repositoryID: entry.path, name: displayName),
-                                        imageData: projectIconData, size: 18)
+                                        imageData: projectIconData, size: WorktreeRowGeometry.identityWidth)
                 case .emoji:
                     if let emoji = entry.emoji {
                         Text(emoji).font(.system(size: 15))
-                            .frame(width: 18).accessibilityHidden(true)
+                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true)
                     }
                 case .typeIcon:
                     typeIcon
@@ -312,7 +323,7 @@ struct WorktreeRow: View {
             )
         }
         .padding(.vertical, 4)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -329,7 +340,7 @@ struct WorktreeRow: View {
         if entry.state.isInFlight {
             ProgressView()
                 .controlSize(.mini)
-                .frame(width: 18)
+                .frame(width: WorktreeRowGeometry.identityWidth)
         } else {
             Image(systemName: WorktreeRowIcon.symbolName(
                 isMainCheckout: isMainCheckout,
@@ -337,7 +348,7 @@ struct WorktreeRow: View {
             ))
                 .font(.system(size: 10))
                 .foregroundColor(typeIconColor)
-                .frame(width: 12)
+                .frame(width: WorktreeRowGeometry.identityWidth)
         }
     }
 

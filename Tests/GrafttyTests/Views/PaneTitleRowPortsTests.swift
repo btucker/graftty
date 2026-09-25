@@ -4,6 +4,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 @testable import Graftty
 
 @Suite("PaneTitleRow port chip rendering and attention precedence")
@@ -11,7 +12,7 @@ struct PaneTitleRowPortsTests {
     @MainActor
     @Test("@spec LAYOUT-2.83: While a worktree row has a PR/MR badge, the application shall indent its pane titles beneath the worktree name while keeping the pane row within the available column width.")
     func paneTitleAlignsAfterPRBadge() throws {
-        let badge = PRBadge(number: 356, state: .open, checks: .success,
+        let badge = PRBadge(number: 356, state: .open, checks: .pending,
                             url: URL(string: "https://github.com/btucker/graftty/pull/356")!)
         var worktree = WorktreeEntry(path: "/repo/.worktrees/needs-attention-ai", branch: "needs-attention-ai", state: .running)
         worktree.emoji = "🧭"
@@ -25,13 +26,19 @@ struct PaneTitleRowPortsTests {
         let host = NSHostingController(rootView: row)
         #expect(host.sizeThatFits(in: CGSize(width: width, height: 1000)).width <= width + 0.5)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
-            let preview = VStack(alignment: .leading, spacing: 0) { heading; row }
-                .frame(width: width, height: 84, alignment: .topLeading)
-                .padding(10)
+            let preview = ProjectWorktreeColumn {
+                VStack(spacing: 0) {
+                    Button {} label: { heading.frame(minHeight: 28) }.buttonStyle(.plain)
+                    Button {} label: { row }.buttonStyle(.plain)
+                }
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+            }
+                .frame(width: width, height: 110)
                 .background(Color(red: 0.3, green: 0.32, blue: 0.34))
                 .environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: preview)
-            hosting.frame = NSRect(x: 0, y: 0, width: width + 20, height: 104)
+            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 110)
             hosting.layoutSubtreeIfNeeded()
             let url = URL(fileURLWithPath: directory)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
