@@ -2136,6 +2136,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
 
+**TEAM-11.10** If the inbox observer cannot decode its first snapshot, the watcher shall still complete startup so a later poll can retry instead of leaving readiness pending forever.
+
 ### TEAM-12.x
 
 **TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.

@@ -154,9 +154,8 @@ public actor InboxWatcher {
         return { getppid() == originalParent }
     }
 
-    /// Awaits until the watcher has finished startup: PID file written and
-    /// the FSEvents observer has fired its initial callback (i.e., it is
-    /// actually listening). Resolves immediately if already ready.
+    /// Awaits until the watcher has written its PID file and processed an
+    /// initial inbox snapshot. Resolves immediately if already ready.
     /// Tests use this instead of `Task.sleep` to avoid timing flakiness on
     /// contended CI executors.
     public func whenReady() async {
@@ -165,6 +164,10 @@ public actor InboxWatcher {
             readyContinuations.append(cont)
         }
     }
+
+    #if DEBUG
+    public func isReadyForTesting() -> Bool { isReady }
+    #endif
 
     private func markReady() {
         if isReady { return }
@@ -197,6 +200,15 @@ public actor InboxWatcher {
 
         startObserver()
         captureCurrentWatermark()
+        // The observer's dispatch callback can be delayed. Process a
+        // snapshot here so readiness and cursor-based catch-up do not wait
+        // for it. If the read fails, leave the baseline unset for the
+        // observer's later retry, but still unblock readiness waiters.
+        do {
+            await handle(messages: try makeInbox().messages(teamID: teamID))
+        } catch {
+            markReady()
+        }
 
         // Park until cancellation. The observer callback is what
         // resolves `outcome`; the CLI driver kills the process on its
@@ -285,10 +297,9 @@ public actor InboxWatcher {
                     teamID: teamID
                 )
             }
-            // FSEvents has delivered its initial state and any cursor-based
-            // catch-up claim is complete. Unblock whenReady() waiters only
-            // after both startup phases so tests and callers can reason about
-            // watermark-only retries deterministically.
+            // The initial snapshot and any cursor-based catch-up claim are
+            // complete. Unblock whenReady() waiters before later observer
+            // emits so callers can reason about watermark-only retries.
             markReady()
             return
         }

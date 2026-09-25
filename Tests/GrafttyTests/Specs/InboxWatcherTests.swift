@@ -4,6 +4,48 @@ import Foundation
 
 @Suite("InboxWatcher — exit on new message + PID-file supersede")
 struct InboxWatcherTests {
+    @Test("@spec TEAM-11.10: If the inbox observer cannot decode its first snapshot, the watcher shall still complete startup so a later poll can retry instead of leaving readiness pending forever.")
+    func startupSurvivesUnreadableInitialSnapshot() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        let teamID = "team-x"
+        let inbox = TeamInbox(rootDirectory: inboxRoot)
+        try seedSession(in: inbox, teamID: teamID, sessionID: "test-session",
+                        worktree: "wt-foo-path", lastSeenID: nil)
+        let messagesURL = TeamInbox.messagesURLFor(rootDirectory: inboxRoot, teamID: teamID)
+        try FileManager.default.createDirectory(at: messagesURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try Data("{".utf8).write(to: messagesURL)
+
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: "test-session",
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: tmpRoot.appendingPathComponent("teams", isDirectory: true),
+            eventLog: nil,
+            pollIntervalNanoseconds: 50_000_000
+        )
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+        var ready = false
+        for _ in 0..<40 {
+            ready = await watcher.isReadyForTesting()
+            if ready { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(ready)
+        try FileManager.default.removeItem(at: messagesURL)
+        _ = try appendMessage(to: inbox, teamID: teamID,
+                              worktree: "wt-foo-path", body: "recovered message")
+        let result = try await outcome.wait(timeout: 3)
+        #expect(result.exitCode == 2)
+        #expect(result.stderr.contains("recovered message"))
+    }
+
     @Test("@spec TEAM-IDLE-1.4: When the watcher observes a new unread message whose canonical `to.worktree` equals its recipient worktree, it shall exit with code 2 and a stderr summary naming the sender's canonical worktree address; branch-derived member names shall remain display metadata and shall not control routing.")
     func exitsWithCode2OnMessage() async throws {
         let tmpRoot = try makeTmpDir()
@@ -35,9 +77,9 @@ struct InboxWatcherTests {
         let runTask = Task.detached { await watcher.runUntilSignal() }
         defer { runTask.cancel() }
 
-        // Wait for the watcher to register its PID and for the FSEvents
-        // observer to fire its initial callback (i.e., it's actually
-        // listening). Avoids Task.sleep, which stretches under CI load.
+        // Wait for the watcher to register its PID and process the initial
+        // inbox snapshot. The observer catches any later append, including
+        // one arriving before its dispatch source finishes attaching.
         await watcher.whenReady()
 
         // Append a message addressed to this watcher's recipient.
@@ -421,8 +463,7 @@ struct InboxWatcherTests {
         defer { runTask.cancel() }
 
         // Wait for the watcher to supersede the prior PID, write its own
-        // PID, and have the FSEvents observer attach. Replaces a
-        // Task.sleep that stretched arbitrarily on contended CI executors.
+        // PID, and finish its initial inbox snapshot.
         await watcher.whenReady()
 
         // PID file now contains our process's PID, not the prior child's.
