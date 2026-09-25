@@ -17,10 +17,14 @@ enum TerminalCopyText {
             count: Int(selection.text_len)
         )
         guard String(decoding: bytes, as: UTF8.self) == text else { return text }
-        return clean(text, columns: Int(ghostty_surface_size(surface).columns))
+        let columns = Int(ghostty_surface_size(surface).columns)
+        // Ghostty flattens viewport cells as row * columns + column.
+        // An offscreen selection start falls back to offset zero.
+        let startColumn = columns > 0 ? Int(selection.offset_start) % columns : 0
+        return clean(text, columns: columns, startColumn: startColumn)
     }
 
-    static func clean(_ text: String, columns: Int) -> String {
+    static func clean(_ text: String, columns: Int, startColumn: Int = 0) -> String {
         if let codeSelection = cleanCodeLineNumberGutter(text) { return codeSelection }
         let withoutChrome = withoutTranscriptChrome(text)
         let lines = withoutChrome.components(separatedBy: "\n")
@@ -29,6 +33,7 @@ enum TerminalCopyText {
         var result = lines[0]
         var previous = lines[0]
         var previousWasJoined = false
+        var previousStartColumn = startColumn
         for line in lines.dropFirst() {
             let indentation = line.prefix(while: { $0 == " " }).count
             let continuation = line.trimmingCharacters(in: .whitespaces)
@@ -46,7 +51,7 @@ enum TerminalCopyText {
                 && !previousContent.hasSuffix(":")
                 && (diagnosticContinuation || (!isStructuredLine(previousContent) && !isStructuredLine(continuation)))
                 && (previousIndentation < 4 || previousWasJoined || numberedDiagnostic(in: previousContent) != nil)
-                && cellWidth(previous) + 1 + nextWordWidth > columns
+                && previousStartColumn + cellWidth(previous) + 1 + nextWordWidth > columns
             if joinsWrappedLine {
                 while result.last == " " { result.removeLast() }
                 result += " " + continuation
@@ -55,6 +60,8 @@ enum TerminalCopyText {
             }
             previousWasJoined = joinsWrappedLine
             previous = line
+            // Only the first copied row can omit cells before the selection.
+            previousStartColumn = 0
         }
         return result
     }
