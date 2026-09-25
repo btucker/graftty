@@ -130,7 +130,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
-**LAYOUT-2.57** When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.
+**LAYOUT-2.57** When an Attention card body is opened, the application shall keep Attention open, retain the card's occurrence-time position, and collapse previously viewed cards with a checkmark when selection moves.
 
 **LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
 
@@ -176,7 +176,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.79** While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.
 
-**LAYOUT-2.80** When a project is chosen or the current Attention card opens successfully, the application shall leave Attention, select the target project, and remember the card's worktree.
+**LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
 
 ### LAYOUT-3.x — Adding Repositories
 

@@ -48,14 +48,16 @@ public final class SidebarNavigationState {
         selectionOpeningID = id
         return id
     }
-    public func finishOpening(_ id: UUID, succeeded: Bool) {
+    public func finishOpening(_ id: UUID, succeeded: Bool, navigateToProject: Bool = false) {
         guard let visit = opening.removeValue(forKey: id) else { return }
         let isCurrentSelection = selectionOpeningID == id
         if succeeded {
             opened(visit.item)
             if isCurrentSelection {
                 rememberedWorktrees[visit.item.projectID] = visit.item.worktreeID
-                showProject(visit.item.projectID)
+                selectedProjectID = visit.item.projectID
+                if navigateToProject { showProject(visit.item.projectID) }
+                else { selectionOpeningID = nil }
             }
         } else if isCurrentSelection {
             selectedAttentionID = visit.previousSelection
@@ -84,6 +86,7 @@ public final class SidebarNavigationState {
     }
     public func leaveAttention() {
         showsAttention = false
+        selectedAttentionID = nil
         selectionOpeningID = nil
         attentionProjectOrder = []
         query = ""

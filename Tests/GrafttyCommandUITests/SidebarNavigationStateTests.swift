@@ -30,7 +30,7 @@ struct SidebarNavigationStateTests {
         navigation.enterAttention(projects: projects, items: [item("c1", "c")])
         #expect(navigation.orderedProjects(projects).first?.id == "c")
     }
-    @Test("@spec LAYOUT-2.80: When a project is chosen or the current Attention card opens successfully, the application shall leave Attention, select the target project, and remember the card's worktree.")
+    @Test("@spec LAYOUT-2.80: When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.")
     func attentionNavigationOpensWorktreeList() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "attention-navigation", defaults: defaults)
@@ -47,23 +47,23 @@ struct SidebarNavigationStateTests {
         navigation.enterAttention(projects: projects, items: [item])
         let stale = navigation.beginOpening(item)
         navigation.showProject("a")
-        navigation.finishOpening(stale, succeeded: true)
+        navigation.finishOpening(stale, succeeded: true, navigateToProject: true)
         #expect(navigation.selectedProjectID == "a")
         #expect(navigation.rememberedWorktrees["b"] == nil)
 
         navigation.enterAttention(projects: projects, items: [item])
         let opening = navigation.beginOpening(item)
-        navigation.finishOpening(opening, succeeded: false)
+        navigation.finishOpening(opening, succeeded: false, navigateToProject: true)
         #expect(navigation.showsAttention)
         let retry = navigation.beginOpening(item)
-        navigation.finishOpening(retry, succeeded: true)
+        navigation.finishOpening(retry, succeeded: true, navigateToProject: true)
         #expect(!navigation.showsAttention)
         #expect(navigation.selectedProjectID == "b")
         #expect(navigation.rememberedWorktrees["b"] == "worktree-b")
         navigation.enterAttention(projects: projects, items: [])
         #expect(navigation.attentionItems(live: [], projects: projects).map(\.id) == ["stop"])
     }
-    @Test("@spec LAYOUT-2.57: When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.")
+    @Test("@spec LAYOUT-2.57: When an Attention card body is opened, the application shall keep Attention open, retain the card's occurrence-time position, and collapse previously viewed cards with a checkmark when selection moves.")
     func openingAttentionPreservesPosition() throws {
         let suite = "AttentionOrder." + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -75,14 +75,21 @@ struct SidebarNavigationStateTests {
                 title: "Stopped", occurrence: .init(timestamp: Date(timeIntervalSince1970: time), text: "Stopped", source: .agentStop), isBusy: false)
         }
         let older = item("older", 1), selected = item("selected", 2), latest = item("latest", 3)
+        navigation.enterAttention(projects: [project], items: [older, selected, latest])
         #expect(navigation.attentionItems(live: [older, selected, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
         let opening = navigation.beginOpening(selected)
         #expect(navigation.selectedAttentionID == selected.id)
         // Host acknowledgement can arrive before the open request completes.
         #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
         navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.showsAttention)
         #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
         #expect(navigation.hasViewed(selected))
+        let next = navigation.beginOpening(latest)
+        navigation.finishOpening(next, succeeded: true)
+        #expect(navigation.selectedAttentionID == latest.id)
+        #expect(navigation.hasViewed(selected))
+        #expect(navigation.attentionItems(live: [older, latest], projects: [project]).map(\.id) == ["latest", "selected", "older"])
         var busy = selected
         busy.occurrence = nil
         busy.isBusy = true
@@ -176,9 +183,10 @@ struct SidebarNavigationStateTests {
                 completed: "Reproduced the clipping.", next: "Inspect the affected pane layout.",
                 need: "Is this a local Mac pane, a pane following another display, or the mobile client?"))
         secondQuestion.occurrence = .init(timestamp: Date().addingTimeInterval(-3600), text: secondQuestion.title, source: .agentStop)
-        for width in [220.0, 300, 420] {
+        navigation.enterAttention(projects: [project], items: [incoming, secondQuestion])
+        func render(_ width: Double, suffix: String) async throws {
             let content = SidebarAttentionList(navigation: navigation, items: [incoming, secondQuestion], projects: [project],
-                selectionColor: Color.white.opacity(0.16), onOpen: { _ in true })
+                selectionColor: Color.white.opacity(0.16), isCurrentWorktree: { $0.id != "w" }, onOpen: { _ in true })
                 .frame(width: width, height: 850)
                 .background(Color(red: 0.21, green: 0.23, blue: 0.25)).environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: content)
@@ -203,9 +211,18 @@ struct SidebarNavigationStateTests {
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
                 let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
                 hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-                try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("attention-\(Int(width)).png"))
+                try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("attention\(suffix)-\(Int(width)).png"))
             }
         }
+        for width in [220.0, 300, 420] { try await render(width, suffix: "") }
+        let firstQuestionVisit = navigation.beginOpening(incoming)
+        navigation.finishOpening(firstQuestionVisit, succeeded: true)
+        let secondQuestionVisit = navigation.beginOpening(secondQuestion)
+        navigation.finishOpening(secondQuestionVisit, succeeded: true)
+        #expect(navigation.showsAttention)
+        #expect(navigation.hasViewed(incoming))
+        #expect(navigation.selectedAttentionID == secondQuestion.id)
+        for width in [220.0, 300, 420] { try await render(width, suffix: "-viewed") }
     }
     #endif
 

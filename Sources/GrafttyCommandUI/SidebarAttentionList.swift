@@ -8,6 +8,13 @@ private struct AttentionPRBadgeAnchor: PreferenceKey {
     }
 }
 
+private struct AttentionWorktreeNameAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 public struct SidebarAttentionList: View {
     @Bindable public var navigation: SidebarNavigationState
     public var items: [SidebarActivityItem]
@@ -49,8 +56,13 @@ public struct SidebarAttentionList: View {
                     if navigation.filter == .needsYou {
                         if !buckets.questions.isEmpty {
                             sectionHeader("Questions", count: buckets.questions.count, color: .orange)
-                            ForEach(Array(buckets.questions.enumerated()), id: \.element.id) { index, item in
-                                row(item, wide: wide, style: index == 0 ? .featuredQuestion : .question).id(item.id)
+                            let hasCurrentSelection = rows.contains {
+                                navigation.selectedAttentionID == $0.id && isCurrentWorktree($0)
+                            }
+                            let firstUnviewed = hasCurrentSelection ? nil
+                                : buckets.questions.first { !navigation.hasViewed($0) }?.id
+                            ForEach(buckets.questions) { item in
+                                row(item, wide: wide, style: item.id == firstUnviewed ? .expanded : .question).id(item.id)
                             }
                         }
                         if !buckets.stopped.isEmpty {
@@ -91,7 +103,15 @@ public struct SidebarAttentionList: View {
     }
 
     private enum RowStyle {
-        case featuredQuestion, question, stopped, other
+        case expanded, question, stopped, other, viewed
+    }
+
+    private func open(_ item: SidebarActivityItem, navigateToProject: Bool) {
+        let visit = navigation.beginOpening(item)
+        Task {
+            let succeeded = await onOpen(item)
+            navigation.finishOpening(visit, succeeded: succeeded, navigateToProject: navigateToProject)
+        }
     }
 
     private func row(_ item: SidebarActivityItem, wide: Bool, style: RowStyle) -> some View {
@@ -100,25 +120,23 @@ public struct SidebarAttentionList: View {
         let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
         let viewed = navigation.hasViewed(item)
         let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
+        let presentation: RowStyle = selected && item.agentStop?.recap != nil ? .expanded
+            : viewed && !selected ? .viewed : style
         return Button {
-            let visit = navigation.beginOpening(item)
-            Task {
-                let succeeded = await onOpen(item)
-                navigation.finishOpening(visit, succeeded: succeeded)
-            }
+            open(item, navigateToProject: false)
         } label: {
-            cardBody(item, card: card, accent: accent, viewed: viewed,
-                     offline: project?.isAvailable == false, wide: wide, style: style)
-                .padding(style == .stopped ? 9 : 12)
+            cardBody(item, card: card, accent: accent, viewed: viewed && !selected,
+                     offline: project?.isAvailable == false, wide: wide, style: presentation)
+                .padding(presentation == .stopped || presentation == .viewed ? 9 : 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .background {
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : style == .stopped ? 0.10 : 0.12))
+                        .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : presentation == .stopped ? 0.10 : 0.12))
                         .overlay {
-                            if style != .stopped {
+                            if presentation != .stopped && presentation != .viewed {
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(accent.opacity(viewed ? 0.05 : style == .featuredQuestion ? 0.18 : 0.12))
+                                    .fill(accent.opacity(viewed ? 0.05 : presentation == .expanded ? 0.18 : 0.12))
                             }
                         }
                 }
@@ -128,6 +146,22 @@ public struct SidebarAttentionList: View {
             .accessibilityValue(viewed ? "Viewed" : "")
             .contextMenu {
                 if viewed { Button("Remove from History") { navigation.forget(item.id) } }
+            }
+            .overlayPreferenceValue(AttentionWorktreeNameAnchor.self) { anchor in
+                if let anchor {
+                    GeometryReader { geometry in
+                        let bounds = geometry[anchor]
+                        Button { open(item, navigateToProject: true) } label: {
+                            Rectangle().fill(.clear).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(project?.isAvailable == false)
+                        .help("Open \(card.headerName) worktrees")
+                        .accessibilityLabel("Open \(card.headerName) worktrees")
+                        .frame(width: bounds.width, height: bounds.height)
+                        .position(x: bounds.midX, y: bounds.midY)
+                    }
+                }
             }
             .overlayPreferenceValue(AttentionPRBadgeAnchor.self) { anchor in
                 if let anchor, let badge = item.prBadge {
@@ -146,7 +180,7 @@ public struct SidebarAttentionList: View {
                           accent: Color, viewed: Bool, offline: Bool, wide: Bool,
                           style: RowStyle) -> some View {
         switch style {
-        case .featuredQuestion:
+        case .expanded:
             VStack(alignment: .leading, spacing: 0) {
                 cardHeader(item, card: card, accent: accent, offline: offline, wide: wide)
                     .padding(.bottom, 11)
@@ -202,8 +236,7 @@ public struct SidebarAttentionList: View {
                 identity(item.worktreeEmoji, accent: accent)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
-                        Text(card.headerName).font(.subheadline).fontWeight(.semibold)
-                            .lineLimit(1).help(card.headerName)
+                        worktreeName(card.headerName, font: .subheadline)
                         Spacer(minLength: 3)
                         if offline { Text("Offline").font(.caption2) }
                         elapsedTime(item)
@@ -216,6 +249,26 @@ public struct SidebarAttentionList: View {
                     if let next = card.sections.first(where: { $0.kind == .upNext }) {
                         Text(next.text).font(.caption).foregroundStyle(.secondary)
                             .lineLimit(1).help(next.text)
+                    }
+                }
+            }
+        case .viewed:
+            HStack(alignment: .top, spacing: 9) {
+                identity(item.worktreeEmoji, accent: accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        worktreeName(card.headerName, font: .subheadline)
+                        Spacer(minLength: 3)
+                        if offline { Text("Offline").font(.caption2) }
+                        elapsedTime(item)
+                    }
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                            .help("Viewed").accessibilityLabel("Viewed")
+                        titleLine(item.agentStop == nil ? item.title : card.title,
+                                  badge: item.prBadge, font: .subheadline, limit: 1)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -233,8 +286,7 @@ public struct SidebarAttentionList: View {
         HStack(alignment: .top, spacing: 8) {
             identity(item.worktreeEmoji, accent: accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.headerName).font(wide ? .callout : .subheadline).fontWeight(.semibold)
-                    .lineLimit(1).help(card.headerName)
+                worktreeName(card.headerName, font: wide ? .callout : .subheadline)
                 if let paneTitle = card.paneTitle {
                     Text(paneTitle).font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(1).help(paneTitle)
@@ -244,6 +296,11 @@ public struct SidebarAttentionList: View {
             if offline { Text("Offline").font(.caption2) }
             elapsedTime(item)
         }
+    }
+
+    private func worktreeName(_ name: String, font: Font) -> some View {
+        Text(name).font(font).fontWeight(.semibold).lineLimit(1).help(name)
+            .anchorPreference(key: AttentionWorktreeNameAnchor.self, value: .bounds) { $0 }
     }
 
     private func identity(_ emoji: String?, accent: Color) -> some View {
