@@ -272,7 +272,8 @@ struct WorktreeRow: View {
                 switch item {
                 case .emoji:
                     if let emoji = entry.emoji {
-                        Text(emoji).font(.system(size: 15)).accessibilityHidden(true)
+                        Text(emoji).font(.system(size: 15))
+                            .frame(width: 12).accessibilityHidden(true)
                     }
                 case .typeIcon:
                     typeIcon
