@@ -42,7 +42,16 @@ enum AgentPluginInstallOfferPolicy {
     }
 
     static var currentBuildVersion: String? {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String else {
+            return nil
+        }
+        return checkpointVersion(build: build, pluginVersion: AgentPluginInstaller.appBuildPluginVersion)
+    }
+
+    static func checkpointVersion(build: String, pluginVersion: String?) -> String {
+        guard AgentPluginInstaller.pluginVersion(forBuild: build) == nil,
+              let pluginVersion else { return build }
+        return "\(build)+\(pluginVersion)"
     }
 
     static func recordInstalled(

@@ -6,6 +6,21 @@ import Testing
 @Suite("Automatic provider plugin updates")
 @MainActor
 struct AgentPluginAutomaticUpdateTests {
+    @Test("@spec AGENT-6.41: When bundled plugin content changes in a development build, the application shall use its content version as the automatic-refresh checkpoint.")
+    func developmentPluginChangesRefreshCheckpoint() {
+        let first = AgentPluginInstallOfferPolicy.checkpointVersion(
+            build: "0.0.0-dev", pluginVersion: "0.0.0-dev.rabc"
+        )
+        let second = AgentPluginInstallOfferPolicy.checkpointVersion(
+            build: "0.0.0-dev", pluginVersion: "0.0.0-dev.rdef"
+        )
+        #expect(first != second)
+        #expect(first == "0.0.0-dev+0.0.0-dev.rabc")
+        #expect(AgentPluginInstallOfferPolicy.checkpointVersion(
+            build: "100.1.2", pluginVersion: "100.1.2"
+        ) == "100.1.2")
+    }
+
     @Test("@spec AGENT-6.37: When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.")
     func changedIntegrationRefreshesSameDevelopmentBuild() async {
         let suite = "AgentPluginSameBuildMigration-\(UUID().uuidString)"

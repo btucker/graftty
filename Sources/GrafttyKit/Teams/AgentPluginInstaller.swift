@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum AgentPluginProvider: String, CaseIterable, Sendable {
@@ -107,9 +108,35 @@ public struct AgentPluginInstaller: Sendable {
             return nil
         }
         return pluginVersion(forBuild: build)
+            ?? bundledResourceRoot().flatMap(developmentPluginVersion(forResourcesAt:))
     }
 
-    static func pluginVersion(forBuild build: String) -> String? {
+    /// Development bundles may keep the same nonnumeric CFBundleVersion for
+    /// many installs. Fingerprinting their bundled plugin bytes gives both
+    /// native caches a stable version that changes with the actual skill.
+    static func developmentPluginVersion(forResourcesAt root: URL) -> String? {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        let files = (enumerator.allObjects as? [URL] ?? []).sorted { $0.path < $1.path }
+        var contents = Data()
+        var fileCount = 0
+        for file in files {
+            guard let data = try? Data(contentsOf: file) else { continue }
+            let relativePath = String(file.path.dropFirst(root.path.count))
+            contents.append(contentsOf: relativePath.utf8)
+            contents.append(0)
+            contents.append(data)
+            contents.append(0)
+            fileCount += 1
+        }
+        guard fileCount > 0 else { return nil }
+        let digest = SHA256.hash(data: contents)
+        let suffix = digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+        return "0.0.0-dev.r\(suffix)"
+    }
+
+    public static func pluginVersion(forBuild build: String) -> String? {
         let parts = build.split(separator: ".", omittingEmptySubsequences: false)
         guard (1...3).contains(parts.count),
               parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }

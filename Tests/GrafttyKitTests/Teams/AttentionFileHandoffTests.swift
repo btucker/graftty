@@ -5,6 +5,28 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test("@spec AGENT-3.19: When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.")
+    func unmanagedAgentReportAppearsWithoutStopHook() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-attention-unmanaged-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let recap = AttentionRecap(title: "Copy wrapped prose", completed: "Fixed mid-line copy.",
+                                   next: "Verify in the installed app.", emoji: "📋")
+
+        try handoff.publishUnmanaged(recap, worktree: "/repo/copy-new-lines",
+                                     agentID: "codex-session", runtime: .codex,
+                                     sessionID: "thread-1", paneSessionName: nil)
+        var events: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { events.append($0) } == 1)
+        #expect(events.first?.recap == recap)
+        #expect(try handoff.stop(worktree: "/repo/copy-new-lines",
+                                 agentID: "codex-session", runtime: .codex,
+                                 sessionID: "thread-1", paneSessionName: nil,
+                                 stopHookActive: false, turnID: "turn-1") == .queued)
+        #expect(try handoff.consumeStops { events.append($0) } == 0)
+    }
+
     @Test("@spec AGENT-3.13: When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.")
     func stagedRecapBecomesOneStoppedTurn() throws {
         let root = FileManager.default.temporaryDirectory

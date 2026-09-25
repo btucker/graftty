@@ -4,6 +4,21 @@ import Testing
 
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
+    @Test("@spec AGENT-6.40: When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.")
+    func developmentPluginContentChangesCacheVersion() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-plugin-version-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let skill = root.appendingPathComponent("SKILL.md")
+        try Data("first".utf8).write(to: skill)
+        let first = try #require(AgentPluginInstaller.developmentPluginVersion(forResourcesAt: root))
+        try Data("second".utf8).write(to: skill)
+        let second = try #require(AgentPluginInstaller.developmentPluginVersion(forResourcesAt: root))
+        #expect(first != second)
+        #expect(first.hasPrefix("0.0.0-dev.r"))
+    }
+
     @Test("""
     @spec AGENT-6.31: When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
     """)

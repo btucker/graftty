@@ -247,7 +247,8 @@ struct TeamHook: ParsableCommand {
         if event == .stop,
            let action = try? AttentionFileHandoff().stop(
                 worktree: worktreePath,
-                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
+                    ?? resolvedSessionID.map { TeamAgentIdentity(runtime: runtime, nativeSessionID: $0).rawValue },
                 runtime: runtime,
                 sessionID: resolvedSessionID,
                 paneSessionName: paneSessionName,
@@ -1412,6 +1413,29 @@ enum TeamPresenceCLI {
 }
 
 enum AttentionReportIdentity {
+    struct UnmanagedAgent {
+        let agentID: String
+        let sessionID: String
+        let runtime: TeamHookRuntime
+    }
+
+    static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
+        let session: (TeamHookRuntime, String)?
+        if let id = environment["CODEX_SESSION_ID"] ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
+            session = (.codex, id)
+        } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
+            session = (.claude, id)
+        } else {
+            session = nil
+        }
+        guard let (runtime, sessionID) = session else { return nil }
+        return UnmanagedAgent(
+            agentID: TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue,
+            sessionID: sessionID,
+            runtime: runtime
+        )
+    }
+
     static func currentAgentID(worktreePath: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let explicit = environment["GRAFTTY_AGENT_ID"]

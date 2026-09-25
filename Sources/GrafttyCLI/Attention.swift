@@ -32,9 +32,21 @@ struct AttentionReport: ParsableCommand {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")
         }
         let worktree = try CLIEnv.resolveWorktree()
-        guard let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree) else {
-            throw ValidationError("an active Graftty agent session is required")
+        let handoff = AttentionFileHandoff()
+        if let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree) {
+            try handoff.stage(recap, worktree: worktree, agentID: agentID)
+        } else if let agent = AttentionReportIdentity.unmanagedAgent(
+            environment: ProcessInfo.processInfo.environment
+        ) {
+            try handoff.publishUnmanaged(
+                recap, worktree: worktree, agentID: agent.agentID,
+                runtime: agent.runtime, sessionID: agent.sessionID,
+                paneSessionName: TeamRegisterPaneResolver.paneSessionName(
+                    env: ProcessInfo.processInfo.environment
+                )
+            )
+        } else {
+            throw ValidationError("an active agent session is required")
         }
-        try AttentionFileHandoff().stage(recap, worktree: worktree, agentID: agentID)
     }
 }

@@ -45,6 +45,36 @@ public struct AttentionFileHandoff: Sendable {
         try data.write(to: reportURL(worktree: worktree, agentID: agentID), options: .atomic)
     }
 
+    /// A native provider session can lack wrapper registration (for example,
+    /// one started before Graftty refreshed its plugin). Its Stop hook may
+    /// also be absent, so publish the explicit report as a stopped card now.
+    /// The receipt prevents a later matching Stop hook from replacing it.
+    public func publishUnmanaged(
+        _ recap: AttentionRecap,
+        worktree: String,
+        agentID: String,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        paneSessionName: String?
+    ) throws {
+        guard recap.isValid, !worktree.isEmpty, !agentID.isEmpty else {
+            throw AttentionFileHandoffError.invalidRecap
+        }
+        try ensureDirectory()
+        let receipt = publishedURL(worktree: worktree, agentID: agentID)
+        try Data(String(Date().timeIntervalSince1970).utf8).write(to: receipt, options: .atomic)
+        do {
+            try enqueueStop(AttentionFileStopEvent(
+                worktree: worktree, agentID: agentID, runtime: runtime,
+                sessionID: sessionID, paneSessionName: paneSessionName,
+                recap: recap, stoppedAt: Date()
+            ))
+        } catch {
+            try? FileManager.default.removeItem(at: receipt)
+            throw error
+        }
+    }
+
     public func stop(
         worktree: String,
         agentID: String?,
@@ -59,6 +89,19 @@ public struct AttentionFileHandoff: Sendable {
         if let marker, let turnID,
            (try? String(contentsOf: marker, encoding: .utf8)) == turnID {
             return .queued
+        }
+        if let agentID {
+            let receipt = publishedURL(worktree: worktree, agentID: agentID)
+            if let timestamp = try? String(contentsOf: receipt, encoding: .utf8),
+               let reportedAt = TimeInterval(timestamp),
+               (0..<600).contains(Date().timeIntervalSince1970 - reportedAt) {
+                if let marker, let turnID {
+                    try? Data(turnID.utf8).write(to: marker, options: .atomic)
+                }
+                try? FileManager.default.removeItem(at: receipt)
+                return .queued
+            }
+            try? FileManager.default.removeItem(at: receipt)
         }
         let report = agentID.map { reportURL(worktree: worktree, agentID: $0) }
         let recap = try report.flatMap { url -> AttentionRecap? in
@@ -75,11 +118,7 @@ public struct AttentionFileHandoff: Sendable {
             recap: recap,
             stoppedAt: Date()
         )
-        let micros = Int64(event.stoppedAt.timeIntervalSince1970 * 1_000_000)
-        let name = "stop-\(micros)-\(UUID().uuidString).json"
-        try JSONEncoder().encode(event).write(
-            to: rootDirectory.appendingPathComponent(name), options: .atomic
-        )
+        try enqueueStop(event)
         if let marker, let turnID {
             try? Data(turnID.utf8).write(to: marker, options: .atomic)
         }
@@ -126,6 +165,18 @@ public struct AttentionFileHandoff: Sendable {
 
     private func reportURL(worktree: String, agentID: String) -> URL {
         rootDirectory.appendingPathComponent("report-\(key(for: "\(worktree)\0\(agentID)")).json")
+    }
+
+    private func publishedURL(worktree: String, agentID: String) -> URL {
+        rootDirectory.appendingPathComponent("published-\(key(for: "\(worktree)\0\(agentID)")).txt")
+    }
+
+    private func enqueueStop(_ event: AttentionFileStopEvent) throws {
+        let micros = Int64(event.stoppedAt.timeIntervalSince1970 * 1_000_000)
+        let name = "stop-\(micros)-\(UUID().uuidString).json"
+        try JSONEncoder().encode(event).write(
+            to: rootDirectory.appendingPathComponent(name), options: .atomic
+        )
     }
 
     private func markerURL(worktree: String, agentID: String?, sessionID: String?) -> URL {

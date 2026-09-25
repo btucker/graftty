@@ -2644,6 +2644,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.18** When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 
+**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
+
+**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -2763,6 +2767,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+
+**AGENT-6.40** When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.
+
+**AGENT-6.41** When bundled plugin content changes in a development build, the application shall use its content version as the automatic-refresh checkpoint.
 
 ## CLI — CLI
 
