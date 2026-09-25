@@ -42,6 +42,23 @@ final class GhosttyConfig {
         ghostty_config_finalize(config)
     }
 
+    /// Retain every user setting except the default background, which is drawn
+    /// once by SwiftUI behind the complete split layout. Never mutate the app's
+    /// base config, since other worktrees may not have artwork.
+    init(forWorktreeArtwork base: GhosttyConfig) throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-artwork-\(UUID().uuidString).conf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try """
+        background-opacity = 0
+        background-opacity-cells = false
+        background-image =
+        """.write(to: url, atomically: true, encoding: .utf8)
+        config = ghostty_config_clone(base.config)
+        url.path.withCString { ghostty_config_load_file(config, $0) }
+        ghostty_config_finalize(config)
+    }
+
     private static func loadGhosttyMacOSConfigIfPresent(into config: ghostty_config_t) {
         let url = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -50,6 +67,14 @@ final class GhosttyConfig {
             .appendingPathComponent("config")
         guard let path = url?.path, FileManager.default.fileExists(atPath: path) else { return }
         path.withCString { ghostty_config_load_file(config, $0) }
+    }
+
+    func apply(to surface: ghostty_surface_t, in view: NSView) {
+        ghostty_surface_update_config(surface, config)
+        // The renderer updates pixel alpha, but its existing IOSurface layer
+        // retains the opacity flag from creation. Update both for compositing.
+        view.layer?.isOpaque = (double(forKey: "background-opacity") ?? 1) >= 1
+        ghostty_surface_refresh(surface)
     }
 
     deinit {
@@ -67,6 +92,15 @@ final class GhosttyConfig {
             ghostty_config_get(config, &color, keyPtr, UInt(strlen(keyPtr)))
         }
         return ok ? color : nil
+    }
+
+    func paletteColors() -> [ghostty_config_color_s] {
+        var palette = ghostty_config_palette_s()
+        let found = "palette".withCString { ghostty_config_get(config, &palette, $0, 7) }
+        guard found else { return [] }
+        return withUnsafeBytes(of: &palette.colors) {
+            Array($0.bindMemory(to: ghostty_config_color_s.self).prefix(16))
+        }
     }
 
     /// Read a floating-point value from the config by key (e.g.
@@ -94,6 +128,7 @@ struct GhosttyTheme: Equatable {
     typealias RGB = GhosttyThemeColors.RGB
 
     let core: GhosttyThemeColors
+    let palette: [RGB]
     var unfocusedSplitFillRGB: RGB { core.unfocusedSplitFillRGB }
     var unfocusedSplitOpacity: Double { core.unfocusedSplitOpacity }
 
@@ -180,14 +215,16 @@ struct GhosttyTheme: Equatable {
                 foregroundRGB: foregroundRGB,
                 unfocusedSplitFillRGB: unfocusedSplitFillRGB,
                 unfocusedSplitOpacity: unfocusedSplitOpacity
-            )
+            ),
+            palette: config.paletteColors().map(Self.toRGB)
         )
     }
 
     /// Designated initializer. The cross-platform core carries Ghostty's
     /// split-focus appearance so Mac and iPad render the same treatment.
-    init(core: GhosttyThemeColors) {
+    init(core: GhosttyThemeColors, palette: [RGB] = []) {
         self.core = core
+        self.palette = palette
     }
 
     /// Convenience initializer preserving the old `(backgroundRGB:foregroundRGB:…)` call shape

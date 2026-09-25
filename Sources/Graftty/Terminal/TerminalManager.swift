@@ -56,6 +56,7 @@ struct PaneHistoryKey: Hashable {
 final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
+    private var artworkGhosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
     private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
@@ -477,8 +478,20 @@ final class TerminalManager: ObservableObject {
         ghostty_app_update_config(app, newConfig.config)
         newConfig.ownershipTransferred = true
         self.ghosttyConfig = newConfig
+        artworkGhosttyConfig = nil
+        for handle in surfaces.values where handle.worktreeArtworkConfig != nil {
+            configureWorktreeArtwork(true, for: handle)
+        }
         self.theme = GhosttyTheme(config: newConfig)
         rebuildKeybindBridge()
+    }
+
+    func configureWorktreeArtwork(_ visible: Bool, for handle: SurfaceHandle) {
+        guard let base = ghosttyConfig else { return }
+        if visible && artworkGhosttyConfig == nil {
+            artworkGhosttyConfig = try? GhosttyConfig(forWorktreeArtwork: base)
+        }
+        handle.setWorktreeArtworkConfig(visible ? artworkGhosttyConfig : nil, base: base)
     }
 
     /// Read `split-preserve-zoom` from the live config and update

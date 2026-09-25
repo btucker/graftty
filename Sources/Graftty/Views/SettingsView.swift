@@ -22,6 +22,10 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.editorCliCommand) private var editorCliCommand: String = ""
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
+    @AppStorage(SettingsKeys.worktreeArtworkEnabled)
+    private var worktreeArtworkEnabled = WorktreeArtworkPreferences.defaultEnabled
+    @AppStorage(SettingsKeys.worktreeArtworkStyle)
+    private var worktreeArtworkStyle = WorktreeArtworkPreferences.defaultStyle
 
     @State private var resolvedShellEditor: String = ""
     @State private var availableApps: [TextEditorApp] = []
@@ -39,6 +43,24 @@ struct SettingsView: View {
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
                 .font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
+
+            Text("Worktree backgrounds")
+                .font(.headline)
+
+            Toggle("Generate worktree backgrounds", isOn: $worktreeArtworkEnabled)
+
+            Picker("Style:", selection: $worktreeArtworkStyle) {
+                ForEach(WorktreeArtworkStyle.allCases) { style in
+                    Text(style.svgLabel).tag(style)
+                }
+            }
+            .disabled(!worktreeArtworkEnabled)
+
+            Text("Creates a connected SVG map with distinct districts based on worktree names and recent agent prompts. Reordering preserves each district and redraws its connections. Terminal backgrounds use colors from the map. Generated locally without an image service.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Divider().padding(.vertical, 4)
 
             VStack(alignment: .leading, spacing: 6) {

@@ -7,9 +7,13 @@ struct TerminalContentView: View {
     let splitTree: Binding<SplitTree>
     let focusedPaneSlotID: PaneSlotID?
     let theme: GhosttyTheme
+    var showsWorktreeArtwork = false
     let onFocusTerminal: (PaneSlotID) -> Void
 
-    var body: some View {
+    var body: some View { terminalLayout }
+
+    @ViewBuilder
+    private var terminalLayout: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
         // All sibling surfaces remain alive in TerminalManager.surfaces — we're
         // only changing which views are mounted, not tearing down PTYs.
@@ -61,7 +65,7 @@ struct TerminalContentView: View {
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             return AnyView(
-                SurfaceViewWrapper(handle: handle)
+                SurfaceViewWrapper(handle: handle, showsWorktreeArtwork: showsWorktreeArtwork)
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Mirror the iOS "Take Control" affordance (OWN-2.1):
                     // offered when another display client (iOS/web) owns this
@@ -95,7 +99,7 @@ struct TerminalContentView: View {
             )
         } else {
             return AnyView(
-                Color.black
+                (!showsWorktreeArtwork ? theme.background : Color.clear)
                     .overlay(
                         ProgressView()
                             .controlSize(.small)

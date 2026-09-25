@@ -71,6 +71,10 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
+    var hasArtwork = false
+    var artworkTitleColor: Color? = nil
+    var artworkPaneColor: Color? = nil
+    @Environment(\.worktreeMapIndent) private var mapIndent
 
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
@@ -104,11 +108,11 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : (isFocusedPane ? artworkTitleColor : artworkPaneColor) ?? (hasArtwork ? .white.opacity(isFocusedPane ? 1 : 0.9) : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty
-            ))
+            )))
     }
 
     var body: some View {
@@ -144,6 +148,7 @@ struct PaneTitleRow: View {
             }
             Spacer(minLength: 0)
         }
+        .artworkTextContrast(hasArtwork)
         .padding(.vertical, 2)
         // Place the `↳` glyph's vertical stroke directly under the center
         // of the worktree row's house/branch icon above. The worktree
@@ -151,7 +156,7 @@ struct PaneTitleRow: View {
         // The `↳` character's vertical stroke sits at its own left edge,
         // so a 14pt leading padding drops that stroke onto the icon's
         // vertical centerline.
-        .padding(.leading, 14)
+        .padding(.leading, 14 + (hasArtwork ? mapIndent : 0))
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -252,6 +257,10 @@ struct WorktreeRow: View {
     /// reachable.
     let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
+    var hasArtwork = false
+    var artworkTitleColor: Color? = nil
+    var artworkPaneColor: Color? = nil
+    @Environment(\.worktreeMapIndent) private var mapIndent
 
     var body: some View {
         HStack(spacing: 6) {
@@ -262,6 +271,7 @@ struct WorktreeRow: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             branchLabel
+                .fontWeight(hasArtwork ? .semibold : .regular)
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
@@ -269,10 +279,13 @@ struct WorktreeRow: View {
             WorktreeRowGutter(
                 stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,
-                theme: theme
+                theme: theme,
+                hasArtwork: hasArtwork
             )
         }
+        .artworkTextContrast(hasArtwork)
         .padding(.vertical, 4)
+        .padding(.leading, hasArtwork ? mapIndent : 0)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -328,10 +341,10 @@ struct WorktreeRow: View {
                 // identity rather than a generic placeholder.
                 Text(displayName)
                     .italic()
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(artworkTitleColor ?? (hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive)))
             } else {
                 Text(displayName)
-                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
+                    .foregroundColor(artworkTitleColor ?? (hasArtwork ? .white : theme.sidebarPrimaryText(isActive: isActive)))
             }
 
             // Secondary label: git branch, dimmed. Skip when it duplicates
@@ -343,7 +356,7 @@ struct WorktreeRow: View {
             if entry.displayBranch != displayName {
                 Text(entry.displayBranch)
                     .font(.caption)
-                    .foregroundColor(theme.sidebarSecondaryText)
+                    .foregroundColor(artworkPaneColor ?? (hasArtwork ? .white.opacity(0.85) : theme.sidebarSecondaryText))
             }
         }
         .lineLimit(1)
