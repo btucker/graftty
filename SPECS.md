@@ -178,6 +178,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
 
+**LAYOUT-2.81** While a worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -1432,9 +1434,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PR-3.x — Sidebar Indicator
 
-**PR-3.1** While a worktree has a resolved PR/MR (open or merged), its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
+**PR-3.1** While a worktree has a resolved PR/MR (open or merged), no assigned emoji, and no in-flight operation, its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 
-**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading icon and branch label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
+**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading emoji or fallback icon and worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
 
 **PR-3.3** The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
 

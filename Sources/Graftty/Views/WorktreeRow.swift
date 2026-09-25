@@ -239,9 +239,9 @@ struct WorktreeRow: View {
     /// worktree). Nil when the default branch isn't resolvable.
     let baseRef: String?
     /// Narrow PR snapshot for this worktree, or nil when no PR/MR is
-    /// associated. Drives (a) the leading-icon swap to the pull-request
-    /// glyph (PR-3.1) and (b) the colored forge reference badge rendered
-    /// between icon and branch label (PR-3.2, PR-3.3). `PRBadge` is
+    /// associated. Drives (a) the fallback leading-icon swap to the
+    /// pull-request glyph (PR-3.1) and (b) the colored forge reference badge
+    /// between the leading identity and worktree label (PR-3.2, PR-3.3). `PRBadge` is
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
@@ -253,15 +253,38 @@ struct WorktreeRow: View {
     let attentionStyle: AttentionCapsuleStyle?
     var attentionCount: Int = 0
 
+    enum LeadingItem: Hashable {
+        case emoji, typeIcon, prBadge, label
+    }
+
+    static func leadingSequence(hasEmoji: Bool, hasPR: Bool, isInFlight: Bool = false) -> [LeadingItem] {
+        var items: [LeadingItem] = [hasEmoji && !isInFlight ? .emoji : .typeIcon]
+        if hasPR { items.append(.prBadge) }
+        items.append(.label)
+        return items
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             SidebarActivityBadge(attentionCount)
-            typeIcon
-            if let prBadge {
-                SidebarPRBadge(badge: prBadge)
-                    .fixedSize(horizontal: true, vertical: false)
+            ForEach(Self.leadingSequence(hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
+                                         isInFlight: entry.state.isInFlight), id: \.self) { item in
+                switch item {
+                case .emoji:
+                    if let emoji = entry.emoji {
+                        Text(emoji).font(.system(size: 15)).accessibilityHidden(true)
+                    }
+                case .typeIcon:
+                    typeIcon
+                case .prBadge:
+                    if let prBadge {
+                        SidebarPRBadge(badge: prBadge)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                case .label:
+                    branchLabel
+                }
             }
-            branchLabel
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
@@ -278,9 +301,9 @@ struct WorktreeRow: View {
         .contentShape(Rectangle())
     }
 
-    /// `house` for the repo's main checkout, `arrow.triangle.branch` for
-    /// linked worktrees, and `arrow.triangle.pull` once a PR/MR is
-    /// associated with the worktree. The icon's color encodes the
+    /// Fallback when a worktree has no emoji: `house` for the repo's main
+    /// checkout, `arrow.triangle.branch` for linked worktrees, and
+    /// `arrow.triangle.pull` once a PR/MR is associated. The icon's color encodes the
     /// worktree's running state: dim foreground when closed, green when
     /// running, yellow when stale. In-flight rows (`.creating` /
     /// `.deleting`) get a `ProgressView` in place of the icon so the
@@ -315,9 +338,6 @@ struct WorktreeRow: View {
     @ViewBuilder
     private var branchLabel: some View {
         HStack(spacing: 6) {
-            if let emoji = entry.emoji {
-                Text(emoji).font(.system(size: 15)).accessibilityHidden(true)
-            }
             // Primary label: directory name (possibly disambiguated with
             // parent) — the identity of the worktree as the user set it up.
             if entry.state == .stale {

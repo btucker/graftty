@@ -25,7 +25,7 @@ struct PrTodo {
     func pr_2_2() async throws { }
 
     @Test("""
-@spec PR-3.1: While a worktree has a resolved PR/MR (open or merged), its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
+@spec PR-3.1: While a worktree has a resolved PR/MR (open or merged), no assigned emoji, and no in-flight operation, its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 """, .disabled("not yet implemented"))
     func pr_3_1() async throws { }
 
