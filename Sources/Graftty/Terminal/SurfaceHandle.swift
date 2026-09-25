@@ -856,9 +856,10 @@ final class SurfaceNSView: NSView {
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t? {
         didSet {
-            if surface == nil { cancelTextComposition() }
+            if surface == nil { voiceInputInterrupted?(); cancelTextComposition() }
         }
     }
+    var voiceInputInterrupted: (() -> Void)?
     var markedText = NSAttributedString(string: "")
     var markedSelection = NSRange(location: 0, length: 0)
     var interpretingComposition = false
@@ -888,7 +889,7 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false {
         didSet {
-            if isReadonly { cancelTextComposition() }
+            if isReadonly { voiceInputInterrupted?(); cancelTextComposition() }
         }
     }
 
@@ -1303,6 +1304,10 @@ final class SurfaceNSView: NSView {
         _ = takeDisplayControlNotifier?()
     }
 
+    func suppressCompositionKeyRelease(_ keyCode: UInt16) {
+        compositionKeyCodes.insert(keyCode)
+    }
+
     override func keyUp(with event: NSEvent) {
         if compositionKeyCodes.remove(event.keyCode) != nil { return }
         guard surface != nil else {
@@ -1533,6 +1538,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func resignFirstResponder() -> Bool {
+        voiceInputInterrupted?()
         acceptsCompositionCallbacks = false
         cancelTextComposition()
         if let surface { surfaceOperations.setFocus(surface, false) }
@@ -1550,6 +1556,7 @@ final class SurfaceNSView: NSView {
     }
 
     @objc private func windowLostTextInputFocus(_ notification: Notification) {
+        voiceInputInterrupted?()
         acceptsCompositionCallbacks = false
         cancelTextComposition()
     }

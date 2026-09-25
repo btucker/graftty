@@ -121,7 +121,7 @@ extension SurfaceNSView: NSTextInputClient {
         return nil
     }
 
-    static func singleLineNativeText(_ text: String) -> String {
+    nonisolated static func singleLineNativeText(_ text: String) -> String {
         let line = text.replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: .newlines).joined(separator: " ")
         return String(line.unicodeScalars.filter { $0.properties.generalCategory != .control })

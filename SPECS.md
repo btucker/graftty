@@ -856,6 +856,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
 
+### KEY-4.x — Voice dictation
+
+**KEY-4.1** While Graftty dictation is listening, the application shall preview revised speech without writing provisional text to the terminal.
+
+**KEY-4.2** When a finalized dictation utterance consists of Send prompt, the application shall submit once and stop listening without inserting the command words.
+
+**KEY-4.3** When ordinary dictation finalizes at a pause, the application shall insert single-line text once, separate successive utterances with a space, and keep listening without submitting.
+
+**KEY-4.4** When dictation stops or its terminal becomes unavailable, the application shall reject later recognition callbacks and shall not submit the terminal input.
+
+**KEY-4.5** While voice dictation is listening, the application shall pulse the sidebar microphone and display a Send prompt hint inline in the expanded sidebar or beside the collapsed rail.
+
+**KEY-4.6** While the collapsed sidebar displays a dictation hint, the application shall keep the microphone control and its callout from taking terminal keyboard focus.
+
+**KEY-4.7** When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.
+
+**KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
+
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
 ### MOUSE-1.x — Mouse
