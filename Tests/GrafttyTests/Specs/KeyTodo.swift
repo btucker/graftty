@@ -9,11 +9,6 @@ import Testing
 @Suite("KEY — pending specs")
 struct KeyTodo {
     @Test("""
-@spec KEY-1.1: The application shall forward all keyboard input, including Command-modified keys, to libghostty so that libghostty's default keybindings (Cmd+C copy, Cmd+V paste, Cmd+A select-all, Cmd+K clear, etc.) take effect.
-""", .disabled("not yet implemented"))
-    func key_1_1() async throws { }
-
-    @Test("""
 @spec KEY-1.2: When libghostty reports that a key was not handled, the application shall allow the event to continue up the responder chain.
 """, .disabled("not yet implemented"))
     func key_1_2() async throws { }
