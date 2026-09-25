@@ -184,6 +184,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.83** While a worktree row shows pane children, the application shall indent their titles beyond the worktree name with or without a PR/MR badge or attention count, keeping each pane row within the available column width.
 
+**LAYOUT-2.84** When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

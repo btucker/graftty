@@ -198,9 +198,12 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
+    /// Latest progress from each provider session, used to retire viewed
+    /// stopped cards after their agent resumes.
+    public var agentProgressTimes: [String: Double]?
     public var emoji: String?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, emoji: String? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.emoji = emoji
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
     }
 
     public func folderID(at depth: Int) -> String? {
@@ -361,6 +364,12 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
         entries = entries.compactMap { entry in
             guard let (worktree, pane) = current[entry.id] else {
                 return availableProjectIDs.contains(entry.item.projectID) ? nil : entry
+            }
+            if let stop = entry.item.agentStop {
+                let progress = worktree.sidebar?.agentProgressTimes ?? [:]
+                let resumedAt = stop.providerSessionKey.flatMap { progress[$0] }
+                    ?? (stop.providerSessionKey == nil ? progress.values.max() : nil)
+                if let resumedAt, resumedAt >= stop.timestamp { return nil }
             }
             var updated = entry
             updated.item.worktreeID = worktree.path

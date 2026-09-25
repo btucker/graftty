@@ -142,4 +142,29 @@ struct WorktreeEntryAttentionTests {
         #expect(e.unseenAgentStop == stop)
         #expect(e.attention?.text == "Approve")
     }
+
+    @Test func progressTimestampSurvivesViewedStopAndRelaunch() throws {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
+        e.recordAgentStop(stop)
+        e.acknowledgeAttention()
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                  progressedAt: Date(timeIntervalSince1970: 200))
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                  progressedAt: Date(timeIntervalSince1970: 300))
+        let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(e))
+        #expect(restored.agentProgressTimes["codex:session:one"]
+                == Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate)
+        #expect(restored.lastAgentStop == stop)
+
+        var resumed = restored
+        resumed.recordAgentStop(SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 400),
+                                               providerSessionKey: "codex:session:one"))
+        resumed.acknowledgeAttention()
+        resumed.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                        progressedAt: Date(timeIntervalSince1970: 500))
+        #expect(resumed.agentProgressTimes["codex:session:one"]
+                == Date(timeIntervalSince1970: 500).timeIntervalSinceReferenceDate)
+    }
 }

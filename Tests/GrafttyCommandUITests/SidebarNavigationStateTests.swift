@@ -9,6 +9,36 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
+    @Test func viewedStopDisappearsFromNeedsYouWhenItsPaneRuns() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
+        let stopped = WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
+            displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "stable", projectID: "project", unseenAgentStop: stop))
+        let item = try #require(SidebarProjection.activity([stopped]).first)
+        navigation.enterAttention(projects: [project], items: [item])
+        let opening = navigation.beginOpening(item)
+        navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.attentionItems(live: [], projects: [project]).count == 1)
+
+        let running = WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
+            displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "pane", title: "Working", attentionText: nil, isBusy: true,
+                          attentionSource: nil),
+            sidebar: .init(id: "stable", projectID: "project", unseenAgentStop: nil,
+                agentProgressTimes: ["codex:session:one": Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate]))
+        let live = SidebarProjection.activity([running])
+        navigation.reconcile(worktrees: [running], projects: [project])
+        #expect(navigation.attentionItems(live: live, projects: [project]).isEmpty)
+        navigation.filter = .running
+        #expect(navigation.attentionItems(live: live, projects: [project]).count == 1)
+    }
+
     @Test("@spec LAYOUT-2.75: When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.")
     func attentionProjectOrderIsFrozen() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))

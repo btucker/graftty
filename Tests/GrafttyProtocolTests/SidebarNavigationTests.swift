@@ -3,6 +3,42 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec LAYOUT-2.84: When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.")
+    func resumedAgentRemovesViewedStop() throws {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
+        let resumedAt = Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate
+        let metadata = SidebarWorktreeMetadata(id: "stable", projectID: "project",
+            unseenAgentStop: nil, agentProgressTimes: ["codex:session:one": resumedAt])
+        func row(_ metadata: SidebarWorktreeMetadata) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: nil, layout: nil, sidebar: metadata)
+        }
+        var history = SidebarRecentHistory()
+        let item = SidebarActivityItem(id: "stable:stop", projectID: "project", worktreeID: "/wt",
+            paneID: nil, projectName: "Project", worktreeName: "wt", title: stop.title,
+            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        history.open(item)
+        history.reconcile(worktrees: [row(metadata)], availableProjectIDs: ["project"])
+        #expect(history.entries.isEmpty)
+
+        let other = SidebarWorktreeMetadata(id: "stable", projectID: "project",
+            unseenAgentStop: nil, agentProgressTimes: ["codex:session:two": resumedAt])
+        history.open(item)
+        history.reconcile(worktrees: [row(other)], availableProjectIDs: ["project"])
+        #expect(history.entries.count == 1)
+
+        let newerStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 300),
+                                         providerSessionKey: "codex:session:one")
+        var newerItem = item
+        newerItem.agentStop = newerStop
+        newerItem.occurrence = newerStop.occurrence
+        history.open(newerItem)
+        history.reconcile(worktrees: [row(metadata)], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item.agentStop == newerStop)
+    }
+
     @Test("@spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.")
     func recapEmojiValidationAndCompatibility() throws {
         let recap = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.",
