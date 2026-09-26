@@ -72,6 +72,7 @@ public struct ProjectNavigationRail: View {
     public var selectionColor: Color
     public var localDeviceID: RemoteDeviceID?
     public var management: () -> AnyView
+    public var aboveManagement: () -> AnyView
     @State private var dropTarget: String?
     @State private var resizeStartWidth: Double?
 
@@ -80,11 +81,13 @@ public struct ProjectNavigationRail: View {
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
                 localDeviceID: RemoteDeviceID? = nil,
+                aboveManagement: @escaping () -> AnyView = { AnyView(EmptyView()) },
                 management: @escaping () -> AnyView = { AnyView(EmptyView()) },
                 menu: @escaping (SidebarProject) -> AnyView = { _ in AnyView(EmptyView()) }) {
         self.projects = projects; self.counts = counts; self.icons = icons; self.selectedID = selectedID
         self.workingCounts = workingCounts
         self.localDeviceID = localDeviceID; self.management = management
+        self.aboveManagement = aboveManagement
         self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
     }
@@ -125,6 +128,7 @@ public struct ProjectNavigationRail: View {
                     }
                 }.padding(.horizontal, 6)
             }
+            aboveManagement()
             if collapsed { management() }
             HStack {
                 if !collapsed { management(); Spacer() }
