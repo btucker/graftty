@@ -509,8 +509,7 @@ struct RemoteMacsSection: View {
                             },
                             portBindings: [],
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
-                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
-                            prBadge: worktree.prBadge
+                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                         )
                     }
                     .buttonStyle(.plain)

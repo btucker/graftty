@@ -8,7 +8,7 @@ private enum WorktreeRowGeometry {
     static let identityWidth: CGFloat = 18
     static let spacing: CGFloat = 6
     static let horizontalInset: CGFloat = 8
-    static let paneIndent: CGFloat = 14
+    static let paneIndent = SidebarPaneLayout.markerLeading - horizontalInset
 }
 
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
@@ -78,10 +78,6 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
-    /// Match the parent row's badge width so the pane title sits just beyond
-    /// the worktree name rather than under its PR/MR reference.
-    var prBadge: PRBadge? = nil
-
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
     }
@@ -100,15 +96,15 @@ struct PaneTitleRow: View {
         return false
     }
 
-    private var paneArrow: some View {
-        Text("↳")
-            .font(.caption)
-            .fontWeight(isFocusedPane ? .bold : .regular)
-            .foregroundColor(theme.paneArrow(
+    private var paneMarker: some View {
+        SidebarPaneMarker(
+            attentionCount: attentionCount,
+            isFocused: isFocusedPane,
+            arrowColor: theme.paneArrow(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree
-            ))
-            .accessibilityHidden(true)
+            )
+        )
     }
 
     @ViewBuilder
@@ -134,30 +130,7 @@ struct PaneTitleRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: WorktreeRowGeometry.spacing) {
-            if let prBadge {
-                Color.clear.frame(width: WorktreeRowGeometry.identityWidth, height: 1)
-                SidebarPRBadge(badge: prBadge)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .hidden()
-                    .accessibilityHidden(true)
-                    .overlay(alignment: .trailing) {
-                        if attentionCount > 0 {
-                            SidebarActivityBadge(attentionCount)
-                        } else {
-                            paneArrow
-                        }
-                    }
-                    .allowsHitTesting(false)
-            } else {
-                Group {
-                    if attentionCount > 0 {
-                        SidebarActivityBadge(attentionCount)
-                    } else {
-                        paneArrow
-                    }
-                }
-                .frame(width: WorktreeRowGeometry.identityWidth, alignment: .trailing)
-            }
+            paneMarker
             if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
                 // intrinsic width) on one line. A plain HStack — NOT
@@ -303,7 +276,7 @@ struct WorktreeRow: View {
 
     var body: some View {
         HStack(spacing: WorktreeRowGeometry.spacing) {
-            SidebarActivityBadge(attentionCount)
+            if attentionCount > 0 { SidebarActivityBadge(attentionCount) }
             ForEach(Self.leadingSequence(isMainCheckout: isMainCheckout, hasEmoji: entry.emoji != nil, hasPR: prBadge != nil,
                                          isInFlight: entry.state.isInFlight), id: \.self) { item in
                 switch item {

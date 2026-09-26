@@ -645,8 +645,7 @@ struct SidebarView: View {
                             attentionStyle: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? [],
                             attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
-                            prBadge: prBadge
+                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
                         )
                     }
                     .buttonStyle(.plain)

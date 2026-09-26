@@ -1782,15 +1782,15 @@ private struct PaneTitleRow: View {
             if case .needsInput = attentionStyle { return true }
             return false
         }()
-        HStack(spacing: 4) {
-            Text("↳")
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .bold : .regular)
-                .foregroundStyle(themedOrSecondary(theme?.paneArrow(
+        HStack(spacing: SidebarPaneLayout.markerSpacing) {
+            SidebarPaneMarker(
+                attentionCount: attentionCount,
+                isFocused: isFocusedPane,
+                arrowColor: theme?.paneArrow(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
-                )))
-            SidebarActivityBadge(attentionCount)
+                ) ?? .secondary
+            )
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
             // AGENT-2.2: a busy pane renders its title in italic. Apply it
             // at the Text level (Text.italic()) so it composes with the
@@ -1817,7 +1817,7 @@ private struct PaneTitleRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 14)
+        .padding(.leading, SidebarPaneLayout.markerLeading)
     }
 }
 

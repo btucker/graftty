@@ -10,8 +10,8 @@ import GrafttyCommandUI
 @Suite("PaneTitleRow port chip rendering and attention precedence")
 struct PaneTitleRowPortsTests {
     @MainActor
-    @Test("@spec LAYOUT-2.83: While a worktree row shows pane children, the application shall indent their titles beyond the worktree name with or without a PR/MR badge or attention count, keeping each pane row within the available column width.")
-    func paneTitleIndentsWithOrWithoutPRBadge() throws {
+    @Test("@spec LAYOUT-2.83: While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.")
+    func paneTitlesShareColumnWithOrWithoutPRBadge() throws {
         let badge = PRBadge(number: 356, state: .open, checks: .pending,
                             url: URL(string: "https://github.com/btucker/graftty/pull/356")!)
         var worktree = WorktreeEntry(path: "/repo/.worktrees/needs-attention-ai", branch: "needs-attention-ai", state: .running)
@@ -21,13 +21,17 @@ struct PaneTitleRowPortsTests {
                                   prBadge: badge, attentionStyle: nil)
         let row = PaneTitleRow(title: "Explore AI-powered Needs Attention", isActiveWorktree: true,
                                isFocusedPane: true, isBusy: false, theme: .fallback,
-                               attentionStyle: nil, portBindings: [], prBadge: badge)
+                               attentionStyle: nil, portBindings: [])
         let countedRow = PaneTitleRow(title: "Add terminal pane padding", isActiveWorktree: true,
                                       isFocusedPane: false, isBusy: false, theme: .fallback,
-                                      attentionStyle: nil, portBindings: [], attentionCount: 1, prBadge: badge)
+                                      attentionStyle: nil, portBindings: [], attentionCount: 1)
         let noPRRow = PaneTitleRow(title: "Plan Mac speech-to-text terminal use", isActiveWorktree: false,
                                    isFocusedPane: false, isBusy: true, theme: .fallback,
                                    attentionStyle: nil, portBindings: [], attentionCount: 1)
+        let noPRHeading = WorktreeRow(entry: .init(path: "/repo/.worktrees/support-mac-stt", branch: "support-mac-stt", state: .running),
+                                       isActive: false, displayName: "support-mac-stt",
+                                       isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil,
+                                       prBadge: nil, attentionStyle: nil)
         let width: CGFloat = 300
         for paneRow in [row, countedRow, noPRRow] {
             let host = NSHostingController(rootView: paneRow)
@@ -39,15 +43,17 @@ struct PaneTitleRowPortsTests {
                     Button {} label: { heading.frame(minHeight: 28) }.buttonStyle(.plain)
                     Button {} label: { row }.buttonStyle(.plain)
                     Button {} label: { countedRow }.buttonStyle(.plain)
+                    Button {} label: { noPRHeading.frame(minHeight: 28) }.buttonStyle(.plain)
+                    Button {} label: { noPRRow }.buttonStyle(.plain)
                 }
                 .padding(.vertical, 8)
                 .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
             }
-                .frame(width: width, height: 132)
+                .frame(width: width, height: 200)
                 .background(Color(red: 0.3, green: 0.32, blue: 0.34))
                 .environment(\.colorScheme, .dark)
             let hosting = NSHostingView(rootView: preview)
-            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 132)
+            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 200)
             hosting.layoutSubtreeIfNeeded()
             let url = URL(fileURLWithPath: directory)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

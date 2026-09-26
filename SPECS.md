@@ -182,7 +182,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
 
-**LAYOUT-2.83** While a worktree row shows pane children, the application shall indent their titles beyond the worktree name with or without a PR/MR badge or attention count, keeping each pane row within the available column width.
+**LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
 
 **LAYOUT-2.84** When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.
 
@@ -1685,6 +1685,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.31** When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
 
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
+
+**IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display it through the shared Attention pane within a compact iPhone width.
 
 ### IOS-5.x — Multi-pane layout
 
