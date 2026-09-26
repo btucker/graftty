@@ -809,6 +809,22 @@ struct SurfaceNSViewGhosttySurfaceOperations {
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var refresh: (ghostty_surface_t) -> Void
     var setContentScale: ((ghostty_surface_t, Double, Double) -> Void)? = nil
+    var text: (ghostty_surface_t, String) -> Void = { surface, text in
+        text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }
+    }
+    var preedit: (ghostty_surface_t, String) -> Void = { surface, text in
+        text.withCString { ghostty_surface_preedit(surface, $0, UInt(text.utf8.count)) }
+    }
+    var imeRect: (ghostty_surface_t) -> NSRect = { surface in
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
+        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+    var interpretComposition: @MainActor (SurfaceNSView, NSEvent) -> Void = { view, event in
+        view.interpretKeyEvents([event])
+    }
+    var key: (ghostty_surface_t, ghostty_input_key_s) -> Bool = { ghostty_surface_key($0, $1) }
+    var setFocus: (ghostty_surface_t, Bool) -> Void = { ghostty_surface_set_focus($0, $1) }
 
     static let live = SurfaceNSViewGhosttySurfaceOperations(
         setSize: { surface, width, height in
@@ -828,11 +844,9 @@ struct SurfaceNSViewGhosttySurfaceOperations {
 
 /// `NSView` subclass used as the ghostty surface's host view.
 ///
-/// Forwards keyboard input to libghostty via `ghostty_surface_text`, which
-/// feeds bytes directly into the PTY. This is the minimum viable path:
-/// `NSEvent.characters` already contains the translated text for regular
-/// keys, Enter (`\r`), Backspace (`\u{7F}`), arrows, etc., so most terminal
-/// interaction works without a full NSTextInputClient.
+/// Hardware keys retain Ghostty's terminal key handling. AppKit's text input
+/// client receives native Dictation separately and keeps provisional text out
+/// of the PTY until the input method commits it.
 ///
 /// `SurfaceHandle` sets `surface` after `ghostty_surface_new` returns.
 /// Mouse-down focuses the view so subsequent keystrokes route here.
@@ -840,7 +854,17 @@ final class SurfaceNSView: NSView {
     /// Weak-ish reference to the libghostty surface for input forwarding.
     /// Set by `SurfaceHandle` after construction; cleared when the handle
     /// is freed (the surface pointer is only valid while the handle owns it).
-    var surface: ghostty_surface_t?
+    var surface: ghostty_surface_t? {
+        didSet {
+            if surface == nil { voiceInputInterrupted?(); cancelTextComposition() }
+        }
+    }
+    var voiceInputInterrupted: (() -> Void)?
+    var markedText = NSAttributedString(string: "")
+    var markedSelection = NSRange(location: 0, length: 0)
+    var interpretingComposition = false
+    var acceptsCompositionCallbacks = true
+    private var compositionKeyCodes = Set<UInt16>()
     var surfaceOperations: SurfaceNSViewGhosttySurfaceOperations = .live
     var followerPixelSize: CGSize?
     var followerScrollHandler: ((NSEvent) -> Bool)?
@@ -863,7 +887,11 @@ final class SurfaceNSView: NSView {
     /// Mirror of libghostty's `toggle_readonly` state. Maintained from the
     /// context-menu action so the checkmark reflects the current mode.
     /// libghostty owns authoritative state; this is our UI shadow.
-    var isReadonly: Bool = false
+    var isReadonly: Bool = false {
+        didSet {
+            if isReadonly { voiceInputInterrupted?(); cancelTextComposition() }
+        }
+    }
 
     /// Direct PTY-input path for host-managed backends. Ghostty's own
     /// host-managed AppKit frontend bypasses `ghostty_surface_key` for
@@ -920,6 +948,16 @@ final class SurfaceNSView: NSView {
     /// never reach libghostty until the user clicks into the terminal.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowLostTextInputFocus(_:)),
+                                                  name: NSWindow.didResignKeyNotification, object: window)
+            NotificationCenter.default.addObserver(self, selector: #selector(windowGainedTextInputFocus(_:)),
+                                                  name: NSWindow.didBecomeKeyNotification, object: window)
+        } else {
+            cancelTextComposition()
+        }
         guard let window, surface != nil else { return }
         // The view can receive its final point size before it joins a window.
         // Resolve backing pixels again now that AppKit knows the window's scale.
@@ -998,6 +1036,9 @@ final class SurfaceNSView: NSView {
     /// what `ghostty_surface_set_size` expects. Synchronize content scale
     /// first so libghostty computes its grid with the current window scale.
     override func setFrameSize(_ newSize: NSSize) {
+        let compositionContext = hasMarkedText() ? inputContext : nil
+        compositionContext?.textInputClientWillStartScrollingOrZooming()
+        defer { compositionContext?.textInputClientDidEndScrollingOrZooming() }
         super.setFrameSize(newSize)
         guard synchronizeSurfaceSize(newSize) else { return }
         markVisibleForInput()
@@ -1150,6 +1191,9 @@ final class SurfaceNSView: NSView {
     /// For precision scrolling Ghostty doubles the delta: "subjective, it
     /// 'feels' better." Replicated here.
     override func scrollWheel(with event: NSEvent) {
+        let compositionContext = hasMarkedText() ? inputContext : nil
+        compositionContext?.textInputClientWillStartScrollingOrZooming()
+        defer { compositionContext?.textInputClientDidEndScrollingOrZooming() }
         if followerScrollHandler?(event) == true { return }
         guard let surface else {
             super.scrollWheel(with: event)
@@ -1185,11 +1229,27 @@ final class SurfaceNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if event.isARepeat {
+            // A key that committed composition stays consumed until release,
+            // even though the marked text has already disappeared.
+            if !hasMarkedText(), compositionKeyCodes.contains(event.keyCode) { return }
+        } else {
+            // A prior release may have gone to another window after a focus
+            // change. A new physical press begins a new key lifecycle.
+            compositionKeyCodes.remove(event.keyCode)
+        }
         guard surface != nil else {
             super.keyDown(with: event)
             return
         }
         markVisibleForInput()
+        if hasMarkedText() {
+            compositionKeyCodes.insert(event.keyCode)
+            interpretingComposition = true
+            defer { interpretingComposition = false }
+            surfaceOperations.interpretComposition(self, event)
+            return
+        }
         reclaimDisplayControlForUserInputIfNeeded(event)
         if let directInput = Self.hostManagedDirectInput(
             forKeyCode: event.keyCode,
@@ -1244,7 +1304,12 @@ final class SurfaceNSView: NSView {
         _ = takeDisplayControlNotifier?()
     }
 
+    func suppressCompositionKeyRelease(_ keyCode: UInt16) {
+        compositionKeyCodes.insert(keyCode)
+    }
+
     override func keyUp(with event: NSEvent) {
+        if compositionKeyCodes.remove(event.keyCode) != nil { return }
         guard surface != nil else {
             super.keyUp(with: event)
             return
@@ -1396,12 +1461,12 @@ final class SurfaceNSView: NSView {
             dispatch = {
                 text.withCString { cstr in
                     keyEvent.text = cstr
-                    handled = ghostty_surface_key(surface, keyEvent)
+                    handled = self.surfaceOperations.key(surface, keyEvent)
                 }
             }
         } else {
             keyEvent.text = nil
-            dispatch = { handled = ghostty_surface_key(surface, keyEvent) }
+            dispatch = { handled = self.surfaceOperations.key(surface, keyEvent) }
         }
         if claimEngagement, let hostManagedUserInputScope {
             hostManagedUserInputScope(dispatch)
@@ -1467,16 +1532,37 @@ final class SurfaceNSView: NSView {
     }
 
     override func becomeFirstResponder() -> Bool {
-        guard let surface else { return super.becomeFirstResponder() }
-        ghostty_surface_set_focus(surface, true)
+        acceptsCompositionCallbacks = true
+        if let surface { surfaceOperations.setFocus(surface, true) }
         return super.becomeFirstResponder()
     }
 
     override func resignFirstResponder() -> Bool {
-        if let surface {
-            ghostty_surface_set_focus(surface, false)
-        }
+        voiceInputInterrupted?()
+        acceptsCompositionCallbacks = false
+        cancelTextComposition()
+        if let surface { surfaceOperations.setFocus(surface, false) }
         return super.resignFirstResponder()
+    }
+
+    override func doCommand(by selector: Selector) {
+        if interpretingComposition || hasMarkedText() {
+            if selector == #selector(cancelOperation(_:)) { cancelTextComposition() }
+            // Return and editing keys consumed during composition must not
+            // become shell commands. AppKit delivers committed text separately.
+            return
+        }
+        super.doCommand(by: selector)
+    }
+
+    @objc private func windowLostTextInputFocus(_ notification: Notification) {
+        voiceInputInterrupted?()
+        acceptsCompositionCallbacks = false
+        cancelTextComposition()
+    }
+
+    @objc private func windowGainedTextInputFocus(_ notification: Notification) {
+        acceptsCompositionCallbacks = window?.firstResponder === self
     }
 
     // MARK: - File drop (TERM-10.1)

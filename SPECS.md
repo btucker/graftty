@@ -822,7 +822,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### KEY-1.x — Keyboard Forwarding
 
-**KEY-1.1** The application shall forward all keyboard input, including Command-modified keys, to libghostty so that libghostty's default keybindings (Cmd+C copy, Cmd+V paste, Cmd+A select-all, Cmd+K clear, etc.) take effect.
+**KEY-1.1** When a terminal receives ordinary text or Command-modified keyboard input outside text composition, the application shall forward the event to libghostty without duplicating text so terminal keybindings remain available.
 
 **KEY-1.2** When libghostty reports that a key was not handled, the application shall allow the event to continue up the responder chain.
 
@@ -831,6 +831,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-1.4** When a modifier key is pressed or released over a terminal pane (AppKit `flagsChanged`), the application shall forward the modifier transition to libghostty as a modifier-only key event, so link hover state refreshes and a cmd+click on an already-hovered file path opens the editor without requiring mouse movement.
 
 **KEY-1.5** When a modifier key is pressed while the pointer hovers a terminal pane that is not first responder, the application shall refresh that pane's link hover state, so cmd+click on a file path in an unfocused pane opens the editor without first moving the mouse. (AppKit delivers `flagsChanged` only to the first responder, so KEY-1.4's forwarding does not reach the hovered pane, and the click's own mouse-pos event is cell-deduped inside libghostty.)
+
+**KEY-1.6** When macOS supplies provisional text to a terminal, the application shall expose an AppKit text input client that retains composition separately from terminal input.
+
+**KEY-1.7** When macOS commits text to the focused terminal, the application shall deliver it once as single-line text without appending Return or forwarding terminal control characters.
+
+**KEY-1.8** When a composing terminal loses focus, closes, or becomes read-only, the application shall discard provisional text and reject subsequent text callbacks while that pane is unavailable for input.
+
+**KEY-1.9** When a key edits terminal text composition, the application shall keep that press, its repeats, and its release out of the terminal input stream, including after composition ends.
 
 ### KEY-2.x — Clipboard
 
@@ -847,6 +855,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
 
 **KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
+
+### KEY-4.x — Voice dictation
+
+**KEY-4.1** While Graftty dictation is listening, the application shall preview revised speech without writing provisional text to the terminal.
+
+**KEY-4.2** When a finalized dictation utterance consists of Send prompt, the application shall submit once and stop listening without inserting the command words.
+
+**KEY-4.3** When ordinary dictation finalizes at a pause, the application shall insert single-line text once, separate successive utterances with a space, and keep listening without submitting.
+
+**KEY-4.4** When dictation stops or its terminal becomes unavailable, the application shall reject later recognition callbacks and shall not submit the terminal input.
+
+**KEY-4.5** While voice dictation is listening, the application shall pulse the sidebar microphone and display a Send prompt hint inline in the expanded sidebar or beside the collapsed rail.
+
+**KEY-4.6** While the collapsed sidebar displays a dictation hint, the application shall keep the microphone control and its callout from taking terminal keyboard focus.
+
+**KEY-4.7** When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.
+
+**KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
 
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
@@ -1315,6 +1341,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **OWN-2.4** When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.
 
 **OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
+
+**OWN-2.6** When native text input commits to a follower terminal, the application shall acquire display ownership before delivering text and shall reject delivery if acquisition fails.
 
 ## UPDATE — Self-Update
 

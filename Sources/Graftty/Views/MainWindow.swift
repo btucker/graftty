@@ -58,6 +58,7 @@ struct MainWindow: View {
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var attentionOpenGeneration: UInt64 = 0
+    @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
     @AppStorage("sidebar.mac.railWidth") private var projectRailExpandedWidth = 196.0
@@ -106,6 +107,8 @@ struct MainWindow: View {
                 appState: $appState,
                 terminalManager: terminalManager,
                 paneTitleInvalidations: terminalManager.paneTitleInvalidations,
+                voiceDictation: voiceDictation,
+                selectedVoicePaneID: selectedVoicePaneID,
                 theme: terminalManager.theme,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
@@ -379,6 +382,9 @@ struct MainWindow: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
+        .onChange(of: selectedVoicePaneID) { _, _ in
+            voiceDictation.cancel()
+        }
         .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
@@ -399,6 +405,7 @@ struct MainWindow: View {
             remoteMacsModel.consumeRemoteNotificationActivation()
         }
         .onDisappear {
+            voiceDictation.cancel()
             destroyAllRemoteSurfaces()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
@@ -1595,6 +1602,10 @@ struct MainWindow: View {
             )
         }
         return terminalID
+    }
+
+    private var selectedVoicePaneID: PaneSlotID? {
+        selectedRemoteIdentity == nil ? selectedWorktree?.focusedPaneSlotID : focusedRemoteTerminalID
     }
 
     private var focusedRemoteTerminalID: PaneSlotID? {
