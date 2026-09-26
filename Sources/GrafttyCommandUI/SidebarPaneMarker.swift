@@ -3,7 +3,7 @@ import SwiftUI
 /// Keeps child-pane titles in one column even when parent worktrees have
 /// different leading badges. Insets are relative to the worktree block.
 public enum SidebarPaneLayout {
-    public static let titleColumn: CGFloat = 90
+    public static let titleColumn: CGFloat = 46
     public static let markerSpacing: CGFloat = 6
     public static var markerLeading: CGFloat {
         titleColumn - SidebarPaneMarker.width - markerSpacing
