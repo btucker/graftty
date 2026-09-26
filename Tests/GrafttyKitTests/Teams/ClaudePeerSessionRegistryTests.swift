@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Claude native peer-session registry")
 struct ClaudePeerSessionRegistryTests {
-    @Test("@spec AGENT-6.33: When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.")
+    @Test("@spec AGENT-6.39: When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.")
     func socketSymlinkReachability() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("graftty-socket-\(UUID().uuidString.prefix(8))")

@@ -188,9 +188,8 @@ final class TerminalManager: ObservableObject {
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
     /// `GHOSTTY_ACTION_SET_TITLE` after filtering obvious env-assignment
     /// leaks via `PaneTitle.isLikelyEnvAssignment`; cleaned up on
-    /// `destroySurface`. Not persisted — these are ephemeral runtime
-    /// state that die with their shell. The sidebar reads this through
-    /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
+    /// `destroySurface`. Raw titles and PWDs are snapshotted at quit so a
+    /// surviving shell keeps the same title priority when reattached.
     var titles: [PaneSlotID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
@@ -209,6 +208,32 @@ final class TerminalManager: ObservableObject {
     /// frequently from shell integration; only display-equivalent changes
     /// trigger the sidebar-only invalidation source above.
     private var renderedTitles: [PaneSlotID: String] = [:]
+
+    var displayTitles: [PaneSlotID: String] { renderedTitles }
+
+    var paneTitleMetadata: [PaneSlotID: PaneTitleMetadata] {
+        let slots = Set(titles.keys).union(pwds.keys)
+        return Dictionary(uniqueKeysWithValues: slots.map { slot in
+            (slot, PaneTitleMetadata(title: titles[slot], pwd: pwds[slot]))
+        })
+    }
+
+    func restorePaneTitleMetadata(_ metadata: [PaneSlotID: PaneTitleMetadata]) {
+        var changed = false
+        for (slot, value) in metadata where renderedTitles[slot] == nil {
+            let title = value.title.flatMap(PaneTitle.sanitize)
+            let pwd = value.pwd
+            guard title != nil || pwd != nil else { continue }
+            if let title { titles[slot] = title }
+            if let pwd { pwds[slot] = pwd }
+            let display = PaneTitle.display(storedTitle: title, pwd: pwd)
+            if !display.isEmpty {
+                renderedTitles[slot] = display
+                changed = true
+            }
+        }
+        if changed { paneTitleInvalidations.schedule() }
+    }
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -688,7 +713,8 @@ final class TerminalManager: ObservableObject {
 
     /// Cold-start session-loss check (ZMX-7.1): if a rehydrated pane's
     /// zmx daemon is gone, the imminent `zmx attach` will create a fresh
-    /// daemon — treat the pane as fresh so the default command runs.
+    /// daemon. Drop the old pane name and treat the pane as fresh so the
+    /// default command runs.
     /// `sessionSnapshot` lets callers batch one `zmx list` across many
     /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
@@ -708,7 +734,14 @@ final class TerminalManager: ObservableObject {
         case nil:
             missing = launcher.isSessionMissing(name)
         }
-        if missing { clearRehydrated(terminalID) }
+        if missing {
+            clearRehydrated(terminalID)
+            titles.removeValue(forKey: terminalID)
+            pwds.removeValue(forKey: terminalID)
+            if renderedTitles.removeValue(forKey: terminalID) != nil {
+                paneTitleInvalidations.schedule()
+            }
+        }
     }
 
     /// Drop per-instantiation runtime state tied to the current libghostty

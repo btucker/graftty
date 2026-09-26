@@ -7,7 +7,7 @@ struct PRBadgeTests {
     private let sampleURL = URL(string: "https://github.com/btucker/graftty/pull/42")!
     private let otherURL = URL(string: "https://github.com/btucker/graftty/pull/99")!
 
-    @Test("@spec PR-3.2: While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading icon and branch label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.")
+    @Test("@spec PR-3.2: While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between its leading project icon, emoji, or fallback icon and its worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.")
     func referenceTextUsesForgePrefixAndUngroupedDigits() {
         let github = PRBadge(
             number: 5_000,

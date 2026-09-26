@@ -25,6 +25,35 @@ public enum SidebarLayoutPolicy {
     }
 }
 
+/// @spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
+public struct SidebarAttentionWidthState {
+    private var previousWidth: Double?
+    private var railWidthAtEntry = 0.0
+
+    public init() {}
+
+    public mutating func enter(currentWidth: Double, railWidth: Double, windowWidth: Double) -> Double? {
+        guard previousWidth == nil,
+              currentWidth.isFinite, railWidth.isFinite, windowWidth.isFinite else { return nil }
+        let target = min(676, railWidth + 410)
+        guard currentWidth < target, windowWidth - target >= 640 else { return nil }
+        previousWidth = currentWidth
+        railWidthAtEntry = railWidth
+        return target
+    }
+
+    public mutating func leave(currentRailWidth: Double) -> Double? {
+        guard let previousWidth else { return nil }
+        self.previousWidth = nil
+        return previousWidth + currentRailWidth - railWidthAtEntry
+    }
+
+    public func adjustedWidth(forRailWidth railWidth: Double) -> Double? {
+        guard previousWidth != nil, railWidth.isFinite else { return nil }
+        return min(676, railWidth + 410)
+    }
+}
+
 /// Stable presentation identity is separate from the live, opaque management route.
 public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -32,14 +61,15 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var name: String
     public var owner: WorktreeOrigin?
     public var iconRevision: String?
+    public var accentHex: String?
     public var initials: String?
     public var isAvailable: Bool
     public var supportsWorktreeEditing: Bool?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
-                iconRevision: String? = nil, initials: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil) {
+                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil) {
         self.id = id; self.repositoryID = repositoryID; self.name = name; self.owner = owner
-        self.iconRevision = iconRevision; self.initials = initials; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing
+        self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing
     }
 
     public var displayInitials: String {
@@ -69,14 +99,79 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+/// Short agent-authored context for the next stopped-turn card.
+/// @spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+/// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
+/// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
+public struct AttentionRecap: Codable, Sendable, Hashable {
+    public var title: String
+    public var context: String?
+    public var completed: String
+    public var next: String
+    public var need: String?
+    public var emoji: String?
+    public var emojiAlternatives: [String]?
+
+    public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
+                emoji: String? = nil, emojiAlternatives: [String]? = nil) {
+        self.title = title
+        self.context = context
+        self.completed = completed
+        self.next = next
+        self.need = need
+        self.emoji = emoji
+        self.emojiAlternatives = emojiAlternatives
+    }
+
+    public static func isSingleEmoji(_ value: String) -> Bool {
+        guard value.count == 1, value.unicodeScalars.contains(where: { $0.properties.isEmoji }) else { return false }
+        return value.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation })
+            || value.unicodeScalars.contains(where: { $0.value == 0xFE0F || $0.value == 0x20E3 })
+    }
+
+    public var proposedEmojis: [String] { [emoji].compactMap { $0 } + (emojiAlternatives ?? []) }
+
+    public var isValid: Bool {
+        let fields = [(title, 100), (completed, 300), (next, 300)]
+        let requiredValid = fields.allSatisfy { value, limit in
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && value.count <= limit
+                && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        }
+        let contextValid = context.map {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.count <= 200
+                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        } ?? true
+        let needValid = need.map {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.count <= 300
+                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        } ?? true
+        let candidates = proposedEmojis
+        let emojiValid = (emojiAlternatives == nil || emoji != nil)
+            && candidates.count <= 4
+            && Set(candidates).count == candidates.count
+            && candidates.allSatisfy(Self.isSingleEmoji)
+        return requiredValid && contextValid && needValid && emojiValid
+    }
+}
+
 /// The latest completed agent turn not yet viewed in its worktree.
 /// The numeric timestamp retains precision across JSON date strategies.
 public struct SidebarAgentStop: Codable, Sendable, Hashable {
     public var agentName: String
     public var timestamp: Double
-    public init(agentName: String, stoppedAt: Date) {
+    public var recap: AttentionRecap?
+    public var paneTitle: String?
+    public var providerSessionKey: String?
+    public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil,
+                paneTitle: String? = nil, providerSessionKey: String? = nil) {
         self.agentName = agentName
         self.timestamp = stoppedAt.timeIntervalSinceReferenceDate
+        self.recap = recap
+        self.paneTitle = paneTitle
+        self.providerSessionKey = providerSessionKey
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
     public var title: String { "\(agentName) stopped" }
@@ -103,8 +198,12 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop
+    /// Latest progress from each provider session, used to retire viewed
+    /// stopped cards after their agent resumes.
+    public var agentProgressTimes: [String: Double]?
+    public var emoji: String?
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
     }
 
     public func folderID(at depth: Int) -> String? {
@@ -170,6 +269,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var paneID: String?
     public var projectName: String
     public var worktreeName: String
+    public var worktreeEmoji: String?
     public var title: String
     public var occurrence: SidebarAttentionOccurrence?
     public var isBusy: Bool
@@ -177,10 +277,10 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var prBadge: PRBadge?
     public init(id: String, projectID: String, worktreeID: String, paneID: String?,
                 projectName: String, worktreeName: String, title: String,
-                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil) {
+                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil, worktreeEmoji: String? = nil) {
         self.id = id; self.projectID = projectID; self.worktreeID = worktreeID; self.paneID = paneID
         self.projectName = projectName; self.worktreeName = worktreeName; self.title = title
-        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge
+        self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge; self.worktreeEmoji = worktreeEmoji
     }
     public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
 }
@@ -196,7 +296,12 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
             switch self { case .needsYou: matches = item.needsAttention
             case .running: matches = item.isBusy
             case .all: matches = true }
-            return matches && (query.isEmpty || "\(item.projectName) \(item.worktreeName) \(item.title)".localizedCaseInsensitiveContains(query))
+            let recap = item.agentStop?.recap
+            let searchable = [item.projectName, item.worktreeName, item.title,
+                              item.agentStop?.paneTitle, recap?.title, recap?.context, recap?.completed,
+                              recap?.next, recap?.need]
+                .compactMap { $0 }.joined(separator: " ")
+            return matches && (query.isEmpty || searchable.localizedCaseInsensitiveContains(query))
         }.sorted {
             let lhs = $0.occurrence?.timestamp ?? .distantPast
             let rhs = $1.occurrence?.timestamp ?? .distantPast
@@ -260,11 +365,18 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
             guard let (worktree, pane) = current[entry.id] else {
                 return availableProjectIDs.contains(entry.item.projectID) ? nil : entry
             }
+            if let stop = entry.item.agentStop {
+                let progress = worktree.sidebar?.agentProgressTimes ?? [:]
+                let resumedAt = stop.providerSessionKey.flatMap { progress[$0] }
+                    ?? (stop.providerSessionKey == nil ? progress.values.max() : nil)
+                if let resumedAt, resumedAt >= stop.timestamp { return nil }
+            }
             var updated = entry
             updated.item.worktreeID = worktree.path
             updated.item.paneID = pane ?? (worktree.state == .closed ? entry.item.paneID : nil)
             updated.item.projectName = worktree.repoDisplayName
             updated.item.worktreeName = worktree.displayBranch
+            updated.item.worktreeEmoji = worktree.sidebar?.emoji
             updated.item.prBadge = worktree.prBadge
             return updated
         }
@@ -310,19 +422,19 @@ public enum SidebarProjection {
             if let stop = wt.sidebar?.unseenAgentStop {
                 items.append(.init(id: stable + ":stop", projectID: projectID, worktreeID: wt.path, paneID: nil,
                     projectName: wt.repoDisplayName, worktreeName: wt.displayBranch, title: stop.title,
-                    occurrence: stop.occurrence, isBusy: false, agentStop: stop))
+                    occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.sidebar?.emoji))
             }
             if let text = wt.attentionText {
                 items.append(.init(id: stable, projectID: projectID, worktreeID: wt.path, paneID: nil,
                                    projectName: wt.repoDisplayName, worktreeName: wt.displayBranch, title: text,
-                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false))
+                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.sidebar?.emoji))
             }
             for leaf in wt.layout?.leaves ?? [] where leaf.attentionText != nil || leaf.isBusy {
                 items.append(.init(id: "\(stable):\(wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName)", projectID: projectID, worktreeID: wt.path,
                                    paneID: leaf.sessionName, projectName: wt.repoDisplayName, worktreeName: wt.displayBranch,
                                    title: leaf.attentionText ?? leaf.displayTitle,
                                    occurrence: leaf.attentionText.map { .init(timestamp: wt.sidebar?.attentionTimestamps?[wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName].map(Date.init(timeIntervalSinceReferenceDate:)) ?? leaf.attentionTimestamp, text: $0, source: leaf.attentionSource) },
-                                   isBusy: leaf.isBusy))
+                                   isBusy: leaf.isBusy, worktreeEmoji: wt.sidebar?.emoji))
             }
             return items.map { item in
                 var item = item

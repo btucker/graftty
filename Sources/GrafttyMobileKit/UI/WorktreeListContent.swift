@@ -502,7 +502,7 @@ public struct WorktreeListContent: View {
                     }
                 }.padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
@@ -515,7 +515,7 @@ public struct WorktreeListContent: View {
             }
         } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
-                ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
+                ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
@@ -524,8 +524,8 @@ public struct WorktreeListContent: View {
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
-                                      onSelect: { selectProject($0, worktrees: worktrees) },
-                                      onAttention: { setNavigationMode(showsAttention: true) },
+                                      onSelect: { project in selectProject(project, worktrees: worktrees) },
+                                      onAttention: { setNavigationMode(showsAttention: !navigation.showsAttention) },
                                       onMove: moveProject)
                 Divider()
                 projectDetail(worktrees, projects: projects, items: items)
@@ -538,7 +538,7 @@ public struct WorktreeListContent: View {
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
                 }.pickerStyle(.segmented).padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
@@ -583,7 +583,7 @@ public struct WorktreeListContent: View {
     @ViewBuilder
     private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem]) -> some View {
         if navigation.showsAttention {
-            SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+            SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                 await openAttention(item, worktrees: worktrees)
@@ -625,9 +625,8 @@ public struct WorktreeListContent: View {
     static func applyProjectSelection(_ project: SidebarProject, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
         // Invalidate before changing modes: offline and compact project picks
         // do not call beginSelectingWorktree, but must still cancel old opens.
-        applyNavigationMode(showsAttention: false, navigation: navigation, selectionGeneration: &selectionGeneration)
-        navigation.selectedProjectID = project.id
-        navigation.compactShowsProjects = false
+        selectionGeneration &+= 1
+        navigation.showProject(project.id)
     }
 
     static func applyNavigationMode(showsAttention: Bool, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
@@ -637,7 +636,13 @@ public struct WorktreeListContent: View {
     }
 
     private func setNavigationMode(showsAttention: Bool) {
+        if showsAttention, case .loaded(let worktrees) = state {
+            selectionIntentGeneration &+= 1
+            navigation.enterAttention(projects: projects(for: worktrees), items: SidebarProjection.activity(worktrees))
+            return
+        }
         Self.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
+        if !showsAttention { navigation.leaveAttention() }
     }
 
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {
@@ -1777,15 +1782,15 @@ private struct PaneTitleRow: View {
             if case .needsInput = attentionStyle { return true }
             return false
         }()
-        HStack(spacing: 4) {
-            Text("↳")
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .bold : .regular)
-                .foregroundStyle(themedOrSecondary(theme?.paneArrow(
+        HStack(spacing: SidebarPaneLayout.markerSpacing) {
+            SidebarPaneMarker(
+                attentionCount: attentionCount,
+                isFocused: isFocusedPane,
+                arrowColor: theme?.paneArrow(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
-                )))
-            SidebarActivityBadge(attentionCount)
+                ) ?? .secondary
+            )
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
             // AGENT-2.2: a busy pane renders its title in italic. Apply it
             // at the Text level (Text.italic()) so it composes with the
@@ -1812,7 +1817,7 @@ private struct PaneTitleRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 14)
+        .padding(.leading, SidebarPaneLayout.markerLeading)
     }
 }
 

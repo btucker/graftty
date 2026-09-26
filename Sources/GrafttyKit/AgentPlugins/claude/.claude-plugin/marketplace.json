@@ -6,9 +6,9 @@
   },
   "plugins": [
     {
-      "name": "graftty-team",
-      "source": "./plugins/graftty-team",
-      "description": "Coordinate Codex and Claude agents through Graftty worktrees."
+      "name": "graftty",
+      "source": "./plugins/graftty",
+      "description": "Connect Claude sessions to Graftty Attention and worktree agents."
     }
   ]
 }

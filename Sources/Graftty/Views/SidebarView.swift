@@ -31,6 +31,7 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     var onOpenAttention: (SidebarActivityItem) async -> Bool = { _ in false }
     var onNavigationIntent: () -> Void = {}
+    var onAttentionWidthChange: (Double?) -> Void = { _ in }
     let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
     let onSelectRemoteWorktree: (RemoteMac, String) -> Void
@@ -79,6 +80,7 @@ struct SidebarView: View {
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
+    @State private var attentionWidthState = SidebarAttentionWidthState()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var remoteIcons: [String: Data] = [:]
@@ -97,7 +99,7 @@ struct SidebarView: View {
         }.map(\.element)
     }
     private var activity: [SidebarActivityItem] {
-        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) })
+        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) })
             + remoteMacsModel.promotedWorktreesForRelay())
     }
     private var projectIcons: [String: Data] {
@@ -110,7 +112,7 @@ struct SidebarView: View {
         let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
         if projects != snapshot.projects { projects = snapshot.projects }
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.titles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects)
+        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
         }
@@ -139,7 +141,7 @@ struct SidebarView: View {
         onNavigationIntent()
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
-        navigation.selectedProjectID = project.id; navigation.showsAttention = false; navigation.query = ""; navigationError = nil
+        navigation.showProject(project.id); navigationError = nil
         guard project.isAvailable else { navigationError = "The owning Mac is offline. Use Manage Remote Macs to reconnect."; return }
         if let index = appState.repos.firstIndex(where: { localProjectID($0) == project.id }) {
             appState.repos[index].isCollapsed = false
@@ -148,7 +150,9 @@ struct SidebarView: View {
             if let path { onSelect(path) }
         } else if let mac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == project.owner?.deviceID }) {
             let rows = (remoteMacsModel.worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).filter { SidebarProjection.projectID($0) == project.id }
-            if let target = rows.first(where: { $0.path == navigation.rememberedWorktrees[project.id] }) ?? rows.first {
+            let remembered = navigation.rememberedWorktrees[project.id]
+                .flatMap { remoteMacsModel.relayRouter.resolveWorktree($0)?.path ?? $0 }
+            if let target = rows.first(where: { $0.path == remembered }) ?? rows.first {
                 onSelectRemoteWorktree(mac, target.path)
             }
         }
@@ -195,7 +199,8 @@ struct SidebarView: View {
                           projectFilter: projectFilter, query: query,
                           showsMacHierarchy: !showsProjectRail,
                           showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
-                          editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)))
+                          editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
+                          projects: projects, projectIcons: projectIcons)
     }
 
     private var addRepositoryIconButton: some View {
@@ -231,10 +236,14 @@ struct SidebarView: View {
         let counts = SidebarActivityCounts(items: activity)
         HStack(spacing: 0) {
             if showsProjectRail {
-                ProjectNavigationRail(projects: projects, counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
+                ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
-                                      onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
+                                      onAttention: {
+                                          onNavigationIntent()
+                                          if navigation.showsAttention { navigation.leaveAttention() }
+                                          else { navigation.enterAttention(projects: projects, items: activity) }
+                                      },
                                       onMove: moveProject, localDeviceID: owner.deviceID,
                                       aboveManagement: { AnyView(voiceDictationButton(collapsed: navigation.railCollapsed)) },
                                       management: { AnyView(HStack(spacing: 0) {
@@ -249,7 +258,7 @@ struct SidebarView: View {
                 }
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
-                                         icons: projectIcons, selectionColor: theme.foreground.opacity(0.16),
+                                         selectionColor: theme.foreground.opacity(0.16),
                                          isCurrentWorktree: isCurrentAttentionWorktree) { item in
                         let opened = await onOpenAttention(item)
                         if !opened { navigationError = "This target is unavailable or its request has changed." }
@@ -281,7 +290,9 @@ struct SidebarView: View {
                         Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
                         Spacer()
                         Button(navigation.showsAttention ? "Projects" : "Attention") {
-                            onNavigationIntent(); navigation.showsAttention.toggle(); navigation.query = ""
+                            onNavigationIntent()
+                            if navigation.showsAttention { navigation.leaveAttention() }
+                            else { navigation.enterAttention(projects: projects, items: activity) }
                         }
                         remoteManagementButton
                     }.buttonStyle(.plain).font(.caption).padding(10)
@@ -292,6 +303,21 @@ struct SidebarView: View {
             while !Task.isCancelled {
                 await refreshNavigation()
                 try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .onChange(of: navigation.showsAttention) { _, showing in
+            let railWidth = showsProjectRail ? navigation.railWidth + 1 : 0
+            if showing {
+                if let expanded = attentionWidthState.enter(
+                    currentWidth: appState.sidebarWidth,
+                    railWidth: railWidth,
+                    windowWidth: appState.windowFrame.width
+                ) {
+                    onAttentionWidthChange(expanded)
+                }
+            } else if let previous = attentionWidthState.leave(currentRailWidth: railWidth) {
+                appState.sidebarWidth = previous
+                onAttentionWidthChange(nil)
             }
         }
         .onChange(of: appState.selectedWorktreePath) { old, new in
@@ -311,6 +337,11 @@ struct SidebarView: View {
         }
         .onChange(of: showsProjectRail) { _, enabled in
             onNavigationIntent()
+            let oldRailWidth = enabled ? 0 : navigation.railWidth + 1
+            if let previous = attentionWidthState.leave(currentRailWidth: oldRailWidth) {
+                appState.sidebarWidth = previous
+                onAttentionWidthChange(nil)
+            }
             navigation.showsAttention = false
             navigation.query = ""
             let delta = navigation.railWidth + 1
@@ -319,6 +350,9 @@ struct SidebarView: View {
         .onChange(of: navigation.railWidth) { previous, current in
             guard showsProjectRail else { return }
             appState.sidebarWidth = max(current + 221, appState.sidebarWidth + current - previous)
+            if let expanded = attentionWidthState.adjustedWidth(forRailWidth: current + 1) {
+                onAttentionWidthChange(expanded)
+            }
         }
         .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -563,6 +597,13 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
+        let projectID = localProjectID(repo)
+        let project = projects.first { $0.id == projectID }
+            ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)
+        let prBadge = prStatusStore.infos[worktree.path].map {
+            PRBadge(number: $0.number, state: $0.state, checks: $0.checks,
+                    mergeable: $0.mergeable, url: $0.url)
+        }
         let heading = WorktreeRow(
             entry: worktree,
             isActive: isActive,
@@ -574,17 +615,10 @@ struct SidebarView: View {
                 worktreePath: worktree.path,
                 repoPath: repo.path
             ),
-            prBadge: prStatusStore.infos[worktree.path].map {
-                PRBadge(
-                    number: $0.number,
-                    state: $0.state,
-                    checks: $0.checks,
-                    mergeable: $0.mergeable,
-                    url: $0.url
-                )
-            },
+            prBadge: prBadge,
             attentionStyle: attention.worktreeCapsule,
-            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0]
+            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
+            project: project, projectIconData: projectIcons[projectID]
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
@@ -695,6 +729,21 @@ struct SidebarView: View {
         if worktree.state.isInFlight {
             return menu
         }
+        menu.addItem(ClosureMenuItem(title: "Edit Worktree Emoji…") {
+            editWorktreeEmoji(worktree)
+        })
+        if worktree.emoji != nil {
+            menu.addItem(ClosureMenuItem(title: "Clear Worktree Emoji") {
+                for repoIndex in appState.repos.indices {
+                    if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
+                        appState.repos[repoIndex].worktrees[index].emoji = nil
+                        appState.repos[repoIndex].worktrees[index].emojiSource = nil
+                        return
+                    }
+                }
+            })
+        }
+        menu.addItem(.separator())
         if navigation.query.isEmpty {
             for (title, offset) in [("Move Up", -1), ("Move Down", 1)] {
                 if let target = worktreeNeighbor(worktree, repo: repo, offset: offset) {
@@ -746,6 +795,34 @@ struct SidebarView: View {
             })
         }
         return menu
+    }
+
+    private func editWorktreeEmoji(_ worktree: WorktreeEntry) {
+        let alert = NSAlert()
+        alert.messageText = "Worktree emoji"
+        alert.informativeText = "Choose one emoji for \(worktree.branch). It will appear beside this worktree and on its Attention cards."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: worktree.emoji ?? "")
+        field.placeholderString = "Emoji"
+        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let chosen = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AttentionRecap.isSingleEmoji(chosen),
+              !appState.repos.flatMap(\.worktrees).contains(where: { $0.id != worktree.id && $0.emoji == chosen }) else {
+            let error = NSAlert()
+            error.messageText = "Choose one unused emoji"
+            error.runModal()
+            return
+        }
+        for repoIndex in appState.repos.indices {
+            if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
+                appState.repos[repoIndex].worktrees[index].emoji = chosen
+                appState.repos[repoIndex].worktrees[index].emojiSource = .manual
+                return
+            }
+        }
     }
 
     /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7

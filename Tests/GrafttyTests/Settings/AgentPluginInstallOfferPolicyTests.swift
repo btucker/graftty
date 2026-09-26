@@ -6,13 +6,12 @@ import GrafttyKit
 @Suite("Native provider plugin launch offer")
 struct AgentPluginInstallOfferPolicyTests {
     @Test("""
-    @spec AGENT-6.15: When Graftty launches with agent teams enabled, no previously completed provider installation, and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
+    @spec AGENT-6.15: When Graftty launches with no previously completed provider installation and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
     """)
     func launchOfferIsGatedAndVersioned() {
         let revision = AgentPluginInstaller.integrationRevision
 
         #expect(AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: nil,
             installedRevision: nil
         ))
@@ -24,22 +23,14 @@ struct AgentPluginInstallOfferPolicyTests {
             installedRevision: revision
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: false,
-            lastAcknowledgedRevision: nil,
-            installedRevision: nil
-        ))
-        #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: revision,
             installedRevision: nil
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: nil,
             installedRevision: revision
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: revision - 1,
             installedRevision: revision - 1
         ))

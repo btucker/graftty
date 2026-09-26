@@ -1,5 +1,5 @@
 {
-  "description": "Bind Codex lifecycle events to Graftty while the plugin skill owns team instructions.",
+  "description": "Connect agent lifecycle events to Graftty Attention and worktree coordination.",
   "hooks": {
     "SessionStart": [
       {

@@ -1,10 +1,41 @@
 import Foundation
 import ImageIO
+import CoreGraphics
 import UniformTypeIdentifiers
 import CryptoKit
 import Darwin
 
 public enum ProjectIconDiscovery {
+    /// Samples opaque, colorful pixels; white icon backgrounds do not wash out the rail tint.
+    public static func accentHex(_ data: Data) -> String? {
+        guard data.count <= 65536, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let side = 24
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let sampled = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side,
+                bitsPerComponent: 8, bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard sampled else { return nil }
+        var red = 0.0, green = 0.0, blue = 0.0, weight = 0.0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let alpha = Double(pixels[offset + 3]) / 255
+            guard alpha > 0.4 else { continue }
+            let r = Double(pixels[offset]) / 255 / alpha
+            let g = Double(pixels[offset + 1]) / 255 / alpha
+            let b = Double(pixels[offset + 2]) / 255 / alpha
+            let saturation = max(r, g, b) - min(r, g, b)
+            guard saturation > 0.12 else { continue }
+            let w = saturation * alpha
+            red += r * w; green += g * w; blue += b * w; weight += w
+        }
+        guard weight > 0 else { return nil }
+        return String(format: "%02X%02X%02X", Int(min(255, red / weight * 255)),
+            Int(min(255, green / weight * 255)), Int(min(255, blue / weight * 255)))
+    }
     /// Open without following a final symlink or blocking on a FIFO, then
     /// validate the opened descriptor so replacing the path cannot bypass it.
     public static func readImageData(at url: URL) -> Data? {

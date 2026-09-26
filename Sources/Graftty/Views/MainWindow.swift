@@ -58,6 +58,7 @@ struct MainWindow: View {
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var attentionOpenGeneration: UInt64 = 0
+    @State private var attentionSidebarWidth: Double?
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
@@ -121,6 +122,7 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
+                onAttentionWidthChange: { attentionSidebarWidth = $0 },
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -140,7 +142,7 @@ struct MainWindow: View {
             )
             .navigationSplitViewColumnWidth(
                 min: minimumSidebarWidth,
-                ideal: max(minimumSidebarWidth, appState.sidebarWidth),
+                ideal: max(minimumSidebarWidth, attentionSidebarWidth ?? appState.sidebarWidth),
                 max: 676
             )
             // Deliberately do NOT call ignoresSafeArea here. The sidebar
@@ -381,7 +383,7 @@ struct MainWindow: View {
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
-        ))
+        ), when: attentionSidebarWidth == nil)
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
         }
@@ -790,7 +792,6 @@ struct MainWindow: View {
                     // Same `acknowledgeAttention()` the notification-
                     // activation path uses, so the two can't drift.
                     if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
-                    appState.repos[repoIdx].worktrees[wtIdx].unseenAgentStop = nil
                 }
             }
         }

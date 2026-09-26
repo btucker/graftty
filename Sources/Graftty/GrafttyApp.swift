@@ -257,6 +257,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
+    var attentionFileObserver: AttentionFileHandoffObserver?
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
@@ -808,7 +809,9 @@ struct GrafttyApp: App {
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
-        UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
+        var registeredDefaults = DefaultPrompts.registrations
+        registeredDefaults[SettingsKeys.agentTeamsEnabled] = true
+        UserDefaults.standard.register(defaults: registeredDefaults)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
@@ -1659,6 +1662,55 @@ struct GrafttyApp: App {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
+        let attentionHandoff = AttentionFileHandoff()
+        let attentionObserver = AttentionFileHandoffObserver(handoff: attentionHandoff)
+        do {
+            try attentionObserver.start {
+                Task { @MainActor in
+                    do {
+                        try attentionHandoff.consumeActivities { activity in
+                            switch activity {
+                            case .progress(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                Self.clearAgentAttention(
+                                    callerPath: event.worktree,
+                                    callerAgentID: event.agentID,
+                                    runtime: event.runtime,
+                                    sessionID: event.sessionID,
+                                    progressedAt: event.progressedAt,
+                                    appState: binding
+                                )
+                            case .stop(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                if let pane = event.paneSessionName,
+                                   binding.wrappedValue.worktree(forPath: event.worktree)?
+                                    .paneSlot(forSessionName: pane) != nil {
+                                    services.claudeSessionRegistry.recordHook(
+                                        runtime: event.runtime, event: .stop,
+                                        sessionID: event.sessionID ?? event.agentID,
+                                        paneSessionName: pane, attentionReason: nil
+                                    )
+                                }
+                                Self.recordStoppedTurn(
+                                    callerPath: event.worktree, runtime: event.runtime,
+                                    callerAgentID: event.agentID, sessionID: event.sessionID,
+                                    paneSessionName: event.paneSessionName, recap: event.recap,
+                                    stoppedAt: event.stoppedAt, appState: binding,
+                                    terminalManager: tm
+                                )
+                            }
+                            Self.persistAppState(binding.wrappedValue)
+                        }
+                    } catch {
+                        NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
+                    }
+                }
+            }
+            services.attentionFileObserver = attentionObserver
+        } catch {
+            NSLog("[Graftty] Attention file observer failed: %@", String(describing: error))
+        }
+
         let remoteBranchStore = services.remoteBranchStore
         let prStatusStore = services.prStatusStore
         remoteBranchStore.onChange = { repoPath, old, new in
@@ -1996,6 +2048,7 @@ struct GrafttyApp: App {
             }
         }
 
+        tm.restorePaneTitleMetadata(appState.savedPaneTitleMetadata)
         restoreRunningWorktrees()
 
         // Restoring running worktrees installs the durable pane-to-session
@@ -2139,7 +2192,7 @@ struct GrafttyApp: App {
                                 paneLayoutNode(
                                     from: $0,
                                     paneSessions: wt.paneSessions,
-                                    titles: terminalManager.titles,
+                                    titles: terminalManager.displayTitles,
                                     paneAttention: wt.paneAttention,
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
@@ -3029,6 +3082,7 @@ struct GrafttyApp: App {
             MainActor.assumeIsolated {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
+                stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -3810,7 +3864,8 @@ struct GrafttyApp: App {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
-             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree:
+             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
+             .attentionReport:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3927,7 +3982,8 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged
+            let skillManaged,
+            let stopHookActive
         ):
             return await handleTeamHook(
                 callerPath: callerPath,
@@ -3938,6 +3994,7 @@ struct GrafttyApp: App {
                 paneSessionName: paneSessionName,
                 attentionReason: attentionReason,
                 skillManaged: skillManaged,
+                stopHookActive: stopHookActive,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
@@ -3945,6 +4002,12 @@ struct GrafttyApp: App {
                 remoteBranchStore: remoteBranchStore,
                 agentRegistry: agentRegistry
             )
+        case .attentionReport(let callerPath, let callerAgentID, let recap):
+            guard recap.isValid, appState.wrappedValue.worktree(forPath: callerPath) != nil else {
+                return .error("invalid attention recap or unknown worktree")
+            }
+            AttentionRecapCoordinator.shared.report(recap, worktree: callerPath, agentID: callerAgentID)
+            return .ok
         case .teamInbox(let request):
             return await handleTeamInbox(
                 request: request,
@@ -4379,6 +4442,7 @@ struct GrafttyApp: App {
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason?,
         skillManaged: Bool,
+        stopHookActive: Bool,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
@@ -4393,13 +4457,22 @@ struct GrafttyApp: App {
         }
         switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
         case .recordStoppedTurn:
-            let stop = SidebarAgentStop(agentName: AgentStopNotification.displayName(runtime), stoppedAt: Date())
-            for ri in appState.wrappedValue.repos.indices {
-                if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
-                    appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
-                    break
-                }
+            let outcome = AttentionRecapCoordinator.shared.stop(
+                worktree: callerPath,
+                agentID: callerAgentID,
+                stopHookActive: stopHookActive
+            )
+            if outcome == .requestRecap {
+                return .teamHookOutput(TeamHookRenderer.requestRecap())
             }
+            guard case .record(let recap) = outcome else { return .teamHookOutput("{}") }
+            recordStoppedTurn(
+                callerPath: callerPath, runtime: runtime,
+                callerAgentID: callerAgentID, sessionID: sessionID,
+                paneSessionName: paneSessionName, recap: recap,
+                stoppedAt: Date(), appState: appState,
+                terminalManager: terminalManager
+            )
         case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,
@@ -4432,6 +4505,13 @@ struct GrafttyApp: App {
 
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            if event == .sessionStart, skillManaged, !teamsEnabled {
+                return .teamHookOutput(try TeamHookRenderer.sessionStart(
+                    runtime: runtime,
+                    teamContext: "",
+                    skillManaged: true
+                ))
+            }
             // Snapshotted before the instruction render's `await`; the
             // ownership decision below therefore reads presence as it stood
             // at hook entry, not as it stands when the decision runs. That
@@ -4541,9 +4621,49 @@ struct GrafttyApp: App {
             }
             return .teamHookOutput(output)
         } catch let error as TeamInboxRequestError {
+            if event == .sessionStart, skillManaged,
+               let output = try? TeamHookRenderer.sessionStart(
+                   runtime: runtime, teamContext: "", skillManaged: true
+               ) {
+                return .teamHookOutput(output)
+            }
             return .error(error.description)
         } catch {
             return .error("failed to render team hook context: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func recordStoppedTurn(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        callerAgentID: String?,
+        sessionID: String?,
+        paneSessionName: String?,
+        recap: AttentionRecap?,
+        stoppedAt: Date,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) {
+        let paneTitle = paneSessionName
+            .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
+            .map { terminalManager.displayTitle(for: $0) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let stop = SidebarAgentStop(
+            agentName: AgentStopNotification.displayName(runtime),
+            stoppedAt: stoppedAt,
+            recap: recap,
+            paneTitle: paneTitle,
+            providerSessionKey: AgentHookAttentionIdentity.key(
+                runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
+            )
+        )
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &appState.wrappedValue.repos)
+        for ri in appState.wrappedValue.repos.indices {
+            if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
+                appState.wrappedValue.repos[ri].worktrees[wi].recordAgentStop(stop)
+                break
+            }
         }
     }
 
@@ -4612,6 +4732,7 @@ struct GrafttyApp: App {
         callerAgentID: String?,
         runtime: TeamHookRuntime,
         sessionID: String?,
+        progressedAt: Date = Date(),
         appState: Binding<AppState>
     ) {
         let providerSessionKey = AgentHookAttentionIdentity.key(
@@ -4621,7 +4742,8 @@ struct GrafttyApp: App {
         )
         appState.wrappedValue.clearAgentStopAttention(
             worktreePath: callerPath,
-            providerSessionKey: providerSessionKey
+            providerSessionKey: providerSessionKey,
+            progressedAt: progressedAt
         )
     }
 
@@ -6312,8 +6434,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
 /// Convert the Mac-side `SplitTree.Node` into the wire-format
 /// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
-/// current title (or the empty string if libghostty hasn't emitted
-/// one yet), and the pane-scoped attention text from the worktree's
+/// current displayed title (or the empty string if no metadata has arrived
+/// yet), and the pane-scoped attention text from the worktree's
 /// `paneAttention`.
 @MainActor
 func paneLayoutNode(
