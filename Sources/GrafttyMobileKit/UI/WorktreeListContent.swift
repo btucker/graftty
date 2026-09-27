@@ -504,6 +504,7 @@ public struct WorktreeListContent: View {
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
                     }
@@ -536,10 +537,11 @@ public struct WorktreeListContent: View {
                 Picker("Navigation", selection: Binding(get: { navigation.showsAttention }, set: { setNavigationMode(showsAttention: $0) })) {
                     Text("Projects").tag(false)
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
-                }.pickerStyle(.segmented).padding(12)
+                }.pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 6)
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
                     }
@@ -585,6 +587,7 @@ public struct WorktreeListContent: View {
         if navigation.showsAttention {
             SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                 await openAttention(item, worktrees: worktrees)
             }

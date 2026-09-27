@@ -20,12 +20,16 @@ public struct SidebarAttentionList: View {
     public var items: [SidebarActivityItem]
     public var projects: [SidebarProject]
     public var onOpen: (SidebarActivityItem) async -> Bool
+    public var expandsAllCards: Bool
+    public var compactHeader: Bool
     public var selectionColor: Color
     public var isCurrentWorktree: (SidebarActivityItem) -> Bool
     public init(navigation: SidebarNavigationState, items: [SidebarActivityItem], projects: [SidebarProject],
-                selectionColor: Color = .primary.opacity(0.16),
+                selectionColor: Color = .primary.opacity(0.16), compactHeader: Bool = false, expandsAllCards: Bool = false,
                 isCurrentWorktree: @escaping (SidebarActivityItem) -> Bool = { _ in true },
                 onOpen: @escaping (SidebarActivityItem) async -> Bool) {
+        self.expandsAllCards = expandsAllCards
+        self.compactHeader = compactHeader
         self.selectionColor = selectionColor; self.isCurrentWorktree = isCurrentWorktree
         self.navigation = navigation; self.items = items; self.projects = projects; self.onOpen = onOpen
     }
@@ -38,13 +42,7 @@ public struct SidebarAttentionList: View {
 
     private func content(wide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Attention").font(.headline).padding(.horizontal, 12)
-            TextField("Find a request or project", text: $navigation.query)
-                .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-            ViewThatFits(in: .horizontal) {
-                filterPicker.pickerStyle(.segmented).fixedSize()
-                filterPicker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(.horizontal, 10)
+            SidebarAttentionHeader(navigation: navigation, compact: compactHeader)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     let rows = navigation.attentionItems(live: items, projects: projects)
@@ -83,13 +81,7 @@ public struct SidebarAttentionList: View {
                     }
                 }.padding(.horizontal, 10).padding(.bottom, 12).scrollTargetLayout()
             }.scrollPosition(id: Binding(get: { navigation.scrollAnchors["attention"] }, set: { navigation.scrollAnchors["attention"] = $0 }))
-        }.padding(.top, 12)
-    }
-
-    private var filterPicker: some View {
-        Picker("Filter attention", selection: $navigation.filter) {
-            ForEach(SidebarActivityFilter.allCases, id: \.self) { filter in Text(filter.title).tag(filter) }
-        }.labelsHidden().fixedSize(horizontal: false, vertical: true)
+        }.padding(.top, compactHeader ? 0 : 12)
     }
 
     private func sectionHeader(_ title: String, count: Int, color: Color) -> some View {
@@ -102,7 +94,7 @@ public struct SidebarAttentionList: View {
         .padding(.top, 4)
     }
 
-    private enum RowStyle {
+    enum RowStyle: Equatable {
         case expanded, question, stopped, other, viewed
     }
 
@@ -114,14 +106,20 @@ public struct SidebarAttentionList: View {
         }
     }
 
+    func rowStyle(for item: SidebarActivityItem, requested: RowStyle) -> RowStyle {
+        if expandsAllCards { return .expanded }
+        let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
+        return selected && item.agentStop?.recap != nil ? .expanded
+            : navigation.hasViewed(item) && !selected ? .viewed : requested
+    }
+
     private func row(_ item: SidebarActivityItem, wide: Bool, style: RowStyle) -> some View {
         let project = projects.first { $0.id == item.projectID }
         let card = SidebarAttentionCardContent(item: item)
         let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
         let viewed = navigation.hasViewed(item)
         let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
-        let presentation: RowStyle = selected && item.agentStop?.recap != nil ? .expanded
-            : viewed && !selected ? .viewed : style
+        let presentation = rowStyle(for: item, requested: style)
         return Button {
             open(item, navigateToProject: false)
         } label: {
@@ -184,14 +182,14 @@ public struct SidebarAttentionList: View {
             VStack(alignment: .leading, spacing: 0) {
                 cardHeader(item, card: card, accent: accent, offline: offline, wide: wide)
                     .padding(.bottom, 11)
-                titleLine(card.title, badge: item.prBadge, font: wide ? .headline : .subheadline, limit: 2)
+                titleLine(card.title, badge: item.prBadge, font: wide ? .headline : .subheadline, limit: expandsAllCards ? nil : 2)
                     .padding(.bottom, 6)
                 if let context = card.sections.first(where: { $0.kind == .context }) {
                     Text(context.text).font(wide ? .callout : .subheadline)
-                        .foregroundStyle(Color.primary.opacity(0.8)).lineLimit(2).help(context.text)
+                        .foregroundStyle(Color.primary.opacity(0.8)).lineLimit(expandsAllCards ? nil : 2).help(context.text)
                     if let detail = context.detail {
                         Text(detail).font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).help(detail).padding(.top, 4)
+                            .lineLimit(expandsAllCards ? nil : 1).help(detail).padding(.top, 4)
                     }
                 }
                 if let need = card.sections.first(where: { $0.kind == .needsYou }) {
@@ -200,7 +198,7 @@ public struct SidebarAttentionList: View {
                             .font(.system(size: 10, weight: .bold)).tracking(1)
                             .foregroundStyle(viewed ? Color.secondary : .orange)
                         Text(need.text).font(.system(size: wide ? 17 : 15, weight: .semibold))
-                            .lineLimit(4).help(need.text)
+                            .lineLimit(expandsAllCards ? nil : 4).help(need.text)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(11)
@@ -212,7 +210,7 @@ public struct SidebarAttentionList: View {
                         Text("NEXT").font(.system(size: 10, weight: .bold)).tracking(0.8)
                             .foregroundStyle(.teal)
                         Text(next.text).font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(2).help(next.text)
+                            .lineLimit(expandsAllCards ? nil : 2).help(next.text)
                     }.padding(.top, 12)
                 }
             }
@@ -327,7 +325,7 @@ public struct SidebarAttentionList: View {
         }
     }
 
-    private func titleLine(_ title: String, badge: PRBadge?, font: Font, limit: Int) -> some View {
+    private func titleLine(_ title: String, badge: PRBadge?, font: Font, limit: Int?) -> some View {
         HStack(spacing: 6) {
             if let badge {
                 // The browser link is a sibling overlay, not a nested button.
@@ -337,5 +335,60 @@ public struct SidebarAttentionList: View {
             }
             Text(title).font(font).fontWeight(.semibold).lineLimit(limit).help(title)
         }
+    }
+}
+
+struct SidebarAttentionHeader: View {
+    @Bindable var navigation: SidebarNavigationState
+    var compact: Bool
+    @State private var showsSearch = false
+    @FocusState private var searchFocused: Bool
+
+    private var searchIsVisible: Bool { showsSearch || !navigation.query.isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+            if compact {
+                HStack {
+                    filterPicker.pickerStyle(.menu).tint(.primary)
+                    Spacer()
+                    Button {
+                        if searchIsVisible {
+                            navigation.query = ""
+                            showsSearch = false
+                            searchFocused = false
+                        } else {
+                            showsSearch = true
+                            searchFocused = true
+                        }
+                    } label: {
+                        Image(systemName: searchIsVisible ? "xmark" : "magnifyingglass")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(searchIsVisible ? "Close search" : "Search attention")
+                }.padding(.leading, 12).padding(.trailing, 4)
+                if searchIsVisible { searchField }
+            } else {
+                Text("Attention").font(.headline).padding(.horizontal, 12)
+                searchField
+                ViewThatFits(in: .horizontal) {
+                    filterPicker.pickerStyle(.segmented).fixedSize()
+                    filterPicker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 10)
+            }
+        }
+    }
+
+    private var searchField: some View {
+        TextField("Find a request or project", text: $navigation.query)
+            .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
+            .focused($searchFocused)
+    }
+
+    private var filterPicker: some View {
+        Picker("Filter attention", selection: $navigation.filter) {
+            ForEach(SidebarActivityFilter.allCases, id: \.self) { filter in Text(filter.title).tag(filter) }
+        }.labelsHidden().fixedSize(horizontal: false, vertical: true)
     }
 }

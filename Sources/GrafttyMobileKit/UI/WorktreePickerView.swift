@@ -90,6 +90,7 @@ public struct WorktreePickerView: View {
         // indicator and a system nav-bar title there would duplicate
         // the host label as a second row above it (IPAD-1.2).
         .navigationTitle(host.label)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

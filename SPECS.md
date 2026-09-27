@@ -1690,6 +1690,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.34** While a mobile pane is open, its back button shall badge unviewed Needs Attention cards from other worktrees and open Needs Attention when tapped with a nonzero badge.
 
+**IOS-4.35** While Attention is displayed on a compact mobile screen, the application shall use an inline host title and a single-row filter and search header, revealing the search field only when requested or when a query is active.
+
+**IOS-4.36** While the mobile Attention list is displayed, every card shall remain expanded with its available recap text visible, including unselected and previously viewed cards.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
