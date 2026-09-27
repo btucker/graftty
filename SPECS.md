@@ -1688,6 +1688,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display it through the shared Attention pane within a compact iPhone width.
 
+**IOS-4.34** While a mobile pane is open, its back button shall badge unviewed Needs Attention cards from other worktrees and open Needs Attention when tapped with a nonzero badge.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -1759,6 +1761,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-7.7** When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
 
 **IOS-7.8** When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.") func failedReplayClosesChannelBeforeReconnect() async throws { let first = DelayedReceiveWS(paged: true) let client = SessionClient(sessionName: "s", webSocketFactory: { first }, pagedRenderer: PagingRenderer()) client.start() defer { client.stop() } try await waitUntil("initial receive") { first.receiveCalls == 1 } // Output before READY is a protocol failure on a still-open channel. first.deliver(.binary(Data("unexpected output".utf8))) try await waitUntil("reconnect backoff") { client.connectionState != .live } #expect(first.closed) } final class PagingRenderer: PagedTerminalRenderer { var installed: [UInt64] = [] var generations: [UInt64] = [] var nearTop = false var pages = 0 var holdResize = false var resizeContinuation: CheckedContinuation<Void, Never>? var resized: [SessionClient.GridSize] = [] func resize(cols: UInt16, rows: UInt16) async throws { if holdResize { await withCheckedContinuation { resizeContinuation = $0 } } resized.append(.init(cols: cols, rows: rows)) } func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws { installed.append(checkpoint.id) generations.append(generation) } func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult { pages += 1 return .applied } func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 } } @Test(
+
+**IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 

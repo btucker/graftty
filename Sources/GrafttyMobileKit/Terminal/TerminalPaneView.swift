@@ -99,6 +99,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
+    public let retainedContainer: TerminalInputContainerView?
 
     public init(
         session: InMemoryTerminalSession,
@@ -115,7 +116,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onPasteRequested: (() -> Void)? = nil,
-        captureContainer: ((TerminalInputContainerView) -> Void)? = nil
+        captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
+        retainedContainer: TerminalInputContainerView? = nil
     ) {
         self.session = session
         self.controller = controller
@@ -132,6 +134,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onPasteRequested = onPasteRequested
         self.captureContainer = captureContainer
+        self.retainedContainer = retainedContainer
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -155,7 +158,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
-        let view = TerminalInputContainerView()
+        let view = retainedContainer ?? TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory

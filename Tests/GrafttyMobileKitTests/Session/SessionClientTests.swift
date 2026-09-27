@@ -11,6 +11,45 @@ import GrafttyRemoteClient
 @MainActor
 struct SessionClientTests {
 
+    @Test("Cached panes retain ownership and render output while detached")
+    func retainedPaneKeepsRendererAndOwnership() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        let pane = RetainedMobilePane(client: client)
+        pane.start()
+        defer { pane.stop() }
+        try await confirmOwner(client, ws: ws)
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 11")
+        container.terminalView.configuration = .init(backend: .inMemory(client.session))
+        host.view.addSubview(container)
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        container.layoutIfNeeded()
+        try await waitUntil("terminal surface") { container.terminalView.surface != nil }
+        pane.container = container
+        let surface = container.terminalView.surface
+        container.removeFromSuperview()
+        pane.detachControls()
+        client.session.receive("output while away")
+        try await waitUntil("output on detached surface") {
+            client.session.readViewportText()?.contains("output while away") == true
+        }
+        #expect(client.isOwner)
+        pane.resume()
+        #expect(client.isOwner)
+        #expect(container.terminalView.surface === surface)
+        host.view.addSubview(container)
+        #expect(client.session.readViewportText()?.contains("output while away") == true)
+        pane.suspend()
+        #expect(pane.requiresValidation)
+        #expect(!client.isOwner)
+    }
+
     @Test("@spec IOS-5.6: While the iOS client follows an authoritative terminal grid, the application shall preserve the leader's exact columns and rows on a canvas fitted to the available width, including non-paged streams, so terminal redraws and wrapping match the leader.", arguments: [390.0, 1024.0])
     func nonPagedFollowerPreservesExactNativeGrid(width: Double) async throws {
         let client = SessionClient(sessionName: "s", webSocketFactory: { FakeWS() })
