@@ -1748,6 +1748,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
 
+**IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -2370,9 +2372,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.10** If a host supplies wake addresses, then the client shall use them only after verifying a signature binding those addresses to the paired host identity.
 
-**REMOTE-2.11** When a Mac client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
+**REMOTE-2.11** When a client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
 
-**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the Mac client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
+**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
 
 **REMOTE-2.13** When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.
 
@@ -2383,6 +2385,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
 
 **REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
+
+**REMOTE-2.18** When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.
 
 ### REMOTE-3.x — Revocation
 

@@ -270,7 +270,7 @@ public final class TerminalInputContainerView: UIView,
         ),
     ]
 
-    let terminalView = UITerminalView(frame: .zero)
+    let terminalView = MobileTerminalInputView(frame: .zero)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
     var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)?
     private var awaitingPhysicalViewport = false

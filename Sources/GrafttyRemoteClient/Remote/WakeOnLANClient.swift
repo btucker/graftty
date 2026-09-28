@@ -3,17 +3,40 @@ import Foundation
 import GrafttyProtocol
 
 enum WakeOnLANClient {
+    struct BroadcastInterface {
+        let index: UInt32
+        let local: String
+        let netmask: String
+    }
+
     /// Returns whether at least one packet was sent, not whether the host woke.
     static func send(_ targets: [WakeOnLANTarget]) async -> Bool {
-        #if os(macOS)
         guard !Task.isCancelled else { return false }
-        var interfaces: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaces) == 0 else { return false }
-        defer { freeifaddrs(interfaces) }
-        var cursor = interfaces
+        let targets = Set(targets)
         var sent = false
-        while let pointer = cursor {
+        for interface in broadcastInterfaces() {
             guard !Task.isCancelled else { return sent }
+            for target in targets {
+                guard let packet = target.magicPacket,
+                    let broadcast = broadcastAddress(host: target.ipv4Address, local: interface.local, netmask: interface.netmask)
+                else { continue }
+                if send(packet, to: broadcast, interfaceIndex: interface.index) {
+                    sent = true
+                }
+            }
+        }
+        return sent
+    }
+
+    /// Active, non-loopback, non-point-to-point IPv4 interfaces that can
+    /// carry a subnet-directed broadcast.
+    static func broadcastInterfaces() -> [BroadcastInterface] {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0 else { return [] }
+        defer { freeifaddrs(interfaces) }
+        var result: [BroadcastInterface] = []
+        var cursor = interfaces
+        while let pointer = cursor {
             let interface = pointer.pointee
             cursor = interface.ifa_next
             let required = UInt32(IFF_UP | IFF_RUNNING | IFF_BROADCAST)
@@ -23,21 +46,11 @@ enum WakeOnLANClient {
                 let mask = interface.ifa_netmask,
                 let local = ipv4String(address), let netmask = ipv4String(mask)
             else { continue }
-            for target in Set(targets) {
-                guard let packet = target.magicPacket,
-                    let broadcast = broadcastAddress(host: target.ipv4Address, local: local, netmask: netmask)
-                else { continue }
-                if send(packet, to: broadcast, interfaceIndex: if_nametoindex(interface.ifa_name)) {
-                    sent = true
-                }
-            }
+            let index = if_nametoindex(interface.ifa_name)
+            guard index != 0 else { continue }
+            result.append(BroadcastInterface(index: index, local: local, netmask: netmask))
         }
-        return sent
-        #else
-        // iOS broadcast requires Apple's managed multicast entitlement.
-        // Enable the sender there only once distribution profiles include it.
-        return false
-        #endif
+        return result
     }
 
     static func broadcastAddress(host: String, local: String, netmask: String) -> String? {
@@ -60,7 +73,6 @@ enum WakeOnLANClient {
         return UInt32(bigEndian: address.s_addr)
     }
 
-    #if os(macOS)
     private static func ipv4String(_ address: UnsafeMutablePointer<sockaddr>) -> String? {
         guard address.pointee.sa_family == AF_INET else { return nil }
         var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
@@ -70,8 +82,9 @@ enum WakeOnLANClient {
         }
     }
 
+    // iOS broadcast requires the managed com.apple.developer.networking.multicast
+    // entitlement (GrafttyMobile.entitlements); without it sendto fails.
     private static func send(_ packet: Data, to broadcast: String, interfaceIndex: UInt32) -> Bool {
-        guard interfaceIndex != 0 else { return false }
         let descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
@@ -99,5 +112,4 @@ enum WakeOnLANClient {
         }
         return sent
     }
-    #endif
 }
