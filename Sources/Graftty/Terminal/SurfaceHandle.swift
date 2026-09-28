@@ -824,6 +824,9 @@ struct SurfaceNSViewGhosttySurfaceOperations {
         view.interpretKeyEvents([event])
     }
     var key: (ghostty_surface_t, ghostty_input_key_s) -> Bool = { ghostty_surface_key($0, $1) }
+    var bindingAction: (ghostty_surface_t, String) -> Bool = { surface, action in
+        action.withCString { ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }
+    }
     var setFocus: (ghostty_surface_t, Bool) -> Void = { ghostty_surface_set_focus($0, $1) }
 
     static let live = SurfaceNSViewGhosttySurfaceOperations(

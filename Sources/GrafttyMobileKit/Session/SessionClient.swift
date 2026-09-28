@@ -101,28 +101,10 @@ public final class SessionClient {
         return legacyServerGrid
     }
 
-    /// libghostty's current cell width in SwiftUI points, derived from
-    /// the viewport-resize callback's `cellWidthPixels ÷ displayScale`.
-    /// Nil until the first resize tick after the UITerminalView
-    /// attaches. `RootView.reconcileFontOverride` pairs this with the
-    /// currently-applied font size to derive the real monospace aspect
-    /// of the configured font for `TerminalWidthLayout.decide` —
-    /// libghostty's measurement is more accurate than the 0.6 default
-    /// aspect assumption for non-default monospace fonts. Pane-preview
-    /// tiles do not consume this value (they use their own
-    /// `PanePreviewFontSizing` per IOS-4.12).
-    public private(set) var cellWidthPoints: CGFloat?
-
     public struct GridSize: Equatable, Hashable, Sendable {
         public let cols: UInt16
         public let rows: UInt16
     }
-
-    /// Display scale used to convert libghostty's pixel-based cell
-    /// metrics into SwiftUI points. Seeded from `UIScreen.main.nativeScale`
-    /// to match UITerminalView. Tests inject a known value.
-    @ObservationIgnored
-    internal var displayScale: CGFloat = UIScreen.main.nativeScale
 
     nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
@@ -397,14 +379,6 @@ public final class SessionClient {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
-        // Skip zero values (pre-lifecycle ticks) and same-value writes —
-        // `onResize` fires per layout frame during keyboard/rotation
-        // animations, and an unchanged `cellWidthPoints` write would
-        // still re-fire every `@Observable` observer.
-        if viewport.cellWidthPixels > 0, displayScale > 0 {
-            let next = CGFloat(viewport.cellWidthPixels) / displayScale
-            if cellWidthPoints != next { cellWidthPoints = next }
-        }
         guard snapshotCanvasGrid == nil,
               !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)

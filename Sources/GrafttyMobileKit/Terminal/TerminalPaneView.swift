@@ -298,13 +298,13 @@ public final class TerminalInputContainerView: UIView,
         let canvas = snapshotCanvas
         snapshotScrollView.frame = paddedViewport(canvas: canvas)
         guard let grid = authoritativeGrid, let metrics = terminalGridMetrics, let canvas else {
-            snapshotScrollView.configure(canvas: nil, rowHeight: 0)
+            snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
             confirmPhysicalViewportIfReady()
             return
         }
         snapshotScrollView.configure(
             canvas: canvas,
-            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale,
+            nativeRowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor,
             columns: grid.cols
         )
     }

@@ -736,6 +736,7 @@ struct GrafttyApp: App {
         + GhosttyCommandRegistry.macPaneFocusActions
         + GhosttyCommandRegistry.macPaneLayoutActions
         + GhosttyCommandRegistry.macPaneLifecycleActions
+        + GhosttyCommandRegistry.macZoomActions
         + GhosttyCommandRegistry.macSettingsActions
 
     @State private var appState: AppState
@@ -1051,6 +1052,15 @@ struct GrafttyApp: App {
                     bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
                         handleGhosttyCommand(command)
                     }
+                }
+            }
+
+            CommandGroup(after: .toolbar) {
+                ForEach(GhosttyCommandRegistry.macZoomActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                    .disabled(terminalManager.focusedTerminalID == nil)
                 }
             }
 
@@ -5818,6 +5828,9 @@ struct GrafttyApp: App {
 
     private func handleUnsupportedGhosttyAction(_ action: GhosttyAction) {
         switch action {
+        case .increaseFontSize, .decreaseFontSize, .resetFontSize:
+            guard let id = terminalManager.focusedTerminalID else { return }
+            terminalManager.handle(for: id)?.followerPresentation?.performZoomAction(action)
         case .toggleSplitZoom:
             handleToggleZoom()
         case .equalizeSplits:
