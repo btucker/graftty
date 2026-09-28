@@ -5,6 +5,34 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test("@spec AGENT-3.23: When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.")
+    func legacyRecapRequestsEmojiOnce() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("emoji-retry-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let legacy = AttentionRecap(title: "Push notifications", completed: "Wired the client.", next: "Test delivery.")
+        try handoff.stage(legacy, worktree: "/repo/one", agentID: "codex-1")
+        #expect(try handoff.stop(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+            sessionID: "one", paneSessionName: nil, stopHookActive: false) == .requestRecap)
+        var events: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { events.append($0) } == 0)
+        #expect(try handoff.stop(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+            sessionID: "one", paneSessionName: nil, stopHookActive: true) == .queued)
+        #expect(try handoff.consumeStops { events.append($0) } == 1)
+        #expect(events.first?.recap == legacy)
+
+        try handoff.stage(legacy, worktree: "/repo/one", agentID: "codex-1")
+        #expect(try handoff.stop(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+            sessionID: "one", paneSessionName: nil, stopHookActive: false) == .requestRecap)
+        var corrected = legacy
+        corrected.emoji = "🔔"
+        try handoff.stage(corrected, worktree: "/repo/one", agentID: "codex-1")
+        #expect(try handoff.stop(worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+            sessionID: "one", paneSessionName: nil, stopHookActive: true) == .queued)
+        #expect(try handoff.consumeStops { events.append($0) } == 1)
+        #expect(events.last?.recap == corrected)
+    }
+
     @Test("@spec AGENT-3.21: When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.")
     func resumedAgentProgressFollowsStopInTimestampOrder() throws {
         let root = FileManager.default.temporaryDirectory
@@ -129,7 +157,7 @@ struct AttentionFileHandoffTests {
             .appendingPathComponent("graftty-attention-duplicate-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let handoff = AttentionFileHandoff(rootDirectory: root)
-        let recap = AttentionRecap(title: "Posting eval", completed: "Ran holdout.", next: "Review results.")
+        let recap = AttentionRecap(title: "Posting eval", completed: "Ran holdout.", next: "Review results.", emoji: "🧪")
         try handoff.stage(recap, worktree: "/repo/one", agentID: "codex-1")
 
         for _ in 0..<2 {

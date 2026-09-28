@@ -4,7 +4,7 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
-    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present.")
+    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present, and require a task-specific emoji independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(
@@ -13,6 +13,8 @@ struct TeamHookRendererTests {
             let context = try additionalContext(from: json)
             #expect(context.contains("Load the `graftty` skill for Attention recaps"))
             #expect(context.contains("`graftty-team` skill for agent coordination"))
+            #expect(context.contains("task-specific `emoji`"))
+            #expect(context.contains("`emojiAlternatives`"))
         }
     }
 
@@ -24,7 +26,8 @@ struct TeamHookRendererTests {
         #expect(json["decision"] == "block")
         #expect(json["reason"]?.contains("graftty attention report --stdin") == true)
         #expect(json["reason"]?.contains("context") == true)
-        #expect(json["reason"]?.contains("emoji") == true)
+        #expect(json["reason"]?.contains("emojiAlternatives") == true)
+        #expect(json["reason"]?.contains("already reported without an emoji") == true)
     }
 
     @Test func codexSessionStartRendersAdditionalContext() throws {

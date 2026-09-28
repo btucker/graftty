@@ -10,10 +10,24 @@ struct AttentionRecapCoordinatorTests {
         title: "Posting detail model evals",
         completed: "v3 scored 0.910 against a700's 0.935.",
         next: "Run four evals on the new holdout, prod200, and us1000.",
-        need: nil
+        need: nil, emoji: "🧪"
     )
 
-    @Test("@spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.")
+    @Test("Socket recap without emoji requests one correction and preserves the original if uncorrected")
+    func legacyRecapRequestsEmojiOnce() {
+        let coordinator = AttentionRecapCoordinator()
+        var legacy = recap
+        legacy.emoji = nil
+        coordinator.report(legacy, worktree: "/repo/one", agentID: "codex-1")
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(legacy))
+        coordinator.report(legacy, worktree: "/repo/one", agentID: "codex-1")
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
+        coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(recap))
+    }
+
+    @Test("@spec AGENT-3.9: When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.")
     func reportedRecapIsConsumedOnce() {
         let coordinator = AttentionRecapCoordinator()
         coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")

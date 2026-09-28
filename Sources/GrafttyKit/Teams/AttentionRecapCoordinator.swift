@@ -27,7 +27,9 @@ public final class AttentionRecapCoordinator {
     public func stop(worktree: String, agentID: String?, stopHookActive: Bool) -> AttentionRecapStopAction {
         guard let agentID, !agentID.isEmpty else { return .record(nil) }
         let key = Key(worktree: worktree, agentID: agentID)
-        if let recap = pending.removeValue(forKey: key) {
+        if let recap = pending[key] {
+            if recap.emoji == nil, !stopHookActive { return .requestRecap }
+            pending.removeValue(forKey: key)
             return .record(recap)
         }
         return stopHookActive ? .record(nil) : .requestRecap

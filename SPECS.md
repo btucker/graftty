@@ -2708,7 +2708,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.8** When Codex emits PermissionRequest before its approval reviewer decides whether user input is required, the application shall not create needs-input attention.
 
-**AGENT-3.9** When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+**AGENT-3.9** When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
 
 **AGENT-3.10** When an agent stops without reporting a recap, the application shall request one continuation once, then show a generic stopped card if the continued turn still has no report.
 
@@ -2733,6 +2733,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
 
 **AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
+
+**AGENT-3.22** When a new Attention report omits its task-specific emoji, the CLI shall reject it with an actionable error before staging it, while older saved recaps remain decodable.
+
+**AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.
 
 ### AGENT-4.x
 
@@ -2840,7 +2844,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present.
+**AGENT-6.33** When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present, and require a task-specific emoji independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 

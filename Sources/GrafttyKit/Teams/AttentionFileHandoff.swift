@@ -129,7 +129,9 @@ public struct AttentionFileHandoff: Sendable {
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             return try JSONDecoder().decode(AttentionRecap.self, from: Data(contentsOf: url))
         }
-        if recap == nil, agentID != nil, !stopHookActive { return .requestRecap }
+        // Older clients and cached skills can stage text without an identity.
+        // Keep that report available during the one permitted correction turn.
+        if recap?.emoji == nil, agentID != nil, !stopHookActive { return .requestRecap }
         let event = AttentionFileStopEvent(
             worktree: worktree,
             agentID: agentID,
