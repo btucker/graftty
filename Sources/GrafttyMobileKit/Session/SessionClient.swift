@@ -344,7 +344,7 @@ public final class SessionClient {
         // Layout path: libghostty tells us "the iOS view is now N×M".
         // We memoize, but send owner resize only while this display is
         // the confirmed owner. Followers use the authoritative grid for
-        // local font fitting without resizing the PTY.
+        // local canvas scaling without resizing the PTY.
         box.onResize = { [weak self] viewport in
             Task { @MainActor [weak self] in
                 self?.handleViewport(viewport)

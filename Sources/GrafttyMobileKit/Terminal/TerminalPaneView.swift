@@ -82,9 +82,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Effective config font used as the starting point for libghostty's
     /// built-in one-point pinch steps.
     public let configuredFontSize: Float?
-    /// Present only while this pane owns the display. Follower auto-fit is a
-    /// temporary rendering choice and must never become the saved worktree
-    /// preference.
+    /// Present only while this pane owns the display. Follower presentation
+    /// zoom must never become the saved worktree font preference.
     public let onFontSizeChange: ((Float) -> Void)?
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
