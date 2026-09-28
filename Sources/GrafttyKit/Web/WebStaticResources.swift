@@ -1,11 +1,12 @@
 import Foundation
 
 /// Accessors for the web client bundled via `resources: [.copy("Web/Resources")]`,
-/// which copies a directory literally named `Resources` into the bundle. In
-/// SwiftPM's flat bundle layout Foundation treats that directory as the
-/// bundle's resource directory, so files resolve with no subdirectory; in the
+/// which copies a directory literally named `Resources` into the bundle. In the
 /// standard `Contents/Resources` layout (Swift 6.4's build system) it is a
-/// nested `Resources/` subdirectory instead (CONFIG-2.7).
+/// nested `Resources/` subdirectory. Foundation resolves the same lookup in
+/// SwiftPM's flat layout too, but only through undocumented handling of a
+/// top-level `Resources` directory, so the unscoped lookup stays as a
+/// fallback (CONFIG-2.7).
 public enum WebStaticResources {
 
     public enum Error: Swift.Error {

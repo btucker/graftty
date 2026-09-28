@@ -693,7 +693,7 @@ public actor WebRTCHostAgent {
         // `inboundChildChannelInitializer` runs for the first channel.
         let peerBox = AuthenticatedPeerBox()
         do {
-            try await transport.eventLoop.submit { [weak self, hostKey, trustedPeerStore, activeRemotePeers, transport] in
+            try await transport.eventLoop.submit { [self, hostKey, trustedPeerStore, activeRemotePeers, transport] in
                 let handler = SSHServerSetup.makeHandler(
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,

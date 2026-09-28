@@ -1199,7 +1199,7 @@ struct SingleSessionView: View {
             onPasteRequested: { [weak client] in
                 client?.pasteFromClipboard()
             },
-            captureContainer: { [paneContainerBox] view in
+            captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0

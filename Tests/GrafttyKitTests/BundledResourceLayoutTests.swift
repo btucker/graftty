@@ -3,16 +3,17 @@ import Testing
 @testable import GrafttyKit
 
 @Suite("""
-@spec CONFIG-2.7: When GrafttyKit's resource bundle uses either SwiftPM's flat \
+@spec CONFIG-2.7: If GrafttyKit's resource bundle uses either SwiftPM's flat \
 layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's \
-build system, the application shall locate the bundled web client assets and \
-agent plugin payload.
+build system, then the application shall locate the bundled web client assets, \
+agent plugin payload, and vendored ghostty runtime resources.
 """)
 struct BundledResourceLayoutTests {
     private enum Layout { case flat, standard }
 
-    /// Mirrors what `.copy("Web/Resources")` and `.copy("AgentPlugins")`
-    /// produce: a directory literally named `Resources` holding the web client.
+    /// Mirrors what `.copy("Web/Resources")`, `.copy("AgentPlugins")`, and
+    /// `.copy("GhosttyResources/ghostty")` produce: a directory literally
+    /// named `Resources` holding the web client, beside the other payloads.
     private func makeBundle(_ layout: Layout) throws -> Bundle {
         let fm = FileManager.default
         let root = try makeTempDir(prefix: "BundleLayout")
@@ -33,10 +34,12 @@ struct BundledResourceLayoutTests {
         for name in ["index.html", "app.js", "app.css"] {
             try Data(name.utf8).write(to: web.appendingPathComponent(name))
         }
-        try fm.createDirectory(
-            at: resources.appendingPathComponent("AgentPlugins/claude"),
-            withIntermediateDirectories: true
-        )
+        for directory in ["AgentPlugins/claude", "ghostty/shell-integration"] {
+            try fm.createDirectory(
+                at: resources.appendingPathComponent(directory),
+                withIntermediateDirectories: true
+            )
+        }
         return try #require(Bundle(url: root))
     }
 
@@ -54,5 +57,14 @@ struct BundledResourceLayoutTests {
         let bundle = try makeBundle(layout)
         let root = try #require(AgentPluginInstaller.bundledResourceRoot(bundle: bundle))
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("claude").path))
+    }
+
+    @Test(arguments: [Layout.flat, .standard])
+    private func ghosttyResourcesResolve(_ layout: Layout) throws {
+        let bundle = try makeBundle(layout)
+        let ghostty = try #require(GhosttyRuntimeResources.bundledResourcesDir(bundle: bundle))
+        #expect(FileManager.default.fileExists(
+            atPath: ghostty.appendingPathComponent("shell-integration").path
+        ))
     }
 }
