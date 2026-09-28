@@ -1374,9 +1374,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.4** When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.
 
-**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
+**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, center a narrower canvas, and restore the Mac's physical viewport before taking control.
 
 **OWN-2.6** When native text input commits to a follower terminal, the application shall acquire display ownership before delivering text and shall reject delivery if acquisition fails.
+
+**OWN-2.7** While a terminal follows another display, the application shall calculate canvas placement, scroll extent, and history row height from one presentation scale, center unused horizontal space, and preserve the native grid when zooming.
+
+**OWN-2.8** When a Mac follower is magnified, the application shall scale its entire canvas and allow horizontal scrolling without changing its native grid, then discard the presentation zoom when it becomes leader.
+
+**OWN-2.9** When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.
 
 ## UPDATE — Self-Update
 
@@ -1726,9 +1732,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
+**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -1940,7 +1946,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
-**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), initially fitting each leaf's canvas to the full leaf width before any local presentation zoom.
 
 **IPAD-2.6** While a focused pane exists in the iPad split tree, the application shall apply the same Ghostty `unfocused-split-fill` and `unfocused-split-opacity` dimming treatment as the Mac to every other live pane, without drawing an iPad-only focus outline. When no pane is focused, no pane shall be dimmed.
 

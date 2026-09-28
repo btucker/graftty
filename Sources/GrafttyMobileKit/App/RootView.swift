@@ -451,18 +451,11 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     /// The iOS-scaled Mac ghostty config used to build `controller`.
-    /// Cached so the follower/ownerless auto-fit path (IOS-5.6) can re-apply
-    /// the base config or a font-size override without re-fetching.
+    /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
     /// Latest owner-selected size. Pinch actions already update the live
-    /// Ghostty surface; this state keeps later follower fitting and owner
-    /// restoration anchored to that same size without replaying the action.
+    /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
-    /// Last font-size override applied via TerminalWidthLayout.decide while
-    /// not owner, so we can detect transitions (e.g. base ↔ override) and
-    /// avoid pointlessly rebuilding the controller config on every layout
-    /// tick. Set to nil while the base config is in effect.
-    @State private var liveFontOverride: Float?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -634,10 +627,8 @@ struct SingleSessionView: View {
             case .terminal:
                 GeometryReader { _ in
                     VStack(spacing: 0) {
-                        GeometryReader { termGeo in
-                            terminalContent(containerSize: termGeo.size)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        }
+                        terminalContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
@@ -1270,17 +1261,13 @@ struct SingleSessionView: View {
         }
     }
 
-    /// The terminal body. While not the display owner, applies a font-size
-    /// override to the controller via `reconcileFontOverride` so that
-    /// `authoritativeCols × cellWidth ≤ containerWidth` and the pane renders at
-    /// the full container width with no horizontal ScrollView (IOS-5.6).
+    /// Followers scale an authoritative canvas; owners use the physical viewport.
     @ViewBuilder
-    private func terminalContent(containerSize: CGSize) -> some View {
+    private var terminalContent: some View {
         if let controller, let client {
             activeTerminal(
                 client: client,
-                controller: controller,
-                containerSize: containerSize
+                controller: controller
             )
         } else {
             // Mac-config fetch in flight, or client not yet assigned.
@@ -1291,8 +1278,7 @@ struct SingleSessionView: View {
     @ViewBuilder
     private func activeTerminal(
         client: SessionClient,
-        controller: TerminalController,
-        containerSize: CGSize
+        controller: TerminalController
     ) -> some View {
         let pane = TerminalPaneView(
             session: client.session,
@@ -1353,34 +1339,12 @@ struct SingleSessionView: View {
             retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container
         )
         pane
-            .task(id: TerminalFontFitTaskKey(
-                containerSize: containerSize,
-                authoritativeCols: client.authoritativeGrid?.cols,
-                isOwner: client.isOwner,
-                baseConfig: effectiveBaseConfigText
-            )) {
-                reconcileFontOverride(
-                    client: client,
-                    controller: controller,
-                    containerWidth: containerSize.width
-                )
-            }
             .onChange(of: client.isOwner) { wasOwner, isOwner in
                 if Self.shouldSynchronizeViewportOnOwnerTransition(
                     wasOwner: wasOwner,
                     isOwner: isOwner
                 ) {
-                    // Ownership may arrive while the surface still has the
-                    // follower-fit font. Restore the owner font synchronously,
-                    // then explicitly ask Ghostty for its resulting grid on
-                    // the next runloop. Relying on a later incidental layout
-                    // leaves the remote PTY at the previous owner's size until
-                    // the user types or shows the keyboard.
-                    reconcileFontOverride(
-                        client: client,
-                        controller: controller,
-                        containerWidth: containerSize.width
-                    )
+                    // Publish the physical viewport after the follower canvas is released.
                     DispatchQueue.main.async { [paneContainerBox] in
                         paneContainerBox.fitTerminalToCurrentSize()
                     }
@@ -1407,60 +1371,6 @@ struct SingleSessionView: View {
                 hostID: hostID,
                 worktreePath: worktreePath
             )
-        }
-    }
-
-    /// @spec IOS-6.10
-    /// Owner promotion restores the base config font: while a follower,
-    /// the auto-fit override shrinks the font to match the authoritative
-    /// (often desktop-width) grid. The owner-transition handler then
-    /// explicitly synchronizes Ghostty's metrics on the next runloop so
-    /// the resulting owner resize cannot wait for keyboard input.
-    /// While owner with no override active, the reconciler leaves the
-    /// font alone so pinch-to-zoom keeps adjusting from that baseline.
-    private func reconcileFontOverride(
-        client: SessionClient,
-        controller: TerminalController,
-        containerWidth: CGFloat
-    ) {
-        guard client.snapshotCanvasGrid == nil else { return }
-        guard let baseConfig = effectiveBaseConfigText else { return }
-        let configSize = Float(
-            GhosttyConfigFetcher.lastFontSize(in: baseConfig)
-                ?? GhosttyConfigFetcher.defaultIOSFontSize
-        )
-
-        // The font size currently applied to the controller — either the
-        // live override or the base config size. We pair this with
-        // libghostty's reported cellWidthPoints to derive the real
-        // monospace aspect of the currently-installed font.
-        let measuredAt: Float = liveFontOverride ?? configSize
-
-        let decision = TerminalWidthLayout.decide(
-            containerWidth: containerWidth,
-            authoritativeCols: client.authoritativeGrid?.cols,
-            configFontSize: configSize,
-            measuredCellWidthPoints: client.cellWidthPoints,
-            measuredAtFontSize: measuredAt,
-            isOwner: client.isOwner
-        )
-        switch TerminalWidthLayout.overrideAction(
-            decision: decision,
-            liveFontOverride: liveFontOverride
-        ) {
-        case .keep:
-            return
-        case .restoreConfigFont:
-            controller.updateConfigSource(.generated(baseConfig))
-            liveFontOverride = nil
-        case let .applyOverride(pointSize):
-            let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
-                to: baseConfig,
-                fontSize: pointSize,
-                comment: "GrafttyMobile auto-fit - non-owner"
-            )
-            controller.updateConfigSource(.generated(overridden))
-            liveFontOverride = pointSize
         }
     }
 

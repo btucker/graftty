@@ -1220,42 +1220,6 @@ struct SessionClientTests {
         #expect(ws.closed)
     }
 
-    @Test
-    func handleViewportCapturesCellSizeInPoints() {
-        let client = SessionClient(sessionName: "s", webSocketFactory: { FakeWS() })
-        client.start()
-        defer { client.stop() }
-        client.displayScale = 3.0
-        client.handleViewport(InMemoryTerminalViewport(
-            columns: 80, rows: 24,
-            widthPixels: 0, heightPixels: 0,
-            cellWidthPixels: 18, cellHeightPixels: 36
-        ))
-        #expect(client.cellWidthPoints == 6.0)
-    }
-
-    @Test
-    func handleViewportIgnoresZeroCellPixelsToAvoidClobberingPriorValue() {
-        // Pre-lifecycle ticks arrive with cellWidthPixels == 0. Keep the
-        // last known non-zero value rather than clobbering it with noise.
-        let client = SessionClient(sessionName: "s", webSocketFactory: { FakeWS() })
-        client.start()
-        defer { client.stop() }
-        client.displayScale = 2.0
-        client.handleViewport(InMemoryTerminalViewport(
-            columns: 80, rows: 24,
-            widthPixels: 0, heightPixels: 0,
-            cellWidthPixels: 14, cellHeightPixels: 28
-        ))
-        #expect(client.cellWidthPoints == 7.0)
-        client.handleViewport(InMemoryTerminalViewport(
-            columns: 80, rows: 24,
-            widthPixels: 0, heightPixels: 0,
-            cellWidthPixels: 0, cellHeightPixels: 0
-        ))
-        #expect(client.cellWidthPoints == 7.0)
-    }
-
     @Test("""
     @spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.
     """)
