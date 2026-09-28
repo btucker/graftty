@@ -1234,13 +1234,13 @@ struct GrafttyApp: App {
         terminalManager.portScanner = portScanner
         let tmRef = terminalManager
         Task {
-            await portScanner.setOnChange { [weak portBindingsModel] id, list in
+            await portScanner.setOnChange { [weak portBindingsModel = portBindingsModel] id, list in
                 portBindingsModel?.set(id, list)
             }
             // PORTS-4.5: panes registered before zmx wrote their `pty
             // spawned` log line need their PID resolved later.
             // `[weak]` breaks the cycle through TerminalManager.portScanner.
-            await portScanner.setPIDResolver { [weak tmRef] id in
+            await portScanner.setPIDResolver { [weak tmRef = tmRef] id in
                 await tmRef?.lookupShellPID(for: id)
             }
         }
@@ -6410,7 +6410,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             for wt in repo.worktrees where wt.state == .running {
                 store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
-            remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
+            remoteBranchStore.refresh(repoPath: repoPath) { [weak self = self] in
                 self?.refreshPushedPRs(repoPath: repoPath)
                 self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
             }

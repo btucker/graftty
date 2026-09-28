@@ -66,21 +66,16 @@ enum StaleWorktreeDismissal {
             now: now,
             gracePeriod: gracePeriod
         ))
-        let candidates: [(
-            repo: RepoEntry,
-            worktrees: [(id: WorktreeEntry.ID, staleSince: Date)]
-        )] =
-            appState.wrappedValue.repos.compactMap { repo in
-                let worktrees: [(id: WorktreeEntry.ID, staleSince: Date)] =
-                    repo.worktrees.compactMap { worktree in
-                        guard expired.contains(worktree.id),
-                              let staleSince = worktree.staleSince else {
-                            return nil
-                        }
-                        return (id: worktree.id, staleSince: staleSince)
-                    }
-                return worktrees.isEmpty ? nil : (repo, worktrees)
+        var candidates: [(repo: RepoEntry, worktrees: [(id: WorktreeEntry.ID, staleSince: Date)])] = []
+        for repo in appState.wrappedValue.repos {
+            var worktrees: [(id: WorktreeEntry.ID, staleSince: Date)] = []
+            for worktree in repo.worktrees {
+                if expired.contains(worktree.id), let staleSince = worktree.staleSince {
+                    worktrees.append((id: worktree.id, staleSince: staleSince))
+                }
             }
+            if !worktrees.isEmpty { candidates.append((repo: repo, worktrees: worktrees)) }
+        }
 
         var dismissed: [WorktreeEntry.ID] = []
         for candidate in candidates {

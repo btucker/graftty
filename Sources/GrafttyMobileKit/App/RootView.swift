@@ -1338,7 +1338,7 @@ struct SingleSessionView: View {
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
                 }
-                view.onPhysicalViewportReady = { [weak client] viewport in
+                view.onPhysicalViewportReady = { [weak client = client] viewport in
                     client?.physicalViewportDidBecomeReady(viewport)
                 }
                 view.setStickyControlActivationChangeHandler { activation in
