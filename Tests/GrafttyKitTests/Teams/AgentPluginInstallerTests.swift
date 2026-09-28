@@ -92,7 +92,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.34: When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+    @spec AGENT-6.42: When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
     """)
     func refreshMigratesLegacyPluginAfterSuccessfulInstall() async throws {
         let destination = FileManager.default.temporaryDirectory
@@ -173,6 +173,7 @@ struct AgentPluginInstallerTests {
             "skills/graftty/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty/SKILL.md",
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-team/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty/.codex-plugin/plugin.json",
+            "skills/graftty-open/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-open/SKILL.md",
         ]
         for (path, target) in links {
             let link = claudeRoot.appendingPathComponent(path)
@@ -183,6 +184,8 @@ struct AgentPluginInstallerTests {
             .appendingPathComponent("skills/graftty/SKILL.md"))
         let expectedTeamSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-team/SKILL.md"))
+        let expectedOpenSkill = try Data(contentsOf: claudeRoot
+            .appendingPathComponent("skills/graftty-open/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -202,6 +205,7 @@ struct AgentPluginInstallerTests {
             for (path, expected) in [
                 "skills/graftty/SKILL.md": expectedRecapSkill,
                 "skills/graftty-team/SKILL.md": expectedTeamSkill,
+                "skills/graftty-open/SKILL.md": expectedOpenSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -209,6 +213,34 @@ struct AgentPluginInstallerTests {
                 #expect(attributes[.type] as? FileAttributeType == .typeRegular)
                 #expect(try Data(contentsOf: file) == expected)
             }
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+    """)
+    func preparesOpenSkillForBothProviders() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-open-plugin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+
+        for provider in ["codex", "claude"] {
+            let file = destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/graftty-open/SKILL.md"
+            )
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
+            let skill = try String(contentsOf: file, encoding: .utf8)
+            #expect(skill.contains("name: graftty-open"))
+            #expect(skill.contains("graftty open"))
+            #expect(skill.contains("finished artifact"))
+            #expect(skill.contains("pane leader"))
+            #expect(skill.contains("tracked worktree"))
+            #expect(skill.contains("20 MB"))
+            #expect(skill.contains("15 minutes"))
+            #expect(skill.contains("Open menu"))
         }
     }
 

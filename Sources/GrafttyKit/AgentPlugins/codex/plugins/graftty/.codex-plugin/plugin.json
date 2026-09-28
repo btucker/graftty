@@ -1,7 +1,7 @@
 {
   "name": "graftty",
   "version": "0.3.2",
-  "description": "Connect Codex and Claude sessions to Graftty Attention and worktree agent coordination.",
+  "description": "Connect agent sessions to Graftty Attention, worktree coordination, and mobile file or URL previews.",
   "author": {
     "name": "Graftty"
   },
@@ -9,16 +9,18 @@
   "interface": {
     "displayName": "Graftty",
     "shortDescription": "Attention recaps and worktree agent coordination.",
-    "longDescription": "Adds Graftty Attention recaps, lifecycle hooks, worktree agent coordination, and durable instructions.",
+    "longDescription": "Adds Graftty Attention recaps, lifecycle hooks, worktree agent coordination, durable instructions, and mobile file and URL preview guidance.",
     "developerName": "Graftty",
     "category": "Productivity",
     "capabilities": [
       "Attention recaps",
-      "Agent coordination"
+      "Agent coordination",
+      "Mobile preview"
     ],
     "defaultPrompt": [
       "Report this agent turn to Graftty Attention.",
-      "Show my Graftty team roster."
+      "Show my Graftty team roster.",
+      "Open a host file or URL on Graftty Mobile."
     ]
   }
 }

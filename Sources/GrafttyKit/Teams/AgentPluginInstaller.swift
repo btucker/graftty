@@ -195,6 +195,7 @@ public struct AgentPluginInstaller: Sendable {
                 "plugins/graftty/skills/graftty/SKILL.md",
                 "plugins/graftty/skills/graftty-team/SKILL.md",
                 "plugins/graftty/.\(provider.rawValue)-plugin/plugin.json",
+                "plugins/graftty/skills/graftty-open/SKILL.md",
             ] {
                 var contents = try Data(contentsOf: source.appendingPathComponent(path))
                 if path.hasSuffix("plugin.json"), let pluginVersion {

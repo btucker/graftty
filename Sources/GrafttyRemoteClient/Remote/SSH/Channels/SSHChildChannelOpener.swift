@@ -33,6 +33,7 @@ func openChildChannel(
     parentHandler: NIOSSHHandler,
     channelType: SSHChannelType = .session,
     timeout: Duration = .seconds(10),
+    closeParentOnTimeout: Bool = true,
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
     try Task.checkCancellation()
@@ -43,7 +44,7 @@ func openChildChannel(
     return try await waiter.wait(
         timeout: timeout,
         timeoutError: SSHChildChannelOpenError.timedOut,
-        onAbort: { parentChannel.close(promise: nil) },
+        onAbort: { if closeParentOnTimeout { parentChannel.close(promise: nil) } },
         // A dismissed preview can cancel an open on a healthy connection.
         // Preserve its siblings; the completion handler closes any late child.
         onCancel: {},
