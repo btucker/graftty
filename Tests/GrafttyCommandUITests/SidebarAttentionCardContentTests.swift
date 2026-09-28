@@ -42,22 +42,22 @@ struct SidebarAttentionCardContentTests {
         #expect(fallback.sections[0].detail == nil)
     }
 
-    @Test("@spec LAYOUT-2.79: While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.")
-    func groupsQuestionsAndRoutineStops() {
-        func item(_ id: String, need: String? = nil, stopped: Bool = true) -> SidebarActivityItem {
-            let stop = stopped ? SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
-                recap: .init(title: id, context: "Context", completed: "Done", next: "Next", need: need)) : nil
-            return SidebarActivityItem(id: id, projectID: "p", worktreeID: id, paneID: nil,
-                projectName: "graftty", worktreeName: id, title: id,
-                occurrence: .init(timestamp: .now, text: id, source: stopped ? .agentStop : .userNotify),
-                isBusy: false, agentStop: stop)
-        }
-        let buckets = SidebarAttentionBuckets(items: [
-            item("routine-1"), item("question-1", need: "Which device?"),
-            item("notify", stopped: false), item("question-2", need: "Which build?"), item("routine-2")
-        ])
-        #expect(buckets.questions.map(\.id) == ["question-1", "question-2"])
-        #expect(buckets.stopped.map(\.id) == ["routine-1", "routine-2"])
-        #expect(buckets.other.map(\.id) == ["notify"])
+    @MainActor
+    @Test("@spec LAYOUT-2.79: While Attention cards are displayed, the application shall expand stopped reports regardless of viewing or selection and collapse resumed agents into Running rows.")
+    func collapsesOnlyAfterResume() {
+        let navigation = SidebarNavigationState(prefix: "presentation-\(UUID())")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+            recap: .init(title: "Task", context: "Context", completed: "Done", next: "Next", need: "Which device?"))
+        var item = SidebarActivityItem(id: "stop", projectID: "p", worktreeID: "wt", paneID: nil,
+            projectName: "graftty", worktreeName: "wt", title: stop.title,
+            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        let list = SidebarAttentionList(navigation: navigation, items: [item], projects: [], onOpen: { _ in true })
+        #expect(list.rowStyle(for: item) == .expanded)
+        navigation.opened(item)
+        #expect(list.rowStyle(for: item) == .expanded)
+        item.isBusy = true
+        #expect(list.rowStyle(for: item) == .running)
+        item.isBusy = false
+        #expect(list.rowStyle(for: item) == .expanded)
     }
 }

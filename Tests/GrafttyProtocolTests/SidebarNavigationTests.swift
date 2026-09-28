@@ -50,7 +50,7 @@ struct SidebarNavigationTests {
         #expect(SidebarProjection.attentionPaneRoute(for: unknown, in: worktree) == nil)
     }
 
-    @Test("@spec LAYOUT-2.84: When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.")
+    @Test("Recent-view bookkeeping retires resumed stops independently of durable Attention cards")
     func resumedAgentRemovesViewedStop() throws {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
                                     providerSessionKey: "codex:session:one")

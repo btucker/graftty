@@ -130,7 +130,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
-**LAYOUT-2.57** When an Attention card body is opened, the application shall keep Attention open, retain the card's occurrence-time position, and collapse previously viewed cards with a checkmark when selection moves.
+**LAYOUT-2.57** When an Attention card body is opened, the application shall keep Attention open, keep existing cards in place as reports update, prepend new cards, and collapse a card only when its agent resumes.
 
 **LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
 
@@ -174,7 +174,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.78** When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
 
-**LAYOUT-2.79** While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.
+**LAYOUT-2.79** While Attention cards are displayed, the application shall expand stopped reports regardless of viewing or selection and collapse resumed agents into Running rows.
 
 **LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
 
@@ -184,7 +184,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
 
-**LAYOUT-2.84** When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.
+**LAYOUT-2.84** When an agent resumes, the application shall retain its Attention card in place as Running and expand the same card when a new stopped report arrives.
+
+**LAYOUT-2.85** While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1692,7 +1694,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.35** While Attention is displayed on a compact mobile screen, the application shall use an inline host title and a single-row filter and search header, revealing the search field only when requested or when a query is active.
 
-**IOS-4.36** While the mobile Attention list is displayed, every card shall remain expanded with its available recap text visible, including unselected and previously viewed cards.
+**IOS-4.36** While the mobile Attention list is displayed, stopped cards shall remain expanded with their available recap text visible regardless of viewing or selection, and resumed agents shall collapse into Running rows.
 
 **IOS-4.37** When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.
 

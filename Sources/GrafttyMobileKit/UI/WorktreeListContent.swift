@@ -704,7 +704,7 @@ public struct WorktreeListContent: View {
                 if item.paneID != nil { currentItem.paneID = paneID }
                 if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
             } else if item.paneID != nil {
-                navigation.forget(item.id); showErrorToast("This pane is no longer available."); return false
+                showErrorToast("This pane is no longer available."); return false
             } else if let onSelectWorktreeDetail {
                 onSelectWorktreeDetail(target)
             } else { onSelect(target) }

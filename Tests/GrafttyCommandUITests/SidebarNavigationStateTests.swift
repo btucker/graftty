@@ -9,7 +9,8 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarNavigationStateTests {
-    @Test func viewedStopDisappearsFromNeedsYouWhenItsPaneRuns() throws {
+    @Test("@spec LAYOUT-2.84: When an agent resumes, the application shall retain its Attention card in place as Running and expand the same card when a new stopped report arrives.")
+    func resumedStopStaysInNeedsYou() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project")
@@ -34,9 +35,74 @@ struct SidebarNavigationStateTests {
                 agentProgressTimes: ["codex:session:one": Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate]))
         let live = SidebarProjection.activity([running])
         navigation.reconcile(worktrees: [running], projects: [project])
-        #expect(navigation.attentionItems(live: live, projects: [project]).isEmpty)
+        let retained = navigation.attentionItems(live: live, projects: [project])
+        #expect(retained.map(\.id) == [item.id])
+        #expect(retained.first?.isBusy == true)
         navigation.filter = .running
         #expect(navigation.attentionItems(live: live, projects: [project]).count == 1)
+        navigation.filter = .needsYou
+        // A late UI render of the old report must not expand a resumed card.
+        #expect(navigation.attentionItems(live: [item], projects: [project]).first?.isBusy == true)
+        var fresh = item
+        fresh.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 300),
+            recap: .init(title: "Ready to review", completed: "Finished the change.", next: "Review it."),
+            providerSessionKey: "codex:session:one")
+        fresh.occurrence = fresh.agentStop?.occurrence
+        navigation.updateAttentionItems([fresh])
+        let expanded = navigation.attentionItems(live: [], projects: [project])
+        #expect(expanded.map(\.id) == [item.id])
+        #expect(expanded.first?.isBusy == false)
+        #expect(expanded.first?.agentStop?.recap?.title == "Ready to review")
+        #expect(!navigation.hasViewed(fresh))
+    }
+
+    @Test("Unrelated agent progress and missing snapshots preserve the pending card")
+    func unrelatedProgressDoesNotCollapse() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "Project")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:one")
+        let worktree = WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
+            displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "stable", projectID: "p", unseenAgentStop: stop,
+                agentProgressTimes: ["codex:other": Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate]))
+        navigation.reconcile(worktrees: [worktree], projects: [project])
+        #expect(navigation.attentionItems(live: [], projects: [project]).first?.isBusy == false)
+        navigation.reconcile(worktrees: [], projects: [])
+        #expect(navigation.attentionItems(live: [], projects: []).isEmpty)
+        #expect(navigation.attentionItems(live: [], projects: [project]).map(\.id) == ["stable:stop"])
+        navigation.query = "wt"
+        #expect(navigation.attentionItems(live: [], projects: [project]).count == 1)
+    }
+
+    @Test("@spec LAYOUT-2.85: While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.")
+    func cardsPersistUntilDismissed() throws {
+        let suite = "attention-workspace-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let project = SidebarProject(id: "p", repositoryID: "r", name: "Project")
+        let items = (0..<30).map { index in
+            SidebarActivityItem(id: "item-\(index)", projectID: "p", worktreeID: "wt-\(index)", paneID: nil,
+                projectName: "Project", worktreeName: "Task \(index)", title: "Review",
+                occurrence: .init(timestamp: Date(timeIntervalSince1970: Double(index)), text: "Review", source: .agentStop), isBusy: false)
+        }
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        navigation.enterAttention(projects: [project], items: items)
+        for item in items { navigation.opened(item) }
+        navigation.leaveAttention()
+        let restored = SidebarNavigationState(prefix: "test", defaults: defaults)
+        restored.enterAttention(projects: [project], items: [])
+        #expect(restored.attentionItems(live: [], projects: [project]).count == 30)
+        let dismissed = items[10]
+        restored.forget(dismissed.id)
+        #expect(!restored.attentionItems(live: items, projects: [project]).contains { $0.id == dismissed.id })
+        var fresh = dismissed
+        fresh.occurrence = .init(timestamp: Date(timeIntervalSince1970: 100), text: "Another question", source: .agentStop)
+        #expect(restored.attentionItems(live: [fresh], projects: [project]).first == fresh)
+        let reopened = SidebarNavigationState(prefix: "test", defaults: defaults)
+        #expect(!reopened.attentionItems(live: [dismissed], projects: [project]).contains { $0.id == dismissed.id })
     }
 
     @Test("@spec LAYOUT-2.75: When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.")
@@ -53,7 +119,7 @@ struct SidebarNavigationStateTests {
         }
         navigation.enterAttention(projects: projects, items: [item("a1", "a"), item("a2", "a"), item("b1", "b", need: "Choose")])
         #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
-        #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).count == 2)
+        #expect(navigation.attentionItems(live: [item("a1", "a"), item("b1", "b")], projects: projects).count == 3)
         #expect(navigation.orderedProjects(projects).map(\.id) == ["b", "a", "c"])
         navigation.leaveAttention()
         #expect(navigation.orderedProjects(projects).map(\.id) == ["a", "b", "c"])
@@ -93,7 +159,7 @@ struct SidebarNavigationStateTests {
         navigation.enterAttention(projects: projects, items: [])
         #expect(navigation.attentionItems(live: [], projects: projects).map(\.id) == ["stop"])
     }
-    @Test("@spec LAYOUT-2.57: When an Attention card body is opened, the application shall keep Attention open, retain the card's occurrence-time position, and collapse previously viewed cards with a checkmark when selection moves.")
+    @Test("@spec LAYOUT-2.57: When an Attention card body is opened, the application shall keep Attention open, keep existing cards in place as reports update, prepend new cards, and collapse a card only when its agent resumes.")
     func openingAttentionPreservesPosition() throws {
         let suite = "AttentionOrder." + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -138,7 +204,8 @@ struct SidebarNavigationStateTests {
         #expect(!navigation.hasViewed(older))
         #expect(navigation.selectedAttentionID == selected.id)
         let fresh = item("selected", 5)
-        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project]).first == fresh)
+        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project]).map(\.id) == ["latest", "selected", "older"])
+        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project])[1] == fresh)
         #expect(!navigation.hasViewed(fresh))
         navigation.filter = .running
         #expect(navigation.attentionItems(live: [], projects: [project]).isEmpty)

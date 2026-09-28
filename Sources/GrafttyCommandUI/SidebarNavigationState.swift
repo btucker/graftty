@@ -26,6 +26,7 @@ public final class SidebarNavigationState {
         let item: SidebarActivityItem
         let previousSelection: String?
     }
+    private var workspace: SidebarAttentionWorkspace
     private var opening: [UUID: Opening] = [:]
     private var selectionOpeningID: UUID?
     private let defaults: UserDefaults
@@ -36,8 +37,15 @@ public final class SidebarNavigationState {
         railExpandedWidth = SidebarLayoutPolicy.clampedRailWidth(
             (defaults.object(forKey: prefix + ".railWidth") as? Double) ?? 196)
         history = defaults.data(forKey: prefix + ".recent").flatMap { try? JSONDecoder().decode(SidebarRecentHistory.self, from: $0) } ?? .init()
+        workspace = defaults.data(forKey: prefix + ".attentionWorkspace").flatMap {
+            try? JSONDecoder().decode(SidebarAttentionWorkspace.self, from: $0)
+        } ?? .init()
+        if defaults.data(forKey: prefix + ".attentionWorkspace") == nil {
+            workspace.merge(history.entries.map(\.item))
+        }
     }
     public func opened(_ item: SidebarActivityItem) {
+        updateAttentionItems([item])
         history.open(item)
         persistHistory()
     }
@@ -65,9 +73,10 @@ public final class SidebarNavigationState {
         }
     }
     public func hasViewed(_ item: SidebarActivityItem) -> Bool {
-        history.entries.contains { $0.id == item.id && $0.item.occurrence == item.occurrence }
+        workspace.isDismissed(item) || history.entries.contains { $0.id == item.id && $0.item.occurrence == item.occurrence }
     }
     public func enterAttention(projects: [SidebarProject], items: [SidebarActivityItem]) {
+        updateAttentionItems(items)
         selectionOpeningID = nil
         let pending = items.filter { $0.needsAttention && !hasViewed($0) }
         let counts = Dictionary(grouping: pending, by: \.projectID).mapValues { group in
@@ -107,26 +116,48 @@ public final class SidebarNavigationState {
     }
     public func attentionItems(live: [SidebarActivityItem], projects: [SidebarProject]) -> [SidebarActivityItem] {
         if filter == .running { return filter.apply(to: live, query: query) }
-        let projectIDs = Set(projects.map(\.id))
-        var retained = Dictionary(history.entries.map { ($0.id, $0.item) }, uniquingKeysWith: { first, _ in first })
-        for visit in opening.values {
-            if retained[visit.item.id] == nil || (visit.item.occurrence?.timestamp ?? .distantPast) >= (retained[visit.item.id]?.occurrence?.timestamp ?? .distantPast) {
-                retained[visit.item.id] = visit.item
+        var current = workspace
+        current.merge(opening.values.map(\.item))
+        current.merge(live)
+        var rows = current.items
+        if filter == .all {
+            let retainedIDs = Set(rows.map(\.id))
+            rows += SidebarActivityFilter.all.apply(to: live).filter {
+                !retainedIDs.contains($0.id) && !current.isDismissed($0)
             }
         }
-        for item in live {
-            // A busy update after acknowledgement must not replace the viewed
-            // occurrence. A fresh request at the same target takes its place.
-            if item.occurrence != nil || retained[item.id] == nil { retained[item.id] = item }
-            retained[item.id]?.prBadge = item.prBadge
-        }
-        return filter.apply(to: retained.values.filter { projectIDs.contains($0.projectID) }, query: query)
+        // Search must not re-sort the durable card order by report timestamp.
+        let matching = Set(SidebarActivityFilter.all.apply(to: rows, query: query).map(\.id))
+        // Mobile shares navigation storage across hosts. Keep other hosts' cards
+        // stored without offering routes through the currently connected host.
+        let projectIDs = Set(projects.map(\.id))
+        return rows.filter { matching.contains($0.id) && projectIDs.contains($0.projectID) }
     }
+    public func updateAttentionItems(_ live: [SidebarActivityItem]) {
+        var next = workspace
+        next.merge(live)
+        storeWorkspace(next)
+    }
+    private func storeWorkspace(_ next: SidebarAttentionWorkspace) {
+        guard next != workspace else { return }
+        workspace = next
+        defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".attentionWorkspace")
+    }
+
     public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject]) {
+        var cards = workspace
+        cards.reconcile(worktrees: worktrees)
+        storeWorkspace(cards)
         var next = history
         next.reconcile(worktrees: worktrees, availableProjectIDs: Set(projects.filter(\.isAvailable).map(\.id)))
         if next != history { history = next; persistHistory() }
     }
-    public func forget(_ id: String) { history.remove(id); persistHistory() }
+    public func forget(_ id: String) {
+        var next = workspace
+        next.dismiss(id)
+        storeWorkspace(next)
+        history.remove(id)
+        persistHistory()
+    }
     private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: prefix + ".recent") }
 }

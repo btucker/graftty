@@ -48,29 +48,3 @@ struct SidebarAttentionCardContent {
         }
     }
 }
-
-/// @spec LAYOUT-2.79: While Needs You contains agent stops and other requests, the application shall group explicit recap questions first, keep stops without questions visible in compact rows, and retain other requests.
-struct SidebarAttentionBuckets {
-    let questions: [SidebarActivityItem]
-    let stopped: [SidebarActivityItem]
-    let other: [SidebarActivityItem]
-
-    init(items: [SidebarActivityItem]) {
-        var questions: [SidebarActivityItem] = []
-        var stopped: [SidebarActivityItem] = []
-        var other: [SidebarActivityItem] = []
-        for item in items {
-            if let need = item.agentStop?.recap?.need,
-               !need.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                questions.append(item)
-            } else if item.agentStop != nil {
-                stopped.append(item)
-            } else {
-                other.append(item)
-            }
-        }
-        self.questions = questions
-        self.stopped = stopped
-        self.other = other
-    }
-}

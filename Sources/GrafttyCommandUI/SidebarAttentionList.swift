@@ -38,6 +38,7 @@ public struct SidebarAttentionList: View {
             content(wide: geometry.size.width >= 360)
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
+        .onChange(of: items, initial: true) { _, current in navigation.updateAttentionItems(current) }
     }
 
     private func content(wide: Bool) -> some View {
@@ -46,56 +47,20 @@ public struct SidebarAttentionList: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     let rows = navigation.attentionItems(live: items, projects: projects)
-                    let buckets = SidebarAttentionBuckets(items: rows)
                     if rows.isEmpty {
                         Text(navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
                             .font(.callout).foregroundStyle(.secondary).padding(12)
                     }
-                    if navigation.filter == .needsYou {
-                        if !buckets.questions.isEmpty {
-                            sectionHeader("Questions", count: buckets.questions.count, color: .orange)
-                            let hasCurrentSelection = rows.contains {
-                                navigation.selectedAttentionID == $0.id && isCurrentWorktree($0)
-                            }
-                            let firstUnviewed = hasCurrentSelection ? nil
-                                : buckets.questions.first { !navigation.hasViewed($0) }?.id
-                            ForEach(buckets.questions) { item in
-                                row(item, wide: wide, style: item.id == firstUnviewed ? .expanded : .question).id(item.id)
-                            }
-                        }
-                        if !buckets.stopped.isEmpty {
-                            sectionHeader("Stopped agents", count: buckets.stopped.count, color: .secondary)
-                                .padding(.top, buckets.questions.isEmpty ? 0 : 8)
-                            ForEach(buckets.stopped) { item in row(item, wide: wide, style: .stopped).id(item.id) }
-                        }
-                        if !buckets.other.isEmpty {
-                            sectionHeader("Other requests", count: buckets.other.count, color: .secondary)
-                                .padding(.top, buckets.questions.isEmpty && buckets.stopped.isEmpty ? 0 : 8)
-                            ForEach(buckets.other) { item in row(item, wide: wide, style: .other).id(item.id) }
-                        }
-                    } else {
-                        ForEach(rows) { item in
-                            let style: RowStyle = item.agentStop?.recap?.need != nil ? .question : item.agentStop != nil ? .stopped : .other
-                            row(item, wide: wide, style: style).id(item.id)
-                        }
+                    ForEach(rows) { item in
+                        row(item, wide: wide).id(item.id)
                     }
                 }.padding(.horizontal, 10).padding(.bottom, 12).scrollTargetLayout()
             }.scrollPosition(id: Binding(get: { navigation.scrollAnchors["attention"] }, set: { navigation.scrollAnchors["attention"] = $0 }))
         }.padding(.top, compactHeader ? 0 : 12)
     }
 
-    private func sectionHeader(_ title: String, count: Int, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Text(title).fontWeight(.semibold)
-            Text(count.formatted()).foregroundStyle(color)
-        }
-        .font(.caption)
-        .padding(.horizontal, 3)
-        .padding(.top, 4)
-    }
-
     enum RowStyle: Equatable {
-        case expanded, question, stopped, other, viewed
+        case expanded, running, other
     }
 
     private func open(_ item: SidebarActivityItem, navigateToProject: Bool) {
@@ -106,44 +71,42 @@ public struct SidebarAttentionList: View {
         }
     }
 
-    func rowStyle(for item: SidebarActivityItem, requested: RowStyle) -> RowStyle {
-        if expandsAllCards { return .expanded }
-        let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
-        return selected && item.agentStop?.recap != nil ? .expanded
-            : navigation.hasViewed(item) && !selected ? .viewed : requested
+    func rowStyle(for item: SidebarActivityItem) -> RowStyle {
+        if item.isBusy { return .running }
+        return item.agentStop?.recap != nil || expandsAllCards ? .expanded : .other
     }
 
-    private func row(_ item: SidebarActivityItem, wide: Bool, style: RowStyle) -> some View {
+    private func row(_ item: SidebarActivityItem, wide: Bool) -> some View {
         let project = projects.first { $0.id == item.projectID }
         let card = SidebarAttentionCardContent(item: item)
         let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
         let viewed = navigation.hasViewed(item)
         let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
-        let presentation = rowStyle(for: item, requested: style)
+        let presentation = rowStyle(for: item)
         return Button {
             open(item, navigateToProject: false)
         } label: {
             cardBody(item, card: card, accent: accent, viewed: viewed && !selected,
-                     offline: project?.isAvailable == false, wide: wide, style: presentation)
-                .padding(presentation == .stopped || presentation == .viewed ? 9 : 12)
+                     offline: project?.isAvailable != true, wide: wide, style: presentation)
+                .padding(presentation == .running ? 9 : 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .background {
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : presentation == .stopped ? 0.10 : 0.12))
+                        .fill(selected ? selectionColor : Color.secondary.opacity(viewed ? 0.06 : presentation == .running ? 0.10 : 0.12))
                         .overlay {
-                            if presentation != .stopped && presentation != .viewed {
+                            if presentation != .running {
                                 RoundedRectangle(cornerRadius: 8)
                                     .fill(accent.opacity(viewed ? 0.05 : presentation == .expanded ? 0.18 : 0.12))
                             }
                         }
                 }
         }.buttonStyle(.plain)
-            .disabled(project?.isAvailable == false)
+            .disabled(project?.isAvailable != true)
             .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityValue(viewed ? "Viewed" : "")
+            .accessibilityValue(item.isBusy ? "Running" : viewed ? "Viewed" : "")
             .contextMenu {
-                if viewed { Button("Remove from History") { navigation.forget(item.id) } }
+                Button("Dismiss") { navigation.forget(item.id) }
             }
             .overlayPreferenceValue(AttentionWorktreeNameAnchor.self) { anchor in
                 if let anchor {
@@ -153,7 +116,7 @@ public struct SidebarAttentionList: View {
                             Rectangle().fill(.clear).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .disabled(project?.isAvailable == false)
+                        .disabled(project?.isAvailable != true)
                         .help("Open \(card.headerName) worktrees")
                         .accessibilityLabel("Open \(card.headerName) worktrees")
                         .frame(width: bounds.width, height: bounds.height)
@@ -214,22 +177,7 @@ public struct SidebarAttentionList: View {
                     }.padding(.top, 12)
                 }
             }
-        case .question:
-            VStack(alignment: .leading, spacing: 9) {
-                cardHeader(item, card: card, accent: accent, offline: offline, wide: wide)
-                titleLine(card.title, badge: item.prBadge, font: .subheadline, limit: 1)
-                    .foregroundStyle(.secondary)
-                if let need = card.sections.first(where: { $0.kind == .needsYou }) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("NEEDS YOU").font(.system(size: 10, weight: .bold)).tracking(0.8)
-                            .foregroundStyle(viewed ? Color.secondary : .orange)
-                        Text(need.text).font(.system(size: wide ? 15 : 14, weight: .semibold))
-                            .lineLimit(wide ? 3 : 4).help(need.text)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        case .stopped:
+        case .running:
             HStack(alignment: .top, spacing: 9) {
                 identity(item.worktreeEmoji, accent: accent)
                 VStack(alignment: .leading, spacing: 3) {
@@ -237,33 +185,12 @@ public struct SidebarAttentionList: View {
                         worktreeName(card.headerName, font: .subheadline)
                         Spacer(minLength: 3)
                         if offline { Text("Offline").font(.caption2) }
-                        elapsedTime(item)
-                    }
-                    if let paneTitle = card.paneTitle {
-                        Text(paneTitle).font(.caption2).foregroundStyle(.secondary)
-                            .lineLimit(1).help(paneTitle)
-                    }
-                    titleLine(card.title, badge: item.prBadge, font: .subheadline, limit: 1)
-                    if let next = card.sections.first(where: { $0.kind == .upNext }) {
-                        Text(next.text).font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).help(next.text)
-                    }
-                }
-            }
-        case .viewed:
-            HStack(alignment: .top, spacing: 9) {
-                identity(item.worktreeEmoji, accent: accent)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        worktreeName(card.headerName, font: .subheadline)
-                        Spacer(minLength: 3)
-                        if offline { Text("Offline").font(.caption2) }
-                        elapsedTime(item)
+                        Text("Running").font(.caption).foregroundStyle(.green)
                     }
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.caption).foregroundStyle(.green)
-                            .help("Viewed").accessibilityLabel("Viewed")
+                            .help("Handed back to the agent").accessibilityLabel("Agent resumed")
                         titleLine(item.agentStop == nil ? item.title : card.title,
                                   badge: item.prBadge, font: .subheadline, limit: 1)
                             .foregroundStyle(.secondary)

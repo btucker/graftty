@@ -9,7 +9,7 @@ import UIKit
 @Suite("Mobile Attention pane")
 struct MobileAttentionPaneTests {
     @MainActor
-    @Test("@spec IOS-4.36: While the mobile Attention list is displayed, every card shall remain expanded with its available recap text visible, including unselected and previously viewed cards.")
+    @Test("@spec IOS-4.36: While the mobile Attention list is displayed, stopped cards shall remain expanded with their available recap text visible regardless of viewing or selection, and resumed agents shall collapse into Running rows.")
     func allMobileCardsStayExpanded() {
         let navigation = SidebarNavigationState(prefix: "expanded-attention.\(UUID())")
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
@@ -22,11 +22,12 @@ struct MobileAttentionPaneTests {
         let list = SidebarAttentionList(navigation: navigation, items: [item],
             projects: SidebarProjection.projects([worktree]), compactHeader: true, expandsAllCards: true,
             onOpen: { _ in true })
-        for style: SidebarAttentionList.RowStyle in [.stopped, .question, .other, .viewed] {
-            #expect(list.rowStyle(for: item, requested: style) == .expanded)
-        }
+        #expect(list.rowStyle(for: item) == .expanded)
         navigation.opened(item)
-        #expect(list.rowStyle(for: item, requested: .stopped) == .expanded)
+        #expect(list.rowStyle(for: item) == .expanded)
+        var running = item
+        running.isBusy = true
+        #expect(list.rowStyle(for: running) == .running)
     }
 
     @MainActor
