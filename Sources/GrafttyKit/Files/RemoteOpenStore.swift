@@ -16,10 +16,11 @@ public actor RemoteOpenStore {
     public init() {}
 
     public enum Failure: LocalizedError {
-        case invalidFile, tooLarge, expired, invalidOffset
+        case invalidFile, invalidBrowserOwner, tooLarge, expired, invalidOffset
         public var errorDescription: String? {
             switch self {
             case .invalidFile: "Choose a readable regular file."
+            case .invalidBrowserOwner: "The mobile browser owner is unavailable. Try again."
             case .tooLarge: "File previews are limited to 20 MB."
             case .expired: "This file offer expired. Run graftty open again."
             case .invalidOffset: "Invalid file download offset."
@@ -27,16 +28,24 @@ public actor RemoteOpenStore {
         }
     }
 
-    public func offer(file: URL, worktree: String, now: Date = Date()) throws -> RemoteOpenOffer {
+    public func offer(
+        file: URL,
+        worktree: String,
+        browserOwnerClientID: DisplayClientID? = nil,
+        now: Date = Date()
+    ) throws -> RemoteOpenOffer {
         if !file.isFileURL {
             guard ["http", "https"].contains(file.scheme?.lowercased() ?? ""),
                   file.host != nil, file.user == nil, file.password == nil else { throw Failure.invalidFile }
             purge(now: now)
-            if entries.count >= 20 { entries.removeFirst() }
             let expires = now.addingTimeInterval(900)
+            guard let browserOwnerClientID,
+                  BrowserTunnelApprovalStore.shared.approve(ownerClientID: browserOwnerClientID, until: expires) else {
+                throw Failure.invalidBrowserOwner
+            }
+            if entries.count >= 20 { entries.removeFirst() }
             let offer = RemoteOpenOffer(id: UUID(), filename: file.absoluteString, byteCount: 0, url: file)
             entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires))
-            BrowserTunnelApprovalStore.shared.approve(until: expires)
             return offer
         }
         // O_NONBLOCK prevents a named pipe from hanging the request before fstat.
@@ -83,19 +92,31 @@ public actor RemoteOpenStore {
 public final class BrowserTunnelApprovalStore: @unchecked Sendable {
     public static let shared = BrowserTunnelApprovalStore()
     private let lock = NSLock()
-    private var approvedUntil = Date.distantPast
+    private var approvedUntil: [RemoteDeviceID: Date] = [:]
 
     public init() {}
 
-    public func approve(until expiry: Date) {
+    public func approve(ownerClientID: DisplayClientID, until expiry: Date) -> Bool {
+        // TerminalSessionHandler names mobile owners ssh-<device ID>-<session UUID>.
+        let raw = ownerClientID.rawValue
+        guard raw.hasPrefix("ssh-"), raw.count > 41 else { return false }
+        let suffix = String(raw.suffix(37))
+        guard suffix.first == "-", UUID(uuidString: String(suffix.dropFirst())) != nil else { return false }
+        let device = String(raw.dropFirst(4).dropLast(37))
+        guard !device.isEmpty else { return false }
+        let deviceID = RemoteDeviceID(value: device)
         lock.lock()
-        approvedUntil = max(approvedUntil, expiry)
+        approvedUntil[deviceID] = max(approvedUntil[deviceID] ?? .distantPast, expiry)
         lock.unlock()
+        return true
     }
 
-    public func isApproved(now: Date = Date()) -> Bool {
+    public func isApproved(deviceID: RemoteDeviceID, now: Date = Date()) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return approvedUntil > now
+        guard let expiry = approvedUntil[deviceID] else { return false }
+        if expiry > now { return true }
+        approvedUntil.removeValue(forKey: deviceID)
+        return false
     }
 }

@@ -3868,7 +3868,12 @@ struct GrafttyApp: App {
                 }
                 switch destination {
                 case .mobile:
-                    _ = try await RemoteOpenStore.shared.offer(file: url, worktree: path)
+                    let ownerClientID = paneSessionName.flatMap {
+                        terminalManager.displayOwnershipStore?.snapshot(sessionName: $0).ownerClientID
+                    }
+                    _ = try await RemoteOpenStore.shared.offer(
+                        file: url, worktree: path, browserOwnerClientID: ownerClientID
+                    )
                 case .mac:
                     guard NSWorkspace.shared.open(url) else {
                         return .error("macOS could not open this resource.")

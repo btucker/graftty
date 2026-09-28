@@ -2380,6 +2380,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-4.2** While a paired client has loopback-only port-tunnel permission, the host shall reject non-loopback targets before connecting to them.
 
+**REMOTE-4.3** When graftty open offers a URL to a mobile pane, the application shall approve browser tunnels only for the paired device owning that pane until the offer expires.
+
 ### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
 **REMOTE-5.1** When a client requests a WebSocket upgrade to `/ws`, the application shall gate the upgrade on the same `AuthPolicy` (Tailscale-whois) check applied to every other path, rejecting the upgrade for a disallowed peer without attaching it to a terminal.

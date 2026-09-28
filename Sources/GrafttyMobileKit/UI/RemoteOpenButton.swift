@@ -22,7 +22,7 @@ struct RemoteOpenButton: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if isDownloading {
                 ProgressView("Downloading file…")
                     .padding(12)

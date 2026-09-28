@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
@@ -9,10 +10,13 @@ struct OpenResourceTargetTests {
         #expect(url.absoluteString == text)
         let store = RemoteOpenStore()
         let now = Date()
-        let offer = try await store.offer(file: url, worktree: "/project", now: now)
+        let owner = DisplayClientID("ssh-test-device-\(UUID().uuidString)")
+        let offer = try await store.offer(file: url, worktree: "/project", browserOwnerClientID: owner, now: now)
         #expect(offer.url == url)
         #expect(await store.list(worktree: "/project") == [offer])
-        #expect(BrowserTunnelApprovalStore.shared.isApproved(now: now.addingTimeInterval(899)))
+        #expect(BrowserTunnelApprovalStore.shared.isApproved(
+            deviceID: RemoteDeviceID(value: "test-device"), now: now.addingTimeInterval(899)
+        ))
     }
 
     @Test(arguments: ["ftp://example.com", "http://user:password@example.com", "https://"])

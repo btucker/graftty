@@ -40,12 +40,28 @@ struct RemoteOpenStoreTests {
         }
     }
 
-    @Test func urlOfferCreatesBoundedTunnelApproval() async throws {
+    @Test("@spec REMOTE-4.3: When graftty open offers a URL to a mobile pane, the application shall approve browser tunnels only for the paired device owning that pane until the offer expires.")
+    func urlOfferCreatesDeviceScopedTunnelApproval() async throws {
+        let store = RemoteOpenStore()
+        await #expect(throws: RemoteOpenStore.Failure.self) {
+            try await store.offer(file: URL(string: "https://example.com")!, worktree: "/project")
+        }
         let approvals = BrowserTunnelApprovalStore()
         let expiry = Date(timeIntervalSince1970: 900)
-        #expect(!approvals.isApproved(now: Date(timeIntervalSince1970: 0)))
-        approvals.approve(until: expiry)
-        #expect(approvals.isApproved(now: Date(timeIntervalSince1970: 899)))
-        #expect(!approvals.isApproved(now: expiry))
+        let owner = DisplayClientID("ssh-phone-\(UUID().uuidString)")
+        let phone = RemoteDeviceID(value: "phone")
+        let other = RemoteDeviceID(value: "other")
+        #expect(!approvals.isApproved(deviceID: phone, now: Date(timeIntervalSince1970: 0)))
+        #expect(approvals.approve(ownerClientID: owner, until: expiry))
+        #expect(approvals.isApproved(deviceID: phone, now: Date(timeIntervalSince1970: 899)))
+        #expect(!approvals.isApproved(deviceID: other, now: Date(timeIntervalSince1970: 899)))
+        #expect(!approvals.isApproved(deviceID: phone, now: expiry))
+        let overlappingID = BrowserTunnelApprovalStore()
+        #expect(overlappingID.approve(
+            ownerClientID: DisplayClientID("ssh-phone-\(UUID().uuidString)-\(UUID().uuidString)"),
+            until: expiry
+        ))
+        #expect(!overlappingID.isApproved(deviceID: phone, now: Date(timeIntervalSince1970: 899)))
+        #expect(!overlappingID.approve(ownerClientID: DisplayClientID("ssh-phone-invalid"), until: expiry))
     }
 }

@@ -1212,11 +1212,11 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
     func browserTunnelAllowed(host: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard let capability = _peer?.capabilities.portTunnel else { return false }
+        guard let peer = _peer else { return false }
         return BrowserTunnelAuthorization.allows(
-            capability: capability,
+            capability: peer.capabilities.portTunnel,
             host: host,
-            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved()
+            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved(deviceID: peer.id)
         )
     }
 }
