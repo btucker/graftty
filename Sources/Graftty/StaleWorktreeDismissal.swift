@@ -70,7 +70,10 @@ enum StaleWorktreeDismissal {
             repo: RepoEntry,
             worktrees: [(id: WorktreeEntry.ID, staleSince: Date)]
         )] =
-            appState.wrappedValue.repos.compactMap { repo in
+            appState.wrappedValue.repos.compactMap { repo -> (
+                repo: RepoEntry,
+                worktrees: [(id: WorktreeEntry.ID, staleSince: Date)]
+            )? in
                 let worktrees: [(id: WorktreeEntry.ID, staleSince: Date)] =
                     repo.worktrees.compactMap { worktree in
                         guard expired.contains(worktree.id),
@@ -79,7 +82,7 @@ enum StaleWorktreeDismissal {
                         }
                         return (id: worktree.id, staleSince: staleSince)
                     }
-                return worktrees.isEmpty ? nil : (repo, worktrees)
+                return worktrees.isEmpty ? nil : (repo: repo, worktrees: worktrees)
             }
 
         var dismissed: [WorktreeEntry.ID] = []

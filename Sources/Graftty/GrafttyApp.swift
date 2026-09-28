@@ -1230,7 +1230,7 @@ struct GrafttyApp: App {
         // pane's listening sockets change.
         terminalManager.portScanner = portScanner
         let tmRef = terminalManager
-        Task {
+        Task { [portBindingsModel, tmRef] in
             await portScanner.setOnChange { [weak portBindingsModel] id, list in
                 portBindingsModel?.set(id, list)
             }
@@ -6276,7 +6276,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let remoteBranchStore = remoteBranchStore
-        Task { @MainActor in
+        Task { @MainActor [self] in
             guard let repo = binding.wrappedValue.repos.first(where: {
                 $0.path == repoPath && $0.isGitTracked
             }) else { return }
