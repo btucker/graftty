@@ -7,6 +7,8 @@ description: Use whenever the user asks to delegate work to agents, ask another 
 
 Coordinate Codex and Claude agents through Graftty's durable inbox. Run team commands from the calling agent's tracked worktree. Use these commands directly; consult subcommand `--help` for undocumented options or installed-version mismatches.
 
+When the user wants to view a host file or URL on Graftty Mobile, use the bundled `graftty-open` skill.
+
 ## Inspect the roster
 
 Run `graftty team list --json` before choosing an agent. In `members[]`, use `name` and `worktree_path` to identify the worktree, then `agents[]` for each agent's `address`, `runtime`, and `is_reachable`. Worktree `is_running` alone does not establish agent reachability.

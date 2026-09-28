@@ -8,14 +8,21 @@ public enum SubcommandSuggestions {
         guard !input.isEmpty, !candidates.isEmpty else { return nil }
         var bestName: String?
         var bestDistance = Int.max
+        var bestPrefixLength = -1
         for c in candidates {
             let d = levenshtein(input, c)
-            if d < bestDistance {
+            let prefixLength = commonPrefixLength(input, c)
+            if d < bestDistance || (d == bestDistance && prefixLength > bestPrefixLength) {
                 bestDistance = d
+                bestPrefixLength = prefixLength
                 bestName = c
             }
         }
         return bestDistance <= 2 ? bestName : nil
+    }
+
+    private static func commonPrefixLength(_ a: String, _ b: String) -> Int {
+        zip(a, b).prefix { $0.0 == $0.1 }.count
     }
 
     /// Standard iterative Levenshtein with two rolling rows. ~30 lines,

@@ -149,6 +149,7 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
 
 /// Requests on `worktree-management@graftty.dev`.
 public enum WorktreeManagementRequest: Sendable, Equatable {
+    case openResource(worktreeID: String, request: RemoteOpenRequest)
     case hostPresentation
     case listRepositories
     case listRemoteMacConnections
@@ -169,6 +170,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
 
 extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
+        case openResource
         case type, repositoryID, worktreeID, worktreeName, branchName,
              existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence
     }
@@ -176,6 +178,10 @@ extension WorktreeManagementRequest: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .openResource(worktreeID, request):
+            try c.encode("open_resource", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
+            try c.encode(request, forKey: .openResource)
         case let .moveProject(id, relativeTo, after):
             try c.encode("move_project", forKey: .type)
             try c.encode(id, forKey: .id)
@@ -232,6 +238,8 @@ extension WorktreeManagementRequest: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "open_resource":
+            self = .openResource(worktreeID: try c.decode(String.self, forKey: .worktreeID), request: try c.decode(RemoteOpenRequest.self, forKey: .openResource))
         case "move_project":
             self = .moveProject(id: try c.decode(String.self, forKey: .id), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
         case "move_worktree":
@@ -293,6 +301,7 @@ extension WorktreeManagementRequest: Codable {
 }
 
 public enum WorktreeManagementResponse: Sendable, Equatable {
+    case openResource(RemoteOpenResponse)
     case hostPresentation(RemoteHostPresentation)
     case repositories([RemoteRepositoryInfo])
     case remoteMacConnections([RemoteMacConnectionSummary])
@@ -305,6 +314,7 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
 
 extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
+        case openResource
         case type, presentation, repositories, remoteMacConnections,
              worktreeID, paneID, dismissed, code, message, forceAllowed,
              shortStatus, imageData
@@ -313,6 +323,9 @@ extension WorktreeManagementResponse: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .openResource(let response):
+            try c.encode("open_resource", forKey: .type)
+            try c.encode(response, forKey: .openResource)
         case .hostPresentation(let presentation):
             try c.encode("host_presentation", forKey: .type)
             try c.encode(presentation, forKey: .presentation)
@@ -346,6 +359,8 @@ extension WorktreeManagementResponse: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "open_resource":
+            self = .openResource(try c.decode(RemoteOpenResponse.self, forKey: .openResource))
         case "host_presentation":
             self = .hostPresentation(
                 try c.decode(

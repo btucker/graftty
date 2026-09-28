@@ -32,4 +32,9 @@ struct SubcommandSuggestionsTests {
     func picksClosest() {
         #expect(SubcommandSuggestions.suggest("send", from: ["sand", "show"]) == "sand")
     }
+
+    @Test("Equal-distance candidates prefer the longest matching prefix")
+    func equalDistancePrefersMatchingPrefix() {
+        #expect(SubcommandSuggestions.suggest("paen", from: ["open", "pane"]) == "pane")
+    }
 }

@@ -9,7 +9,7 @@ import UIKit
 final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let terminalView: UITerminalView
     private var canvas: TerminalSnapshotCanvas.Layout?
-    private var followerZoomScale: CGFloat = 1
+    private(set) var followerZoomScale: CGFloat = 1
     private var baseRowHeight: CGFloat = 0
     private var pinchStartScale: CGFloat = 1
     private var presentationScale: CGFloat { (canvas?.scale ?? 1) * followerZoomScale }
@@ -43,6 +43,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         let anchor = CGPoint(x: contentOffset.x + point.x,
                              y: contentOffset.y + point.y - terminalView.frame.minY)
         followerZoomScale = next
+        superview?.setNeedsLayout()
         configure(canvas: canvas, rowHeight: baseRowHeight, columns: columns)
         adjusting = true
         contentOffset = CGPoint(

@@ -80,6 +80,7 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
+    case offerResource(path: String, target: String, paneSessionName: String? = nil)
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
@@ -196,6 +197,11 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .offerResource(path, target, paneSessionName):
+            try container.encode("open_resource", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case .notify(let path, let text, let clearAfter, let paneSessionName):
             try container.encode("notify", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -360,6 +366,12 @@ extension NotificationMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "open_resource":
+            self = .offerResource(
+                path: try container.decode(String.self, forKey: .path),
+                target: try container.decode(String.self, forKey: .target),
+                paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            )
         case "notify":
             let path = try container.decode(String.self, forKey: .path)
             let text = try container.decode(String.self, forKey: .text)
