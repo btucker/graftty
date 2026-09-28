@@ -85,7 +85,7 @@ struct AgentPluginInstallerTests {
         try fileManager.createDirectory(at: temporary, withIntermediateDirectories: true)
         let source = temporary.appendingPathComponent("source")
         try fileManager.copyItem(
-            at: GrafttyKitResourceBundle.bundle.bundleURL.appendingPathComponent("AgentPlugins"),
+            at: try #require(AgentPluginInstaller.bundledResourceRoot(bundle: GrafttyKitResourceBundle.bundle)),
             to: source
         )
         let claudeRoot = source.appendingPathComponent("claude/plugins/graftty-team")

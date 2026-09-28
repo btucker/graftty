@@ -359,8 +359,13 @@ public struct AgentPluginInstaller: Sendable {
     }
 
     private static func bundledResourceRoot() -> URL? {
-        GrafttyKitResourceBundle.bundle.bundleURL
-            .appendingPathComponent("AgentPlugins", isDirectory: true)
+        bundledResourceRoot(bundle: GrafttyKitResourceBundle.bundle)
+    }
+
+    /// Foundation finds a copied top-level directory in both SwiftPM's flat
+    /// bundle layout and the standard `Contents/Resources` layout (CONFIG-2.7).
+    static func bundledResourceRoot(bundle: Bundle) -> URL? {
+        bundle.url(forResource: "AgentPlugins", withExtension: nil)
     }
 
     private static func describe(_ error: Error) -> String {

@@ -934,6 +934,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
+**CONFIG-2.7** When GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, the application shall locate the bundled web client assets and agent plugin payload.
+
 ## DIVERGE — Worktree Divergence Indicator
 
 ### DIVERGE-1.x — Display
