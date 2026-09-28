@@ -3,6 +3,53 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec IOS-4.37: When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.")
+    func stoppedAttentionResolvesOriginatingPane() throws {
+        func row(_ stop: SidebarAgentStop, duplicateTitle: Bool = false, single: Bool = false) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Repo",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: nil,
+                layout: single ? .leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil) : .split(direction: .horizontal, ratio: 0.5,
+                    left: .leaf(sessionName: "shell", title: duplicateTitle ? "Agent" : "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+                    right: .leaf(sessionName: "new-session", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)),
+                sidebar: .init(id: "stable", projectID: "repo", paneIDs: ["shell": "shell-slot", "new-session": "agent-slot"], unseenAgentStop: stop))
+        }
+        var stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, paneTitle: "Old title", paneSlotID: "agent-slot")
+        let worktree = row(stop)
+        let item = try #require(SidebarProjection.activity([worktree]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: item, in: worktree) == "new-session")
+        #expect(item.paneID == nil)
+        #expect(SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: true)
+            == .acknowledgeOccurrence(worktreeID: "/wt", paneID: nil, occurrence: stop.occurrence))
+        #expect(try JSONDecoder().decode(SidebarAgentStop.self, from: JSONEncoder().encode(stop)) == stop)
+
+        // A deleted slot must not open a different pane with the same title.
+        stop.paneSlotID = "deleted-slot"
+        stop.paneTitle = "Agent"
+        let missing = row(stop)
+        let missingItem = try #require(SidebarProjection.activity([missing]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: missingItem, in: missing) == nil)
+        #expect(SidebarProjection.attentionPaneRoute(for: missingItem, in: row(stop, single: true)) == nil)
+
+        let legacyData = Data(#"{"agentName":"Codex","timestamp":0,"paneTitle":"Agent"}"#.utf8)
+        let legacy = try JSONDecoder().decode(SidebarAgentStop.self, from: legacyData)
+        #expect(legacy.paneSlotID == nil)
+        let legacyRow = row(legacy)
+        let legacyItem = try #require(SidebarProjection.activity([legacyRow]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: legacyItem, in: legacyRow) == "new-session")
+        #expect(SidebarProjection.attentionPaneRoute(for: legacyItem, in: row(legacy, duplicateTitle: true)) == nil)
+
+        var explicit = item
+        explicit.id = "stable:shell-slot"
+        explicit.paneID = "old-shell-session"
+        explicit.agentStop = nil
+        #expect(SidebarProjection.attentionPaneRoute(for: explicit, in: worktree) == "shell")
+        var unknown = item
+        unknown.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now)
+        #expect(SidebarProjection.attentionPaneRoute(for: unknown, in: row(stop, single: true)) == "shell")
+        #expect(SidebarProjection.attentionPaneRoute(for: unknown, in: worktree) == nil)
+    }
+
     @Test("@spec LAYOUT-2.84: When an agent resumes after its stopped card was viewed, the application shall remove that card from Attention while preserving stopped cards from other sessions and newer stops.")
     func resumedAgentRemovesViewedStop() throws {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),

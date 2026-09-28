@@ -4645,8 +4645,9 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager
     ) {
-        let paneTitle = paneSessionName
+        let paneSlot = paneSessionName
             .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
+        let paneTitle = paneSlot
             .map { terminalManager.displayTitle(for: $0) }
             .flatMap { $0.isEmpty ? nil : $0 }
         let stop = SidebarAgentStop(
@@ -4654,6 +4655,7 @@ struct GrafttyApp: App {
             stoppedAt: stoppedAt,
             recap: recap,
             paneTitle: paneTitle,
+            paneSlotID: paneSlot?.id.uuidString,
             providerSessionKey: AgentHookAttentionIdentity.key(
                 runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
             )

@@ -108,42 +108,10 @@ public struct RootView: View {
                 coordinator: coordinator
             )
                 .navigationDestination(for: Host.self) { host in
-                    WorktreePickerView(
-                        host: host,
-                        coordinator: coordinator,
-                        onSelect: { wt in
-                            iPadAppState.selectedHostId = host.id
-                            iPadAppState.selectedWorktreePath = wt.path
-                            iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
-                            switch MobileNavigationDecision.decide(layout: wt.layout) {
-                            case let .session(sessionName, title):
-                                navigationPath.append(SessionStep(
-                                    host: host,
-                                    worktreePath: wt.path,
-                                    sessionName: sessionName,
-                                    title: title
-                                ))
-                            case .worktreeDetail:
-                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
-                            }
-                        },
-                        onSelectPaneWithWorktree: { worktree, leaf in
-                            iPadAppState.selectedHostId = host.id
-                            iPadAppState.selectedWorktreePath = worktree.path
-                            iPadAppState.focusedPaneId = leaf.sessionName
-                            if case let .session(sessionName, title) =
-                                MobileNavigationDecision.decide(paneRow: leaf) {
-                                navigationPath.append(SessionStep(
-                                    host: host,
-                                    worktreePath: worktree.path,
-                                    sessionName: sessionName,
-                                    title: title
-                                ))
-                            }
-                        },
-                        navigation: iPadAppState.sidebarNavigation
-                    )
-                    .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
+                    compactPicker(host: host)
+                }
+                .navigationDestination(for: ProjectStep.self) { step in
+                    compactPicker(host: step.host, project: step.project)
                 }
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
@@ -169,6 +137,57 @@ public struct RootView: View {
                             Self.applyCompactSession(step, to: iPadAppState)
                         }
                 }
+        }
+    }
+
+    private func compactPicker(host: Host, project: SidebarProject? = nil) -> some View {
+        WorktreePickerView(
+            host: host,
+            coordinator: coordinator,
+            onSelect: { wt in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = wt.path
+                iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+                switch MobileNavigationDecision.decide(layout: wt.layout) {
+                case let .session(sessionName, title):
+                    navigationPath.append(SessionStep(
+                        host: host,
+                        worktreePath: wt.path,
+                        sessionName: sessionName,
+                        title: title
+                    ))
+                case .worktreeDetail:
+                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                }
+            },
+            onSelectPaneWithWorktree: { worktree, leaf in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = worktree.path
+                iPadAppState.focusedPaneId = leaf.sessionName
+                if case let .session(sessionName, title) =
+                    MobileNavigationDecision.decide(paneRow: leaf) {
+                    navigationPath.append(SessionStep(
+                        host: host,
+                        worktreePath: worktree.path,
+                        sessionName: sessionName,
+                        title: title
+                    ))
+                }
+            },
+            navigation: iPadAppState.sidebarNavigation,
+            project: project,
+            onSelectWorktreeDetail: { worktree in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = worktree.path
+                navigationPath.append(WorktreeStep(host: host, worktree: worktree))
+            }
+        )
+        .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
+        .task {
+            if let project,
+               iPadAppState.sidebarNavigation.selectedProjectID != project.id || iPadAppState.sidebarNavigation.showsAttention {
+                iPadAppState.sidebarNavigation.showProject(project.id)
+            }
         }
     }
 
@@ -244,7 +263,13 @@ public struct RootView: View {
     }
 }
 
-/// Second-level nav: picked a worktree, now show its pane tree.
+/// @spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
+struct ProjectStep: Hashable {
+    let host: Host
+    let project: SidebarProject
+}
+
+/// Picked a worktree, now show its pane tree.
 struct WorktreeStep: Hashable {
     let host: Host
     let worktree: WorktreePanes

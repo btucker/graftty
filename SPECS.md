@@ -1694,6 +1694,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.36** While the mobile Attention list is displayed, every card shall remain expanded with its available recap text visible, including unselected and previously viewed cards.
 
+**IOS-4.37** When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.
+
+**IOS-4.38** When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

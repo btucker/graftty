@@ -164,13 +164,16 @@ public struct SidebarAgentStop: Codable, Sendable, Hashable {
     public var timestamp: Double
     public var recap: AttentionRecap?
     public var paneTitle: String?
+    /// Stable layout slot of the agent that stopped, independent of its terminal session or title.
+    public var paneSlotID: String?
     public var providerSessionKey: String?
     public init(agentName: String, stoppedAt: Date, recap: AttentionRecap? = nil,
-                paneTitle: String? = nil, providerSessionKey: String? = nil) {
+                paneTitle: String? = nil, paneSlotID: String? = nil, providerSessionKey: String? = nil) {
         self.agentName = agentName
         self.timestamp = stoppedAt.timeIntervalSinceReferenceDate
         self.recap = recap
         self.paneTitle = paneTitle
+        self.paneSlotID = paneSlotID
         self.providerSessionKey = providerSessionKey
     }
     public var stoppedAt: Date { Date(timeIntervalSinceReferenceDate: timestamp) }
@@ -400,6 +403,20 @@ public enum SidebarProjection {
             return leaves.first { metadata.paneIDs?[$0.sessionName] == slot }?.sessionName
         }
         return leaves.first { $0.sessionName == previousRoute }?.sessionName
+    }
+
+    /// Resolves navigation only; stopped reports retain worktree-scoped acknowledgement.
+    public static func attentionPaneRoute(for item: SidebarActivityItem, in worktree: WorktreePanes) -> String? {
+        if item.paneID != nil { return paneRoute(for: item, in: worktree) }
+        let leaves = worktree.layout?.leaves ?? []
+        if let slot = item.agentStop?.paneSlotID {
+            return leaves.first { worktree.sidebar?.paneIDs?[$0.sessionName] == slot }?.sessionName
+        }
+        if let title = item.agentStop?.paneTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let matches = leaves.filter { $0.title == title }
+            return matches.count == 1 ? matches[0].sessionName : nil
+        }
+        return leaves.count == 1 ? leaves[0].sessionName : nil
     }
 
     public static func projectID(_ worktree: WorktreePanes) -> String {
