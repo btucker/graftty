@@ -32,7 +32,7 @@ struct MultiPaneDetailViewTests {
     }
 
     @Test("""
-@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), initially fitting each leaf's canvas to the full leaf width before any local presentation zoom.
 """)
     func ipad_2_5_embeddedLeafReusesSingleSessionCanvas() throws {
         let canvas = try #require(TerminalSnapshotCanvas.layout(

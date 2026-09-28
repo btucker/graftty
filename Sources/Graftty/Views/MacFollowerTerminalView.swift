@@ -17,6 +17,13 @@ final class MacFollowerTerminalView: NSView {
     private var scrollbar = ghostty_action_scrollbar_s()
     private var rowHeight: CGFloat = 0
     private var nativeRow: UInt64 = 0
+    private var presentation: FollowerTerminalLayout.Presentation?
+    private(set) var followerZoomScale: CGFloat = 1
+    private var pinchStartScale: CGFloat = 1
+    private var consumedMagnification: CGFloat = 0
+    private lazy var magnificationGesture = NSMagnificationGestureRecognizer(
+        target: self, action: #selector(magnifyTerminal(_:))
+    )
     private var adjusting = false
     private var boundsObserver: NSObjectProtocol?
     private let makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)?
@@ -31,6 +38,11 @@ final class MacFollowerTerminalView: NSView {
     var followerGrid: DisplayGrid? {
         didSet {
             guard followerGrid != oldValue else { return }
+            if (followerGrid == nil) != (oldValue == nil) {
+                magnificationGesture.isEnabled = false
+                magnificationGesture.isEnabled = true
+            }
+            if followerGrid == nil { followerZoomScale = 1 }
             needsLayout = true
             updateHistoryTimer()
         }
@@ -53,6 +65,7 @@ final class MacFollowerTerminalView: NSView {
         document.addSubview(historyScaledView)
         document.addSubview(scaledView)
         scaledView.addSubview(terminalView)
+        addGestureRecognizer(magnificationGesture)
         terminalView.followerScrollHandler = { [weak self] event in
             guard let self, self.followerGrid != nil else { return false }
             self.scrollView.scrollWheel(with: event)
@@ -78,6 +91,65 @@ final class MacFollowerTerminalView: NSView {
 
     private var historyRows: UInt64 { scrollbar.total - min(scrollbar.total, scrollbar.len) }
     private var atBottom: Bool { scrollView.contentView.bounds.maxY >= document.bounds.height - 1 }
+
+    @objc private func magnifyTerminal(_ gesture: NSMagnificationGestureRecognizer) {
+        if gesture.state == .began { beginMagnification() }
+        guard gesture.state == .began || gesture.state == .changed else { return }
+        let point = scrollView.contentView.convert(gesture.location(in: self), from: self)
+        magnify(by: gesture.magnification,
+                around: CGPoint(x: point.x - scrollView.contentView.bounds.minX,
+                                y: point.y - scrollView.contentView.bounds.minY))
+    }
+
+    func beginMagnification() {
+        pinchStartScale = followerZoomScale
+        consumedMagnification = 0
+    }
+
+    func magnify(by amount: CGFloat, around point: CGPoint) {
+        guard amount.isFinite else { return }
+        if followerGrid != nil {
+            setFollowerZoomScale(pinchStartScale * (1 + amount), around: point)
+        } else {
+            let steps = Int((amount - consumedMagnification) / 0.1)
+            guard steps != 0 else { return }
+            consumedMagnification += CGFloat(steps) * 0.1
+            performNativeFontAction("\(steps > 0 ? "increase" : "decrease")_font_size:\(abs(steps))")
+        }
+    }
+
+    func performZoomAction(_ action: GhosttyAction) {
+        guard [.increaseFontSize, .decreaseFontSize, .resetFontSize].contains(action) else { return }
+        guard followerGrid != nil else { performNativeFontAction(action.rawValue); return }
+        let next: CGFloat
+        switch action {
+        case .increaseFontSize: next = followerZoomScale * 1.1
+        case .decreaseFontSize: next = followerZoomScale / 1.1
+        default: next = 1
+        }
+        setFollowerZoomScale(next, around: CGPoint(x: scrollView.contentSize.width / 2,
+                                                   y: scrollView.contentSize.height / 2))
+    }
+
+    private func performNativeFontAction(_ action: String) {
+        guard let surface = terminalView.surface else { return }
+        _ = terminalView.surfaceOperations.bindingAction(surface, action)
+    }
+
+    func setFollowerZoomScale(_ scale: CGFloat, around point: CGPoint) {
+        guard followerGrid != nil, presentation != nil, scale.isFinite else { return }
+        let next = min(4, max(1, scale))
+        guard next != followerZoomScale else { return }
+        let offset = scrollView.contentView.bounds.origin
+        let oldFrame = scaledView.frame
+        followerZoomScale = next
+        layout()
+        guard let presentation else { return }
+        scrollView.contentView.scroll(to: presentation.anchoredOffset(
+            from: oldFrame, oldOffset: offset, to: scaledView.frame, anchor: point
+        ))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
 
     func updateScrollbar(_ value: ghostty_action_scrollbar_s) {
         guard value.total != scrollbar.total || value.offset != scrollbar.offset || value.len != scrollbar.len else { return }
@@ -112,7 +184,9 @@ final class MacFollowerTerminalView: NSView {
                 displayScale: pixelScale, container: viewport
               ) else {
             removeHistory()
+            presentation = nil
             scrollView.hasVerticalScroller = false
+            scrollView.hasHorizontalScroller = false
             document.frame = CGRect(origin: .zero, size: viewport)
             scaledView.frame = document.bounds
             scaledView.bounds = CGRect(origin: .zero, size: viewport)
@@ -123,32 +197,38 @@ final class MacFollowerTerminalView: NSView {
             return
         }
         scrollView.hasVerticalScroller = true
-        let scale = min(1, canvas.scale)
-        rowHeight = CGFloat(size.cell_height_px) / pixelScale * scale
-        let screenHeight = canvas.size.height * scale
-        document.frame = CGRect(x: 0, y: 0, width: viewport.width,
-                                height: CGFloat(historyRows) * rowHeight + max(viewport.height, screenHeight))
+        scrollView.hasHorizontalScroller = true
+        let presentation = canvas.presentation(
+            viewport: viewport, nativeRowHeight: CGFloat(size.cell_height_px) / pixelScale,
+            historyRows: historyRows, zoomScale: followerZoomScale, maximumBaseScale: 1
+        )
+        self.presentation = presentation
+        rowHeight = presentation.rowHeight
+        document.frame = CGRect(origin: .zero, size: presentation.contentSize)
         positionCanvas(canvas)
-        terminalView.followerPixelSize = CGSize(
+        let pixels = CGSize(
             width: (canvas.size.width * pixelScale).rounded(),
             height: (canvas.size.height * pixelScale).rounded()
         )
-        terminalView.setFrameOrigin(.zero)
-        terminalView.setFrameSize(canvas.size)
+        if terminalView.followerPixelSize != pixels || terminalView.frame.size != canvas.size {
+            terminalView.followerPixelSize = pixels
+            terminalView.setFrameOrigin(.zero)
+            terminalView.setFrameSize(canvas.size)
+        }
         let offset = wasAtBottom && nativeRow == historyRows
             ? document.bounds.height - viewport.height
             : CGFloat(nativeRow) * rowHeight + max(0, withinCanvas)
-        scrollView.contentView.scroll(to: CGPoint(x: 0, y: min(max(0, offset), max(0, document.bounds.height - viewport.height))))
+        scrollView.contentView.scroll(to: CGPoint(
+            x: min(scrollView.contentView.bounds.minX, max(0, document.bounds.width - viewport.width)),
+            y: min(max(0, offset), max(0, document.bounds.height - viewport.height))
+        ))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         refreshHistory()
     }
 
     private func positionCanvas(_ canvas: FollowerTerminalLayout.Layout) {
-        let scale = min(1, canvas.scale)
-        let screenHeight = canvas.size.height * scale
-        scaledView.frame = CGRect(x: 0,
-                                  y: CGFloat(nativeRow) * rowHeight + max(0, scrollView.contentSize.height - screenHeight),
-                                  width: canvas.size.width * scale, height: screenHeight)
+        guard let presentation else { return }
+        scaledView.frame = presentation.screenFrame(at: nativeRow)
         scaledView.bounds = CGRect(origin: .zero, size: canvas.size)
     }
 
@@ -160,8 +240,7 @@ final class MacFollowerTerminalView: NSView {
             let action = "scroll_to_row:\(row)"
             action.withCString { _ = ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count)) }
         }
-        let height = scaledView.frame.height
-        scaledView.setFrameOrigin(CGPoint(x: 0, y: CGFloat(nativeRow) * rowHeight + max(0, scrollView.contentSize.height - height)))
+        if let presentation { scaledView.setFrameOrigin(presentation.screenFrame(at: nativeRow).origin) }
         refreshHistory()
     }
 
@@ -219,7 +298,7 @@ final class MacFollowerTerminalView: NSView {
         let pixelHeight = CGFloat(text.offset_len) * CGFloat(size.cell_height_px) + padding
         let nativeSize = CGSize(width: scaledView.bounds.width, height: (pixelHeight + 0.5) / pixelScale)
         let height = nativeSize.height * scale
-        historyScaledView.frame = CGRect(x: 0, y: scaledView.frame.minY - height,
+        historyScaledView.frame = CGRect(x: scaledView.frame.minX, y: scaledView.frame.minY - height,
                                          width: scaledView.frame.width, height: height)
         historyScaledView.bounds = CGRect(origin: .zero, size: nativeSize)
         if historyView == nil {

@@ -175,7 +175,7 @@ struct MountedTerminalSnapshotCanvasTests {
             displayScale: 2, container: scroll.bounds.size
         ))
         let rowHeight = 10 * canvas.scale
-        scroll.configure(canvas: canvas, rowHeight: rowHeight)
+        scroll.configure(canvas: canvas, nativeRowHeight: 10)
         scroll.updateScrollbar(.init(total: 124, offset: 100, len: 24))
         #expect(abs(terminal.frame.width - 600) < 0.5)
         #expect(abs(scroll.contentOffset.y - (scroll.contentSize.height - 160)) < 0.5)
@@ -192,7 +192,7 @@ struct MountedTerminalSnapshotCanvasTests {
         scroll.contentOffset = .zero
         #expect(abs(terminal.frame.minY) < 0.5)
         #expect(terminal.bounds.size == canvas.size)
-        scroll.configure(canvas: nil, rowHeight: 0)
+        scroll.configure(canvas: nil, nativeRowHeight: 0)
         #expect(!scroll.isScrollEnabled)
         #expect(terminal.transform == .identity)
         #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))

@@ -65,6 +65,9 @@ public struct GhosttyCommandRegistry: Sendable {
         .init(action: .equalizeSplits, label: "Equalize Splits", kind: .unsupported),
         .init(action: .reloadConfig, label: "Reload Ghostty Config", kind: .unsupported),
         .init(action: .openConfig, label: "Open Ghostty Settings", kind: .unsupported),
+        .init(action: .increaseFontSize, label: "Zoom In", kind: .unsupported),
+        .init(action: .decreaseFontSize, label: "Zoom Out", kind: .unsupported),
+        .init(action: .resetFontSize, label: "Actual Size", kind: .unsupported),
     ]
 
     public static let iPadSupportedActions: [GhosttyAction] = [
@@ -119,6 +122,10 @@ public struct GhosttyCommandRegistry: Sendable {
     public static let macSettingsActions: [Entry] = entries(for: [
         .openConfig,
         .reloadConfig,
+    ])
+
+    public static let macZoomActions: [Entry] = entries(for: [
+        .increaseFontSize, .decreaseFontSize, .resetFontSize,
     ])
 
     public static subscript(action: GhosttyAction) -> Entry? {

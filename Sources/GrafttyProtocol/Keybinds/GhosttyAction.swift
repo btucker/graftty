@@ -24,4 +24,7 @@ public enum GhosttyAction: String, CaseIterable, Sendable {
     case equalizeSplits  = "equalize_splits"
     case reloadConfig    = "reload_config"
     case openConfig      = "open_config"
+    case increaseFontSize = "increase_font_size:1"
+    case decreaseFontSize = "decrease_font_size:1"
+    case resetFontSize = "reset_font_size"
 }
