@@ -95,6 +95,7 @@
     "PWD.3": "Position Memory",
     "KEY.1": "Keyboard Forwarding",
     "KEY.2": "Clipboard",
+    "KEY.4": "Voice dictation",
     "MOUSE.1": "Mouse",
     "BELL.1": "Bell",
     "NOTIF.1": "Desktop Notifications",

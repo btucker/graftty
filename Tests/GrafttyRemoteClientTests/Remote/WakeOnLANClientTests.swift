@@ -5,7 +5,7 @@ import Testing
 @testable import GrafttyRemoteClient
 
 struct WakeOnLANClientTests {
-    @Test("@spec REMOTE-2.11: When a Mac client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.")
+    @Test("@spec REMOTE-2.11: When a client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.")
     func subnetSelection() {
         #expect(WakeOnLANClient.broadcastAddress(host: "192.168.1.10", local: "192.168.1.20", netmask: "255.255.255.0") == "192.168.1.255")
         #expect(WakeOnLANClient.broadcastAddress(host: "192.168.2.10", local: "192.168.1.20", netmask: "255.255.255.0") == nil)
@@ -15,7 +15,18 @@ struct WakeOnLANClientTests {
         #expect(WakeOnLANClient.broadcastAddress(host: "192.168.1.10", local: "192.168.1.20", netmask: "0.0.0.0") == nil)
     }
 
-    @Test("@spec REMOTE-2.12: When connecting to a paired host with verified wake addresses on a reachable local subnet, the Mac client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.")
+    @Test(
+        "@spec REMOTE-2.18: When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.",
+        .enabled(if: localBroadcastIPv4Address() != nil, "requires an active IPv4 broadcast interface")
+    )
+    func sendsOnLocalSubnet() async throws {
+        let local = try #require(localBroadcastIPv4Address())
+        // Locally administered address: no real NIC matches it, so nothing wakes.
+        let target = WakeOnLANTarget(macAddress: "02:00:5e:00:53:01", ipv4Address: local)
+        #expect(await WakeOnLANClient.send([target]))
+    }
+
+    @Test("@spec REMOTE-2.12: When connecting to a paired host with verified wake addresses on a reachable local subnet, the client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.")
     func wakesThenRetriesUnavailableHost() async throws {
         let fixture = try Fixture()
         let events = Events()
@@ -155,6 +166,15 @@ struct WakeOnLANClientTests {
             #expect(exchange.wakeOnLAN == (advertisement == fixture.advertisement ? advertisement : nil))
         }
     }
+}
+
+/// An address `WakeOnLANClient.send` would broadcast for, mirroring its
+/// interface and subnet preconditions so the test skips rather than fails
+/// on hosts without one.
+private func localBroadcastIPv4Address() -> String? {
+    WakeOnLANClient.broadcastInterfaces().first {
+        WakeOnLANClient.broadcastAddress(host: $0.local, local: $0.local, netmask: $0.netmask) != nil
+    }?.local
 }
 
 private actor Events {

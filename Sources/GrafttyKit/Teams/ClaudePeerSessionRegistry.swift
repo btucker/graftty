@@ -111,7 +111,10 @@ public struct ClaudePeerSessionRegistry: Sendable {
     }
 
     public static func isSocket(atPath path: String) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+        // Codex may expose its app-server socket as a symlink into its daemon
+        // directory. FileManager reports the link's type unless we resolve it.
+        let resolvedPath = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
             return false
         }
         return attributes[.type] as? FileAttributeType == .typeSocket

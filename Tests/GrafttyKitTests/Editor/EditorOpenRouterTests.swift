@@ -234,7 +234,7 @@ final class EditorOpenRouterCliCommandTests: XCTestCase {
     }
 }
 
-/// @spec EDITOR-1.1: When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+/// @spec EDITOR-1.1: When the user cmd-clicks a text file path in a terminal pane, the application shall open the file via the configured editor.
 final class EditorOpenRouterResolveTests: XCTestCase {
 
     private let dummyURL = URL(fileURLWithPath: "/tmp/foo.swift")
@@ -284,5 +284,72 @@ final class EditorOpenRouterResolveTests: XCTestCase {
         }
         XCTAssertEqual(file, dummyURL)
         XCTAssertEqual(app, dummyApp)
+    }
+
+    /// @spec EDITOR-1.9: When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
+    func test_binaryFile_usesSystemDefaultApp() throws {
+        let cases: [(String, Data)] = [
+            ("program", Data([0x7f, 0x45, 0x4c, 0x46, 0, 0xff])),
+            ("mislabeled.txt", Data([0xff])),
+            ("bom-then-binary.txt", Data([0xEF, 0xBB, 0xBF, 0xFF])),
+            ("document.pdf", Data("%PDF-1.7\n1 0 obj\n".utf8)),
+        ]
+        for (name, contents) in cases {
+            try withTemporaryFile(name: name, contents: contents) { file in
+                let target = EditorOpenRouter.ClassifiedTarget.editorOpen(
+                    absolutePath: file, line: nil, column: nil
+                )
+                let cliAction = EditorOpenRouter.resolve(
+                    target: target,
+                    editor: ResolvedEditor(kind: .cli(command: "nvim"), source: .shellEnv)
+                )
+                XCTAssertEqual(cliAction, .openWithDefaultApp(file), name)
+
+                let guiAction = EditorOpenRouter.resolve(
+                    target: target,
+                    editor: ResolvedEditor(kind: .app(bundleURL: dummyApp), source: .userPreference)
+                )
+                XCTAssertEqual(guiAction, .openWithDefaultApp(file), name)
+                XCTAssertEqual(EditorOpenRouter.resolve(target: target, editor: nil),
+                               .openWithDefaultApp(file), name)
+            }
+        }
+    }
+
+    func test_utf8TextAtSampleBoundary_stillUsesEditor() throws {
+        var contents = Data(repeating: 0x61, count: 8 * 1024 - 1)
+        contents.append(contentsOf: [0xC3, 0xA9])
+        try withTemporaryFile(name: "notes.txt", contents: contents) { file in
+            let action = EditorOpenRouter.resolve(
+                target: .editorOpen(absolutePath: file, line: nil, column: nil),
+                editor: ResolvedEditor(kind: .cli(command: "nvim"), source: .shellEnv)
+            )
+            XCTAssertEqual(action, .openInPane(initialInput: "nvim '\(file.path)'\n"))
+        }
+    }
+
+    func test_utf16TextWithByteOrderMark_stillUsesEditor() throws {
+        let contents = "hello".data(using: .utf16)!
+        try withTemporaryFile(name: "notes.txt", contents: contents) { file in
+            let action = EditorOpenRouter.resolve(
+                target: .editorOpen(absolutePath: file, line: nil, column: nil),
+                editor: ResolvedEditor(kind: .cli(command: "nvim"), source: .shellEnv)
+            )
+            XCTAssertEqual(action, .openInPane(initialInput: "nvim '\(file.path)'\n"))
+        }
+    }
+
+    private func withTemporaryFile(
+        name: String,
+        contents: Data,
+        body: (URL) throws -> Void
+    ) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent(name)
+        try contents.write(to: file)
+        try body(file)
     }
 }

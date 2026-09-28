@@ -182,7 +182,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Graftty allows terminal programs you run to access the microphone for features such as voice dictation.</string>
+    <string>Graftty uses the microphone to let you dictate into terminals and to support microphone access for terminal programs.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Graftty recognizes your speech to enter terminal text and respond to the spoken Send prompt command.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Graftty uses the local network to discover and connect to your other Macs.</string>
     <key>NSBonjourServices</key>

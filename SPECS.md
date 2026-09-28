@@ -16,6 +16,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.4** While the sidebar is hidden (`NavigationSplitViewVisibility.detailOnly`), the breadcrumb bar shall apply a leading inset wide enough to clear the window's traffic-light buttons and the sidebar-toggle button so its text remains legible at the window's left edge. While the sidebar is visible, the breadcrumb shall use its standard 12pt leading padding because the sidebar column already offsets the detail content past the traffic lights.
 
+**LAYOUT-1.5** When the user drags to select text in a terminal pane beneath the titlebar, the application shall deliver the drag to the terminal instead of moving the window.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
@@ -342,6 +344,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.10` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
 
+**TERM-8.11** When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.
+
+**TERM-8.12** When a selected agent transcript begins with a `└` or `⎿` line-numbered diagnostic and ends with an expansion hint, the application shall copy each visible entry as one line and omit the expansion hint.
+
+**TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
+
+**TERM-8.14** When a terminal selection starts mid-line, the application shall include the starting column when checking whether the next word fits on the first row, while preserving paragraph, item, and code boundaries.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"
@@ -383,6 +393,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-11.16** When AppKit resizes a zmx-backed terminal view, the application shall update libghostty's surface size before marking the pane visible and reconciling zmx to the live grid, so the show-time reconcile cannot forward the previous row count during a real resize.
 
 **TERM-11.17** When a zmx-backed pane starts while backgrounded before its view lays out and then enters the visible set for the first time, the application shall forward the current live libghostty grid to the running zmx PTY unconditionally, without waiting for a later layout-settled or viewport callback; a same-size forward is a kernel no-op, so ordinary focus switches do not create harmful resize churn.
+
+**TERM-11.18** When a local terminal view joins a window after receiving an offscreen frame size or its backing properties change, the application shall resynchronize libghostty's content scale and backing-pixel viewport in that order even if its point size did not change.
 
 ### TERM-12.x — Paged History on Mac and Mobile
 
@@ -810,7 +822,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### KEY-1.x — Keyboard Forwarding
 
-**KEY-1.1** The application shall forward all keyboard input, including Command-modified keys, to libghostty so that libghostty's default keybindings (Cmd+C copy, Cmd+V paste, Cmd+A select-all, Cmd+K clear, etc.) take effect.
+**KEY-1.1** When a terminal receives ordinary text or Command-modified keyboard input outside text composition, the application shall forward the event to libghostty without duplicating text so terminal keybindings remain available.
 
 **KEY-1.2** When libghostty reports that a key was not handled, the application shall allow the event to continue up the responder chain.
 
@@ -819,6 +831,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-1.4** When a modifier key is pressed or released over a terminal pane (AppKit `flagsChanged`), the application shall forward the modifier transition to libghostty as a modifier-only key event, so link hover state refreshes and a cmd+click on an already-hovered file path opens the editor without requiring mouse movement.
 
 **KEY-1.5** When a modifier key is pressed while the pointer hovers a terminal pane that is not first responder, the application shall refresh that pane's link hover state, so cmd+click on a file path in an unfocused pane opens the editor without first moving the mouse. (AppKit delivers `flagsChanged` only to the first responder, so KEY-1.4's forwarding does not reach the hovered pane, and the click's own mouse-pos event is cell-deduped inside libghostty.)
+
+**KEY-1.6** When macOS supplies provisional text to a terminal, the application shall expose an AppKit text input client that retains composition separately from terminal input.
+
+**KEY-1.7** When macOS commits text to the focused terminal, the application shall deliver it once as single-line text without appending Return or forwarding terminal control characters.
+
+**KEY-1.8** When a composing terminal loses focus, closes, or becomes read-only, the application shall discard provisional text and reject subsequent text callbacks while that pane is unavailable for input.
+
+**KEY-1.9** When a key edits terminal text composition, the application shall keep that press, its repeats, and its release out of the terminal input stream, including after composition ends.
 
 ### KEY-2.x — Clipboard
 
@@ -835,6 +855,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
 
 **KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
+
+### KEY-4.x — Voice dictation
+
+**KEY-4.1** While Graftty dictation is listening, the application shall preview revised speech without writing provisional text to the terminal.
+
+**KEY-4.2** When a finalized dictation utterance consists of Send prompt, the application shall submit once and stop listening without inserting the command words.
+
+**KEY-4.3** When ordinary dictation finalizes at a pause, the application shall insert single-line text once, separate successive utterances with a space, and keep listening without submitting.
+
+**KEY-4.4** When dictation stops or its terminal becomes unavailable, the application shall reject later recognition callbacks and shall not submit the terminal input.
+
+**KEY-4.5** While voice dictation is listening, the application shall pulse the sidebar microphone and display a Send prompt hint inline in the expanded sidebar or beside the collapsed rail.
+
+**KEY-4.6** While the collapsed sidebar displays a dictation hint, the application shall keep the microphone control and its callout from taking terminal keyboard focus.
+
+**KEY-4.7** When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.
+
+**KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
 
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
@@ -1304,6 +1342,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
 
+**OWN-2.6** When native text input commits to a follower terminal, the application shall acquire display ownership before delivering text and shall reject delivery if acquisition fails.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow
@@ -1668,7 +1708,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
 
-**IOS-6.24** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
+**IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
+
+**IOS-6.25** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
 
 ### IOS-7.x — Lifecycle
 
@@ -2094,6 +2136,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.13** When Graftty rebuilds a managed Codex home, the application shall keep app-server-control as a real mirror-local directory rather than symlink the durable Codex control directory.
 
+**TEAM-10.14** When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
+
+**TEAM-10.15** When a wrapped Codex session loses its owning wrapper, the application shall stop its still-running app-server after verifying both process identities and retain its record until the server exits.
+
+**TEAM-10.16** When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
@@ -2238,7 +2286,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### EDITOR-1.x
 
-**EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+**EDITOR-1.1** When the user cmd-clicks a text file path in a terminal pane, the application shall open the file via the configured editor.
 
 **EDITOR-1.2** If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
 
@@ -2253,6 +2301,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **EDITOR-1.7** When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
 
 **EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
+
+**EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
 ## REMOTE — Secure Remote Access
 
@@ -2300,9 +2350,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.10** If a host supplies wake addresses, then the client shall use them only after verifying a signature binding those addresses to the paired host identity.
 
-**REMOTE-2.11** When a Mac client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
+**REMOTE-2.11** When a client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
 
-**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the Mac client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
+**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
 
 **REMOTE-2.13** When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.
 
@@ -2313,6 +2363,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.16** When a protocol-v2 client requests same-device replacement, the application shall keep the base offer signature compatible with older hosts and shall authenticate eviction authority with a separate optional signature.
 
 **REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
+
+**REMOTE-2.18** When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.
 
 ### REMOTE-3.x — Revocation
 
@@ -2706,7 +2758,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+**AGENT-6.33** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+
+**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 
 ## CLI — CLI
 

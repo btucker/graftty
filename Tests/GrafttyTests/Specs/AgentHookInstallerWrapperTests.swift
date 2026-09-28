@@ -371,12 +371,12 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains(#"app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)"#))
         #expect(script.contains(#"if ! _graftty_codex_should_use_app_server "$@"; then"#))
         #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks "$@""#))
-        #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &"#))
+        #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$_graftty_codex_native_binary" --enable hooks app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &"#))
         #expect(script.contains(#"_graftty_codex_app_server_pid=$!"#))
         #expect(script.contains(#"_graftty_wait_for_codex_socket() {"#))
         #expect(script.contains(#"[ -S "$_graftty_codex_socket" ]"#))
         #expect(script.contains(#"kill -0 "$_graftty_codex_app_server_pid""#))
-        #expect(script.contains(#"team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid""#))
+        #expect(script.contains(#"team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$""#))
         #expect(script.contains(#"env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@""#))
         #expect(script.contains(#"team codex-app-server unregister --socket "$_graftty_codex_socket" --app-server-pid "$_graftty_codex_app_server_pid""#))
         #expect(script.contains(#"kill "$_graftty_codex_app_server_pid""#))
@@ -398,6 +398,24 @@ struct AgentHookInstallerWrapperTests {
         #expect(cleanupIdx < exitIdx)
         #expect(script.contains("'/usr/local/bin/graftty' team unregister --runtime codex"))
         #expect(script.contains(#"if [ -z "${_graftty_preserve_codex_app_server_log:-}" ] && [ -n "${_graftty_codex_app_server_log:-}" ]; then"#))
+    }
+
+    @Test("""
+    @spec TEAM-10.14: When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
+    """)
+    func codexWrapperResolvesNativeBinaryForAppServer() {
+        let script = AgentHookInstaller.wrapperScript(
+            runtime: .codex,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "codex",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+
+        #expect(script.contains(#"team codex-app-server resolve-binary --real-binary "$real_binary""#))
+        #expect(script.contains(#"if [ ! -x "$_graftty_codex_native_binary" ]; then"#))
+        #expect(script.contains(#""$_graftty_codex_native_binary" --enable hooks app-server"#))
+        #expect(script.contains(#""$real_binary" --enable hooks --remote"#))
     }
 
     @Test(

@@ -1,9 +1,44 @@
+import Darwin
 import Foundation
 import Testing
 @testable import GrafttyKit
 
 @Suite("Claude native peer-session registry")
 struct ClaudePeerSessionRegistryTests {
+    @Test("@spec AGENT-6.33: When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.")
+    func socketSymlinkReachability() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("graftty-socket-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let socketPath = directory.appendingPathComponent("server.sock")
+        let linkPath = directory.appendingPathComponent("codex.sock")
+
+        let listener = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(listener >= 0)
+        guard listener >= 0 else { return }
+        defer { Darwin.close(listener) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of: &address.sun_path) {
+            $0.copyBytes(from: Array(socketPath.path.utf8) + [0])
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        #expect(bound == 0)
+        guard bound == 0 else { return }
+        try FileManager.default.createSymbolicLink(at: linkPath, withDestinationURL: socketPath)
+
+        #expect(ClaudePeerSessionRegistry.isSocket(atPath: socketPath.path))
+        #expect(ClaudePeerSessionRegistry.isSocket(atPath: linkPath.path))
+        try FileManager.default.removeItem(at: socketPath)
+        #expect(!ClaudePeerSessionRegistry.isSocket(atPath: linkPath.path))
+    }
+
     @Test("""
     @spec AGENT-6.5: When a Claude SessionStart hook identifies a live protocol-v1 top-level registry record for its session in Claude's configured state directory, the application shall register that native session with its canonical agent ID, process identity, messaging socket, provider display label, worktree, and pane; malformed, stale, unsupported, mismatched, and subagent records shall not become routable agents.
     """)

@@ -133,7 +133,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.33: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
     """)
     func preparesOpenSkillForBothProviders() throws {
         let destination = FileManager.default.temporaryDirectory

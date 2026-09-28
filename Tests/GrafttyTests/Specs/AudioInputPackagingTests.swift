@@ -12,6 +12,14 @@ struct AudioInputPackagingTests {
         #expect(!usageDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    @Test("@spec KEY-4.7: When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.")
+    func speechRecognitionUsage() throws {
+        let plist = try Self.bundleInfoPlist()
+        let speech = try #require(plist["NSSpeechRecognitionUsageDescription"] as? String)
+        #expect(!speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect((plist["NSMicrophoneUsageDescription"] as? String)?.contains("dictate") == true)
+    }
+
     @Test("codesigning grants audio input")
     func codesigningGrantsAudioInput() throws {
         let entitlements = try Self.propertyList(

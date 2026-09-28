@@ -15,6 +15,8 @@ struct SidebarView: View {
     /// recompute on every shell title/PWD event.
     let terminalManager: TerminalManager
     @ObservedObject var paneTitleInvalidations: PaneTitleInvalidationSource
+    @ObservedObject var voiceDictation: VoiceDictationController
+    let selectedVoicePaneID: PaneSlotID?
     let theme: GhosttyTheme
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
@@ -234,6 +236,7 @@ struct SidebarView: View {
                                       collapsed: $navigation.railCollapsed, expandedWidth: $navigation.railExpandedWidth, selectionColor: theme.foreground.opacity(0.16), onSelect: selectProject,
                                       onAttention: { onNavigationIntent(); navigation.showsAttention = true; navigation.query = "" },
                                       onMove: moveProject, localDeviceID: owner.deviceID,
+                                      aboveManagement: { AnyView(voiceDictationButton(collapsed: navigation.railCollapsed)) },
                                       management: { AnyView(HStack(spacing: 0) {
                                           addRepositoryIconButton
                                           remoteManagementButton
@@ -273,6 +276,7 @@ struct SidebarView: View {
                 }
                 if !showsProjectRail {
                     Divider()
+                    voiceDictationButton(collapsed: false)
                     HStack {
                         Button(action: onAddRepo) { Label("Add Repository", systemImage: "plus") }
                         Spacer()
@@ -341,6 +345,14 @@ struct SidebarView: View {
                 onCancel: { pendingAddWorktree = nil }
             )
         }
+    }
+
+    private func voiceDictationButton(collapsed: Bool) -> some View {
+        VoiceDictationButton(
+            controller: voiceDictation,
+            target: selectedVoicePaneID.flatMap { terminalManager.handle(for: $0) },
+            collapsed: collapsed
+        )
     }
 
     private func isCurrentAttentionWorktree(_ item: SidebarActivityItem) -> Bool {
