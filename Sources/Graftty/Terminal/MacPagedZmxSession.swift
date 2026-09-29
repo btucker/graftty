@@ -18,6 +18,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private var engine: PagedZmxAttachEngine?
     private var closed = false
     private var started = false
+    private var startedAt = ProcessInfo.processInfo.systemUptime
     private var restored = false
     private var failed = false
     private var attachmentFailure: (String) -> Void = { _ in }
@@ -56,6 +57,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             guard !closed else { throw NativePtySession.Error.closed }
             guard !started else { throw NativePtySession.Error.alreadyStarted }
             started = true
+            startedAt = ProcessInfo.processInfo.systemUptime
             task = Task { @MainActor [weak self] in await self?.run() }
         }
     }
@@ -187,6 +189,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private func runLegacy() async {
         guard let fallback else { return }
         do {
+            lock.withLock { startedAt = ProcessInfo.processInfo.systemUptime }
             try fallback.start()
             for await command in commands {
                 guard !Task.isCancelled, !lock.withLock({ failed }) else { break }
@@ -205,8 +208,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         // are still running. Only a confirmed missing daemon is a shell exit.
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: configuration.argv[0]),
             zmxDir: URL(fileURLWithPath: configuration.env["ZMX_DIR"] ?? ""))
-        if launcher.isSessionMissing(configuration.sessionName) {
-            reportExit(status: Int32(NativePtySession.exitCode(from: status)))
+        // Legacy zmx attach returns success for a completed shell, including
+        // a shell that exits nonzero. A failed attach can leave no daemon too.
+        if status == 0, launcher.isSessionMissing(configuration.sessionName) {
+            reportExit(status: 0)
         } else {
             reportFailure("Terminal attachment ended. Reconnect to resume the session.")
         }
@@ -226,7 +231,9 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     private func reportExit(status: Int32) {
-        surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), 0) }
+        let elapsed = lock.withLock { ProcessInfo.processInfo.systemUptime - startedAt }
+        let milliseconds = UInt64(max(0, elapsed) * 1_000)
+        surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), milliseconds) }
     }
 
     func close() {

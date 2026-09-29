@@ -179,6 +179,9 @@ final class TerminalManager: ObservableObject {
     /// keeps that interaction snappy. Entries are dropped lazily on miss
     /// (shell exited / respawned) and via `forgetSurfaceRuntimeState`.
     private var cachedShellPIDs: [PaneSlotID: Int32] = [:]
+    // Daemon logs outlive their shells. Do not reload a known-dead PID while
+    // an asynchronous replacement is starting and has not written its log yet.
+    private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -470,6 +473,8 @@ final class TerminalManager: ObservableObject {
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
         ) else { return nil }
+        guard obsoleteShellPIDs[id] != pid else { return nil }
+        obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
         return pid
     }
@@ -736,6 +741,14 @@ final class TerminalManager: ObservableObject {
             missing = launcher.isSessionMissing(name)
         }
         if missing {
+            // Prefer the newest spawn in the log over a possibly older cache.
+            if let previousPID = ZmxPIDLookup.shellPID(
+                logFile: launcher.logFile(forSession: name), sessionName: name
+            ) ?? cachedShellPIDs[terminalID] {
+                obsoleteShellPIDs[terminalID] = previousPID
+            }
+            cachedShellPIDs[terminalID] = nil
+            shellReadyFired.remove(terminalID)
             clearRehydrated(terminalID)
             titles.removeValue(forKey: terminalID)
             pwds.removeValue(forKey: terminalID)
@@ -758,6 +771,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
+        obsoleteShellPIDs.removeValue(forKey: terminalID)
         paneClosed?(terminalID, zmxSessionName(for: terminalID))
     }
 
@@ -925,6 +939,10 @@ final class TerminalManager: ObservableObject {
     /// any queued launch command before default-command policy runs.
     func shellBecameReady(for terminalID: PaneSlotID) {
         guard shellReadyFired.insert(terminalID).inserted else { return }
+        // Readiness proves a new shell exists, even if its PID was reused.
+        if obsoleteShellPIDs.removeValue(forKey: terminalID) != nil {
+            cachedShellPIDs[terminalID] = nil
+        }
         if let input = pendingShellReadyInitialInput[terminalID] {
             let accepted = surfaces[terminalID]?.writeText(
                 input,
@@ -1090,7 +1108,7 @@ final class TerminalManager: ObservableObject {
         guard attachmentFailures[terminalID] != nil,
               let handle = surfaces[terminalID],
               let sessionID = paneSessionIDs[terminalID] else { return false }
-        let path = handle.worktreePath
+        let path = paneWorktreePaths[terminalID] ?? handle.worktreePath
         let wasFocused = focusedTerminalID == terminalID
         evictSurface(terminalID: terminalID, forRetry: true)
         guard createSurface(terminalID: terminalID, paneSessionID: sessionID,
@@ -1175,6 +1193,7 @@ final class TerminalManager: ObservableObject {
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
     private func forgetTrackingState(for terminalID: PaneSlotID) {
+        obsoleteShellPIDs[terminalID] = nil
         attachmentFailures[terminalID] = nil
         if pendingShellReadyInitialInput[terminalID] != nil {
             completeInitialInputDelivery(for: terminalID, success: false)

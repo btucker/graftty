@@ -384,7 +384,7 @@ final class NativePtySession {
         _ = kill(spawned.pid, SIGTERM)
     }
 
-    static func exitCode(from status: Int32?) -> UInt32 {
+    private static func exitCode(from status: Int32?) -> UInt32 {
         guard let status else { return 0 }
         let waitStatus = status & 0o177
         if waitStatus == 0 {

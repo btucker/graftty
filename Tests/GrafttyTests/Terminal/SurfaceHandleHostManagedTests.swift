@@ -466,7 +466,9 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.freeCalls.isEmpty)
     }
 
-    @Test("@spec TERM-5.11: If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.")
+    @Test("""
+    @spec TERM-5.11: If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.
+    """)
     func backendStartFailurePreservesPaneWithoutProcessExit() {
         struct ForcedStartFailure: Error {}
 

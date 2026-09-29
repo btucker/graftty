@@ -336,9 +336,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-5.10** When `NativePtySession.close()` is called while a `writeToSurface` callback is mid-execution on the PTY reader thread, the application shall block `close()` until that callback returns and shall ensure no further `writeToSurface` invocation occurs after `close()` has returned. The barrier prevents `SurfaceHandle.deinit` (which calls `close()` and then `ghostty_surface_free`) from racing with an in-flight `ghostty_surface_write_buffer` on the reader thread; without it, the reader dereferences the freed surface and aborts with `BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt`.
 
-**TERM-5.11** If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.") func backendStartFailurePreservesPaneWithoutProcessExit() { struct ForcedStartFailure: Error {} let backend = FakeSurfaceHandleZmxBackend(startError: ForcedStartFailure()) let surface = fakeSurface() let harness = SurfaceHandleTestHarness(surface: surface) let handle = SurfaceHandle( terminalID: Self.terminalID(), app: fakeApp(), worktreePath: "/tmp/worktree", socketPath: "/tmp/graftty.sock", zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(), surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend } ) #expect(handle != nil) let surfaceView = try? #require(handle?.view as? SurfaceNSView) surfaceView?.hostManagedLayoutNotifier?() #expect(backend.startCount == 1) #expect(backend.closeCount == 1) #expect(backend.releaseCount == 0) #expect(harness.freeCalls.isEmpty) #expect(harness.writeBufferCalls.count == 1) #expect( String(data: harness.writeBufferCalls[0].data, encoding: .utf8)? .contains("zmx attach failed") == true ) #expect(harness.processExitCalls.isEmpty) } @Test(
+**TERM-5.11** If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.
 
 **TERM-5.12** When the user retries a failed terminal attachment, the application shall preserve the pane identity and session mapping, and ignore failure or close callbacks from its replaced surface.
+
+**TERM-5.13** When attachment recovery confirms that the previous daemon is gone, the application shall reset shell readiness and exclude the previous shell PID until a replacement shell is observed.
 
 ### TERM-6.x — Stopping a Worktree
 

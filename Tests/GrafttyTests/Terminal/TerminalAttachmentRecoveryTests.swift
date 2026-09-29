@@ -7,18 +7,21 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct TerminalAttachmentRecoveryTests {
-    @Test("Typing k after an attachment failure does not close the native surface", arguments: [false, true])
-    func typingAfterFailureKeepsPane(legacyProcessExit: Bool) async throws {
+    @Test("Typing k after an attachment failure does not close the native surface", arguments: [FailureMode.start, .queryUnavailable, .missingDaemon])
+    func typingAfterFailureKeepsPane(mode: FailureMode) async throws {
         _ = NSApplication.shared
         #expect(ghostty_init(0, nil) == 0)
         let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         let manager = TerminalManager(socketPath: "/tmp/graftty-attachment-test.sock")
         let id = PaneSlotID()
-        let config = ZmxSpawnConfiguration(sessionName: "test", argv: ["/usr/bin/false"],
+        let fixture = try makeFakeZmx(attachCommand: "exit 1")
+        defer { try? FileManager.default.removeItem(at: fixture.deletingLastPathComponent()) }
+        let executable = mode == .missingDaemon ? fixture.path : "/usr/bin/false"
+        let config = ZmxSpawnConfiguration(sessionName: "test", argv: [executable, "attach"],
             env: [:], workingDirectory: URL(fileURLWithPath: "/tmp"), shellReadySignalAvailable: false)
         let backend = HostManagedZmxBackend(spawnConfiguration: config,
             sessionFactory: { surface, config, size in
-                if legacyProcessExit { return MacPagedZmxSession(surface: surface, configuration: config, initialSize: size) }
+                if mode != .start { return MacPagedZmxSession(surface: surface, configuration: config, initialSize: size) }
                 return FailingSession()
             })
         let handle = try #require(SurfaceHandle(terminalID: id, app: app.app,
@@ -28,7 +31,7 @@ struct TerminalAttachmentRecoveryTests {
         manager.insertSurfaceForTesting(handle, for: id)
         var closed = false
         manager.onSurfaceClosed = { _ in closed = true }
-        #expect(handle.startForBackgroundLaunch() == legacyProcessExit)
+        #expect(handle.startForBackgroundLaunch() == (mode != .start))
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while manager.attachmentFailures[id] == nil, ContinuousClock.now < deadline {
             app.tick()
@@ -68,6 +71,8 @@ struct TerminalAttachmentRecoveryTests {
         let userdata = try #require(ghostty_surface_userdata(old.surface))
         let oldBox = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
         _ = manager.recordTitle("Existing terminal", for: id)
+        // PWD reassignment changes the owner while preserving the surface.
+        manager.recordPaneSession(session, for: id, worktreePath: "/tmp/new-owner")
         manager.recordAttachmentFailure("Disconnected", for: old)
         var closes = 0
         manager.onSurfaceClosed = { _ in closes += 1 }
@@ -75,6 +80,8 @@ struct TerminalAttachmentRecoveryTests {
         let replacement = try #require(manager.handle(for: id))
         #expect(replacement !== old)
         #expect(replacement.terminalID == id)
+        #expect(replacement.worktreePath == "/tmp/new-owner")
+        #expect(manager.worktreePath(forSessionName: ZmxLauncher.sessionName(for: session)) == "/tmp/new-owner")
         #expect(manager.zmxSessionName(for: id) == ZmxLauncher.sessionName(for: session))
         #expect(manager.titles[id] == "Existing terminal")
         #expect(manager.wasRehydrated(id))
@@ -107,6 +114,81 @@ struct TerminalAttachmentRecoveryTests {
         manager.ptyDeviceAvailability = { .available }
         #expect(manager.retryAttachment(for: id))
         #expect(manager.handle(for: id) !== old)
+    }
+
+    @Test("Normal legacy completion preserves elapsed runtime and closes the surface")
+    func normalLegacyExitClosesPane() async throws {
+        _ = NSApplication.shared
+        #expect(ghostty_init(0, nil) == 0)
+        let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
+        let manager = TerminalManager(socketPath: "/tmp/graftty-attachment-test.sock")
+        let fixture = try makeFakeZmx(attachCommand: "sleep 0.4; exit 0")
+        defer { try? FileManager.default.removeItem(at: fixture.deletingLastPathComponent()) }
+        let id = PaneSlotID()
+        let config = ZmxSpawnConfiguration(sessionName: "test", argv: [fixture.path, "attach"],
+            env: [:], workingDirectory: URL(fileURLWithPath: "/tmp"), shellReadySignalAvailable: false)
+        let backend = HostManagedZmxBackend(spawnConfiguration: config)
+        let handle = try #require(SurfaceHandle(terminalID: id, app: app.app,
+            worktreePath: "/tmp", socketPath: manager.socketPath,
+            zmxSpawnConfiguration: config, terminalManager: manager,
+            zmxBackendFactory: { _, _, _, _ in backend }))
+        manager.insertSurfaceForTesting(handle, for: id)
+        var closed = false
+        manager.onSurfaceClosed = { _ in closed = true }
+        #expect(handle.startForBackgroundLaunch())
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !closed, ContinuousClock.now < deadline {
+            app.tick()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(closed)
+        #expect(manager.attachmentFailures[id] == nil)
+        withExtendedLifetime(app) {}
+    }
+
+    @Test("""
+    @spec TERM-5.13: When attachment recovery confirms that the previous daemon is gone, the application shall reset shell readiness and exclude the previous shell PID until a replacement shell is observed.
+    """)
+    func retryMissingDaemonResetsShellState() throws {
+        _ = NSApplication.shared
+        let fixture = try makeFakeZmx(attachCommand: "exit 1")
+        let directory = fixture.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = TerminalManager(socketPath: "/tmp/graftty-attachment-test.sock")
+        manager.initialize()
+        let launcher = ZmxLauncher(executable: fixture, zmxDir: directory)
+        manager.zmxLauncher = launcher
+        let id = PaneSlotID()
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let session = PaneSessionID()
+        let name = ZmxLauncher.sessionName(for: session)
+        let log = launcher.logFile(forSession: name)
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "pty spawned session=\(name) pid=111\n".write(to: log, atomically: true, encoding: .utf8)
+        let old = try #require(manager.createSurface(terminalID: id, paneSessionID: session, worktreePath: "/tmp"))
+        var ready = 0
+        manager.onShellReady = { _ in ready += 1 }
+        manager.shellBecameReady(for: id)
+        #expect(manager.lookupShellPID(for: id) == 111)
+        manager.recordAttachmentFailure("Disconnected", for: old)
+        #expect(manager.retryAttachment(for: id))
+        #expect(manager.lookupShellPID(for: id) == nil, "An old log must not repopulate the PID cache")
+        try "pty spawned session=\(name) pid=222\n".write(to: log, atomically: true, encoding: .utf8)
+        #expect(manager.lookupShellPID(for: id) == 222)
+        manager.shellBecameReady(for: id)
+        #expect(ready == 2, "The replacement shell must initialize normally")
+    }
+
+    enum FailureMode: Sendable { case start, queryUnavailable, missingDaemon }
+
+    private func makeFakeZmx(attachCommand: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("zmx")
+        try "#!/bin/sh\nif [ \"$1\" = list ]; then exit 0; fi\n\(attachCommand)\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return executable
     }
 
     private final class FailingSession: HostManagedZmxSession {
