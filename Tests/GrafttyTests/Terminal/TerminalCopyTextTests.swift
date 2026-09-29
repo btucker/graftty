@@ -3,6 +3,42 @@ import Testing
 
 @Suite("@spec TERM-8.11: When a selected terminal line has an indented continuation whose first word would not fit within the current terminal columns, the application shall join the lines and remove continuation indentation while preserving paragraph, item, and code boundaries.")
 struct TerminalCopyTextTests {
+    @Test("@spec TERM-8.14: When a terminal selection starts mid-line, the application shall include the starting column when checking whether the next word fits on the first row, while preserving paragraph, item, and code boundaries.")
+    func joinsProseSelectedMidLine() {
+        let copied = "near the edge\n  continuation follows"
+        #expect(TerminalCopyText.clean(copied, columns: 40, startColumn: 20) ==
+            "near the edge continuation follows")
+        #expect(TerminalCopyText.clean(copied, columns: 40) == copied)
+    }
+
+    @Test func preservesMidLineBreakWhenNextWordFitsExactly() {
+        let copied = "near the edge\n  continuation follows"
+        #expect(TerminalCopyText.clean(copied, columns: 40, startColumn: 14) == copied)
+    }
+
+    @Test func appliesStartingColumnOnlyToFirstRow() {
+        let copied = "near the edge\n  continuation follows\n  deliberate break"
+        #expect(TerminalCopyText.clean(copied, columns: 40, startColumn: 20) ==
+            "near the edge continuation follows\n  deliberate break")
+    }
+
+    @Test func preservesBoundariesInMidLineSelections() {
+        for copied in [
+            "near the edge\n\n  continuation follows",
+            "near the edge\n  - continuation follows",
+            "near the edge\n  return result",
+            "let value = 1\n  continuation follows",
+        ] {
+            #expect(TerminalCopyText.clean(copied, columns: 40, startColumn: 30) == copied)
+        }
+    }
+
+    @Test func countsWideCharactersInMidLineSelection() {
+        let copied = "界界界\n  continuation follows"
+        #expect(TerminalCopyText.clean(copied, columns: 40, startColumn: 25) ==
+            "界界界 continuation follows")
+    }
+
     @Test func joinsIndentedContinuationWhenNextWordCouldNotFit() {
         let copied = """
         The build command reported a diagnostic near the terminal's right edge at

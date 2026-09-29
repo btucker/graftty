@@ -8,6 +8,19 @@ private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
 }
 
+@MainActor
+private final class NativeInputDelegateSpy: NSObject, UITextInputDelegate {
+    var events: [String] = []
+    func textWillChange(_ textInput: (any UITextInput)?) { events.append("textWillChange") }
+    func textDidChange(_ textInput: (any UITextInput)?) { events.append("textDidChange") }
+    func selectionWillChange(_ textInput: (any UITextInput)?) { events.append("selectionWillChange") }
+    func selectionDidChange(_ textInput: (any UITextInput)?) { events.append("selectionDidChange") }
+    #if !targetEnvironment(macCatalyst)
+    @available(iOS 18.4, *)
+    func conversationContext(_ context: UIConversationContext?, didChange textInput: (any UITextInput)?) {}
+    #endif
+}
+
 private final class TerminalResponseRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
@@ -43,6 +56,71 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @Suite
 @MainActor
 struct TerminalPaneViewTests {
+
+    @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
+    func terminalPaddingTracksMeasuredRows() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        container.addsVerticalRowPadding = true
+        let displayScale = UIScreen.main.scale
+        container.terminalView.contentScaleFactor = displayScale
+        for cellHeight: UInt32 in [32, 40] {
+            container.terminalDidResize(TerminalGridMetrics(
+                columns: 40, rows: 12, widthPixels: 640, heightPixels: 480,
+                cellWidthPixels: 16, cellHeightPixels: cellHeight
+            ))
+            container.layoutIfNeeded()
+            let padding = CGFloat(cellHeight) / displayScale
+            #expect(abs(container.snapshotScrollView.frame.minY - padding) < 0.001)
+            #expect(abs(container.snapshotScrollView.frame.maxY - (240 - padding)) < 0.001)
+            #expect(container.snapshotScrollView.frame.width == 320)
+            #expect(container.terminalView.bounds.height == 240 - 2 * padding)
+            #expect(container.hitTest(CGPoint(x: 160, y: padding / 2), with: nil) === container)
+            #expect(container.hitTest(CGPoint(x: 160, y: 240 - padding / 2), with: nil) === container)
+            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding / 2)))
+            #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding + 1)))
+            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: 240 - padding / 2)))
+            #expect(container.backgroundColor == .clear)
+        }
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
+        container.layoutIfNeeded()
+        // Fitting twice as many columns halves the displayed row height.
+        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 10))
+        #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
+        container.snapshotScrollView.setFollowerZoomScale(2, around: CGPoint(x: 160, y: 100))
+        container.layoutIfNeeded()
+        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 20))
+        #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
+    }
+
+    @Test("@spec IOS-6.24: When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.")
+    func nativeInputDoesNotEchoExternalChangeNotifications() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view: any UITextInput = container.terminalView
+        let delegate = NativeInputDelegateSpy()
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(
+            insertText: { texts.append($0) }, deleteBackward: {}
+        )
+        view.inputDelegate = delegate
+
+        view.insertText("first ")
+        view.setMarkedText("draft", selectedRange: NSRange(location: 5, length: 0))
+        #expect(texts == ["first "])
+        let range = try #require(view.markedTextRange)
+        view.selectedTextRange = view.textRange(from: range.start, to: range.start)
+        view.replace(range, withText: "second ")
+        view.setMarkedText("third!", selectedRange: NSRange(location: 6, length: 0))
+        view.deleteBackward()
+        view.unmarkText()
+
+        #expect(texts == ["first ", "second ", "third"])
+        #expect(delegate.events.isEmpty)
+        // Genuine changes originating outside UIKit still reach its delegate.
+        #expect(view.inputDelegate === delegate)
+        view.inputDelegate?.selectionWillChange(view)
+        view.inputDelegate?.selectionDidChange(view)
+        #expect(delegate.events == ["selectionWillChange", "selectionDidChange"])
+    }
 
     @Test("@spec IOS-6.23: While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.")
     func hiddenKeyboardRejectsTouchFocusUntilShown() {
@@ -300,7 +378,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.8: While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
+@spec IOS-6.8: While no authoritative checkpoint grid is set, the terminal shall fill the padded viewport, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 """)
     func terminalViewIsSoleFullSizeSubviewAndTouchTarget() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

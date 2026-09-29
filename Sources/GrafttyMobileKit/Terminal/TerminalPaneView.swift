@@ -59,6 +59,9 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// The leader's grid, from ownership or a paged checkpoint. The canvas preserves
     /// both dimensions while its presentation fits the available container.
     public let authoritativeGrid: SessionClient.GridSize?
+    /// Reserves one rendered row above and below interactive panes. Preview
+    /// tiles leave this disabled because their background is presentation UI.
+    public let addsVerticalRowPadding: Bool
     public let showsAdditionalHistory: Bool
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
@@ -79,9 +82,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Effective config font used as the starting point for libghostty's
     /// built-in one-point pinch steps.
     public let configuredFontSize: Float?
-    /// Present only while this pane owns the display. Follower auto-fit is a
-    /// temporary rendering choice and must never become the saved worktree
-    /// preference.
+    /// Present only while this pane owns the display. Follower presentation
+    /// zoom must never become the saved worktree font preference.
     public let onFontSizeChange: ((Float) -> Void)?
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
@@ -104,6 +106,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         session: InMemoryTerminalSession,
         controller: TerminalController,
         authoritativeGrid: SessionClient.GridSize? = nil,
+        addsVerticalRowPadding: Bool = false,
         showsAdditionalHistory: Bool = false,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
@@ -120,6 +123,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.session = session
         self.controller = controller
         self.authoritativeGrid = authoritativeGrid
+        self.addsVerticalRowPadding = addsVerticalRowPadding
         self.showsAdditionalHistory = showsAdditionalHistory
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
@@ -157,6 +161,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
+        view.addsVerticalRowPadding = addsVerticalRowPadding
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
@@ -178,6 +183,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
+        view.addsVerticalRowPadding = addsVerticalRowPadding
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
@@ -267,7 +273,7 @@ public final class TerminalInputContainerView: UIView,
         ),
     ]
 
-    let terminalView = UITerminalView(frame: .zero)
+    let terminalView = MobileTerminalInputView(frame: .zero)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
     var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)?
     private var awaitingPhysicalViewport = false
@@ -279,28 +285,50 @@ public final class TerminalInputContainerView: UIView,
             setNeedsLayout()
         }
     }
+    var addsVerticalRowPadding = false {
+        didSet {
+            guard addsVerticalRowPadding != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
-        snapshotScrollView.frame = bounds
-        guard let grid = authoritativeGrid, let metrics = terminalGridMetrics,
-              let canvas = TerminalSnapshotCanvas.layout(
-                  grid: CGSize(width: Int(grid.cols), height: Int(grid.rows)),
-                  measuredGrid: CGSize(width: Int(metrics.columns), height: Int(metrics.rows)),
-                  measuredPixels: CGSize(width: Int(metrics.widthPixels), height: Int(metrics.heightPixels)),
-                  cellPixels: CGSize(width: Int(metrics.cellWidthPixels), height: Int(metrics.cellHeightPixels)),
-                  displayScale: terminalView.contentScaleFactor,
-                  container: bounds.size
-              ) else {
-            snapshotScrollView.configure(canvas: nil, rowHeight: 0)
+        let canvas = snapshotCanvas
+        snapshotScrollView.frame = paddedViewport(canvas: canvas)
+        guard let grid = authoritativeGrid, let metrics = terminalGridMetrics, let canvas else {
+            snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
             confirmPhysicalViewportIfReady()
             return
         }
         snapshotScrollView.configure(
             canvas: canvas,
-            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale,
+            nativeRowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor,
             columns: grid.cols
         )
+    }
+
+    private var snapshotCanvas: TerminalSnapshotCanvas.Layout? {
+        guard let grid = authoritativeGrid, let metrics = terminalGridMetrics else { return nil }
+        return TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: Int(grid.cols), height: Int(grid.rows)),
+            measuredGrid: CGSize(width: Int(metrics.columns), height: Int(metrics.rows)),
+            measuredPixels: CGSize(width: Int(metrics.widthPixels), height: Int(metrics.heightPixels)),
+            cellPixels: CGSize(width: Int(metrics.cellWidthPixels), height: Int(metrics.cellHeightPixels)),
+            displayScale: terminalView.contentScaleFactor,
+            container: bounds.size
+        )
+    }
+
+    // Keep the margins outside the native surface so they cannot become
+    // terminal cells. The clear container exposes the configured theme behind it.
+    private func paddedViewport(canvas: TerminalSnapshotCanvas.Layout?) -> CGRect {
+        guard addsVerticalRowPadding, let metrics = terminalGridMetrics,
+              terminalView.contentScaleFactor > 0 else { return bounds }
+        let rowHeight = CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor
+            * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
+        let inset = min(rowHeight, max(0, bounds.height / 2))
+        return bounds.insetBy(dx: 0, dy: inset)
     }
 
     private func confirmPhysicalViewportIfReady() {
@@ -309,8 +337,9 @@ public final class TerminalInputContainerView: UIView,
         // Pixel comparison also covers fractional point changes that Ghostty
         // deduplicates without another resize notification.
         let scale = terminalView.contentScaleFactor
-        let widthPixels = (bounds.width * scale).rounded(.down)
-        let heightPixels = (bounds.height * scale).rounded(.down)
+        let viewport = paddedViewport(canvas: nil)
+        let widthPixels = (viewport.width * scale).rounded(.down)
+        let heightPixels = (viewport.height * scale).rounded(.down)
         guard awaitingPhysicalViewport, authoritativeGrid == nil,
               widthPixels > 0, heightPixels > 0,
               let metrics = terminalGridMetrics,
@@ -520,6 +549,7 @@ public final class TerminalInputContainerView: UIView,
         r.isEnabled = false
         return r
     }()
+    private var selectionPanStartedInViewport = false
 
     /// Captures the most-recent long-press location so the menu's
     /// `Select` action can word-select at the original touch point even
@@ -643,8 +673,13 @@ public final class TerminalInputContainerView: UIView,
             }
     }
 
-    @objc private func handleFocusKeyboardInputTap() {
+    @objc private func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
+        guard acceptsTerminalInput(at: recognizer.location(in: self)) else { return }
         _ = focusKeyboardInput()
+    }
+
+    func acceptsTerminalInput(at point: CGPoint) -> Bool {
+        snapshotScrollView.frame.contains(point)
     }
 
     @discardableResult
@@ -681,11 +716,18 @@ public final class TerminalInputContainerView: UIView,
         let point = recognizer.location(in: terminalView)
         switch recognizer.state {
         case .began:
+            selectionPanStartedInViewport = acceptsTerminalInput(
+                at: recognizer.location(in: self)
+            )
+            guard selectionPanStartedInViewport else { return }
             selectionMenu.dismissMenu()
             selectionController.extend(to: point)
         case .changed:
+            guard selectionPanStartedInViewport else { return }
             selectionController.extend(to: point)
         case .ended, .cancelled, .failed:
+            guard selectionPanStartedInViewport else { return }
+            selectionPanStartedInViewport = false
             selectionController.endExtension(
                 at: point,
                 viewportHeight: terminalView.bounds.height,
@@ -1092,7 +1134,7 @@ extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
 extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
     public func terminalDidResize(_ size: TerminalGridMetrics) {
         terminalGridMetrics = size
-        if authoritativeGrid != nil { setNeedsLayout() }
+        setNeedsLayout()
         confirmPhysicalViewportIfReady()
     }
 }

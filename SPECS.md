@@ -466,6 +466,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-8.13** When a selected code block starts after the first line's number gutter and later rows have a consistent numbered gutter, the application shall omit the later gutter numbers while preserving diff markers and code indentation.
 
+**TERM-8.14** When a terminal selection starts mid-line, the application shall include the starting column when checking whether the next word fits on the first row, while preserving paragraph, item, and code boundaries.
+
 ### TERM-9.x
 
 **TERM-9.1** When the user activates "Reload Ghostty Config"
@@ -511,6 +513,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-11.16** When AppKit resizes a zmx-backed terminal view, the application shall update libghostty's surface size before marking the pane visible and reconciling zmx to the live grid, so the show-time reconcile cannot forward the previous row count during a real resize.
 
 **TERM-11.17** When a zmx-backed pane starts while backgrounded before its view lays out and then enters the visible set for the first time, the application shall forward the current live libghostty grid to the running zmx PTY unconditionally, without waiting for a later layout-settled or viewport callback; a same-size forward is a kernel no-op, so ordinary focus switches do not create harmful resize churn.
+
+**TERM-11.18** When a local terminal view joins a window after receiving an offscreen frame size or its backing properties change, the application shall resynchronize libghostty's content scale and backing-pixel viewport in that order even if its point size did not change.
 
 ### TERM-12.x — Paged History on Mac and Mobile
 
@@ -938,7 +942,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### KEY-1.x — Keyboard Forwarding
 
-**KEY-1.1** The application shall forward all keyboard input, including Command-modified keys, to libghostty so that libghostty's default keybindings (Cmd+C copy, Cmd+V paste, Cmd+A select-all, Cmd+K clear, etc.) take effect.
+**KEY-1.1** When a terminal receives ordinary text or Command-modified keyboard input outside text composition, the application shall forward the event to libghostty without duplicating text so terminal keybindings remain available.
 
 **KEY-1.2** When libghostty reports that a key was not handled, the application shall allow the event to continue up the responder chain.
 
@@ -947,6 +951,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-1.4** When a modifier key is pressed or released over a terminal pane (AppKit `flagsChanged`), the application shall forward the modifier transition to libghostty as a modifier-only key event, so link hover state refreshes and a cmd+click on an already-hovered file path opens the editor without requiring mouse movement.
 
 **KEY-1.5** When a modifier key is pressed while the pointer hovers a terminal pane that is not first responder, the application shall refresh that pane's link hover state, so cmd+click on a file path in an unfocused pane opens the editor without first moving the mouse. (AppKit delivers `flagsChanged` only to the first responder, so KEY-1.4's forwarding does not reach the hovered pane, and the click's own mouse-pos event is cell-deduped inside libghostty.)
+
+**KEY-1.6** When macOS supplies provisional text to a terminal, the application shall expose an AppKit text input client that retains composition separately from terminal input.
+
+**KEY-1.7** When macOS commits text to the focused terminal, the application shall deliver it once as single-line text without appending Return or forwarding terminal control characters.
+
+**KEY-1.8** When a composing terminal loses focus, closes, or becomes read-only, the application shall discard provisional text and reject subsequent text callbacks while that pane is unavailable for input.
+
+**KEY-1.9** When a key edits terminal text composition, the application shall keep that press, its repeats, and its release out of the terminal input stream, including after composition ends.
 
 ### KEY-2.x — Clipboard
 
@@ -963,6 +975,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
 
 **KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
+
+### KEY-4.x — Voice dictation
+
+**KEY-4.1** While Graftty dictation is listening, the application shall preview revised speech without writing provisional text to the terminal.
+
+**KEY-4.2** When a finalized dictation utterance consists of Send prompt, the application shall submit once and stop listening without inserting the command words.
+
+**KEY-4.3** When ordinary dictation finalizes at a pause, the application shall insert single-line text once, separate successive utterances with a space, and keep listening without submitting.
+
+**KEY-4.4** When dictation stops or its terminal becomes unavailable, the application shall reject later recognition callbacks and shall not submit the terminal input.
+
+**KEY-4.5** While voice dictation is listening, the application shall pulse the sidebar microphone and display a Send prompt hint inline in the expanded sidebar or beside the collapsed rail.
+
+**KEY-4.6** While the collapsed sidebar displays a dictation hint, the application shall keep the microphone control and its callout from taking terminal keyboard focus.
+
+**KEY-4.7** When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.
+
+**KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
 
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
@@ -1438,7 +1468,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.4** When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.
 
-**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
+**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, center a narrower canvas, and restore the Mac's physical viewport before taking control.
+
+**OWN-2.6** When native text input commits to a follower terminal, the application shall acquire display ownership before delivering text and shall reject delivery if acquisition fails.
+
+**OWN-2.7** While a terminal follows another display, the application shall calculate canvas placement, scroll extent, and history row height from one presentation scale, center unused horizontal space, and preserve the native grid when zooming.
+
+**OWN-2.8** When a Mac follower is magnified, the application shall scale its entire canvas and allow horizontal scrolling without changing its native grid, then discard the presentation zoom when it becomes leader.
+
+**OWN-2.9** When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.
 
 ## UPDATE — Self-Update
 
@@ -1772,13 +1810,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.7** While a terminal pane is rendered in the iOS app, `UITerminalView` shall remain the sole terminal keyboard responder and its supported `showsInputAccessory` property shall be false, so the GhosttyKit accessory is absent without Objective-C runtime swizzling. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 
-**IOS-6.8** While no authoritative checkpoint grid is set, the terminal shall fill its container, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
+**IOS-6.8** While no authoritative checkpoint grid is set, the terminal shall fill the padded viewport, remain its rendering touch target, and retain libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures.
 
 **IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
+**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -1803,6 +1841,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.22** While the software keyboard is hidden and the show-keyboard control is visible, the application shall render its keyboard glyph with the same dark-gray primary foreground and plain button styling as the fullscreen back control, rather than the blue accent tint.
 
 **IOS-6.23** While the user has hidden the mobile keyboard, the application shall reject terminal keyboard focus requests without disabling scrolling, and restore focus eligibility when the user chooses Show keyboard.
+
+**IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
+
+**IOS-6.25** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
 
 ### IOS-7.x — Lifecycle
 
@@ -1910,6 +1952,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.22** While an image paste awaits host confirmation, the mobile application shall queue subsequent terminal input in order and send it only after a successful confirmation; if image paste fails or the input queue exceeds its limit, then the application shall discard queued input and explain the failure.
 
+### IOS-12.x
+
+**IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.
+
+**IOS-12.2** When a user opens an offered host file on mobile, the application shall download its bounded snapshot to a temporary local file and reject invalid names and incomplete transfers.
+
+**IOS-12.3** When the user runs graftty open with a file path, the CLI shall send the caller's pane session with the file in its tracked worktree and report request failures.
+
+**IOS-12.4** When graftty open receives an HTTP or HTTPS URL on a directly paired host, the application shall preserve its origin, offer it to mobile, and carry its browser connections through the authenticated host connection so localhost and DNS resolve on the host.
+
+**IOS-12.5** When a mobile browser requests a URL through its authenticated SOCKS proxy, the application shall relay HTTP bytes through SSH over WebRTC to a TCP connection on the paired host.
+
+**IOS-12.6** If a browser tunnel cannot connect before its deadline, then the application shall fail that browser connection without disconnecting terminal panes sharing the host transport.
+
+**IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
+
+**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or the pane is unknown, the host shall open it with macOS.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar
@@ -1966,7 +2026,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
-**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), initially fitting each leaf's canvas to the full leaf width before any local presentation zoom.
 
 **IPAD-2.6** While a focused pane exists in the iPad split tree, the application shall apply the same Ghostty `unfocused-split-fill` and `unfocused-split-opacity` dimming treatment as the Mac to every other live pane, without drawing an iPad-only focus outline. When no pane is focused, no pane shall be dimmed.
 
@@ -2360,7 +2420,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### EDITOR-1.x
 
-**EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+**EDITOR-1.1** When the user cmd-clicks a text file path in a terminal pane, the application shall open the file via the configured editor.
 
 **EDITOR-1.2** If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
 
@@ -2375,6 +2435,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **EDITOR-1.7** When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
 
 **EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
+
+**EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
 ## REMOTE — Secure Remote Access
 
@@ -2422,9 +2484,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.10** If a host supplies wake addresses, then the client shall use them only after verifying a signature binding those addresses to the paired host identity.
 
-**REMOTE-2.11** When a Mac client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
+**REMOTE-2.11** When a client sends a wake packet, the application shall broadcast only on active local IPv4 interfaces whose subnet contains the remembered host address.
 
-**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the Mac client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
+**REMOTE-2.12** When connecting to a paired host with verified wake addresses on a reachable local subnet, the client shall attempt a wake and make at most three signaling attempts, while preserving authentication and cancellation.
 
 **REMOTE-2.13** When an authenticated client connects, the host shall supply separately signed wake addresses as an optional protocol-v2 extension that older clients can ignore.
 
@@ -2436,6 +2498,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
 
+**REMOTE-2.18** When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -2446,9 +2510,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-4.x — Port Tunnels
 
-**REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
+**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL before connecting to the target.
 
-**REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
+**REMOTE-4.2** While a paired client has loopback-only port-tunnel permission, the host shall reject non-loopback targets before connecting to them.
+
+**REMOTE-4.3** When graftty open offers a URL to a mobile pane, the application shall approve browser tunnels only for the paired device owning that pane until the offer expires.
 
 ### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
@@ -2530,7 +2596,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.5** While Graftty uses non-trickle SDP signaling, the application shall configure both peers to gather ICE candidates once so offer and answer generation can finish when the initial candidates have been collected.
 
-**REMOTE-11.6** If an SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
+**REMOTE-11.6** If a terminal or control SSH child channel cannot open before its deadline, then the client shall fail the open and close the stalled transport so a subsequent connection can retry.
 
 **REMOTE-11.7** When a pending SSH child channel open is cancelled, the client shall resume the caller with cancellation while preserving the shared parent transport and sibling channels.
 
@@ -2830,7 +2896,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.33** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
-**AGENT-6.34** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.
+**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+
+**AGENT-6.35** When a provider reports UserPromptSubmit, the application shall forward a bounded nonempty user prompt through the shared hook message for worktree artwork, excluding native subagent prompts, injected instructions, and tool input without requiring new plugin hooks.
 
 ## CLI — CLI
 
