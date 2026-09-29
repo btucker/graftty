@@ -934,6 +934,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
+### CONFIG-3.x — File Access Setup
+
+**CONFIG-3.1** When the Full Disk Access setup offer has not been acknowledged, the application shall offer optional access guidance at launch; either response shall dismiss future launch offers, and only Open System Settings shall open the permission settings without recording access as granted.
+
 ## DIVERGE — Worktree Divergence Indicator
 
 ### DIVERGE-1.x — Display

@@ -36,6 +36,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Text("Full Disk Access")
+                .font(.headline)
+            Text(FullDiskAccessOffer.explanation)
+                .font(.caption).foregroundStyle(.secondary)
+            Text(FullDiskAccessOffer.instructions)
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Open Full Disk Access Settings") {
+                FullDiskAccessOffer.openSettings()
+            }
+            Divider().padding(.vertical, 4)
+
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
                 .font(.caption).foregroundStyle(.secondary)
