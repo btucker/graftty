@@ -158,6 +158,10 @@ struct MainWindow: View {
                     worktreeDisplayName:
                         selectedRemoteWorktreeSnapshot?.displayName
                         ?? worktreeDisplayName,
+                    worktreeEmoji: BreadcrumbBar.selectedWorktreeEmoji(
+                        localEmoji: selectedWorktree?.emoji,
+                        remoteWorktree: selectedRemoteWorktreeSnapshot
+                    ),
                     worktreePath: selectedRemoteWorktreeSnapshot?.path
                         ?? selectedWorktree?.path,
                     branchName: selectedRemoteWorktreeSnapshot?.displayBranch

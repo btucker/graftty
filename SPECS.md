@@ -18,6 +18,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.5** When the user drags to select text in a terminal pane beneath the titlebar, the application shall deliver the drag to the terminal instead of moving the window.
 
+**LAYOUT-1.6** When the breadcrumb displays a selected worktree with an assigned emoji, the application shall show that emoji before its worktree name, using the selected remote snapshot's emoji without falling back to a local worktree's emoji.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
