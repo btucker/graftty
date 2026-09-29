@@ -37,6 +37,21 @@
 		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<!-- Paired signaling is signed; terminal traffic uses WebRTC and SSH.
+		     Tailscale IP literals need explicit ATS exceptions on iOS 17+. -->
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>100.64.0.0/10</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>fd7a:115c:a1e0::/48</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

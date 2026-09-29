@@ -2420,6 +2420,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.18** When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.
 
+**REMOTE-2.19** When the mobile client signals a paired Mac over Tailscale, the application shall permit HTTP signaling to Tailscale IPv4 and IPv6 ranges without disabling App Transport Security globally.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -2531,6 +2533,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
 
 **REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
+
+**REMOTE-11.14** When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 

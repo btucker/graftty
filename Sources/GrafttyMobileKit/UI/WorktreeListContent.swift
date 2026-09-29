@@ -228,7 +228,7 @@ public struct WorktreeListContent: View {
                             Text(refreshError)
                                 .font(.caption)
                             Spacer()
-                            Button("Retry") { Task { await refresh() } }
+                            Button("Retry") { Task { await refresh(reconnect: true) } }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                         }
@@ -480,16 +480,16 @@ public struct WorktreeListContent: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Retry") { Task { await load() } }
+            Button("Retry") { Task { await load(reconnect: true) } }
                 .buttonStyle(.borderedProminent)
         }
     }
 
-    private func load() async {
+    private func load(reconnect: Bool = false) async {
         state = .loading
         loadingStage = .connecting
         refreshError = nil
-        await refresh(reportsLoadingProgress: true)
+        await refresh(reportsLoadingProgress: true, reconnect: reconnect)
     }
 
     private func projects(for worktrees: [WorktreePanes]) -> [SidebarProject] {
@@ -865,7 +865,7 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func refresh(reportsLoadingProgress: Bool = false) async {
+    private func refresh(reportsLoadingProgress: Bool = false, reconnect: Bool = false) async {
         let requestHostID = host.id
         let onProgress: RemoteWorktreeLoadProgress?
         if reportsLoadingProgress {
@@ -886,7 +886,8 @@ public struct WorktreeListContent: View {
                 host: host,
                 remoteSnapshotProvider: remoteSnapshotProvider,
                 includeRemoteWorktrees: includeRemoteWorktrees,
-                onProgress: onProgress
+                onProgress: onProgress,
+                reconnect: reconnect
             )
             guard Self.shouldApplyLoadResult(
                 requestHostID: requestHostID,
@@ -1070,10 +1071,11 @@ public struct WorktreeListContent: View {
         host: Host,
         remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?,
         includeRemoteWorktrees: Bool,
-        onProgress: RemoteWorktreeLoadProgress? = nil
+        onProgress: RemoteWorktreeLoadProgress? = nil,
+        reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
         if let remoteSnapshotProvider {
-            return try await remoteSnapshotProvider(onProgress)
+            return try await remoteSnapshotProvider(onProgress, reconnect)
         }
         if onProgress != nil {
             loadingStage = .waitingForSnapshot

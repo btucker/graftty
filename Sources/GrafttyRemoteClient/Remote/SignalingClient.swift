@@ -1,10 +1,12 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
+import OSLog
 
 /// Exchanges authenticated signaling messages with the host's paired-access
 /// listener.
 public struct SignalingClient: Sendable {
+    private static let logger = Logger(subsystem: "com.quotably.graftty", category: "signaling-client")
     public struct AuthenticatedExchange: Sendable {
         public let answer: AuthenticatedSignalingAnswer
         public let route: RemoteConnectionRoute
@@ -150,6 +152,9 @@ public struct SignalingClient: Sendable {
                             }
                         ))
                     } catch let error as Error {
+                        if !Task.isCancelled {
+                            Self.logger.warning("offer route \(offerRoute.baseURL.absoluteString, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                        }
                         return .failure(error)
                     } catch {
                         return .failure(.transport(String(describing: error)))
