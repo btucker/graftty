@@ -673,6 +673,9 @@ public final class TerminalInputContainerView: UIView,
             .compactMap { $0 as? UIPanGestureRecognizer }
             .forEach { recognizer in
                 recognizer.allowedScrollTypesMask = [.continuous, .discrete]
+                if recognizer.delegate == nil {
+                    recognizer.delegate = terminalView
+                }
             }
     }
 

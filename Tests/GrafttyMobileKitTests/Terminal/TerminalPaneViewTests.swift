@@ -1,5 +1,5 @@
 #if canImport(UIKit)
-import GhosttyTerminal
+@testable import GhosttyTerminal
 import Testing
 @testable import GrafttyMobileKit
 import UIKit
@@ -1289,4 +1289,72 @@ struct TerminalPaneViewTests {
     }
 }
 
+@MainActor
+private final class TouchScrollPan: UIPanGestureRecognizer {
+    var phase: UIGestureRecognizer.State = .changed
+    var point = CGPoint.zero
+    override var state: UIGestureRecognizer.State {
+        get { phase }
+        set { phase = newValue }
+    }
+    override func location(in view: UIView?) -> CGPoint { point }
+    override func translation(in view: UIView?) -> CGPoint { CGPoint(x: 0, y: 30) }
+    override func setTranslation(_ translation: CGPoint, in view: UIView?) {}
+}
+
+private final class ScrollInputRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = Data()
+    func append(_ data: Data) { lock.withLock { bytes.append(data) } }
+    func contains(_ text: String) -> Bool {
+        lock.withLock { bytes.range(of: Data(text.utf8)) != nil }
+    }
+    var description: String { lock.withLock { String(decoding: bytes, as: UTF8.self).debugDescription } }
+}
+
+@Suite
+@MainActor
+struct TerminalTouchScrollTests {
+    @Test("@spec IOS-6.26: When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.")
+    func fullscreenWheelUsesTouchedRegion() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.layoutIfNeeded()
+        let input = ScrollInputRecorder()
+        let session = InMemoryTerminalSession(write: { input.append($0) }, resize: { _ in })
+        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.controller = renderer
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer {
+            container.removeFromSuperview()
+            window.isHidden = true
+        }
+        let grid = try #require(container.terminalGridMetrics)
+        let ready = "\u{1b}[\(grid.rows);\(grid.columns)R"
+        for _ in 0..<100 where !input.contains(ready) {
+            session.receive("\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h\u{1b}[999;999H\u{1b}[6n")
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(input.contains(ready))
+        let pan = TouchScrollPan()
+        let scale = container.terminalView.contentScaleFactor
+        pan.point = CGPoint(x: CGFloat(grid.cellWidthPixels) * 8.5 / scale,
+                            y: CGFloat(grid.cellHeightPixels) * 6.5 / scale)
+        let nativePan = try #require(container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+        let delegate = try #require(nativePan.delegate)
+        #expect(delegate === container.terminalView)
+        #expect(delegate.gestureRecognizerShouldBegin?(pan) == true)
+        container.terminalView.handleTouchScrollGesture(pan)
+        let wheelAtFinger = "\u{1b}[<64;9;7M"
+        for _ in 0..<100 where !input.contains(wheelAtFinger) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(input.contains(wheelAtFinger), "Wheel input must target the touched cell: \(input.description)")
+    }
+}
 #endif
