@@ -3,6 +3,172 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarNavigationTests {
+    @Test("@spec IOS-4.37: When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.")
+    func stoppedAttentionResolvesOriginatingPane() throws {
+        func row(_ stop: SidebarAgentStop, duplicateTitle: Bool = false, single: Bool = false) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Repo",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: nil,
+                layout: single ? .leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil) : .split(direction: .horizontal, ratio: 0.5,
+                    left: .leaf(sessionName: "shell", title: duplicateTitle ? "Agent" : "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+                    right: .leaf(sessionName: "new-session", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)),
+                sidebar: .init(id: "stable", projectID: "repo", paneIDs: ["shell": "shell-slot", "new-session": "agent-slot"], unseenAgentStop: stop))
+        }
+        var stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, paneTitle: "Old title", paneSlotID: "agent-slot")
+        let worktree = row(stop)
+        let item = try #require(SidebarProjection.activity([worktree]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: item, in: worktree) == "new-session")
+        #expect(item.paneID == nil)
+        #expect(SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: true)
+            == .acknowledgeOccurrence(worktreeID: "/wt", paneID: nil, occurrence: stop.occurrence))
+        #expect(try JSONDecoder().decode(SidebarAgentStop.self, from: JSONEncoder().encode(stop)) == stop)
+
+        // A deleted slot must not open a different pane with the same title.
+        stop.paneSlotID = "deleted-slot"
+        stop.paneTitle = "Agent"
+        let missing = row(stop)
+        let missingItem = try #require(SidebarProjection.activity([missing]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: missingItem, in: missing) == nil)
+        #expect(SidebarProjection.attentionPaneRoute(for: missingItem, in: row(stop, single: true)) == nil)
+
+        let legacyData = Data(#"{"agentName":"Codex","timestamp":0,"paneTitle":"Agent"}"#.utf8)
+        let legacy = try JSONDecoder().decode(SidebarAgentStop.self, from: legacyData)
+        #expect(legacy.paneSlotID == nil)
+        let legacyRow = row(legacy)
+        let legacyItem = try #require(SidebarProjection.activity([legacyRow]).first)
+        #expect(SidebarProjection.attentionPaneRoute(for: legacyItem, in: legacyRow) == "new-session")
+        #expect(SidebarProjection.attentionPaneRoute(for: legacyItem, in: row(legacy, duplicateTitle: true)) == nil)
+
+        var explicit = item
+        explicit.id = "stable:shell-slot"
+        explicit.paneID = "old-shell-session"
+        explicit.agentStop = nil
+        #expect(SidebarProjection.attentionPaneRoute(for: explicit, in: worktree) == "shell")
+        var unknown = item
+        unknown.agentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now)
+        #expect(SidebarProjection.attentionPaneRoute(for: unknown, in: row(stop, single: true)) == "shell")
+        #expect(SidebarProjection.attentionPaneRoute(for: unknown, in: worktree) == nil)
+    }
+
+    @Test("Recent-view bookkeeping retires resumed stops independently of durable Attention cards")
+    func resumedAgentRemovesViewedStop() throws {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
+        let resumedAt = Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate
+        let metadata = SidebarWorktreeMetadata(id: "stable", projectID: "project",
+            unseenAgentStop: nil, agentProgressTimes: ["codex:session:one": resumedAt])
+        func row(_ metadata: SidebarWorktreeMetadata) -> WorktreePanes {
+            WorktreePanes(path: "/wt", displayName: "wt", repoDisplayName: "Project",
+                displayBranch: "wt", state: .running, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: nil, layout: nil, sidebar: metadata)
+        }
+        var history = SidebarRecentHistory()
+        let item = SidebarActivityItem(id: "stable:stop", projectID: "project", worktreeID: "/wt",
+            paneID: nil, projectName: "Project", worktreeName: "wt", title: stop.title,
+            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        history.open(item)
+        history.reconcile(worktrees: [row(metadata)], availableProjectIDs: ["project"])
+        #expect(history.entries.isEmpty)
+
+        let other = SidebarWorktreeMetadata(id: "stable", projectID: "project",
+            unseenAgentStop: nil, agentProgressTimes: ["codex:session:two": resumedAt])
+        history.open(item)
+        history.reconcile(worktrees: [row(other)], availableProjectIDs: ["project"])
+        #expect(history.entries.count == 1)
+
+        let newerStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 300),
+                                         providerSessionKey: "codex:session:one")
+        var newerItem = item
+        newerItem.agentStop = newerStop
+        newerItem.occurrence = newerStop.occurrence
+        history.open(newerItem)
+        history.reconcile(worktrees: [row(metadata)], availableProjectIDs: ["project"])
+        #expect(history.entries.first?.item.agentStop == newerStop)
+    }
+
+    @Test("@spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.")
+    func recapEmojiValidationAndCompatibility() throws {
+        let recap = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.",
+                                   emoji: "🔔", emojiAlternatives: ["📱", "📨"])
+        #expect(recap.isValid)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: JSONEncoder().encode(recap)) == recap)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "1").isValid)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "🔔🔔").isValid)
+        #expect(!AttentionRecap(title: "Task", completed: "Done", next: "Next", emoji: "🔔", emojiAlternatives: ["🔔"]).isValid)
+        let old = Data(#"{"title":"Push notifications","completed":"Client wired.","next":"Test devices."}"#.utf8)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: old).emoji == nil)
+    }
+    @Test("@spec LAYOUT-2.72: When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.")
+    func stoppedTurnRetainsPaneName() throws {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+                                    paneTitle: "Terminal wrap cleanup")
+        let row = WorktreePanes(path: "/r/w", displayName: "feature", repoDisplayName: "Repo",
+            displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "w", projectID: "r", unseenAgentStop: stop))
+        let item = try #require(SidebarProjection.activity([row]).first)
+        #expect(item.agentStop?.paneTitle == "Terminal wrap cleanup")
+        #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: "wrap cleanup").count == 1)
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
+    }
+
+    @Test("@spec LAYOUT-2.70: While an agent's stopped turn has a recap, the application shall retain its recognizable title, task context, completed work, next step, and user need in the Attention item across snapshot encoding.")
+    func stoppedTurnRetainsRecap() throws {
+        let recap = AttentionRecap(
+            title: "Posting detail model evals",
+            context: "Comparing a smaller extraction model against a700.",
+            completed: "v3 scored 0.910 against a700's 0.935.",
+            next: "Run four holdout evals.",
+            need: "Choose the target score."
+        )
+        #expect(recap.isValid)
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        let row = WorktreePanes(path: "/r/w", displayName: "feature", repoDisplayName: "Repo",
+            displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "w", projectID: "r", unseenAgentStop: stop))
+        let item = try #require(SidebarProjection.activity([row]).first)
+        #expect(item.agentStop?.recap == recap)
+        #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
+    }
+
+    @Test("@spec LAYOUT-2.71: When the user searches Attention, the application shall match the stopped turn's recap title, task context, completed work, next step, and user need.")
+    func attentionSearchIncludesRecap() {
+        let recap = AttentionRecap(title: "Posting detail model evals", context: "Extracting job posting details.", completed: "v3 scored 0.910.",
+                                   next: "Run holdout evals.", need: "Choose a target score.")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        let item = SidebarActivityItem(id: "stop", projectID: "p", worktreeID: "w", paneID: nil,
+            projectName: "Repo", worktreeName: "branch", title: stop.title,
+            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
+        for query in ["posting detail", "extracting job", "0.910", "holdout", "target score"] {
+            #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: query).count == 1)
+        }
+    }
+
+    @Test("@spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.")
+    func recapContextValidatesAndKeepsOldCards() throws {
+        let recap = AttentionRecap(title: "Push notifications", context: "Paired devices should notify a locked phone.",
+                                   completed: "Client committed.", next: "Verify on a device.")
+        #expect(recap.isValid)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: JSONEncoder().encode(recap)) == recap)
+        #expect(!AttentionRecap(title: "Push notifications", context: "   ",
+                                completed: "Client committed.", next: "Verify on a device.").isValid)
+        let old = Data(#"{"title":"Push notifications","completed":"Client committed.","next":"Verify on a device."}"#.utf8)
+        #expect(try JSONDecoder().decode(AttentionRecap.self, from: old).context == nil)
+    }
+
+    @Test("@spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.")
+    func attentionReadingWidthRestoresPreviousWidth() {
+        var state = SidebarAttentionWidthState()
+        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 1200) == 410)
+        #expect(state.leave(currentRailWidth: 0) == 256)
+        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 900) == nil)
+        #expect(state.leave(currentRailWidth: 0) == nil)
+        #expect(state.enter(currentWidth: 460, railWidth: 197, windowWidth: 1400) == 607)
+        #expect(state.adjustedWidth(forRailWidth: 65) == 475)
+        #expect(state.leave(currentRailWidth: 65) == 328)
+    }
+
     @Test("@spec LAYOUT-2.68: While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.")
     func attentionIncludesForgeBadge() throws {
         let badge = PRBadge(number: 342, state: .open, checks: .pending,

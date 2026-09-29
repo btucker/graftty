@@ -5,6 +5,20 @@ import Foundation
 @Suite("@spec TEAM-1.10: When the application starts, the application shall migrate any legacy `channelRoutingPreferences` UserDefaults string into `teamEventRoutingPreferences` and clear the old key. The migration is idempotent: if `teamEventRoutingPreferences` is already populated, the migration leaves the new value alone and only clears the old key. If neither key is present the migration is a no-op.")
 struct SettingsKeyMigrationTests {
 
+    @Test("@spec TEAM-1.1: When Graftty starts, the application shall make Agent Teams available without an enable switch, including for users who previously disabled them.")
+    func removesLegacyAgentTeamsOptOut() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(false, forKey: SettingsKeys.agentTeamsEnabled)
+
+        SettingsKeyMigration.run(in: defaults)
+        defaults.register(defaults: [SettingsKeys.agentTeamsEnabled: true])
+
+        #expect(defaults.bool(forKey: SettingsKeys.agentTeamsEnabled))
+        #expect(defaults.persistentDomain(forName: suiteName)?[SettingsKeys.agentTeamsEnabled] == nil)
+    }
+
     @Test func migratesOldKeyToNew() {
         let suiteName = "test-\(UUID())"
         let defaults = UserDefaults(suiteName: suiteName)!

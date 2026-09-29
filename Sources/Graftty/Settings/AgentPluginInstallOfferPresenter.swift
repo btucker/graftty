@@ -81,7 +81,7 @@ enum AgentPluginInstallOfferPresenter {
                 messageText: nativeMessagingWasEnabled
                     ? "Install Codex and Claude Plugins?"
                     : "Install Plugins and Enable Native Messaging?",
-                informativeText: "Graftty can run the provider-native commands that install the shared team skill and lifecycle hooks. After installation, Graftty will refresh these plugins automatically when the app updates. \(actionDescription) If a provider CLI is not installed, you can still enable native messaging independently in Agent Teams Settings.",
+                informativeText: "Graftty can run the provider-native commands that install its Attention and team skills with lifecycle hooks. After installation, Graftty will refresh these plugins automatically when the app updates. \(actionDescription) If a provider CLI is not installed, you can still enable native messaging independently in Agent Teams Settings.",
                 style: .informational,
                 primaryButton: nativeMessagingWasEnabled
                     ? "Install Both Plugins"
@@ -96,7 +96,7 @@ enum AgentPluginInstallOfferPresenter {
                 .userSelectionRevision(in: defaults)
 
             Task { @MainActor in
-                let report = await installer.install(plan)
+                let report = await installer.installReplacingLegacy(plan)
                 let enabledByInstallation = report.succeeded
                     && !nativeMessagingWasEnabled
                     && AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)

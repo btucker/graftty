@@ -7,6 +7,34 @@ import Testing
 @MainActor
 @Suite("TerminalManager pane metadata")
 struct TerminalManagerMetadataTests {
+    @Test("@spec PERSIST-3.8: When Graftty quits and reopens with running worktrees, the application shall restore each pane's last title or PWD label and preserve title-over-PWD precedence as fresh metadata arrives.")
+    func paneTitlesSurviveStateRoundTrip() throws {
+        let namedSlot = PaneSlotID()
+        let pwdSlot = PaneSlotID()
+        let named = WorktreeEntry(path: "/repo/named", branch: "named", state: .running,
+                                  splitTree: SplitTree(root: .leaf(namedSlot)))
+        let byPWD = WorktreeEntry(path: "/repo/pwd", branch: "pwd", state: .running,
+                                  splitTree: SplitTree(root: .leaf(pwdSlot)))
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo",
+                                               worktrees: [named, byPWD])])
+        let manager = TerminalManager(socketPath: "/tmp/graftty-title-persist-test.sock")
+        manager.recordTitle("Codex: attention cards", for: namedSlot)
+        manager.recordPWD("/repo/pwd/research", for: pwdSlot)
+
+        state.capturePaneTitleMetadata(manager.paneTitleMetadata)
+        let restoredState = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(state))
+        let reopened = TerminalManager(socketPath: "/tmp/graftty-title-restore-test.sock")
+        reopened.restorePaneTitleMetadata(restoredState.savedPaneTitleMetadata)
+
+        #expect(reopened.displayTitle(for: namedSlot) == "Codex: attention cards")
+        #expect(reopened.displayTitle(for: pwdSlot) == "research")
+        reopened.recordPWD("/repo/named/other-dir", for: namedSlot)
+        #expect(reopened.displayTitle(for: namedSlot) == "Codex: attention cards")
+        reopened.recordPWD("/repo/pwd/followup", for: pwdSlot)
+        #expect(reopened.displayTitle(for: pwdSlot) == "followup")
+        reopened.recordTitle("Codex: done", for: namedSlot)
+        #expect(reopened.displayTitle(for: namedSlot) == "Codex: done")
+    }
 
     @Test("""
 @spec LAYOUT-2.19: When repeated terminal title or PWD actions leave a pane's rendered sidebar title unchanged, the application shall retain the latest raw metadata without publishing a sidebar invalidation.

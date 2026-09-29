@@ -1,0 +1,26 @@
+{
+  "name": "graftty",
+  "version": "0.3.2",
+  "description": "Connect agent sessions to Graftty Attention, worktree coordination, and mobile file or URL previews.",
+  "author": {
+    "name": "Graftty"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Graftty",
+    "shortDescription": "Attention recaps and worktree agent coordination.",
+    "longDescription": "Adds Graftty Attention recaps, lifecycle hooks, worktree agent coordination, durable instructions, and mobile file and URL preview guidance.",
+    "developerName": "Graftty",
+    "category": "Productivity",
+    "capabilities": [
+      "Attention recaps",
+      "Agent coordination",
+      "Mobile preview"
+    ],
+    "defaultPrompt": [
+      "Report this agent turn to Graftty Attention.",
+      "Show my Graftty team roster.",
+      "Open a host file or URL on Graftty Mobile."
+    ]
+  }
+}

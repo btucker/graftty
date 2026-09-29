@@ -82,6 +82,8 @@ public struct WorktreeListContent: View {
     }
 
     public let host: Host
+    /// A compact navigation destination, independent of shared sidebar selection.
+    let project: SidebarProject?
     /// Ghostty palette for theming row text. nil keeps the system colors
     /// in use on the compact (iPhone) path, where the List renders against
     /// the standard grouped-list background; the iPad sidebar paints a
@@ -106,6 +108,7 @@ public struct WorktreeListContent: View {
     public let remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
     private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     public let onListChanged: ([WorktreePanes]) -> Void
     public let externalRefreshToken: Int
@@ -125,9 +128,11 @@ public struct WorktreeListContent: View {
         externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
+        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
+        project: SidebarProject? = nil
     ) {
         self.host = host
+        self.project = project
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
@@ -137,6 +142,7 @@ public struct WorktreeListContent: View {
         self.remoteSnapshotProvider = remoteSnapshotProvider
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
+        self.onSelectWorktreeDetail = nil
         self.onSelectPaneWithWorktree = nil
         self.onListChanged = onListChanged
         self.externalRefreshToken = externalRefreshToken
@@ -160,9 +166,12 @@ public struct WorktreeListContent: View {
         externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
+        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
+        project: SidebarProject? = nil,
+        onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
     ) {
         self.host = host
+        self.project = project
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
@@ -172,6 +181,7 @@ public struct WorktreeListContent: View {
         self.remoteSnapshotProvider = remoteSnapshotProvider
         self.onSelect = onSelect
         self.onSelectPane = { _ in }
+        self.onSelectWorktreeDetail = onSelectWorktreeDetail
         self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
         self.onListChanged = onListChanged
         self.externalRefreshToken = externalRefreshToken
@@ -218,7 +228,7 @@ public struct WorktreeListContent: View {
                             Text(refreshError)
                                 .font(.caption)
                             Spacer()
-                            Button("Retry") { Task { await refresh() } }
+                            Button("Retry") { Task { await refresh(reconnect: true) } }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                         }
@@ -470,16 +480,16 @@ public struct WorktreeListContent: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Retry") { Task { await load() } }
+            Button("Retry") { Task { await load(reconnect: true) } }
                 .buttonStyle(.borderedProminent)
         }
     }
 
-    private func load() async {
+    private func load(reconnect: Bool = false) async {
         state = .loading
         loadingStage = .connecting
         refreshError = nil
-        await refresh(reportsLoadingProgress: true)
+        await refresh(reportsLoadingProgress: true, reconnect: reconnect)
     }
 
     private func projects(for worktrees: [WorktreePanes]) -> [SidebarProject] {
@@ -492,7 +502,9 @@ public struct WorktreeListContent: View {
         let items = SidebarProjection.activity(worktrees)
         let activityCounts = SidebarActivityCounts(items: items)
         let counts = activityCounts.attentionByProject
-        if !showsProjectRail {
+        if horizontalSizeClass != .regular, let project {
+            projectDetail(worktrees, projects: projects, items: items, projectID: project.id)
+        } else if !showsProjectRail {
             VStack(spacing: 0) {
                 HStack {
                     if !navigation.showsAttention { Text("Worktrees").font(.headline) }
@@ -502,8 +514,9 @@ public struct WorktreeListContent: View {
                     }
                 }.padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
                     }
@@ -515,7 +528,7 @@ public struct WorktreeListContent: View {
             }
         } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
-                ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
+                ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID, showsAttention: navigation.showsAttention,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
@@ -524,8 +537,8 @@ public struct WorktreeListContent: View {
                                       allowsReordering: sidebarSnapshot?.supportsNavigationEditing == true && !orderMutationInFlight,
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
-                                      onSelect: { selectProject($0, worktrees: worktrees) },
-                                      onAttention: { setNavigationMode(showsAttention: true) },
+                                      onSelect: { project in selectProject(project, worktrees: worktrees) },
+                                      onAttention: { setNavigationMode(showsAttention: !navigation.showsAttention) },
                                       onMove: moveProject)
                 Divider()
                 projectDetail(worktrees, projects: projects, items: items)
@@ -536,18 +549,19 @@ public struct WorktreeListContent: View {
                 Picker("Navigation", selection: Binding(get: { navigation.showsAttention }, set: { setNavigationMode(showsAttention: $0) })) {
                     Text("Projects").tag(false)
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
-                }.pickerStyle(.segmented).padding(12)
+                }.pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 6)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                         await openAttention(item, worktrees: worktrees)
                     }
-                } else if navigation.compactShowsProjects {
+                } else {
                     List {
                         remoteMacConnectionsSection
                         ForEach(projects) { project in
-                            Button { selectProject(project, worktrees: worktrees) } label: {
+                            NavigationLink(value: ProjectStep(host: host, project: project)) {
                                 HStack(spacing: 10) {
                                     ProjectIdentityView(project: project, imageData: projectIcons[project.id])
                                     VStack(alignment: .leading) {
@@ -570,39 +584,29 @@ public struct WorktreeListContent: View {
                             moveProject(projects[source].id, projects[target].id, destination > source)
                         }.moveDisabled(sidebarSnapshot?.supportsNavigationEditing != true || orderMutationInFlight)
                     }.toolbar { EditButton() }
-                } else {
-                    Button { setNavigationMode(showsAttention: false); navigation.compactShowsProjects = true } label: {
-                        Label("All projects", systemImage: "chevron.left").frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(.horizontal, 14).padding(.bottom, 8)
-                    projectDetail(worktrees, projects: projects, items: items)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem]) -> some View {
-        if navigation.showsAttention {
-            SidebarAttentionList(navigation: navigation, items: items, projects: projects, icons: projectIcons,
+    private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem], projectID: String? = nil) -> some View {
+        let selectedProjectID = projectID ?? navigation.selectedProjectID
+        if projectID == nil && navigation.showsAttention {
+            SidebarAttentionList(navigation: navigation, items: items, projects: projects,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
+                                         compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
                 await openAttention(item, worktrees: worktrees)
             }
         } else {
             VStack(spacing: 0) {
-                if let selected = projects.first(where: { $0.id == navigation.selectedProjectID }) {
-                    if horizontalSizeClass != .regular {
-                        HStack {
-                            ProjectIdentityView(project: selected, imageData: projectIcons[selected.id])
-                            Text(selected.name).font(.headline).lineLimit(1)
-                            Spacer()
-                        }.padding(12)
-                    }
+                if let selected = projects.first(where: { $0.id == selectedProjectID }) {
                     if !selected.isAvailable { Text("The owning Mac is offline.").font(.caption).foregroundStyle(.secondary) }
                 }
                 TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
                 worktreeList(worktrees.filter {
-                    navigation.query.isEmpty ? SidebarProjection.projectID($0) == navigation.selectedProjectID
+                    navigation.query.isEmpty ? SidebarProjection.projectID($0) == selectedProjectID
                         : SidebarInteractionPolicy.matches($0, query: navigation.query)
                 })
             }
@@ -625,9 +629,8 @@ public struct WorktreeListContent: View {
     static func applyProjectSelection(_ project: SidebarProject, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
         // Invalidate before changing modes: offline and compact project picks
         // do not call beginSelectingWorktree, but must still cancel old opens.
-        applyNavigationMode(showsAttention: false, navigation: navigation, selectionGeneration: &selectionGeneration)
-        navigation.selectedProjectID = project.id
-        navigation.compactShowsProjects = false
+        selectionGeneration &+= 1
+        navigation.showProject(project.id)
     }
 
     static func applyNavigationMode(showsAttention: Bool, navigation: SidebarNavigationState, selectionGeneration: inout UInt64) {
@@ -637,7 +640,13 @@ public struct WorktreeListContent: View {
     }
 
     private func setNavigationMode(showsAttention: Bool) {
+        if showsAttention, case .loaded(let worktrees) = state {
+            selectionIntentGeneration &+= 1
+            navigation.enterAttention(projects: projects(for: worktrees), items: SidebarProjection.activity(worktrees))
+            return
+        }
         Self.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &selectionIntentGeneration)
+        if !showsAttention { navigation.leaveAttention() }
     }
 
     private func moveProject(_ id: String, _ target: String, _ after: Bool) {
@@ -689,13 +698,15 @@ public struct WorktreeListContent: View {
             guard presentedHostID == requestHostID, generation == selectionIntentGeneration, target.layout != nil else { return false }
             var currentItem = item
             currentItem.worktreeID = target.path
-            if item.paneID != nil {
-                guard let paneID = SidebarProjection.paneRoute(for: item, in: target),
-                      let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) else {
-                    navigation.forget(item.id); showErrorToast("This pane is no longer available."); return false
-                }
-                currentItem.paneID = paneID
+            if let paneID = SidebarProjection.attentionPaneRoute(for: item, in: target),
+               let leaf = target.layout?.leaves.first(where: { $0.sessionName == paneID }) {
+                // Routing a stopped recap to its pane does not make its acknowledgement pane-scoped.
+                if item.paneID != nil { currentItem.paneID = paneID }
                 if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
+            } else if item.paneID != nil {
+                showErrorToast("This pane is no longer available."); return false
+            } else if let onSelectWorktreeDetail {
+                onSelectWorktreeDetail(target)
             } else { onSelect(target) }
             acknowledgeViewedStop(target)
             let supportsExactAcknowledgement = projects(for: worktrees)
@@ -854,7 +865,7 @@ public struct WorktreeListContent: View {
         }
     }
 
-    private func refresh(reportsLoadingProgress: Bool = false) async {
+    private func refresh(reportsLoadingProgress: Bool = false, reconnect: Bool = false) async {
         let requestHostID = host.id
         let onProgress: RemoteWorktreeLoadProgress?
         if reportsLoadingProgress {
@@ -875,7 +886,8 @@ public struct WorktreeListContent: View {
                 host: host,
                 remoteSnapshotProvider: remoteSnapshotProvider,
                 includeRemoteWorktrees: includeRemoteWorktrees,
-                onProgress: onProgress
+                onProgress: onProgress,
+                reconnect: reconnect
             )
             guard Self.shouldApplyLoadResult(
                 requestHostID: requestHostID,
@@ -1059,10 +1071,11 @@ public struct WorktreeListContent: View {
         host: Host,
         remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?,
         includeRemoteWorktrees: Bool,
-        onProgress: RemoteWorktreeLoadProgress? = nil
+        onProgress: RemoteWorktreeLoadProgress? = nil,
+        reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
         if let remoteSnapshotProvider {
-            return try await remoteSnapshotProvider(onProgress)
+            return try await remoteSnapshotProvider(onProgress, reconnect)
         }
         if onProgress != nil {
             loadingStage = .waitingForSnapshot
@@ -1777,15 +1790,15 @@ private struct PaneTitleRow: View {
             if case .needsInput = attentionStyle { return true }
             return false
         }()
-        HStack(spacing: 4) {
-            Text("↳")
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .bold : .regular)
-                .foregroundStyle(themedOrSecondary(theme?.paneArrow(
+        HStack(spacing: SidebarPaneLayout.markerSpacing) {
+            SidebarPaneMarker(
+                attentionCount: attentionCount,
+                isFocused: isFocusedPane,
+                arrowColor: theme?.paneArrow(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
-                )))
-            SidebarActivityBadge(attentionCount)
+                ) ?? .secondary
+            )
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
             // AGENT-2.2: a busy pane renders its title in italic. Apply it
             // at the Text level (Text.italic()) so it composes with the
@@ -1812,7 +1825,7 @@ private struct PaneTitleRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 14)
+        .padding(.leading, SidebarPaneLayout.markerLeading)
     }
 }
 

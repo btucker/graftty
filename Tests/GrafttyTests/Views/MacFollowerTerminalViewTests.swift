@@ -1,11 +1,40 @@
 import AppKit
 import GhosttyKit
+import GrafttyKit
 import GrafttyProtocol
 import Testing
 @testable import Graftty
 
 @MainActor
 struct MacFollowerTerminalViewTests {
+    @Test("@spec TERM-2.7: When a user clicks or types in a native Mac terminal pane, the application shall update the pane focus model used for dimming even when a scroll-view wrapper consumes SwiftUI tap gestures.")
+    func nativeClickUpdatesFocusAndDimming() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let terminal = SurfaceNSView()
+        let wrapper = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        window.contentView = wrapper
+        let first = PaneSlotID()
+        let second = PaneSlotID()
+        var selected = first
+        wrapper.onFocusTerminal = { selected = second }
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 100, y: 100), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        terminal.mouseDown(with: click)
+        #expect(window.firstResponder === terminal)
+        #expect(selected == second)
+        #expect(!GhosttyTheme.fallback.paneFocusDimmingStyle(isUnfocused: selected != second).isVisible)
+        selected = first
+        let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "x", charactersIgnoringModifiers: "x", isARepeat: false, keyCode: 7))
+        terminal.keyDown(with: key)
+        #expect(selected == second)
+        // SwiftUI can replace the callback while retaining the native wrapper.
+        wrapper.onFocusTerminal = { selected = first }
+        terminal.mouseDown(with: click)
+        #expect(selected == first)
+    }
+
     @Test("@spec OWN-2.9: When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.")
     func zoomRoutesByDisplayOwnership() throws {
         let terminal = SurfaceNSView()

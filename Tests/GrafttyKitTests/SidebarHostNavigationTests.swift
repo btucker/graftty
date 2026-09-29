@@ -5,6 +5,58 @@ import GrafttyProtocol
 import Darwin
 
 struct SidebarHostNavigationTests {
+    @Test("@spec LAYOUT-2.76: When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.")
+    func firstReportClaimsWorktreeEmoji() throws {
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/one", branch: "one")
+        ])]
+        #expect(repos[0].worktrees.allSatisfy { $0.emoji == nil })
+        let first = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.", emoji: "🔔")
+        SidebarHostNavigation.adoptReportedEmoji(first, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🔔")
+        #expect(repos[0].worktrees[1].emojiSource == .agent)
+        let later = AttentionRecap(title: "Push notifications", completed: "Device tested.", next: "Merge PR.", emoji: "📱")
+        SidebarHostNavigation.adoptReportedEmoji(later, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🔔")
+        let restored = try JSONDecoder().decode([RepoEntry].self, from: JSONEncoder().encode(repos))
+        #expect(restored[0].worktrees[1].emoji == "🔔")
+        #expect(SidebarHostNavigation.metadata(for: restored[0].worktrees[1], projectID: "p", folders: []).emoji == "🔔")
+        repos[0].worktrees[1].emoji = "🎱"
+        repos[0].worktrees[1].emojiSource = .manual
+        SidebarHostNavigation.adoptReportedEmoji(first, worktreePath: "/repo/one", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "🎱")
+        #expect(repos[0].worktrees[0].emoji == nil)
+    }
+
+    @Test("@spec LAYOUT-2.77: When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.")
+    func duplicateReportEmojiUsesAlternative() {
+        var first = WorktreeEntry(path: "/repo/one", branch: "one")
+        first.emoji = "🔔"
+        first.emojiSource = .manual
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [first,
+            WorktreeEntry(path: "/repo/two", branch: "two")])]
+        let recap = AttentionRecap(title: "Push notifications", completed: "Client wired.", next: "Test devices.",
+                                   emoji: "🔔", emojiAlternatives: ["📱", "📨"])
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: "/repo/two", in: &repos)
+        #expect(repos[0].worktrees[1].emoji == "📱")
+    }
+
+    @Test("@spec LAYOUT-2.78: When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.")
+    func legacyAutomaticEmojisAreCleared() {
+        var repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/one", branch: "one")
+        ])]
+        SidebarHostNavigation.assignLegacyEmojis(in: &repos)
+        let generated = repos[0].worktrees[0].emoji
+        repos[0].worktrees[1].emoji = "🎱"
+        SidebarHostNavigation.migrateLegacyEmojis(in: &repos)
+        #expect(generated != nil)
+        #expect(repos[0].worktrees[0].emoji == nil)
+        #expect(repos[0].worktrees[1].emoji == "🎱")
+        #expect(repos[0].worktrees[1].emojiSource == .manual)
+    }
     @Test("@spec LAYOUT-2.60: When a worktree is stopped and reopened, the application shall retain recent Attention pane targets for saved layout slots and resolve them to their new sessions without following reused routes.")
     func recentPaneSurvivesStop() throws {
         let slot = PaneSlotID()
@@ -72,13 +124,14 @@ struct SidebarHostNavigationTests {
     }
 
     @Test("""
-@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 """)
     func unseenStopSurvivesUntilVisit() throws {
         var worktree = WorktreeEntry(path: "/repo/w", branch: "feature")
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100))
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
         worktree.unseenAgentStop = stop
-        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:other")
         #expect(worktree.unseenAgentStop == stop)
         #expect(worktree.hasAttention)
         let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
@@ -89,6 +142,9 @@ struct SidebarHostNavigationTests {
         #expect(queue.count == 1)
         #expect(queue.first?.title == "Codex stopped")
         #expect(queue.first?.occurrence?.timestamp == stop.stoppedAt)
+        worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        #expect(worktree.unseenAgentStop == nil)
+        worktree.unseenAgentStop = stop
         worktree.acknowledgeAttention()
         #expect(worktree.unseenAgentStop == nil)
         worktree.unseenAgentStop = stop

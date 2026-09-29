@@ -9,22 +9,12 @@ import Testing
 @Suite("TEAM — pending specs")
 struct TeamTodo {
     @Test("""
-@spec TEAM-1.1: The application shall provide a Settings tab named "Agent Teams" containing one boolean toggle, *Enable agent teams*, persisted via `@AppStorage("agentTeamsEnabled")` (Bool, default false).
-""", .disabled("not yet implemented"))
-    func team_1_1() async throws { }
-
-    @Test("""
-@spec TEAM-1.2: While `agentTeamsEnabled` is false, the application shall not write any team event rows to the inbox and `graftty team hook` shall return no-op responses; the agent team feature is fully gated by this flag.
-""", .disabled("not yet implemented"))
-    func team_1_2() async throws { }
-
-    @Test("""
-@spec TEAM-1.5: `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
+@spec TEAM-1.5: When the application routes a team event, it shall select recipients from the `teamEventRoutingPreferences` matrix (see TEAM-1.8) without consulting the retired `teamPRNotificationsEnabled` flag.
 """, .disabled("not yet implemented"))
     func team_1_5() async throws { }
 
     @Test("""
-@spec TEAM-1.8: The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
+@spec TEAM-1.8: The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between provider integration and the prompt sections.
 """, .disabled("not yet implemented"))
     func team_1_8() async throws { }
 
@@ -44,7 +34,7 @@ struct TeamTodo {
     func team_2_3() async throws { }
 
     @Test("""
-@spec TEAM-2.4: Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
+@spec TEAM-2.4: Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist a separate team membership registry.
 """, .disabled("not yet implemented"))
     func team_2_4() async throws { }
 
@@ -54,22 +44,22 @@ struct TeamTodo {
     func team_4_1() async throws { }
 
     @Test("""
-@spec TEAM-4.2: `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, (c) `<member-name>` is not a teammate of the caller, or (d) no non-empty body is supplied. In case (c) the error shall list the current teammates' member names.
+@spec TEAM-4.2: `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) the calling worktree has no team, (b) `<member-name>` is not a teammate of the caller, or (c) no non-empty body is supplied. In case (b) the error shall list the current teammates' member names.
 """, .disabled("not yet implemented"))
     func team_4_2() async throws { }
 
     @Test("""
-@spec TEAM-4.3: `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+@spec TEAM-4.3: `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if the calling worktree has no team.
 """, .disabled("not yet implemented"))
     func team_4_3() async throws { }
 
     @Test("""
-@spec TEAM-5.2: The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+@spec TEAM-5.2: The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a tracked repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 """, .disabled("not yet implemented"))
     func team_5_2() async throws { }
 
     @Test("""
-@spec TEAM-5.3: The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+@spec TEAM-5.3: The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 """, .disabled("not yet implemented"))
     func team_5_3() async throws { }
 

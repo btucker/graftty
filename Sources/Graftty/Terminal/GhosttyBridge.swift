@@ -397,11 +397,10 @@ final class GhosttyApp {
             // the actual destruction through `onSurfaceClosed`.
             guard let userdata else { return }
             let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
-            let terminalID = box.terminalID
             let manager = box.terminalManager
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    manager?.onSurfaceClosed?(terminalID)
+                    manager?.receiveSurfaceClosed(box)
                 }
             }
         }

@@ -1,1 +1,0 @@
-../../../../../codex/plugins/graftty-team/skills/graftty-team/SKILL.md
