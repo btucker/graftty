@@ -292,6 +292,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-2.6** On application restart, persisted `.running` worktrees shall be marked as rehydrated but only the currently-selected worktree shall immediately recreate libghostty surfaces and run `zmx attach`. Other running worktrees shall attach lazily when selected. This keeps hidden panes from rendering or reattaching while they are not displayed, and prevents a large saved workspace from delaying input in the pane the user is actually returning to.
 
+**TERM-2.7** When a user clicks or types in a native Mac terminal pane, the application shall update the pane focus model used for dimming even when a scroll-view wrapper consumes SwiftUI tap gestures.
+
 ### TERM-3.x — Splitting
 
 **TERM-3.1** When the user triggers a horizontal split, the application shall insert a new terminal pane to the right of the focused pane with a 50/50 ratio.

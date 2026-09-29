@@ -913,6 +913,7 @@ final class SurfaceNSView: NSView {
     /// backend's one-shot makes it the TERM-11.1 layout-settled signal.
     var hostManagedLayoutNotifier: (() -> Void)?
     var visibleForInputNotifier: (() -> Void)?
+    var userInteractionNotifier: (() -> Void)?
     var takeDisplayControlNotifier: (() -> Bool)?
     /// Whether this pane's session can currently be reclaimed for the Mac —
     /// see `reclaimDisplayControlForUserInputIfNeeded` (OWN-2.2).
@@ -1077,6 +1078,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        userInteractionNotifier?()
         // Grab keyboard focus so subsequent keystrokes route to this view.
         markVisibleForInput()
         window?.makeFirstResponder(self)
@@ -1151,6 +1153,8 @@ final class SurfaceNSView: NSView {
     }
 
     override func otherMouseDown(with event: NSEvent) {
+        userInteractionNotifier?()
+        window?.makeFirstResponder(self)
         guard let surface else { return }
         _ = ghostty_surface_mouse_button(
             surface,
@@ -1232,6 +1236,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        userInteractionNotifier?()
         if event.isARepeat {
             // A key that committed composition stays consumed until release,
             // even though the marked text has already disappeared.

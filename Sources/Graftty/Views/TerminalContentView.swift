@@ -61,7 +61,14 @@ struct TerminalContentView: View {
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             return AnyView(
-                SurfaceViewWrapper(handle: handle)
+                SurfaceViewWrapper(handle: handle, onFocusTerminal: {
+                    // AppKit consumes terminal clicks inside the scroll view.
+                    // Reconcile model focus directly, without re-focusing all
+                    // surfaces on every keystroke in the already active pane.
+                    if focusedPaneSlotID != terminalID || tm.focusedTerminalID != terminalID {
+                        onFocusTerminal(terminalID)
+                    }
+                })
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Mirror the iOS "Take Control" affordance (OWN-2.1):
                     // offered when another display client (iOS/web) owns this
