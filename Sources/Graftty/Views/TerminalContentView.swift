@@ -78,23 +78,24 @@ struct TerminalContentView: View {
                     // tracks ownership changes reactively via
                     // TerminalManager's store observer.
                     .overlay(alignment: .top) {
-                        if tm.canTakeDisplayControl(for: terminalID) {
+                        if tm.attachmentFailures[terminalID] != nil {
+                            HStack(spacing: 12) {
+                                Label("Terminal disconnected", systemImage: "exclamationmark.triangle")
+                                Button("Retry") { tm.retryAttachment(for: terminalID) }
+                            }
+                            .font(.callout)
+                            .padding(12)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(12)
+                        } else if tm.canTakeDisplayControl(for: terminalID) {
                             takeControlButton {
                                 _ = tm.takeDisplayControl(for: terminalID)
                             }
                         }
                     }
-                    // Force a distinct SwiftUI identity per terminal. Without
-                    // this, when the split tree swaps one terminalID for
-                    // another at the same structural position (e.g., the user
-                    // switches worktrees), SwiftUI would reuse the existing
-                    // NSViewRepresentable instance and call updateNSView with
-                    // the ORIGINAL NSView — never swapping the on-screen
-                    // terminal view. The .id() modifier ties view identity to
-                    // the terminalID, so SwiftUI tears down the old wrapper
-                    // and constructs a fresh one (makeNSView called again
-                    // with the correct NSView).
-                    .id(terminalID)
+                    // A retry replaces the native view while preserving the
+                    // pane ID. Rebuild the wrapper for the new surface too.
+                    .id(ObjectIdentifier(handle))
                     .onTapGesture {
                         onFocusTerminal(terminalID)
                     }

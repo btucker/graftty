@@ -1,4 +1,5 @@
 import Foundation
+import os
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
@@ -10,7 +11,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private let lock = NSLock()
     private let surface: MacPagedSurface
     private let configuration: ZmxSpawnConfiguration
-    private let fallback: NativePtySession
+    private var fallback: NativePtySession?
     private let commands: AsyncStream<Command>
     private let commandSink: AsyncStream<Command>.Continuation
     private var task: Task<Void, Never>?
@@ -18,17 +19,32 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private var closed = false
     private var started = false
     private var restored = false
+    private var failed = false
+    private var attachmentFailure: (String) -> Void = { _ in }
     private var prepareGrid: (DisplayGrid?) -> Void = { _ in }
 
     init(surface: ghostty_surface_t, configuration: ZmxSpawnConfiguration, initialSize: PtyProcess.WindowSize?) {
         self.surface = MacPagedSurface(surface)
         self.configuration = configuration
-        fallback = NativePtySession(surface: surface, argv: configuration.argv, env: configuration.env,
-            workingDirectory: configuration.workingDirectory, initialSize: initialSize, spawnFailed: { _ in })
         let pair = AsyncStream<Command>.makeStream(bufferingPolicy: .bufferingOldest(1024))
         commands = pair.stream
         commandSink = pair.continuation
         if let initialSize { commandSink.yield(.resize(initialSize)) }
+        fallback = NativePtySession(argv: configuration.argv, env: configuration.env,
+            workingDirectory: configuration.workingDirectory, initialSize: initialSize,
+            writeToSurface: { [weak self] in self?.surface.write($0) },
+            processExited: { [weak self] _, status in
+                // NativePtySession holds its I/O lock during this callback.
+                // Querying the daemon here would also block pane teardown.
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    self?.legacyAttachmentExited(status: status)
+                }
+            },
+            spawnFailed: { [weak self] in self?.reportFailure("Could not attach to the terminal: \($0)") })
+    }
+
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {
+        lock.withLock { attachmentFailure = handler }
     }
 
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
@@ -48,6 +64,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private func run() async {
         defer { commandSink.finish() }
         guard !lock.withLock({ closed }) else { return }
+        guard MacPagedTerminalRenderer.isSupported else {
+            await runLegacy()
+            return
+        }
         let config = configuration
         let stream = PagedZmxAttachEngine(config: .init(
             zmxExecutable: URL(fileURLWithPath: config.argv[0]),
@@ -116,6 +136,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
                         break
                     }
                 } catch {
+                    reportFailure("Terminal connection failed: \(error)")
                     await stream.close()
                     return
                 }
@@ -131,14 +152,16 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
                 case .ended(let status):
                     receivedExit = true
                     reportExit(status: status)
+                    await stream.close()
+                    return
                 default: try await attachment.handle(event)
                 }
             }
         } catch {
             // Never mix a legacy replay into an installed checkpoint.
-            if !Task.isCancelled { receivedExit = true; reportExit() }
+            if !Task.isCancelled { receivedExit = true; reportFailure("Terminal restoration failed: \(error)") }
         }
-        if !receivedExit, !Task.isCancelled { reportExit() }
+        if !receivedExit, !Task.isCancelled { reportFailure("Terminal connection was interrupted.") }
         await stream.close()
     }
 
@@ -151,6 +174,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private func enqueue(_ command: Command) throws {
         try lock.withLock {
             guard !closed else { throw NativePtySession.Error.closed }
+            guard !failed else { throw NativePtySession.Error.notStarted }
             switch commandSink.yield(command) {
             case .enqueued: break
             case .dropped, .terminated: throw NativePtySession.Error.notStarted
@@ -161,20 +185,47 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
     @MainActor
     private func runLegacy() async {
+        guard let fallback else { return }
         do {
             try fallback.start()
             for await command in commands {
-                guard !Task.isCancelled else { break }
+                guard !Task.isCancelled, !lock.withLock({ failed }) else { break }
                 switch command {
                 case .input(let data): try fallback.write(data)
                 case .resize(let size): try fallback.resize(windowSize: size)
                 case .restored: break
                 }
             }
-        } catch { reportExit() }
+        } catch { reportFailure("Terminal connection failed: \(error)") }
     }
 
-    private func reportExit(status: Int32 = 1) {
+    private func legacyAttachmentExited(status: Int32?) {
+        guard !lock.withLock({ closed }) else { return }
+        // The short-lived attach process can exit while the daemon and shell
+        // are still running. Only a confirmed missing daemon is a shell exit.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: configuration.argv[0]),
+            zmxDir: URL(fileURLWithPath: configuration.env["ZMX_DIR"] ?? ""))
+        if launcher.isSessionMissing(configuration.sessionName) {
+            reportExit(status: Int32(NativePtySession.exitCode(from: status)))
+        } else {
+            reportFailure("Terminal attachment ended. Reconnect to resume the session.")
+        }
+    }
+
+    private func reportFailure(_ message: String) {
+        let handler = lock.withLock { () -> ((String) -> Void)? in
+            guard !closed, !failed else { return nil }
+            failed = true
+            return attachmentFailure
+        }
+        guard let handler else { return }
+        commandSink.finish()
+        Logger(subsystem: "com.graftty.app", category: "terminal-attachment")
+            .error("\(self.configuration.sessionName, privacy: .public): \(message, privacy: .public)")
+        handler(message)
+    }
+
+    private func reportExit(status: Int32) {
         surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), 0) }
     }
 
@@ -190,7 +241,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         surface.close()
         current.0?.cancel()
         current.1?.close()
-        fallback.close()
+        fallback?.close()
     }
 
     deinit { close() }

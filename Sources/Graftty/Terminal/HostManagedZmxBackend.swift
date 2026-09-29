@@ -5,6 +5,7 @@ import GrafttyProtocol
 import os
 
 protocol HostManagedZmxSession: AnyObject {
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
     func start() throws
     func write(_ data: Data) throws
@@ -14,6 +15,7 @@ protocol HostManagedZmxSession: AnyObject {
 }
 
 extension HostManagedZmxSession {
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func resize(windowSize: PtyProcess.WindowSize) throws {
         try resize(cols: windowSize.cols, rows: windowSize.rows)
@@ -264,6 +266,7 @@ final class HostManagedZmxBackend {
     private let scheduleCoalescedResize: ResizeCoalescingScheduler
     private let sessionFactory: SessionFactory
     private let lock = NSLock()
+    private var attachmentFailure: (String) -> Void = { _ in }
 
     private var lifecycle: Lifecycle = .idle
     private var session: HostManagedZmxSession?
@@ -341,17 +344,7 @@ final class HostManagedZmxBackend {
         ownership: HostManagedZmxOwnership? = nil,
         scheduleCoalescedResize: @escaping ResizeCoalescingScheduler = HostManagedZmxBackend.defaultResizeCoalescingScheduler,
         sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
-            if MacPagedTerminalRenderer.isSupported {
-                return MacPagedZmxSession(surface: surface, configuration: configuration, initialSize: initialSize)
-            }
-            return NativePtySession(
-                surface: surface,
-                argv: configuration.argv,
-                env: configuration.env,
-                workingDirectory: configuration.workingDirectory,
-                initialSize: initialSize,
-                spawnFailed: { _ in }
-            )
+            MacPagedZmxSession(surface: surface, configuration: configuration, initialSize: initialSize)
         }
     ) {
         self.spawnConfiguration = spawnConfiguration
@@ -425,6 +418,11 @@ final class HostManagedZmxBackend {
             grid: spawnSize.flatMap { Self.displayGrid(from: $0) } ?? .daemonFallback
         )
         let newSession = sessionFactory(surface, spawnConfiguration, spawnSize)
+        newSession.bindAttachmentFailure { [weak self] message in
+            guard let self else { return }
+            let handler = self.lock.withLock { self.attachmentFailure }
+            handler(message)
+        }
         newSession.bindAttachmentGrid { [weak self] grid in
             guard let self else { return }
             let prepare = self.lock.withLock {
@@ -593,6 +591,10 @@ final class HostManagedZmxBackend {
             lock.unlock()
         }
         return try body()
+    }
+
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {
+        lock.withLock { attachmentFailure = handler }
     }
 
     /// Binds the surface-sync closures. To be called by SurfaceHandle after

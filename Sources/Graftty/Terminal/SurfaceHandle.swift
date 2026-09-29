@@ -35,6 +35,7 @@ final class SurfaceUserdataBox {
 }
 
 protocol SurfaceHandleZmxBackend: AnyObject {
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     /// Main-thread presentation updates during snapshot import or remote following.
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
     func configure(_ config: inout ghostty_surface_config_s)
@@ -78,6 +79,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func synchronizeFollowerGrid() {}
     func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool {
@@ -392,6 +394,11 @@ final class SurfaceHandle {
         surfaceView.surface = newSurface
 
         if let backend {
+            backend.bindAttachmentFailure { [weak self] message in
+                DispatchQueue.main.async { [weak self] in
+                    self?.reportAttachmentFailure(message)
+                }
+            }
             // TERM-11.3: let the backend query the live window and request
             // repaints without linking libghostty. These closures run on
             // whatever thread triggers a flush (libghostty IO, IPC, main) —
@@ -511,7 +518,19 @@ final class SurfaceHandle {
             }
             surfaceFactory.writeBuffer(surface, base, UInt(buffer.count))
         }
-        surfaceFactory.processExit(surface, 1, 0)
+        DispatchQueue.main.async { [weak self] in
+            self?.reportAttachmentFailure("Could not connect to the terminal. Retry to reconnect.")
+        }
+    }
+
+    @MainActor
+    private func reportAttachmentFailure(_ message: String) {
+        let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).takeUnretainedValue()
+        box.terminalManager?.recordAttachmentFailure(message, for: self)
+    }
+
+    func ownsUserdata(_ box: SurfaceUserdataBox) -> Bool {
+        Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).takeUnretainedValue() === box
     }
 
     private static func agentHookPathPrefix() -> String? {
@@ -797,6 +816,10 @@ final class SurfaceHandle {
             pressHandled ? "handled" : "unhandled",
             releaseHandled ? "handled" : "unhandled"
         )
+    }
+
+    func disconnectAttachment() {
+        zmxBackend?.close()
     }
 
     func requestClose() {

@@ -57,6 +57,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
+    @Published private(set) var attachmentFailures: [PaneSlotID: String] = [:]
     private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
@@ -952,6 +953,7 @@ final class TerminalManager: ObservableObject {
     }
 
     private func didCreateSurface(for terminalID: PaneSlotID) {
+        attachmentFailures[terminalID] = nil
         evictedGridSizes.removeValue(forKey: terminalID)
     }
 
@@ -1072,6 +1074,37 @@ final class TerminalManager: ObservableObject {
         return true
     }
 
+    func recordAttachmentFailure(_ message: String, for handle: SurfaceHandle) {
+        guard handle.zmxSessionName != nil, surfaces[handle.terminalID] === handle else { return }
+        attachmentFailures[handle.terminalID] = message
+    }
+
+    func receiveSurfaceClosed(_ box: SurfaceUserdataBox) {
+        // A delayed close from the old attachment must not remove its retry.
+        guard surfaces[box.terminalID]?.ownsUserdata(box) == true else { return }
+        onSurfaceClosed?(box.terminalID)
+    }
+
+    @discardableResult
+    func retryAttachment(for terminalID: PaneSlotID) -> Bool {
+        guard attachmentFailures[terminalID] != nil,
+              let handle = surfaces[terminalID],
+              let sessionID = paneSessionIDs[terminalID] else { return false }
+        let path = handle.worktreePath
+        let wasFocused = focusedTerminalID == terminalID
+        evictSurface(terminalID: terminalID, forRetry: true)
+        guard createSurface(terminalID: terminalID, paneSessionID: sessionID,
+                            worktreePath: path) != nil else {
+            surfaces[terminalID] = handle
+            attachmentFailures[terminalID] = "Could not recreate the terminal view. Retry to try again."
+            return false
+        }
+        attachmentFailures[terminalID] = nil
+        objectWillChange.send()
+        if wasFocused { setFocus(terminalID) }
+        return true
+    }
+
     /// Soft destroy. Releases the libghostty surface (freeing scrollback
     /// + Metal layers via `SurfaceHandle.deinit`) and marks the leaf as
     /// rehydrated so a future surface creation re-attaches to the zmx
@@ -1079,13 +1112,14 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`, this preserves titles, PWDs, the
     /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
-    func evictSurface(terminalID: PaneSlotID) {
+    func evictSurface(terminalID: PaneSlotID, forRetry: Bool = false) {
         if let handle = surfaces.removeValue(forKey: terminalID) {
             let size = GridSize(handle.queryGridSize())
             if size.cols > 0 && size.rows > 0 {
                 evictedGridSizes[terminalID] = size
             }
-            handle.requestClose()
+            if forRetry { handle.disconnectAttachment() }
+            else { handle.requestClose() }
         }
         rehydratedSurfaces.insert(terminalID)
         if let scanner = portScanner {
@@ -1141,6 +1175,7 @@ final class TerminalManager: ObservableObject {
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
     private func forgetTrackingState(for terminalID: PaneSlotID) {
+        attachmentFailures[terminalID] = nil
         if pendingShellReadyInitialInput[terminalID] != nil {
             completeInitialInputDelivery(for: terminalID, success: false)
         }
