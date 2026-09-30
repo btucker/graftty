@@ -51,7 +51,7 @@ struct PaneHistoryKey: Hashable {
 /// # Threading
 /// `@MainActor`-isolated. The underlying `GhosttyApp` may fire wakeup/action
 /// callbacks from background threads; wakeups arrive as `Notification.Name.ghosttyWakeup`
-/// which we observe on the main queue and translate into `tick()` calls.
+/// which we translate into deferred main-queue `tick()` calls.
 @MainActor
 final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
@@ -427,14 +427,8 @@ final class TerminalManager: ObservableObject {
         self.ghosttyApp = app
         self.theme = app.theme
 
-        wakeupObserver = NotificationCenter.default.addObserver(
-            forName: .ghosttyWakeup,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.ghosttyApp?.tick()
-            }
+        wakeupObserver = GhosttyWakeupBridge.observe { [weak self] in
+            self?.ghosttyApp?.tick()
         }
 
         if let config = ghosttyConfig?.config {

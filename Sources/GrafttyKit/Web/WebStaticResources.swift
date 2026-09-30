@@ -1,8 +1,12 @@
 import Foundation
 
-/// Accessors for the web client bundled via `resources: [.copy("Web/Resources")]`.
-/// SPM's copy layout relocates resource files to the bundle root, so lookups use
-/// `Bundle.module.url(forResource:withExtension:)` with no `subdirectory:` argument.
+/// Accessors for the web client bundled via `resources: [.copy("Web/Resources")]`,
+/// which copies a directory literally named `Resources` into the bundle. In the
+/// standard `Contents/Resources` layout (Swift 6.4's build system) it is a
+/// nested `Resources/` subdirectory. Foundation resolves the same lookup in
+/// SwiftPM's flat layout too, but only through undocumented handling of a
+/// top-level `Resources` directory, so the unscoped lookup stays as a
+/// fallback (CONFIG-2.7).
 public enum WebStaticResources {
 
     public enum Error: Swift.Error {
@@ -20,10 +24,15 @@ public enum WebStaticResources {
     }
 
     public static func asset(for urlPath: String) throws -> Asset {
+        try asset(for: urlPath, in: GrafttyKitResourceBundle.bundle)
+    }
+
+    static func asset(for urlPath: String, in bundle: Bundle) throws -> Asset {
         let filename = try resolveFilename(urlPath)
         let ext = (filename as NSString).pathExtension
         let base = (filename as NSString).deletingPathExtension
-        guard let url = GrafttyKitResourceBundle.bundle.url(forResource: base, withExtension: ext) else {
+        guard let url = bundle.url(forResource: base, withExtension: ext, subdirectory: "Resources")
+                ?? bundle.url(forResource: base, withExtension: ext) else {
             throw Error.missingResource(filename)
         }
         let data = try Data(contentsOf: url)

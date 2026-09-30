@@ -730,3 +730,22 @@ struct CodexAppServerInboxDeliveryWiringTests {
         }
     }
 }
+
+@Suite("GrafttyApp — attention-only team hooks")
+struct AttentionOnlyTeamHookTests {
+    /// Codex has no PostToolUse context channel: the team handler renders
+    /// `{}` for it unconditionally, so the app answers before scanning
+    /// presence records or resolving team context on every Codex tool call.
+    @Test("Codex PostToolUse is answered as an attention-only hook; Claude PostToolUse still delivers.")
+    func codexPostToolUseIsAttentionOnly() {
+        #expect(GrafttyApp.isAttentionOnlyTeamHook(runtime: .codex, event: .postToolUse))
+        #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: .claude, event: .postToolUse))
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            for event in [TeamHookEvent.preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure] {
+                #expect(GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: event))
+            }
+            #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: .sessionStart))
+            #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: .stop))
+        }
+    }
+}

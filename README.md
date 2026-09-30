@@ -169,9 +169,10 @@ the child from that commit, but Graftty still reads the resulting filesystem
 file directly. Once the child exists, its own `.graftty/` can tune later
 sessions without a commit.
 
-The built-in team session prompt explains these forms and tells agents they may
+The bundled Graftty Team skill explains these forms and tells agents they may
 suggest concise instruction files when durable team structure would help, but
-to create or modify them only when authorized.
+to create or modify them only when authorized. Instruction files are how you
+customize agents; Graftty has no separate session prompt setting.
 
 Requires **Agent Teams** to be enabled in Settings.
 
@@ -182,20 +183,22 @@ running in its worktrees can register their presence, send inbox messages,
 and react to PR and CI events. A repository with one local worktree can
 also communicate with agents on a remote Mac.
 
-Enable it under **Settings → Agent Teams**. From there you choose which
-events (PR state, merges, CI conclusion, mergability) get routed to the
-root agent, the per-worktree agent, peer worktrees, or any combination,
-and customize the templated session and per-event prompts each agent
-receives.
+Agents connect to Graftty through the Codex and Claude provider plugins.
+Graftty offers to install them on first launch; you can also install them
+from **Settings → Agent Teams**, which warns until they are installed. The
+plugins add Graftty's skills and lifecycle hooks, and Graftty refreshes them
+automatically after app updates. Start new agent sessions after installing.
 
-The session prompt is the complete SessionStart team context, including
-the CLI surface for coordination. Settings shows the built-in Stencil
-template with live `agent` and `team` placeholders; you can edit or replace
-the whole template, restore the current Graftty default, or clear it to
-disable SessionStart team context:
+In **Settings → Agent Teams** you also choose which events (PR state,
+merges, CI conclusion, mergability) get routed to the root agent, the
+per-worktree agent, peer worktrees, or any combination, and customize the
+templated per-event prompt each agent receives with an automated event.
+Customize agents themselves with `GRAFTTY.md` instruction files (above).
+
+The bundled Graftty Team skill teaches agents the CLI surface for
+coordination:
 
 ```sh
-graftty team register --runtime claude   # announce presence at session start
 graftty team list                        # see teammates, worktrees, and running state
 graftty team list --json                 # stable machine-readable roster
 graftty team send --stdin <member>       # read a direct message literally from stdin
@@ -207,19 +210,19 @@ graftty team inbox --unread              # compatibility alias for --keep-unread
 graftty team inbox --history             # inspect prior incoming messages without mutation
 ```
 
-Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
-each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
-runtime. `SessionStart` renders the configured complete session prompt;
-`Stop` triggers inbox delivery at the end of each turn.
-For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
-when a new message arrives; for Codex, a graftty-side service sends the
-message into the active conversation through Codex's app server.
+Delivery is native. The plugins' `SessionStart` hook points agents at the
+Graftty skills and delivers their `GRAFTTY.md` instructions and any
+messages queued before the session started. After that, Graftty sends new
+messages into the running session: to Claude Code through its peer
+messaging socket, and to Codex through Codex's app server. For Codex,
+Graftty installs a `codex` shim on each agent's `PATH` that starts that app
+server and registers the session.
 
 The Codex shim routes feature, plugin marketplace, plugin, and MCP
-administration to the user's durable `~/.codex` home while maintaining
-Graftty's hooks and a read-only-at-runtime config snapshot in an isolated
-managed home. Those changes therefore survive later agent launches without
-requiring an agent to rewrite Graftty's generated files. A sandboxed agent may
+administration to the user's durable `~/.codex` home while maintaining a
+read-only-at-runtime config snapshot in an isolated managed home. Those
+changes therefore survive later agent launches without requiring an agent to
+rewrite Graftty's generated files. A sandboxed agent may
 request normal filesystem approval before changing this user-global state.
 Codex discovers plugin-provided tools when a session starts, so the shim prints
 a reminder to reload the agent or start a new session after a successful

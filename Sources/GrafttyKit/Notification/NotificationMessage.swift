@@ -122,7 +122,6 @@ public enum NotificationMessage: Sendable, Equatable {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason? = nil,
-        skillManaged: Bool = false,
         stopHookActive: Bool = false
     )
     case attentionReport(callerWorktree: String, callerAgentID: String, recap: AttentionRecap)
@@ -193,7 +192,6 @@ extension NotificationMessage: Codable {
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
         case attentionReason = "attention_reason"
-        case skillManaged = "skill_managed"
         case stopHookActive = "stop_hook_active"
         case recap
         case pressEnter = "press_enter"
@@ -284,7 +282,6 @@ extension NotificationMessage: Codable {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged,
             let stopHookActive
         ):
             try container.encode("team_hook", forKey: .type)
@@ -295,7 +292,6 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
             try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
-            try container.encode(skillManaged, forKey: .skillManaged)
             try container.encode(stopHookActive, forKey: .stopHookActive)
         case .attentionReport(let path, let callerAgentID, let recap):
             try container.encode("attention_report", forKey: .type)
@@ -472,13 +468,12 @@ extension NotificationMessage: Codable {
                 AgentHookAttentionReason.self,
                 forKey: .attentionReason
             )
-            let skillManaged = try container.decodeIfPresent(Bool.self, forKey: .skillManaged) ?? false
             let stopHookActive = try container.decodeIfPresent(Bool.self, forKey: .stopHookActive) ?? false
             self = .teamHook(callerWorktree: path, callerAgentID: callerAgentID,
                              runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
                              attentionReason: attentionReason,
-                             skillManaged: skillManaged, stopHookActive: stopHookActive)
+                             stopHookActive: stopHookActive)
         case "attention_report":
             self = .attentionReport(
                 callerWorktree: try container.decode(String.self, forKey: .callerWorktree),

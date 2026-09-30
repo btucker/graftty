@@ -15,7 +15,7 @@ struct CodexHomeMirrorTests {
         try writeFile(src.appendingPathComponent("config.toml"), "")
         try FileManager.default.createDirectory(at: src.appendingPathComponent("sessions"), withIntermediateDirectories: true)
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
 
         let fm = FileManager.default
 
@@ -38,116 +38,57 @@ struct CodexHomeMirrorTests {
         #expect(configTarget == nil)
     }
 
-    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks and replace stale Graftty delivery hooks; while legacy wrapper hooks are enabled it shall add SessionStart plus attention-only UserPromptSubmit, PostToolUse, and blocking question or plan-review hooks without adding pre-review permission hooks, and while provider plugins are enabled it shall leave those hooks to the plugin.")
-    func hooksUnionMerge() throws {
+    @Test("@spec TEAM-IDLE-1.1: When Graftty synthesizes a managed CODEX_HOME, the application shall preserve user Codex hooks, strip every Graftty hook command, including groups an earlier Graftty wrote into the managed home, and add none of its own, leaving Graftty lifecycle hooks to the Codex provider plugin.")
+    func mirrorStripsGrafttyHooksAndPreservesUserHooks() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
-        try writeFile(src.appendingPathComponent("hooks.json"), """
-        {
-          "hooks": {
-            "SessionStart": [
-              { "hooks": [{ "type": "command", "command": "/path/to/user-script.sh" }] }
-            ]
-          }
-        }
-        """)
-
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
-
-        let mergedData = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
-        let merged = try JSONSerialization.jsonObject(with: mergedData) as! [String: Any]
-        let hooks = merged["hooks"] as! [String: Any]
-        let sessionStart = hooks["SessionStart"] as! [[String: Any]]
-        // User's matcher-group + graftty's = 2.
-        #expect(sessionStart.count == 2)
-        let commands = sessionStart.flatMap { group -> [String] in
-            let handlers = (group["hooks"] as? [[String: Any]]) ?? []
-            return handlers.compactMap { $0["command"] as? String }
-        }
-        #expect(commands.contains("/path/to/user-script.sh"))
-        #expect(commands.contains(where: { $0.hasPrefix("/usr/local/bin/graftty team hook codex") }))
-
-        // Re-running rebuild is idempotent (graftty entries strip-and-replace, not duplicate).
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
-        let merged2Data = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
-        let merged2 = try JSONSerialization.jsonObject(with: merged2Data) as! [String: Any]
-        let hooks2 = merged2["hooks"] as! [String: Any]
-        let sessionStart2 = hooks2["SessionStart"] as! [[String: Any]]
-        #expect(sessionStart2.count == 2)
-    }
-
-    @Test("Provider-plugin mode strips legacy Graftty hooks without replacing user hooks.")
-    func pluginModeLeavesHooksToPlugin() throws {
-        let (src, dst) = try makeMirrorSandbox()
-        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         try writeFile(src.appendingPathComponent("hooks.json"), """
         {
           "hooks": {
             "SessionStart": [
               { "hooks": [{ "type": "command", "command": "/path/to/user-script.sh" }] },
               { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex session-start" }] }
+            ],
+            "PostToolUse": [
+              { "hooks": [{ "type": "command", "command": "/old/graftty team hook codex post-tool-use", "timeout": 2 }] },
+              { "hooks": [{ "type": "command", "command": "/path/to/user-post-tool-use.sh" }] }
             ]
           }
         }
         """)
-
-        try CodexHomeMirror(
-            sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            grafttyHooksEnabled: false
-        ).rebuild()
-
-        let data = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
-        let root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        let hooks = root["hooks"] as! [String: Any]
-        let commands = commands(in: hooks["SessionStart"] as! [[String: Any]])
-        #expect(commands == ["/path/to/user-script.sh"])
-    }
-
-    @Test("Codex mirror installs authoritative attention transitions while removing stale delivery hooks.")
-    func grafttyHooksReplaceDeliveryWithAttentionTransitions() throws {
-        let (src, dst) = try makeMirrorSandbox()
-        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-
-        try writeFile(src.appendingPathComponent("hooks.json"), """
+        // A managed home written by an older Graftty carries legacy wrapper
+        // hook groups.
+        try writeFile(dst.appendingPathComponent("hooks.json"), """
         {
           "hooks": {
-            "PostToolUse": [
-              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex post-tool-use" }] },
-              { "hooks": [{ "type": "command", "command": "/path/to/user-post-tool-use.sh" }] }
+            "SessionStart": [
+              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex session-start" }] }
             ],
-            "Stop": [
-              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex stop" }] }
+            "PreToolUse": [
+              { "matcher": "request_user_input|exit_plan_mode", "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex pre-tool-use", "timeout": 2 }] }
+            ],
+            "UserPromptSubmit": [
+              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex user-prompt-submit", "timeout": 2 }] }
             ]
           }
         }
         """)
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        for _ in 0..<2 {
+            try CodexHomeMirror(
+                sourceDirectory: src,
+                mirrorDirectory: dst
+            ).rebuild()
 
-        let mergedData = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
-        let merged = try JSONSerialization.jsonObject(with: mergedData) as! [String: Any]
-        let hooks = merged["hooks"] as! [String: Any]
-        let sessionStartCommands = commands(in: hooks["SessionStart"] as! [[String: Any]])
-        let preToolUseCommands = commands(in: hooks["PreToolUse"] as! [[String: Any]])
-        let userPromptSubmitCommands = commands(in: hooks["UserPromptSubmit"] as! [[String: Any]])
-        let postToolUseCommands = commands(in: hooks["PostToolUse"] as! [[String: Any]])
-        let permissionRequestCommands = commands(in: hooks["PermissionRequest"] as! [[String: Any]])
-        let postToolUseFailureCommands = commands(in: hooks["PostToolUseFailure"] as! [[String: Any]])
-        let stopCommands = commands(in: hooks["Stop"] as! [[String: Any]])
-
-        #expect(sessionStartCommands == ["/usr/local/bin/graftty team hook codex session-start"])
-        #expect(preToolUseCommands == ["/usr/local/bin/graftty team hook codex pre-tool-use"])
-        #expect(userPromptSubmitCommands == ["/usr/local/bin/graftty team hook codex user-prompt-submit"])
-        #expect(postToolUseCommands == [
-            "/path/to/user-post-tool-use.sh",
-            "/usr/local/bin/graftty team hook codex post-tool-use",
-        ])
-        #expect(permissionRequestCommands.isEmpty)
-        #expect(postToolUseFailureCommands.isEmpty)
-        #expect(stopCommands.isEmpty)
+            let data = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
+            let root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            let hooks = root["hooks"] as! [String: Any]
+            let all = hooks.values.flatMap { commands(in: ($0 as? [[String: Any]]) ?? []) }
+            #expect(!all.contains(where: { $0.contains("team hook codex") }))
+            #expect(commands(in: hooks["SessionStart"] as! [[String: Any]]) == ["/path/to/user-script.sh"])
+            #expect(commands(in: hooks["PostToolUse"] as! [[String: Any]]) == ["/path/to/user-post-tool-use.sh"])
+        }
     }
 
     @Test("Durable Codex configuration changes appear in the next managed snapshot.")
@@ -161,8 +102,7 @@ struct CodexHomeMirrorTests {
 
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         )
         try mirror.rebuild()
 
@@ -188,12 +128,12 @@ struct CodexHomeMirrorTests {
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
 
         try writeFile(src.appendingPathComponent("foo.json"), "{}")
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
         #expect(FileManager.default.fileExists(atPath: dst.appendingPathComponent("foo.json").path))
 
         // User deletes foo.json; rebuild should remove the dangling symlink.
         try FileManager.default.removeItem(at: src.appendingPathComponent("foo.json"))
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
         // Note: fileExists follows symlinks, so even a dangling link returns false; check via isSymbolicLink resource value or path-existence.
         let dstFoo = dst.appendingPathComponent("foo.json")
         let resourceValues = try? dstFoo.resourceValues(forKeys: [.isSymbolicLinkKey])
@@ -206,7 +146,7 @@ struct CodexHomeMirrorTests {
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         // No config.toml in src.
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
 
         let dstConfig = dst.appendingPathComponent("config.toml")
         #expect(try Data(contentsOf: dstConfig).isEmpty)
@@ -228,8 +168,7 @@ struct CodexHomeMirrorTests {
         #expect(throws: (any Error).self) {
             try CodexHomeMirror(
                 sourceDirectory: src,
-                mirrorDirectory: dst,
-                grafttyCLIPath: "/usr/local/bin/graftty"
+                mirrorDirectory: dst
             ).rebuild()
         }
         #expect(!FileManager.default.fileExists(
@@ -241,7 +180,7 @@ struct CodexHomeMirrorTests {
     func durablePluginCacheCreatedLaterSurvivesRebuild() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
-        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty")
+        let mirror = CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst)
         try mirror.rebuild()
 
         let durableCache = src.appendingPathComponent("plugins/cache/runpod", isDirectory: true)
@@ -277,8 +216,7 @@ struct CodexHomeMirrorTests {
 
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         )
         try mirror.rebuild()
 
@@ -313,8 +251,7 @@ struct CodexHomeMirrorTests {
         try writeFile(src.appendingPathComponent("config.toml"), "model = \"o3\"\n")
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         )
         try mirror.rebuild()
 
@@ -345,8 +282,7 @@ struct CodexHomeMirrorTests {
 
         try CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         ).rebuild()
 
         #expect(try String(contentsOf: src.appendingPathComponent("plugins/cache/shared/version")) == "durable")
@@ -395,7 +331,7 @@ struct CodexHomeMirrorTests {
             ofItemAtPath: legacy.path
         )
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
 
         let durableText = try String(contentsOf: durable)
         #expect(durableText.contains("[plugins.\"runpod@runpod\"]"))
@@ -446,8 +382,7 @@ struct CodexHomeMirrorTests {
 
         try CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         ).rebuild()
 
         let migrated = try String(contentsOf: durable)
@@ -511,8 +446,7 @@ struct CodexHomeMirrorTests {
         }
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         )
         let startedAt = Date()
         try mirror.rebuild()
@@ -560,8 +494,7 @@ struct CodexHomeMirrorTests {
 
         try CodexHomeMirror(
             sourceDirectory: src,
-            mirrorDirectory: dst,
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            mirrorDirectory: dst
         ).rebuild()
 
         let migrated = try String(contentsOf: durable)
@@ -608,7 +541,7 @@ struct CodexHomeMirrorTests {
             ofItemAtPath: legacy.path
         )
 
-        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst).rebuild()
 
         let durableText = try String(contentsOf: durable)
         #expect(durableText.contains("model = \"gpt-5\""))

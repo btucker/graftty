@@ -62,3 +62,26 @@ struct ClaudeHookPresenceResolutionTests {
         )
     }
 }
+
+@Suite("Team hook output when Graftty cannot render the hook")
+struct TeamHookUnrenderedOutputTests {
+    @Test("""
+    @spec AGENT-6.49: If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
+    """)
+    func sessionStartFallsBackToSkillGuidance() throws {
+        let grafttyPane = ["GRAFTTY_SOCK": "/tmp/graftty.sock"]
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            #expect(
+                TeamHook.unrenderedHookOutput(runtime: runtime, event: .sessionStart, environment: grafttyPane)
+                    == (try TeamHookRenderer.sessionStart(runtime: runtime))
+            )
+            #expect(TeamHook.unrenderedHookOutput(runtime: runtime, event: .sessionStart, environment: [:]) == "{}")
+            #expect(TeamHook.unrenderedHookOutput(
+                runtime: runtime, event: .sessionStart, environment: ["GRAFTTY_SOCK": ""]
+            ) == "{}")
+            for event in TeamHookEvent.allCases where event != .sessionStart {
+                #expect(TeamHook.unrenderedHookOutput(runtime: runtime, event: event, environment: grafttyPane) == "{}")
+            }
+        }
+    }
+}

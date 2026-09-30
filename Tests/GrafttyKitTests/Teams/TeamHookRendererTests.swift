@@ -4,17 +4,26 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
-    @Test("@spec AGENT-6.33: When a skill-managed agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination even when no team primer is present, and require a task-specific emoji independently of cached skill instructions.")
+    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
-            let json = try TeamHookRenderer.sessionStart(
-                runtime: runtime, teamContext: "", skillManaged: true
-            )
+            let json = try TeamHookRenderer.sessionStart(runtime: runtime)
             let context = try additionalContext(from: json)
             #expect(context.contains("Load the `graftty` skill for Attention recaps"))
             #expect(context.contains("`graftty-team` skill for agent coordination"))
             #expect(context.contains("task-specific `emoji`"))
             #expect(context.contains("`emojiAlternatives`"))
+        }
+    }
+
+    @Test("@spec AGENT-6.44: When an agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.")
+    func managedSessionForbidsManualWorktrees() throws {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let json = try TeamHookRenderer.sessionStart(runtime: runtime)
+            let context = try additionalContext(from: json)
+            #expect(context.contains("one agent per worktree"))
+            #expect(context.contains("`git worktree add`"))
+            #expect(context.contains("`graftty worktree add <name> --agent"))
         }
     }
 
@@ -30,11 +39,26 @@ struct TeamHookRendererTests {
         #expect(json["reason"]?.contains("already reported without an emoji") == true)
     }
 
-    @Test func codexSessionStartRendersAdditionalContext() throws {
-        let json = try TeamHookRenderer.codexSessionStart(teamContext: "You are feature-auth.")
+    @Test("@spec AGENT-3.24: When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.")
+    func recapRequestKeepsReportSilent() throws {
+        let json = try #require(JSONSerialization.jsonObject(
+            with: Data(TeamHookRenderer.requestRecap().utf8)
+        ) as? [String: String])
+        let reason = try #require(json["reason"])
+        #expect(reason.contains("Do not mention the report"))
+        #expect(reason.contains("If the command fails, say so"))
+    }
+
+    @Test("SessionStart appends GRAFTTY.md instructions after the skill guidance.")
+    func sessionStartRendersInstructionsAfterSkillGuidance() throws {
+        let json = try TeamHookRenderer.sessionStart(
+            runtime: .codex,
+            instructions: "You are feature-auth."
+        )
         let context = try additionalContext(from: json)
 
-        #expect(context == "You are feature-auth.")
+        #expect(context.hasPrefix("Load the `graftty` skill"))
+        #expect(context.hasSuffix("You are feature-auth."))
         #expect(!context.contains("Graftty team context"))
     }
 
@@ -73,56 +97,37 @@ struct TeamHookRendererTests {
         #expect(try TeamHookRenderer.claudePostToolUse(messages: []) == "{}")
     }
 
-    @Test("@spec TEAM-PRESENCE-1.1: The built-in `teamSessionPrompt` shall include the Graftty team protocol primer in SessionStart additionalContext. A user may replace or clear that complete template in Agent Teams Settings.")
-    func sessionStartIncludesPrimer() throws {
-        let json = try TeamHookRenderer.sessionStart(
-            runtime: .codex,
-            teamContext: defaultTeamContext()
-        )
-        let context = try additionalContext(from: json)
+    @Test("@spec TEAM-PRESENCE-1.1: The Graftty Team provider skill shall document the team protocol commands for listing the roster, sending messages through standard input, and reading the inbox, and shall not instruct agents to register themselves, because the wrapper and plugin hooks own registration.")
+    func teamSkillDocumentsProtocol() throws {
+        let skill = try GrafttyTeamSkillText.load()
 
-        #expect(context.contains("graftty team inbox"))
-        #expect(context.contains("graftty team send --stdin"))
-        #expect(context.contains("graftty team list"))
-        #expect(context.contains("feature/auth"))
-        #expect(!context.lowercased().contains("coworker"))
-        #expect(!context.lowercased().contains("lead"))
-
-        // TEAM-PRESENCE-1.3: registration is handled by the wrapper, not
-        // typed by the model. The primer must not instruct it — that's the
-        // shape the classifier kept blocking.
-        #expect(!context.contains("graftty team register"))
+        #expect(skill.contains("graftty team inbox"))
+        #expect(skill.contains("graftty team send --stdin"))
+        #expect(skill.contains("graftty team list --json"))
+        #expect(!skill.lowercased().contains("coworker"))
+        #expect(!skill.contains("graftty team register"))
     }
 
-    @Test("@spec TEAM-4.4: The built-in session-start template shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
-    func sessionStartDocumentsLiteralMessageInput() throws {
-        let json = try TeamHookRenderer.sessionStart(
-            runtime: .codex,
-            teamContext: defaultTeamContext()
-        )
-        let context = try additionalContext(from: json)
+    @Test("@spec TEAM-4.4: The Graftty Team provider skill shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
+    func teamSkillDocumentsLiteralMessageInput() throws {
+        let skill = try GrafttyTeamSkillText.load()
 
-        #expect(context.contains("graftty team send --stdin"))
-        #expect(context.contains("graftty team broadcast --stdin"))
-        #expect(context.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
-        #expect(context.contains("<graftty-forge-message provider=\"<provider>\">"))
-        #expect(context.contains("<graftty-system-message>"))
-        #expect(context.contains("stable reply address"))
-        #expect(context.contains("send to `fallback-agent`"))
-        #expect(context.contains("<<'GRAFTTY_<random>'"))
-        #expect(context.contains("fresh quoted high-entropy heredoc delimiter"))
-        #expect(context.contains("absent from the body"))
-        #expect(context.contains("never use it literally"))
-        #expect(!context.contains("GRAFTTY_MSG_7F3A"))
-        #expect(context.contains("Quoting keeps shell syntax literal"))
-        #expect(context.contains("never shell arguments"))
-        #expect(!context.contains("graftty team msg"))
+        #expect(skill.contains("graftty team send --stdin"))
+        #expect(skill.contains("graftty team broadcast --stdin"))
+        #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
+        #expect(skill.contains("<graftty-forge-message provider=\"<provider>\">"))
+        #expect(skill.contains("<graftty-system-message>"))
+        #expect(skill.contains("stable reply address"))
+        #expect(skill.contains("fresh quoted high-entropy heredoc delimiter"))
+        #expect(skill.contains("does not occur in the body"))
+        #expect(skill.contains("never as shell arguments"))
+        #expect(!skill.contains("graftty team msg"))
     }
 
-    @Test("Both runtimes produce the identical SessionStart primer text.")
+    @Test("Both runtimes produce the identical SessionStart context.")
     func bothRuntimesAlign() throws {
-        let claude = try TeamHookRenderer.sessionStart(runtime: .claude, teamContext: "X")
-        let codex = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "X")
+        let claude = try TeamHookRenderer.sessionStart(runtime: .claude, instructions: "X")
+        let codex = try TeamHookRenderer.sessionStart(runtime: .codex, instructions: "X")
         #expect(claude == codex)
     }
 
@@ -220,22 +225,5 @@ struct TeamHookRendererTests {
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let hookSpecificOutput = try #require(object["hookSpecificOutput"] as? [String: Any])
         return try #require(hookSpecificOutput["additionalContext"] as? String)
-    }
-
-    private func defaultTeamContext() -> String {
-        var repo = RepoEntry(path: "/repo/acme", displayName: "acme")
-        repo.worktrees.append(WorktreeEntry(path: "/repo/acme", branch: "main"))
-        repo.worktrees.append(
-            WorktreeEntry(
-                path: "/repo/acme/.worktrees/feature-auth",
-                branch: "feature/auth"
-            )
-        )
-        let team = TeamView.team(
-            for: repo.worktrees[1],
-            in: [repo],
-            teamsEnabled: true
-        )!
-        return TeamInstructionsRenderer.render(team: team, viewer: team.members[1])
     }
 }

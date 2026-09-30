@@ -95,7 +95,10 @@ public enum AgentPluginInstallerError: Error, Equatable {
 public struct AgentPluginInstaller: Sendable {
     /// Bump when the integration changes enough to re-offer first-time setup
     /// to users who declined it. Completed installations refresh per app build.
-    public static let integrationRevision = 9
+    /// Revision 10: the plugins became the only agent integration, so users
+    /// who declined revision 9 while legacy wrapper hooks still worked must
+    /// be offered again.
+    public static let integrationRevision = 10
 
     private let resourceRoot: URL?
     private let grafttyCLIPath: String
@@ -482,9 +485,14 @@ public struct AgentPluginInstaller: Sendable {
         let enabled: Bool
     }
 
-    private static func bundledResourceRoot() -> URL? {
-        GrafttyKitResourceBundle.bundle.bundleURL
-            .appendingPathComponent("AgentPlugins", isDirectory: true)
+    /// SwiftPM's flat bundle keeps resources at its root, but Foundation
+    /// reports its `Resources` subdirectory (the web assets) as
+    /// `resourceURL`; Swift Build nests them under `Contents/Resources`.
+    /// Use whichever location actually holds the plugins.
+    static func bundledResourceRoot(in bundle: Bundle = GrafttyKitResourceBundle.bundle) -> URL? {
+        [bundle.resourceURL, bundle.bundleURL]
+            .compactMap { $0?.appendingPathComponent("AgentPlugins", isDirectory: true) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private static func describe(_ error: Error) -> String {
