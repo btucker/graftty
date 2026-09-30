@@ -587,25 +587,21 @@ struct DidYouMeanWiringTests {
     }
 }
 
-@Suite("@spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a concise block naming the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.")
-struct TeamPrimerPaneBulletsTests {
-    @Test("Primer text includes pane control commands")
-    func primerHasPaneBullets() throws {
-        let primer = TeamInstructionsRenderer.defaultTemplate
-        #expect(primer.contains("graftty pane list"))
-        #expect(primer.contains("graftty pane show"))
-        #expect(primer.contains("graftty pane send"))
-        #expect(primer.contains("graftty pane send --help"))
+@Suite("@spec ATTN-1.23: The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.")
+struct TeamSkillPaneBulletsTests {
+    @Test("Skill text includes pane control commands")
+    func skillHasPaneBullets() throws {
+        let skill = try GrafttyTeamSkillText.load()
+        #expect(skill.contains("graftty pane list"))
+        #expect(skill.contains("graftty pane show"))
+        #expect(skill.contains("graftty pane send"))
+        #expect(skill.contains("graftty pane send --help"))
     }
 
-    @Test("Primer flags lack of consent layer for pane send")
-    func primerWarnsAboutPaneSend() throws {
-        let primer = TeamInstructionsRenderer.defaultTemplate
-        #expect(
-            primer.contains("no inbox") ||
-            primer.contains("consent layer") ||
-            primer.contains("straight to the PTY")
-        )
+    @Test("Skill text flags lack of consent layer for pane send")
+    func skillWarnsAboutPaneSend() throws {
+        let skill = try GrafttyTeamSkillText.load()
+        #expect(skill.contains("no inbox or consent layer"))
     }
 }
 

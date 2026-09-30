@@ -49,9 +49,7 @@ public enum EventBodyRenderer {
         return bodyReferencePattern.firstMatch(in: template, range: range) != nil
     }
 
-    /// Builds the event-delivery `agent` dictionary. The full session-start
-    /// context is a superset built by `TeamInstructionsRenderer`; it preserves
-    /// these four shared keys while adding session identity and team data.
+    /// Builds the event-delivery `agent` dictionary.
     public static func makeAgentContext(
         branch: String,
         isMainWorktree: Bool,
@@ -141,19 +139,16 @@ public enum EventBodyRenderer {
 
 extension EventBodyRenderer {
     /// Renders a Stencil template against an agent-context dict, with
-    /// optional top-level `body`, `event`, and caller-provided context.
-    /// Returns the trimmed rendered string, or nil on render failure / empty
-    /// result. `body` and `event` default to nil for the session-start path.
+    /// optional top-level `body` and `event`. Returns the trimmed rendered
+    /// string, or nil on render failure / empty result.
     public static func renderAgentTemplate(
         _ template: String,
         agent: [String: Any],
         body: String? = nil,
-        event: [String: Any]? = nil,
-        additionalContext: [String: Any] = [:]
+        event: [String: Any]? = nil
     ) -> String? {
         guard !template.isEmpty else { return nil }
-        var context = additionalContext
-        context["agent"] = agent
+        var context: [String: Any] = ["agent": agent]
         if let body { context["body"] = body }
         if let event { context["event"] = event }
         let rendered: String

@@ -7,7 +7,6 @@ struct TeamInboxRequestHandlerTests {
     private static func makeHandler(
         inbox: TeamInbox,
         templateProvider: @escaping () -> String = { "" },
-        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
         automaticDeliveryOwner: (@Sendable (
             _ teamID: String,
             _ worktree: String,
@@ -24,7 +23,6 @@ struct TeamInboxRequestHandlerTests {
                 preferencesProvider: { TeamEventRoutingPreferences() },
                 templateProvider: templateProvider
             ),
-            sessionPromptRenderer: sessionPromptRenderer,
             automaticDeliveryOwner: automaticDeliveryOwner,
             agentRecords: agentRecords,
             agentReachability: agentReachability
@@ -518,32 +516,10 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test("""
-    @spec TEAM-3.3: Two user templates control agent-facing team text. At session start, the rendered `teamSessionPrompt` is the complete team context section delivered by the hook, with instruction files delivered as a separate section; empty, whitespace-only, or invalid templates suppress that context rather than revealing a hidden hard-coded primer, and render failures are logged. Queued inbox messages remain a separate transient session-start section. For automated-event delivery, the rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient, with the same render/empty/failure rules. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
+    @spec TEAM-3.3: The per-event `teamPrompt` user template controls agent-facing automated-event text. The rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient; empty, whitespace-only, or invalid templates store no prompt, and render failures are logged. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
     """)
-    func sessionStartUsesConfiguredPromptAsTheCompleteContext() throws {
-        let root = try Self.temporaryDirectory()
+    func automatedEventsRenderTheConfiguredEventPromptSeparately() throws {
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let handler = Self.makeHandler(
-            inbox: TeamInbox(rootDirectory: root),
-            sessionPromptRenderer: { _, viewer in
-                "Complete configured context for \(viewer.name)"
-            }
-        )
-
-        let output = try handler.hook(
-            callerWorktree: "/repo/.worktrees/alice",
-            runtime: .codex,
-            event: .sessionStart,
-            sessionID: "session-1",
-            paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
-        )
-
-        #expect(output.contains("Complete configured context for alice"))
-        #expect(!output.contains("Graftty team context"))
-        #expect(!output.contains("graftty team inbox"))
-
         let event = ChannelServerMessage.event(
             type: TeamChannelEvents.WireType.prStateChanged,
             attrs: ["to": "open"],
@@ -560,36 +536,10 @@ struct TeamInboxRequestHandlerTests {
         #expect(split.agentPrompt == "Event for alice: PR opened")
     }
 
-    @Test func suppressedSessionTemplateDoesNotRevealHiddenInstructions() throws {
-        let root = try Self.temporaryDirectory()
-        let repo = TeamTestFixtures.makeRepo(
-            path: "/repo",
-            displayName: "repo",
-            branches: ["main", "alice"]
-        )
-        let handler = Self.makeHandler(
-            inbox: TeamInbox(rootDirectory: root),
-            sessionPromptRenderer: { _, _ in nil }
-        )
-
-        let output = try handler.hook(
-            callerWorktree: "/repo/.worktrees/alice",
-            runtime: .codex,
-            event: .sessionStart,
-            sessionID: "suppressed-session",
-            paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
-        )
-
-        #expect(!output.contains("Graftty team context"))
-        #expect(!output.contains("graftty team inbox"))
-    }
-
     @Test("""
-    @spec AGENT-6.9: When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
+    @spec AGENT-6.9: When a SessionStart hook fires, with or without the legacy `--skill-managed` flag, the application shall render no team primer of its own, leaving team guidance to the provider plugin's Graftty skills, while still delivering any queued exact-agent messages as separate transient context.
     """)
-    func skillManagedSessionOmitsPrimerButKeepsQueuedMessages() throws {
+    func sessionStartOmitsPrimerButKeepsQueuedMessages() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
@@ -618,17 +568,17 @@ struct TeamInboxRequestHandlerTests {
             sessionID: "session-1",
             paneSessionName: nil,
             repos: [repo],
-            teamsEnabled: true,
-            skillManaged: true
+            teamsEnabled: true
         )
 
         #expect(!output.contains("Graftty team context"))
         #expect(!output.contains("graftty worktree remove"))
+        #expect(output.contains("`graftty-team` skill"))
         #expect(output.contains("queued before launch"))
     }
 
     @Test("""
-    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to confirm child reachability before relinquishing that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one agent per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
@@ -664,12 +614,9 @@ struct TeamInboxRequestHandlerTests {
                 teamsEnabled: true
             )
 
-            #expect(output.contains("graftty worktree add <name> --agent <codex|claude>"))
-            #expect(output.contains("Proactively delegate"))
-            #expect(output.contains("confirm that a top-level child"))
-            #expect(output.contains("stop working on that scope"))
-            #expect(output.contains("worktree's stable reply address"))
-            #expect(output.contains("graftty team send --stdin <address>"))
+            #expect(output.contains("graftty worktree add <name> --agent <codex|claude> --prompt-stdin"))
+            #expect(output.contains("`graftty-team` skill"))
+            #expect(output.contains("one agent per worktree"))
             #expect(output.contains("queued before launch"))
             #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\">"))
             #expect(!output.lowercased().contains("untrusted peer"))
@@ -681,7 +628,7 @@ struct TeamInboxRequestHandlerTests {
         }
     }
 
-    @Test("A non-owner SessionStart receives team context without consuming the owner's queue.")
+    @Test("A non-owner SessionStart receives the skill context without consuming the owner's queue.")
     func nonOwnerSessionStartDoesNotRenderOrAdvanceQueuedMessages() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(
@@ -720,7 +667,7 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
 
-        #expect(secondaryOutput.contains("Graftty team context"))
+        #expect(secondaryOutput.contains("`graftty-team` skill"))
         #expect(!secondaryOutput.contains("queued for the owner"))
         #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
         #expect(try inbox.worktreeWatermark(
@@ -1343,7 +1290,7 @@ struct TeamInboxRequestHandlerTests {
             repos: [repo], teamsEnabled: true
         )
 
-        #expect(output.contains("Graftty team context"))
+        #expect(output.contains("`graftty-team` skill"))
     }
 
     @Test("PostToolUse hook returns rendered context without firing delivery callbacks.")

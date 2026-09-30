@@ -1,30 +1,29 @@
 import Foundation
 
 public enum TeamHookRenderer {
+    /// SessionStart context: a pointer to the provider plugin's Graftty
+    /// skills, then the session's `GRAFTTY.md` instructions, then any inbox
+    /// messages queued before the session started.
     public static func sessionStart(
         runtime: TeamHookRuntime,
-        teamContext: String,
         instructions: String = "",
-        messages: [TeamInboxMessage] = [],
-        skillManaged: Bool = false
+        messages: [TeamInboxMessage] = []
     ) throws -> String {
-        switch runtime {
-        case .codex:
-            return try codexSessionStart(
-                teamContext: teamContext,
-                instructions: instructions,
-                messages: messages,
-                skillManaged: skillManaged
-            )
-        case .claude:
-            return try claudeSessionStart(
-                teamContext: teamContext,
-                instructions: instructions,
-                messages: messages,
-                skillManaged: skillManaged
-            )
+        _ = runtime
+        var sections = [skillGuidance]
+        if !instructions.isEmpty { sections.append(instructions) }
+        if !messages.isEmpty {
+            sections.append("""
+            Worktree inbox messages queued before this process started:
+
+            \(format(messages: messages))
+            """)
         }
+        let context = sections.joined(separator: "\n\n\n")
+        return try hookJSON(eventName: "SessionStart", additionalContext: context)
     }
+
+    static let skillGuidance = "Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes."
 
     public static func postToolUse(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
         switch runtime {
@@ -50,29 +49,6 @@ public enum TeamHookRenderer {
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
-    public static func codexSessionStart(
-        teamContext: String,
-        instructions: String = "",
-        messages: [TeamInboxMessage] = [],
-        skillManaged: Bool = false
-    ) throws -> String {
-        var sections: [String] = []
-        if skillManaged {
-            sections.append("Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes.")
-        }
-        if !teamContext.isEmpty { sections.append(teamContext) }
-        if !instructions.isEmpty { sections.append(instructions) }
-        if !messages.isEmpty {
-            sections.append("""
-            Worktree inbox messages queued before this process started:
-
-            \(format(messages: messages))
-            """)
-        }
-        let context = sections.joined(separator: "\n\n\n")
-        return try hookJSON(eventName: "SessionStart", additionalContext: context)
-    }
-
     public static func claudePostToolUse(messages: [TeamInboxMessage]) throws -> String {
         guard !messages.isEmpty else { return "{}" }
         let context = """
@@ -83,20 +59,6 @@ public enum TeamHookRenderer {
         \(format(messages: messages))
         """
         return try hookJSON(eventName: "PostToolUse", additionalContext: context)
-    }
-
-    public static func claudeSessionStart(
-        teamContext: String,
-        instructions: String = "",
-        messages: [TeamInboxMessage] = [],
-        skillManaged: Bool = false
-    ) throws -> String {
-        try codexSessionStart(
-            teamContext: teamContext,
-            instructions: instructions,
-            messages: messages,
-            skillManaged: skillManaged
-        )
     }
 
     public static func format(messages: [TeamInboxMessage]) -> String {

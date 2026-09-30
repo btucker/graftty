@@ -52,12 +52,12 @@ Choose worktree options as needed:
 - `--base <ref>` selects a locally resolvable starting revision. Default: repository default branch or `HEAD`. `--base HEAD` uses the caller's current commit, without uncommitted changes.
 - `--branch <branch>` overrides the normalized worktree name as the branch name.
 - `--branch <branch> --existing` uses an existing local branch in a **new directory**. It neither reopens a directory nor restarts an agent. Incompatible with `--base`.
-- `--prompt-stdin` requires `--agent codex` or `--agent claude`; incompatible with `--prompt`.
+- `--prompt-stdin` requires `--agent codex` or `--agent claude`; incompatible with `--prompt`. Use `--prompt` only for trusted literal text and `--prompt-stdin` for dynamic or untrusted text.
 - `--timeout <seconds>` waits for Git hooks and pane creation, not task completion. Default: 300; must be positive.
 
 Delegation within the user's requested repository work needs no separate confirmation. A child agent does not grant new authority.
 
-Save the returned `created worktree=... address=...`. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
+Save the returned `created worktree=... address=...`; the address is the child's stable reply address, and messages sent to it before the agent is ready are queued. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
 
 ### Create a worktree on another Mac
 
@@ -81,9 +81,13 @@ Open and select the target worktree in Graftty first; a new pane's shell waits f
 graftty pane add '<worktree-name>' --command 'codex -- "Check Graftty messages, then report ready for a task."'
 ```
 
-For Claude, replace `codex` with `claude`, keeping the initial prompt so a completed turn activates fallback inbox delivery. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
+For Claude, replace `codex` with `claude`. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
 
-Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane show '<worktree-name>:<id>' --lines 100`, using its 1-based pane ID. Use `team send` for messages; `pane send` types into the terminal and presses Return by default.
+Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane show '<worktree-name>:<id>' --lines 100`, using its 1-based pane ID. Use `team send` for messages. `graftty pane send` writes directly to the PTY with no inbox or consent layer and presses Return by default; run `graftty pane send --help` first.
+
+### Remove a worktree
+
+`graftty worktree remove <worktree> [--force]` removes a linked worktree but keeps its branch. Dirty files require `--force`.
 
 ## Send and reply
 
@@ -126,15 +130,18 @@ Replies arrive automatically through hooks; do not poll for completion. For deli
 - `graftty team inbox --json` reads unread messages and marks them read. Empty output does not mean a task finished.
 - `--all` fetches every matching page. `--history` and `--keep-unread` are incompatible.
 - `--worktree '<path-or-name>'`, `--repo '<repo-path>'`, or `--member '<name>'` selects diagnostic scope and peeks unless `--history` is supplied.
+- Never edit Graftty state files to change delivery positions; if advancement fails, rerun the supported inbox command.
 
 ## Durable agent instructions
 
 Use these files for durable role or workflow guidance:
 
 - `.graftty/GRAFTTY.md` applies to every worktree in the repository.
+- A linked worktree's key is its path relative to the main checkout's `.worktrees/`; the main checkout's key is the repository's default branch. Until Graftty can resolve that branch, the main checkout receives only `.graftty/GRAFTTY.md`.
 - Worktree key `<parent>/<leaf>` reads `.graftty/<parent>/GRAFTTY.md` and `.graftty/<parent>/<leaf>/GRAFTTY.md`. Each applies to its key and descendants.
 - Text above `## Private` is shared with peers as role context; text below reaches only matching worktrees.
 - For each relative path, the first readable regular file wins: Application Support, current worktree, then main checkout. Current bytes apply at the next session start; no commit is required.
+- To tune a new child, put its exact-worktree `GRAFTTY.md` where its first session can see it: Application Support, the main checkout, or the child's starting tree (for example, commit it and launch with `--base HEAD`).
 - Keep files concise. Create or modify them only when authorized.
 
 ## Transport
@@ -155,4 +162,4 @@ Attention recaps and Stop events use a private file handoff and do not need this
 2. Request narrowly scoped elevated permission to use the main socket, then retry the same command outside the sandbox.
 3. Do not delete or recreate the socket, change its permissions, or restart Graftty as a first response.
 
-If retry fails, continue socket diagnosis. Timeouts and connection-refused errors do not establish sandbox denial. Graftty owns native transports; leave queued messages for retry or compatibility fallback when native delivery is unavailable.
+If retry fails, continue socket diagnosis. Timeouts and connection-refused errors do not establish sandbox denial. Graftty owns native transports; leave queued messages for retry when native delivery is unavailable.
