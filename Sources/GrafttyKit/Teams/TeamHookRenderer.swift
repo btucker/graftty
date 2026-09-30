@@ -44,7 +44,7 @@ public enum TeamHookRenderer {
     public static func requestRecap() -> String {
         let payload = [
             "decision": "block",
-            "reason": "Before finishing, load the Graftty skill if available and run `graftty attention report --stdin` with a brief JSON recap: title, context, completed, next, emoji, emojiAlternatives, and optional need. Include a task-specific `emoji` even if an older cached skill omits it; use `emojiAlternatives` for up to three distinct task-related alternatives. If you already reported without an emoji, resend the recap with these fields. Then finish your response. If the command fails, say so in the response; Graftty will stop without asking again."
+            "reason": "Before finishing, load the Graftty skill if available and run `graftty attention report --stdin` with a brief JSON recap: title, context, completed, next, emoji, emojiAlternatives, and optional need. Include a task-specific `emoji` even if an older cached skill omits it; use `emojiAlternatives` for up to three distinct task-related alternatives. If you already reported without an emoji, resend the recap with these fields. Then finish your response. Do not mention the report in your response. If the command fails, say so in the response; Graftty will stop without asking again."
         ]
         let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -58,7 +58,7 @@ public enum TeamHookRenderer {
     ) throws -> String {
         var sections: [String] = []
         if skillManaged {
-            sections.append("Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents.")
+            sections.append("Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes.")
         }
         if !teamContext.isEmpty { sections.append(teamContext) }
         if !instructions.isEmpty { sections.append(instructions) }

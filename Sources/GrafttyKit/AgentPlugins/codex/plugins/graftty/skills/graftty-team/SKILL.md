@@ -27,6 +27,8 @@ Send existing agents questions or tasks with context, the requested result, and 
 
 ## Delegate work into a new worktree
 
+Each Graftty worktree maps to exactly one agent. Never create a worktree yourself: not with `git worktree add`, provider worktree tools such as Claude's `EnterWorktree`, worktree-isolated subagents, or any other skill or workflow, even when another skill recommends one. Work that needs its own worktree belongs to a new agent there, launched with `graftty worktree add` as shown below. Subagents that stay in your current worktree are fine.
+
 Proactively delegate bounded, independent work while continuing useful parent work. Avoid tiny, sequential, or overlapping tasks. Prefer a suitable existing agent.
 
 `graftty worktree add <name>` alone does not delegate the task. Launch a top-level agent with its task in the first prompt:

@@ -623,7 +623,7 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(!output.contains("Graftty team context"))
-        #expect(!output.contains("graftty worktree add"))
+        #expect(!output.contains("graftty worktree remove"))
         #expect(output.contains("queued before launch"))
     }
 

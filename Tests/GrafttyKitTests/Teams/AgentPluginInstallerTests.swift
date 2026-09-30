@@ -165,7 +165,7 @@ struct AgentPluginInstallerTests {
         try fileManager.createDirectory(at: temporary, withIntermediateDirectories: true)
         let source = temporary.appendingPathComponent("source")
         try fileManager.copyItem(
-            at: GrafttyKitResourceBundle.bundle.bundleURL.appendingPathComponent("AgentPlugins"),
+            at: try #require(AgentPluginInstaller.bundledResourceRoot()),
             to: source
         )
         let claudeRoot = source.appendingPathComponent("claude/plugins/graftty")
@@ -473,6 +473,42 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("recent verified progress"))
             #expect(skill.contains("task-specific"))
             #expect(skill.contains("only when the user must decide"))
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
+    """)
+    func materializedTeamSkillForbidsManualWorktrees() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-worktree-rule-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let skill = try String(contentsOf: destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/graftty-team/SKILL.md"
+            ))
+            #expect(skill.contains("exactly one agent"))
+            #expect(skill.contains("`git worktree add`"))
+            #expect(skill.contains("worktree-isolated subagents"))
+            #expect(skill.contains("even when another skill"))
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.43: When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
+    """)
+    func materializedRecapSkillKeepsReportSilent() throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-silent-skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let skill = try String(contentsOf: destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
+            ))
+            #expect(skill.contains("Do not mention the report"))
+            #expect(skill.contains("mention the failure in your final response"))
         }
     }
 

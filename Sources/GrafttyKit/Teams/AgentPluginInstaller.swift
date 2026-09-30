@@ -482,8 +482,11 @@ public struct AgentPluginInstaller: Sendable {
         let enabled: Bool
     }
 
-    private static func bundledResourceRoot() -> URL? {
-        GrafttyKitResourceBundle.bundle.bundleURL
+    static func bundledResourceRoot() -> URL? {
+        // `resourceURL` covers both the flat SwiftPM bundle and the
+        // `Contents/Resources` layout Swift Build produces.
+        let bundle = GrafttyKitResourceBundle.bundle
+        return (bundle.resourceURL ?? bundle.bundleURL)
             .appendingPathComponent("AgentPlugins", isDirectory: true)
     }
 

@@ -18,6 +18,19 @@ struct TeamHookRendererTests {
         }
     }
 
+    @Test("@spec AGENT-6.44: When a skill-managed agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.")
+    func managedSessionForbidsManualWorktrees() throws {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let json = try TeamHookRenderer.sessionStart(
+                runtime: runtime, teamContext: "", skillManaged: true
+            )
+            let context = try additionalContext(from: json)
+            #expect(context.contains("one agent per worktree"))
+            #expect(context.contains("`git worktree add`"))
+            #expect(context.contains("`graftty worktree add <name> --agent"))
+        }
+    }
+
     @Test("Stop recap request uses a blocking decision.")
     func recapRequestUsesStopDecision() throws {
         let json = try #require(JSONSerialization.jsonObject(
@@ -28,6 +41,16 @@ struct TeamHookRendererTests {
         #expect(json["reason"]?.contains("context") == true)
         #expect(json["reason"]?.contains("emojiAlternatives") == true)
         #expect(json["reason"]?.contains("already reported without an emoji") == true)
+    }
+
+    @Test("@spec AGENT-3.24: When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.")
+    func recapRequestKeepsReportSilent() throws {
+        let json = try #require(JSONSerialization.jsonObject(
+            with: Data(TeamHookRenderer.requestRecap().utf8)
+        ) as? [String: String])
+        let reason = try #require(json["reason"])
+        #expect(reason.contains("Do not mention the report"))
+        #expect(reason.contains("If the command fails, say so"))
     }
 
     @Test func codexSessionStartRendersAdditionalContext() throws {

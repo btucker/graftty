@@ -2754,6 +2754,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.
 
+**AGENT-3.24** When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -2879,6 +2881,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.41** When bundled plugin content changes in a development build, the application shall use its content version as the automatic-refresh checkpoint.
 
 **AGENT-6.42** When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+
+**AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
+
+**AGENT-6.44** When a skill-managed agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.
+
+**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
 
 ## CLI — CLI
 
