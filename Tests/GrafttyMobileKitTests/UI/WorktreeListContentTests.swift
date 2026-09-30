@@ -9,6 +9,23 @@ import GrafttyCommandUI
 @Suite("WorktreeListContent — extracted picker preserves callbacks + onListChanged")
 struct WorktreeListContentTests {
 
+    @Test("@spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.")
+    func projectDestinationHasItsOwnSelection() {
+        let project = SidebarProject(id: "repo", repositoryID: "repo", name: "Repo")
+        let step = ProjectStep(host: sampleHost(), project: project)
+        let root = WorktreePickerView(host: step.host, coordinator: RemoteConnectionCoordinator(),
+            onSelect: { _ in }, onSelectPane: { _ in })
+        let destination = WorktreePickerView(host: step.host, coordinator: root.coordinator,
+            onSelect: { _ in }, onSelectPane: { _ in }, project: step.project)
+        #expect(root.project == nil)
+        #expect(destination.project?.id == "repo")
+        let navigation = SidebarNavigationState(prefix: "project-route-\(UUID())")
+        navigation.showProject("different-project")
+        // Changing shared sidebar selection must not replace either stack level.
+        #expect(root.project == nil)
+        #expect(destination.project?.id == "repo")
+    }
+
     @Test("Navigation metadata accepts matching legacy snapshots and rejects missing or mismatched generations")
     func metadataMustMatchDisplayedRows() {
         let rows = [WorktreePanes(path: "old", displayName: "Feature", repoDisplayName: "Repo", displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)]

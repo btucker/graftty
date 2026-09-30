@@ -22,7 +22,7 @@ public final class BrowserProxy: @unchecked Sendable {
 
     public func start() async throws -> UInt16 {
         try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            queue.async { [self] in
                 guard !self.stopped else { continuation.resume(throwing: CancellationError()); return }
                 self.ready = continuation
                 self.listener.stateUpdateHandler = { [weak self] state in

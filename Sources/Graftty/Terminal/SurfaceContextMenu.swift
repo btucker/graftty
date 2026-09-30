@@ -23,6 +23,7 @@ import GhosttyKit
 ///   always current.
 extension SurfaceNSView {
     override func rightMouseDown(with event: NSEvent) {
+        userInteractionNotifier?()
         // Make sure the surface has focus before the menu appears so the
         // menu's action target (this view) is reachable via the responder
         // chain. Without this, the items can pop up but do nothing.

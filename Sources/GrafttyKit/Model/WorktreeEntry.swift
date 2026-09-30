@@ -65,6 +65,12 @@ public enum WorktreeState: String, Codable, Sendable {
     }
 }
 
+public enum WorktreeEmojiSource: String, Codable, Sendable {
+    case agent
+    case manual
+}
+
+/// @spec LAYOUT-2.76: When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.
 public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public let id: UUID
     /// The worktree's absolute path on disk. Mutable so the relocate
@@ -74,6 +80,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// the relocate cascade, callers treat this as write-once.
     public var path: String
     public var branch: String
+    /// User-editable, worktree-scoped identity shown in navigation and Attention.
+    public var emoji: String?
+    /// Nil for pre-migration state. Current identities record their source.
+    public var emojiSource: WorktreeEmojiSource?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -88,6 +98,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// (STATE-2.3), independent of the pane rows beneath it.
     public var attention: Attention?
     public var unseenAgentStop: SidebarAgentStop?
+    /// Last stop remains available after the user views its card, so its
+    /// first subsequent progress event can retire that viewed occurrence.
+    public private(set) var lastAgentStop: SidebarAgentStop?
+    /// Recent provider progress timestamps let viewed stopped cards retire
+    /// even after acknowledging them cleared `unseenAgentStop`.
+    public var agentProgressTimes: [String: Double]
     /// Pane-scoped attention slots keyed by pane `PaneSlotID`. Driven by
     /// shell-integration events (`COMMAND_FINISHED`) that are emitted by
     /// one specific pane — so the ping must land on that pane's sidebar
@@ -95,6 +111,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// different rows and do not fall back onto one another.
     public var paneAttention: [PaneSlotID: Attention]
     public var paneSessions: [PaneSlotID: PaneSessionID]
+    /// Last title and PWD for running panes, saved at application quit.
+    public var paneTitleMetadata: [PaneSlotID: PaneTitleMetadata]
     public var splitTree: SplitTree
     public var focusedPaneSlotID: PaneSlotID?
     /// The pane that owns worktree-level startup behavior such as a
@@ -122,12 +140,17 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.id = UUID()
         self.path = path
         self.branch = branch
+        self.emoji = nil
+        self.emojiSource = nil
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
         self.unseenAgentStop = nil
+        self.lastAgentStop = nil
+        self.agentProgressTimes = [:]
         self.paneAttention = [:]
         self.paneSessions = [:]
+        self.paneTitleMetadata = [:]
         self.splitTree = splitTree
         self.focusedPaneSlotID = nil
         self.primaryPaneSlotID = nil
@@ -140,8 +163,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, state, staleSince, attention, unseenAgentStop, paneAttention,
-             paneSessions, splitTree, primaryPaneSlotID,
+        case id, path, branch, emoji, emojiSource, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -160,10 +183,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.path = try container.decode(String.self, forKey: .path)
         self.branch = try container.decode(String.self, forKey: .branch)
+        self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
+        self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.unseenAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .unseenAgentStop)
+        self.lastAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .lastAgentStop)
+        self.agentProgressTimes = try container.decodeIfPresent([String: Double].self, forKey: .agentProgressTimes) ?? [:]
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
             forKey: .paneAttention
@@ -171,6 +198,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneSessions = try container.decodeIfPresent(
             [PaneSlotID: PaneSessionID].self,
             forKey: .paneSessions
+        ) ?? [:]
+        self.paneTitleMetadata = try container.decodeIfPresent(
+            [PaneSlotID: PaneTitleMetadata].self,
+            forKey: .paneTitleMetadata
         ) ?? [:]
         self.splitTree = try container.decode(SplitTree.self, forKey: .splitTree)
         self.focusedPaneSlotID = try container.decodeIfPresent(
@@ -195,6 +226,11 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// navigation (KBD-5) and any other consumer can't drift on scope.
     public var hasAttention: Bool {
         attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
+    }
+
+    public mutating func recordAgentStop(_ stop: SidebarAgentStop) {
+        unseenAgentStop = stop
+        lastAgentStop = stop
     }
 
     /// Single setter for attention: pane-scoped when `pane` is non-nil,
@@ -251,18 +287,51 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
     /// Finds attention by its persisted owner rather than re-resolving the
     /// provider's current pane, which may have moved since the prompt began.
-    public mutating func clearAgentStopAttention(providerSessionKey: String?) {
+    public mutating func clearAgentStopAttention(
+        providerSessionKey: String?,
+        progressedAt: Date = Date()
+    ) {
         guard let providerSessionKey else { return }
+        let timestamp = progressedAt.timeIntervalSinceReferenceDate
+        let previousProgress = agentProgressTimes[providerSessionKey]
+        let previousStop = lastAgentStop ?? unseenAgentStop
+        let resumedStop = previousStop.flatMap { stop -> SidebarAgentStop? in
+            stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey ? stop : nil
+        }
+        let shouldRecordProgress: Bool
+        if let previousProgress {
+            shouldRecordProgress = timestamp > previousProgress
+                && (resumedStop?.timestamp ?? -.infinity) > previousProgress
+        } else {
+            shouldRecordProgress = true
+        }
+        if shouldRecordProgress {
+            agentProgressTimes[providerSessionKey] = timestamp
+            if agentProgressTimes.count > 20,
+               let oldest = agentProgressTimes.min(by: { $0.value < $1.value })?.key {
+                agentProgressTimes.removeValue(forKey: oldest)
+            }
+        }
+        // Older saved stops have no owner. Since there is only one stop card
+        // per worktree, prefer clearing an ambiguous legacy card when any
+        // agent makes progress here rather than showing a false stopped state.
+        if let stop = unseenAgentStop,
+           stop.stoppedAt <= progressedAt,
+           (stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey) {
+            unseenAgentStop = nil
+        }
         if attention?.source == .agentStop,
-           attention?.providerSessionKey == providerSessionKey {
+           attention?.providerSessionKey == providerSessionKey,
+           (attention?.timestamp ?? .distantFuture) <= progressedAt {
             attention = nil
         }
         paneAttention = paneAttention.filter { _, attention in
             attention.source != .agentStop
                 || attention.providerSessionKey != providerSessionKey
+                || attention.timestamp > progressedAt
         }
     }
 
@@ -461,6 +530,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForStop() {
         state = .closed
         paneAttention.removeAll()
+        paneTitleMetadata.removeAll()
         clearAllPaneSessions()
     }
 

@@ -57,6 +57,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
+    @Published private(set) var attachmentFailures: [PaneSlotID: String] = [:]
     private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
@@ -178,6 +179,9 @@ final class TerminalManager: ObservableObject {
     /// keeps that interaction snappy. Entries are dropped lazily on miss
     /// (shell exited / respawned) and via `forgetSurfaceRuntimeState`.
     private var cachedShellPIDs: [PaneSlotID: Int32] = [:]
+    // Daemon logs outlive their shells. Do not reload a known-dead PID while
+    // an asynchronous replacement is starting and has not written its log yet.
+    private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -188,9 +192,8 @@ final class TerminalManager: ObservableObject {
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
     /// `GHOSTTY_ACTION_SET_TITLE` after filtering obvious env-assignment
     /// leaks via `PaneTitle.isLikelyEnvAssignment`; cleaned up on
-    /// `destroySurface`. Not persisted — these are ephemeral runtime
-    /// state that die with their shell. The sidebar reads this through
-    /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
+    /// `destroySurface`. Raw titles and PWDs are snapshotted at quit so a
+    /// surviving shell keeps the same title priority when reattached.
     var titles: [PaneSlotID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
@@ -209,6 +212,32 @@ final class TerminalManager: ObservableObject {
     /// frequently from shell integration; only display-equivalent changes
     /// trigger the sidebar-only invalidation source above.
     private var renderedTitles: [PaneSlotID: String] = [:]
+
+    var displayTitles: [PaneSlotID: String] { renderedTitles }
+
+    var paneTitleMetadata: [PaneSlotID: PaneTitleMetadata] {
+        let slots = Set(titles.keys).union(pwds.keys)
+        return Dictionary(uniqueKeysWithValues: slots.map { slot in
+            (slot, PaneTitleMetadata(title: titles[slot], pwd: pwds[slot]))
+        })
+    }
+
+    func restorePaneTitleMetadata(_ metadata: [PaneSlotID: PaneTitleMetadata]) {
+        var changed = false
+        for (slot, value) in metadata where renderedTitles[slot] == nil {
+            let title = value.title.flatMap(PaneTitle.sanitize)
+            let pwd = value.pwd
+            guard title != nil || pwd != nil else { continue }
+            if let title { titles[slot] = title }
+            if let pwd { pwds[slot] = pwd }
+            let display = PaneTitle.display(storedTitle: title, pwd: pwd)
+            if !display.isEmpty {
+                renderedTitles[slot] = display
+                changed = true
+            }
+        }
+        if changed { paneTitleInvalidations.schedule() }
+    }
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -444,6 +473,8 @@ final class TerminalManager: ObservableObject {
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
         ) else { return nil }
+        guard obsoleteShellPIDs[id] != pid else { return nil }
+        obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
         return pid
     }
@@ -688,7 +719,8 @@ final class TerminalManager: ObservableObject {
 
     /// Cold-start session-loss check (ZMX-7.1): if a rehydrated pane's
     /// zmx daemon is gone, the imminent `zmx attach` will create a fresh
-    /// daemon — treat the pane as fresh so the default command runs.
+    /// daemon. Drop the old pane name and treat the pane as fresh so the
+    /// default command runs.
     /// `sessionSnapshot` lets callers batch one `zmx list` across many
     /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
@@ -708,7 +740,22 @@ final class TerminalManager: ObservableObject {
         case nil:
             missing = launcher.isSessionMissing(name)
         }
-        if missing { clearRehydrated(terminalID) }
+        if missing {
+            // Prefer the newest spawn in the log over a possibly older cache.
+            if let previousPID = ZmxPIDLookup.shellPID(
+                logFile: launcher.logFile(forSession: name), sessionName: name
+            ) ?? cachedShellPIDs[terminalID] {
+                obsoleteShellPIDs[terminalID] = previousPID
+            }
+            cachedShellPIDs[terminalID] = nil
+            shellReadyFired.remove(terminalID)
+            clearRehydrated(terminalID)
+            titles.removeValue(forKey: terminalID)
+            pwds.removeValue(forKey: terminalID)
+            if renderedTitles.removeValue(forKey: terminalID) != nil {
+                paneTitleInvalidations.schedule()
+            }
+        }
     }
 
     /// Drop per-instantiation runtime state tied to the current libghostty
@@ -724,6 +771,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
+        obsoleteShellPIDs.removeValue(forKey: terminalID)
         paneClosed?(terminalID, zmxSessionName(for: terminalID))
     }
 
@@ -891,6 +939,10 @@ final class TerminalManager: ObservableObject {
     /// any queued launch command before default-command policy runs.
     func shellBecameReady(for terminalID: PaneSlotID) {
         guard shellReadyFired.insert(terminalID).inserted else { return }
+        // Readiness proves a new shell exists, even if its PID was reused.
+        if obsoleteShellPIDs.removeValue(forKey: terminalID) != nil {
+            cachedShellPIDs[terminalID] = nil
+        }
         if let input = pendingShellReadyInitialInput[terminalID] {
             let accepted = surfaces[terminalID]?.writeText(
                 input,
@@ -919,6 +971,7 @@ final class TerminalManager: ObservableObject {
     }
 
     private func didCreateSurface(for terminalID: PaneSlotID) {
+        attachmentFailures[terminalID] = nil
         evictedGridSizes.removeValue(forKey: terminalID)
     }
 
@@ -1039,6 +1092,37 @@ final class TerminalManager: ObservableObject {
         return true
     }
 
+    func recordAttachmentFailure(_ message: String, for handle: SurfaceHandle) {
+        guard handle.zmxSessionName != nil, surfaces[handle.terminalID] === handle else { return }
+        attachmentFailures[handle.terminalID] = message
+    }
+
+    func receiveSurfaceClosed(_ box: SurfaceUserdataBox) {
+        // A delayed close from the old attachment must not remove its retry.
+        guard surfaces[box.terminalID]?.ownsUserdata(box) == true else { return }
+        onSurfaceClosed?(box.terminalID)
+    }
+
+    @discardableResult
+    func retryAttachment(for terminalID: PaneSlotID) -> Bool {
+        guard attachmentFailures[terminalID] != nil,
+              let handle = surfaces[terminalID],
+              let sessionID = paneSessionIDs[terminalID] else { return false }
+        let path = paneWorktreePaths[terminalID] ?? handle.worktreePath
+        let wasFocused = focusedTerminalID == terminalID
+        evictSurface(terminalID: terminalID, forRetry: true)
+        guard createSurface(terminalID: terminalID, paneSessionID: sessionID,
+                            worktreePath: path) != nil else {
+            surfaces[terminalID] = handle
+            attachmentFailures[terminalID] = "Could not recreate the terminal view. Retry to try again."
+            return false
+        }
+        attachmentFailures[terminalID] = nil
+        objectWillChange.send()
+        if wasFocused { setFocus(terminalID) }
+        return true
+    }
+
     /// Soft destroy. Releases the libghostty surface (freeing scrollback
     /// + Metal layers via `SurfaceHandle.deinit`) and marks the leaf as
     /// rehydrated so a future surface creation re-attaches to the zmx
@@ -1046,13 +1130,14 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`, this preserves titles, PWDs, the
     /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
-    func evictSurface(terminalID: PaneSlotID) {
+    func evictSurface(terminalID: PaneSlotID, forRetry: Bool = false) {
         if let handle = surfaces.removeValue(forKey: terminalID) {
             let size = GridSize(handle.queryGridSize())
             if size.cols > 0 && size.rows > 0 {
                 evictedGridSizes[terminalID] = size
             }
-            handle.requestClose()
+            if forRetry { handle.disconnectAttachment() }
+            else { handle.requestClose() }
         }
         rehydratedSurfaces.insert(terminalID)
         if let scanner = portScanner {
@@ -1108,6 +1193,8 @@ final class TerminalManager: ObservableObject {
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
     private func forgetTrackingState(for terminalID: PaneSlotID) {
+        obsoleteShellPIDs[terminalID] = nil
+        attachmentFailures[terminalID] = nil
         if pendingShellReadyInitialInput[terminalID] != nil {
             completeInitialInputDelivery(for: terminalID, success: false)
         }

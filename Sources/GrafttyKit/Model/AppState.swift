@@ -138,14 +138,16 @@ public struct AppState: Codable, Sendable, Equatable {
     /// provider session, even if its pane mapping changed in the meantime.
     public mutating func clearAgentStopAttention(
         worktreePath: String,
-        providerSessionKey: String?
+        providerSessionKey: String?,
+        progressedAt: Date = Date()
     ) {
         guard let providerSessionKey else { return }
         for repoIdx in repos.indices {
             for wtIdx in repos[repoIdx].worktrees.indices
                 where repos[repoIdx].worktrees[wtIdx].path == worktreePath {
                 repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(
-                    providerSessionKey: providerSessionKey
+                    providerSessionKey: providerSessionKey,
+                    progressedAt: progressedAt
                 )
                 return
             }
@@ -184,6 +186,34 @@ public struct AppState: Codable, Sendable, Equatable {
             }
         }
         return nil
+    }
+
+    /// Snapshot only panes that still belong to running worktrees. Closed
+    /// panes must not revive an old process title when reopened later.
+    public mutating func capturePaneTitleMetadata(_ metadata: [PaneSlotID: PaneTitleMetadata]) {
+        for repoIndex in repos.indices {
+            for worktreeIndex in repos[repoIndex].worktrees.indices {
+                let worktree = repos[repoIndex].worktrees[worktreeIndex]
+                let saved: [(PaneSlotID, PaneTitleMetadata)] = worktree.state == .running
+                    ? worktree.splitTree.allLeaves.compactMap { slot in
+                        guard let value = metadata[slot] else { return nil }
+                        return (slot, value)
+                    }
+                    : []
+                repos[repoIndex].worktrees[worktreeIndex].paneTitleMetadata =
+                    Dictionary(uniqueKeysWithValues: saved)
+            }
+        }
+    }
+
+    public var savedPaneTitleMetadata: [PaneSlotID: PaneTitleMetadata] {
+        var metadata: [PaneSlotID: PaneTitleMetadata] = [:]
+        for repo in repos {
+            for worktree in repo.worktrees where worktree.state == .running {
+                metadata.merge(worktree.paneTitleMetadata) { _, latest in latest }
+            }
+        }
+        return metadata
     }
 
     public func repo(forWorktreePath path: String) -> RepoEntry? {

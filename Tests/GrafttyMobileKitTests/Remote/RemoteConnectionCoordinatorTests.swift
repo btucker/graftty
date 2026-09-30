@@ -19,6 +19,46 @@ import WebRTC
 @Suite("RemoteConnectionCoordinator — negotiate-on-demand, dedup, registry, eviction (W3 Task 2).", .serialized)
 struct RemoteConnectionCoordinatorTests {
 
+    @Test("@spec REMOTE-11.14: When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.", .timeLimit(.minutes(1)))
+    func explicitRetryBypassesCooldownAndSignsReplacement() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let offers = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, body in
+                if request.url?.path.hasSuffix(RemoteAccessProtocol.challengePath) == true {
+                    let probe = try JSONDecoder.iso8601().decode(SignalingChallengeRequest.self, from: body)
+                    let challenge = try SignalingChallengeResponse(
+                        hostDeviceID: host.remoteDeviceID!, clientDeviceID: probe.clientDeviceID,
+                        clientNonce: probe.clientNonce, hostNonce: Data(repeating: 1, count: 32),
+                        expiresAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 60),
+                        routes: [.init(kind: .lan, baseURL: host.baseURL)], signingKey: hostKey
+                    )
+                    return Self.httpResponseSuccess(for: request, data: try JSONEncoder.iso8601().encode(challenge))
+                }
+                let offer = try JSONDecoder.iso8601().decode(AuthenticatedSignalingOffer.self, from: body)
+                offers.increment()
+                if offers.count == 1 {
+                    #expect(offer.replacesExistingConnection != true)
+                } else {
+                    let key = try ClientIdentityStore(directory: dir).loadOrGenerateAndPersist()
+                    let publicKey = try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+                    #expect(offer.hasValidReplacementIntent(using: publicKey))
+                }
+                return Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
+            now: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(offers.count == 1)
+        #expect(await coordinator.connection(for: host) == nil)
+        #expect(offers.count == 1, "automatic polling must still respect the cooldown")
+        #expect(await coordinator.connection(for: host, replacingExistingConnection: true) == nil)
+        #expect(offers.count == 2, "Retry must issue a fresh signed offer immediately")
+    }
+
     // MARK: - Fast-nil for unpaired hosts
 
     @Test(.timeLimit(.minutes(1)))

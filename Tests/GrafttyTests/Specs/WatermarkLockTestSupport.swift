@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @testable import GrafttyKit
 
 /// Holds the inter-process worktree watermark lock from a child process
@@ -56,7 +57,16 @@ func holdWatermarkLock(
     let stdout = Pipe()
     holder.standardOutput = stdout
     try holder.run()
-    // Block until the child reports the lock is held.
+    // A child blocked before acquiring the lock must fail this test promptly,
+    // not leave the entire CI job parked in availableData indefinitely.
+    var descriptor = pollfd(fd: stdout.fileHandleForReading.fileDescriptor,
+                            events: Int16(POLLIN | POLLHUP), revents: 0)
+    let pollResult = poll(&descriptor, 1, 5_000)
+    guard pollResult > 0 else {
+        holder.terminate()
+        holder.waitUntilExit()
+        throw CocoaError(.fileReadUnknown)
+    }
     let readied = stdout.fileHandleForReading.availableData
     guard String(data: readied, encoding: .utf8)?.contains("locked") == true else {
         holder.terminate()

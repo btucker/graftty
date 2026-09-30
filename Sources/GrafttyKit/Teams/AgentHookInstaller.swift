@@ -461,7 +461,7 @@ public struct AgentHookInstaller: Sendable {
             if providerPluginsEnabled {
                 runtimeBlock = """
                 # The installed provider plugin owns lifecycle hooks and the
-                # graftty-team skill; this wrapper is compatibility-only.
+                # Graftty skills; this wrapper is compatibility-only.
                 "$real_binary" "$@"
                 """
             } else {

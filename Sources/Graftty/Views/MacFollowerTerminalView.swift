@@ -10,6 +10,7 @@ private final class FollowerDocumentView: NSView {
 /// Fits the authoritative native grid independently from the Mac pane's size.
 final class MacFollowerTerminalView: NSView {
     let terminalView: SurfaceNSView
+    var onFocusTerminal: (() -> Void)?
     let scrollView = NSScrollView()
     let scaledView = NSView()
     private let document = FollowerDocumentView()
@@ -65,6 +66,9 @@ final class MacFollowerTerminalView: NSView {
         document.addSubview(historyScaledView)
         document.addSubview(scaledView)
         scaledView.addSubview(terminalView)
+        terminalView.userInteractionNotifier = { [weak self] in
+            self?.onFocusTerminal?()
+        }
         addGestureRecognizer(magnificationGesture)
         terminalView.followerScrollHandler = { [weak self] event in
             guard let self, self.followerGrid != nil else { return false }

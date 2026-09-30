@@ -5,20 +5,23 @@ public enum TeamHookRenderer {
         runtime: TeamHookRuntime,
         teamContext: String,
         instructions: String = "",
-        messages: [TeamInboxMessage] = []
+        messages: [TeamInboxMessage] = [],
+        skillManaged: Bool = false
     ) throws -> String {
         switch runtime {
         case .codex:
             return try codexSessionStart(
                 teamContext: teamContext,
                 instructions: instructions,
-                messages: messages
+                messages: messages,
+                skillManaged: skillManaged
             )
         case .claude:
             return try claudeSessionStart(
                 teamContext: teamContext,
                 instructions: instructions,
-                messages: messages
+                messages: messages,
+                skillManaged: skillManaged
             )
         }
     }
@@ -38,12 +41,25 @@ public enum TeamHookRenderer {
         return "{}"
     }
 
+    public static func requestRecap() -> String {
+        let payload = [
+            "decision": "block",
+            "reason": "Before finishing, load the Graftty skill if available and run `graftty attention report --stdin` with a brief JSON recap: title, context, completed, next, emoji, emojiAlternatives, and optional need. Include a task-specific `emoji` even if an older cached skill omits it; use `emojiAlternatives` for up to three distinct task-related alternatives. If you already reported without an emoji, resend the recap with these fields. Then finish your response. If the command fails, say so in the response; Graftty will stop without asking again."
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
     public static func codexSessionStart(
         teamContext: String,
         instructions: String = "",
-        messages: [TeamInboxMessage] = []
+        messages: [TeamInboxMessage] = [],
+        skillManaged: Bool = false
     ) throws -> String {
         var sections: [String] = []
+        if skillManaged {
+            sections.append("Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents.")
+        }
         if !teamContext.isEmpty { sections.append(teamContext) }
         if !instructions.isEmpty { sections.append(instructions) }
         if !messages.isEmpty {
@@ -72,12 +88,14 @@ public enum TeamHookRenderer {
     public static func claudeSessionStart(
         teamContext: String,
         instructions: String = "",
-        messages: [TeamInboxMessage] = []
+        messages: [TeamInboxMessage] = [],
+        skillManaged: Bool = false
     ) throws -> String {
         try codexSessionStart(
             teamContext: teamContext,
             instructions: instructions,
-            messages: messages
+            messages: messages,
+            skillManaged: skillManaged
         )
     }
 

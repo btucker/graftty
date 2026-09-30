@@ -205,6 +205,7 @@ struct TeamHook: ParsableCommand {
             event: event,
             stdinJSON: stdinPayload
         )
+        let stopHookActive = stdinPayload["stop_hook_active"] as? Bool ?? false
 
         // TEAM-9.1
         if event == .stop, AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
@@ -222,6 +223,17 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        func stageAttentionProgress() {
+            try? AttentionFileHandoff().progress(
+                worktree: worktreePath,
+                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                runtime: runtime,
+                sessionID: resolvedSessionID
+            )
+        }
+        if event == .sessionStart || event == .userPromptSubmit {
+            stageAttentionProgress()
+        }
         if runtime == .claude,
            skillManaged,
            event == .sessionStart || event == .postToolUse || event == .stop,
@@ -243,6 +255,20 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
+        if event == .stop,
+           let action = try? AttentionFileHandoff().stop(
+                worktree: worktreePath,
+                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
+                    ?? resolvedSessionID.map { TeamAgentIdentity(runtime: runtime, nativeSessionID: $0).rawValue },
+                runtime: runtime,
+                sessionID: resolvedSessionID,
+                paneSessionName: paneSessionName,
+                stopHookActive: stopHookActive,
+                turnID: stdinPayload["turn_id"] as? String
+           ) {
+            print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
+            return
+        }
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
@@ -253,20 +279,34 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    skillManaged: skillManaged
+                    skillManaged: skillManaged,
+                    stopHookActive: stopHookActive
                 )
             )
             switch response {
             case .teamHookOutput(let output):
                 print(output)
-            case .error:
+            case .error, .serverBusy:
+                if event == .postToolUse || event == .postToolUseFailure {
+                    stageAttentionProgress()
+                }
                 print("{}")
-            case .serverBusy, .ok, .paneList, .paneShow, .teamList, .teamInbox,
-                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
+            case .ok, .paneList, .paneShow, .teamList, .teamInbox,
+                .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 print("{}")
             }
         } catch {
-            print("{}")
+            if event == .postToolUse || event == .postToolUseFailure {
+                stageAttentionProgress()
+            }
+            if event == .sessionStart, skillManaged,
+               let output = try? TeamHookRenderer.sessionStart(
+                   runtime: runtime, teamContext: "", skillManaged: true
+               ) {
+                print(output)
+            } else {
+                print("{}")
+            }
         }
     }
 
@@ -1389,7 +1429,30 @@ enum TeamPresenceCLI {
     }
 }
 
-private enum TeamMessageInput {
+enum AttentionReportIdentity {
+    struct UnmanagedAgent {
+        let agentID: String
+        let sessionID: String
+        let runtime: TeamHookRuntime
+    }
+
+    static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
+        let session: (TeamHookRuntime, String)?
+        if let id = environment["CODEX_SESSION_ID"] ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
+            session = (.codex, id)
+        } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
+            session = (.claude, id)
+        } else {
+            session = nil
+        }
+        guard let (runtime, sessionID) = session else { return nil }
+        return UnmanagedAgent(
+            agentID: TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue,
+            sessionID: sessionID,
+            runtime: runtime
+        )
+    }
+
     static func currentAgentID(worktreePath: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let explicit = environment["GRAFTTY_AGENT_ID"]
@@ -1406,6 +1469,12 @@ private enum TeamMessageInput {
             records: records,
             isReachable: TeamAgentReachability.isReachable
         )
+    }
+}
+
+private enum TeamMessageInput {
+    static func currentAgentID(worktreePath: String) -> String? {
+        AttentionReportIdentity.currentAgentID(worktreePath: worktreePath)
     }
 
     static func resolve(text: String?, stdin: Bool) throws -> String {
