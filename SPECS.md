@@ -20,6 +20,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.6** When the breadcrumb displays a selected worktree with an assigned emoji, the application shall show that emoji before its worktree name, using the selected remote snapshot's emoji without falling back to a local worktree's emoji.
 
+**LAYOUT-1.7** When the user selects a different worktree, the application shall record the visit in window-local history; Back and Forward shall traverse those visits without adding visits, with unavailable directions disabled.
+
+**LAYOUT-1.8** When the user opens another worktree after navigating Back, the application shall replace the forward history while retaining previously visited worktrees in the recent-worktrees dropdown.
+
+**LAYOUT-1.9** When the user clicks the breadcrumb, the application shall offer distinct recently visited worktrees in most-recent-first order, identify their repository and remote Mac when applicable, mark the current worktree, and select a chosen worktree through the existing selection flow.
+
+**LAYOUT-1.10** If a visited worktree is unavailable, then the application shall skip it in Back, Forward, and the recent-worktrees dropdown, and shall distinguish local and remote visits with the same filesystem path.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
