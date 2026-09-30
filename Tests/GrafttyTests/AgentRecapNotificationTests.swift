@@ -14,7 +14,7 @@ struct AgentRecapNotificationTests {
         #expect(AgentNotificationRouter.foregroundPresentationOptions(kind: nil).isEmpty)
     }
 
-    @Test("@spec NOTIF-1.7: When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate or older stopped-turn deliveries.")
+    @Test("@spec NOTIF-1.7: When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.")
     func recordingAStoppedRecapPostsOnce() {
         var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo",
             worktrees: [WorktreeEntry(path: "/repo/sidebar", branch: "sidebar")])])
@@ -47,5 +47,12 @@ struct AgentRecapNotificationTests {
         #expect(notifications[0].identifier == notifications[1].identifier)
         record(300, recap: nil)
         #expect(notifications.count == 2)
+        state.repos[0].worktrees[0].clearAgentStopAttention(
+            providerSessionKey: "codex:session:session", progressedAt: Date(timeIntervalSince1970: 400))
+        record(350, recap: recap)
+        #expect(notifications.count == 2)
+        #expect(state.repos[0].worktrees[0].unseenAgentStop == nil)
+        record(450, recap: recap)
+        #expect(notifications.count == 3)
     }
 }

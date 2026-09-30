@@ -1384,7 +1384,7 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
-    @spec NOTIF-1.8: When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second generic agent alert for that worktree in the same snapshot.
+    @spec NOTIF-1.8: When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
     """)
     func remoteRecapsUseTaskContent() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -1401,16 +1401,23 @@ struct RemoteMacsModelTests {
         model.onRemoteNotification = { events.append($0) }
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
-        func snapshot(time: Double?, userNotification: Bool = false) -> [WorktreePanes] {
+        func snapshot(time: Double?, userNotification: Bool = false,
+                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false) -> [WorktreePanes] {
             let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
                                                   recap: recap, paneSlotID: "slot") }
+            let prompt = PaneLayoutNode.leaf(sessionName: separatePane ? "other-pane" : "agent-pane", title: "Agent",
+                attentionText: userNotification ? "Check the preview" : time == nil ? nil : "Codex has a question", isBusy: false,
+                attentionSource: userNotification ? .userNotify : .agentStop,
+                attentionTimestamp: promptTime.map(Date.init(timeIntervalSince1970:)))
+            let layout = separatePane ? PaneLayoutNode.split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "agent-pane", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: prompt) : prompt
             return [WorktreePanes(path: "/repo/sidebar", displayName: "sidebar", repoDisplayName: "Repo",
                 displayBranch: "sidebar", state: .running, isMainCheckout: false, prBadge: nil,
-                stats: nil, attentionText: time == nil ? nil : "Codex has a question", attentionSource: .agentStop,
-                layout: .leaf(sessionName: "agent-pane", title: "Agent",
-                              attentionText: userNotification ? "Check the preview" : time == nil ? nil : "Codex has a question", isBusy: false,
-                              attentionSource: userNotification ? .userNotify : .agentStop),
-                sidebar: .init(id: "stable", projectID: "project", paneIDs: ["agent-pane": "slot"], unseenAgentStop: stop, emoji: "📥"))]
+                stats: nil, attentionText: worktreePrompt ? "Worktree requires permission" : nil,
+                attentionSource: .agentStop, attentionTimestamp: worktreePrompt ? promptTime.map(Date.init(timeIntervalSince1970:)) : nil,
+                layout: layout,
+                sidebar: .init(id: "stable", projectID: "project", paneIDs: ["agent-pane": "slot", "other-pane": "other-slot"], unseenAgentStop: stop, emoji: "📥"))]
         }
         registry.onPaneSnapshot(identity, snapshot(time: 10))
         #expect(events.isEmpty)
@@ -1429,6 +1436,16 @@ struct RemoteMacsModelTests {
         registry.onPaneSnapshot(identity, snapshot(time: 300, userNotification: true))
         #expect(events.count == 4)
         #expect(events.last?.kind == .userNotify)
+        registry.onPaneSnapshot(identity, snapshot(time: 300, promptTime: 400))
+        #expect(events.count == 5)
+        #expect(events.last?.paneID == "agent-pane")
+        registry.onPaneSnapshot(identity, snapshot(time: 300, promptTime: 200, separatePane: true))
+        #expect(events.count == 6)
+        #expect(events.last?.paneID == "other-pane")
+        registry.onPaneSnapshot(identity, snapshot(time: 300, promptTime: 200, worktreePrompt: true))
+        #expect(events.count == 7)
+        #expect(events.last?.title == "Worktree requires permission")
+        #expect(events.last?.paneID == nil)
     }
 
     @Test("""

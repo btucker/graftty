@@ -4685,6 +4685,9 @@ struct GrafttyApp: App {
                 runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
             )
         )
+        if let key = stop.providerSessionKey,
+           let progressedAt = appState.wrappedValue.worktree(forPath: callerPath)?.agentProgressTimes[key],
+           progressedAt > stop.timestamp { return }
         if let previous = appState.wrappedValue.worktree(forPath: callerPath)?.lastAgentStop {
             if previous.timestamp > stop.timestamp { return }
             if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey,

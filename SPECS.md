@@ -214,6 +214,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.92** When an available project's worktree is deleted, the application shall remove all of its retained Attention cards and queued banners while preserving cards for offline projects.
 
+**LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -978,9 +980,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate or older stopped-turn deliveries.
+**NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
 
-**NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second generic agent alert for that worktree in the same snapshot.
+**NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 

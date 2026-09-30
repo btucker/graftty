@@ -55,6 +55,10 @@ struct SidebarAttentionBannerTests {
         #expect(navigation.attentionBanner?.id == recap.id)
         navigation.dismissAttentionBanner(old)
         #expect(navigation.attentionBanner?.id == recap.id)
+        var delayed = recap
+        delayed.occurrence = item("stop", time: 15, worktree: "/wt").occurrence
+        navigation.updateAttentionItems([delayed])
+        #expect(navigation.attentionBanner?.occurrence == recap.occurrence)
         navigation.dismissAttentionBanner(recap)
         #expect(navigation.attentionBanner == nil)
         navigation.updateAttentionItems([old])
@@ -77,6 +81,33 @@ struct SidebarAttentionBannerTests {
         #expect(navigation.selectedAttentionID == incoming.id)
         #expect(navigation.rememberedWorktrees[project.id] == incoming.worktreeID)
         #expect(navigation.attentionItems(live: [], projects: [project]).map(\.id) == [incoming.id, existing.id])
+        #expect(navigation.attentionBanner == nil)
+    }
+
+    @Test("@spec LAYOUT-2.93: When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.")
+    func resolvedRequestsLeaveBannerQueue() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
+        navigation.updateAttentionItems([])
+        let pending = item("stable:stop", time: 10, worktree: "/wt")
+        navigation.updateAttentionItems([pending])
+        navigation.reconcile(worktrees: [], projects: [project], authoritativeProjectIDs: [])
+        #expect(navigation.attentionBanner?.id == pending.id)
+        let resumed = WorktreePanes(path: "/wt", displayName: "Task", repoDisplayName: "Project",
+            displayBranch: "task", state: .running, isMainCheckout: false, prBadge: nil,
+            stats: nil, attentionText: nil, layout: nil, sidebar: .init(id: "stable", projectID: "p"))
+        navigation.reconcile(worktrees: [resumed], projects: [project])
+        #expect(navigation.attentionBanner == nil)
+
+        let viewed = item("viewed", time: 20)
+        navigation.updateAttentionItems([viewed])
+        #expect(navigation.attentionBanner?.id == viewed.id)
+        navigation.opened(viewed)
+        #expect(navigation.attentionBanner == nil)
+
+        let dismissed = item("dismissed", time: 30)
+        navigation.updateAttentionItems([dismissed])
+        navigation.forget(dismissed.id)
         #expect(navigation.attentionBanner == nil)
     }
 
