@@ -72,11 +72,12 @@ public struct TeamReplyResolver {
             // The legacy send parser accepts XML-escaped addresses and prefers
             // literal worktree paths over agent suffixes. Require the stored
             // path itself and reject a suffix that names a different worktree.
-            guard repo.worktrees.contains(where: { $0.path == sender.worktree }) else {
+            let worktrees = repos.flatMap(\.worktrees)
+            guard worktrees.contains(where: { $0.path == sender.worktree }) else {
                 throw TeamInboxRequestError.recipientNotFound(name: sender.worktree, available: repo.worktrees.map(\.path))
             }
             address = sender.worktree + (suffix.map { "#" + $0 } ?? "")
-            guard address == sender.worktree || !repo.worktrees.contains(where: { $0.path == address }) else {
+            guard address == sender.worktree || !worktrees.contains(where: { $0.path == address }) else {
                 throw TeamReplyError.ambiguousSender
             }
         }

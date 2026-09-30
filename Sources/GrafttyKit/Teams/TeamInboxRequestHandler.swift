@@ -162,12 +162,9 @@ public final class TeamInboxRequestHandler {
         repos: [RepoEntry],
         teamsEnabled: Bool
     ) throws -> TeamInboxDelivery {
-        // Validate recipient exists up front so the CLI error message
-        // stays helpful (the dispatcher would silently no-op on an unknown
-        // recipient, returning nil — not a useful error for `team msg`).
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
-        let addressed = splitAgentAddress(recipient, in: context.team)
-        guard let recipientMember = context.team.memberNamed(addressed.member) else {
+        let addressed = splitAgentAddress(recipient, in: context.team, repos: repos)
+        guard let target = TeamLookup.recipient(named: addressed.member, from: context.team, in: repos) else {
             let available = context.team.members
                 .map(\.name)
                 .filter { $0 != context.sender.name }
@@ -183,10 +180,10 @@ public final class TeamInboxRequestHandler {
         if let explicitAgentID = addressed.agentID {
             do {
                 selectedAgent = try TeamAgentDirectory(
-                    records: agentRecords().filter { $0.teamID == teamID(context.team) },
+                    records: agentRecords().filter { $0.teamID == teamID(target.team) },
                     isReachable: agentReachability
                 ).resolve(
-                    worktreePath: recipientMember.worktreePath,
+                    worktreePath: target.member.worktreePath,
                     explicitAgentID: explicitAgentID
                 )
             } catch TeamAgentDirectoryError.explicitAgentNotFound(let id) {
@@ -199,12 +196,12 @@ public final class TeamInboxRequestHandler {
         }
         let senderIdentity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:))
 
-        // Validated above (teamContext + memberNamed), so the dispatcher
+        // Validated above against the same repo snapshot, so the dispatcher
         // cannot return nil here. Force-unwrap rather than re-throwing a
         // misleading `notInTeam`.
         let message = try dispatcher.dispatchTeamMessage(
             fromWorktree: callerWorktree,
-            to: addressed.member,
+            to: target.member.worktreePath,
             text: text,
             priority: priority,
             repos: repos,
@@ -214,7 +211,7 @@ public final class TeamInboxRequestHandler {
             recipientRuntime: selectedAgent?.runtime ?? addressed.runtime,
             recipientAgentID: selectedAgent?.id.rawValue
         )!
-        return TeamInboxDelivery(recipient: recipientMember, message: message)
+        return TeamInboxDelivery(recipient: target.member, message: message)
     }
 
     @discardableResult
@@ -812,15 +809,16 @@ public final class TeamInboxRequestHandler {
 
     private func splitAgentAddress(
         _ recipient: String,
-        in team: TeamView
+        in team: TeamView,
+        repos: [RepoEntry]
     ) -> AddressedRecipient {
-        let literal = splitLiteralAgentAddress(recipient, in: team)
-        if team.memberNamed(literal.member) != nil {
+        let literal = splitLiteralAgentAddress(recipient, in: team, repos: repos)
+        if TeamLookup.recipient(named: literal.member, from: team, in: repos) != nil {
             return literal
         }
         let unescaped = Self.unescapeXMLAttribute(recipient)
         guard unescaped != recipient else { return literal }
-        return splitLiteralAgentAddress(unescaped, in: team)
+        return splitLiteralAgentAddress(unescaped, in: team, repos: repos)
     }
 
     private func hookDeliverablePrefix(
@@ -850,37 +848,34 @@ public final class TeamInboxRequestHandler {
 
     private func splitLiteralAgentAddress(
         _ recipient: String,
-        in team: TeamView
+        in team: TeamView,
+        repos: [RepoEntry]
     ) -> AddressedRecipient {
         // Prefer an exact member/path match so existing branch names that
         // contain `#` remain valid. Canonical suffixes are recognized only
         // after a known absolute worktree path or convenience display name
         // plus a literal separator. Paths sort first naturally in most cases,
         // but explicit length ordering also handles names nested in paths.
-        if team.memberNamed(recipient) != nil {
+        if TeamLookup.recipient(named: recipient, from: team, in: repos) != nil {
             return AddressedRecipient(member: recipient, runtime: nil, agentID: nil)
         }
-        let candidates = team.members.flatMap { member in
-            [
-                (address: member.worktreePath, member: member.worktreePath),
-                (address: member.name, member: member.name),
-            ]
-        }.sorted { lhs, rhs in
-            lhs.address.count > rhs.address.count
+        let paths = repos.flatMap(\.worktrees).map { $0.path }
+        let candidates = (paths + team.members.map(\.name)).sorted { lhs, rhs in
+            lhs.count > rhs.count
         }
         for candidate in candidates {
-            let prefix = candidate.address + "#"
+            let prefix = candidate + "#"
             guard recipient.hasPrefix(prefix) else { continue }
             let suffix = String(recipient.dropFirst(prefix.count))
             if let runtime = TeamHookRuntime(rawValue: suffix) {
                 return AddressedRecipient(
-                    member: candidate.member,
+                    member: candidate,
                     runtime: runtime,
                     agentID: nil
                 )
             }
             return AddressedRecipient(
-                member: candidate.member,
+                member: candidate,
                 runtime: nil,
                 agentID: suffix.isEmpty ? nil : suffix
             )

@@ -2114,7 +2114,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.1** The application shall provide a `graftty team` CLI group with direct-message, broadcast, inbox, and member-list commands. Direct-message and broadcast commands shall accept message text from standard input via `--stdin`.
 
-**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) the calling worktree has no team, (b) `<member-name>` is not a teammate of the caller, or (c) no non-empty body is supplied. In case (b) the error shall list the current teammates' member names.
+**TEAM-4.2** When `graftty team send [--urgent] [--stdin] <address> [text]` is invoked, the application shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, resolve short member names within the caller's team or canonical worktree paths across tracked repositories, and write a `team_message` row in the recipient repository's inbox with the caller's member name and supplied body. If the caller has no team, the recipient cannot be resolved, or no non-empty body is supplied, then the CLI shall exit non-zero with a stderr message; unresolved-recipient errors shall list the caller's current teammates.
 
 **TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if the calling worktree has no team.
 
@@ -2133,6 +2133,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-4.10** When an unread team inbox read spans pages, the application shall return the oldest rows first from a fixed upper snapshot so only displayed rows are eligible for advancement and later arrivals remain unread.
 
 **TEAM-4.11** When a nonempty unread team inbox response lacks the fixed-snapshot capability, the CLI shall reject it before output or advancement rather than risk misordered or silently truncated delivery.
+
+**TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
 ### TEAM-5.x — `team_*` Inbox Events
 

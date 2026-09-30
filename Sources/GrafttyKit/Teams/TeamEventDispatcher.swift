@@ -24,7 +24,8 @@ public final class TeamEventDispatcher {
 
     /// Writes a single `team_message` row addressed to the named recipient.
     /// No-ops (silently) when teams are disabled, the sender's worktree is
-    /// not in a team, or the recipient is not a teammate.
+    /// not in a team, or the recipient cannot be resolved. Canonical paths
+    /// may target a different repository; names remain team-local.
     @discardableResult
     public func dispatchTeamMessage(
         fromWorktree senderWorktreePath: String,
@@ -41,13 +42,16 @@ public final class TeamEventDispatcher {
         guard teamsEnabled else { return nil }
         guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
               let senderMember = team.members.first(where: { $0.worktreePath == senderWorktreePath }),
-              let recipientMember = team.memberNamed(recipientName)
+              let target = TeamLookup.recipient(named: recipientName, from: team, in: repos)
         else { return nil }
 
+        let recipientMember = target.member
+
         return try inbox.appendMessage(
-            teamID: TeamLookup.id(of: team),
+            teamID: TeamLookup.id(of: target.team),
+            // Native peer labels use this display name to identify the sender.
             teamName: team.repoDisplayName,
-            repoPath: team.repoPath,
+            repoPath: target.team.repoPath,
             from: TeamInboxEndpoint(
                 member: senderMember.name,
                 worktree: senderMember.worktreePath,

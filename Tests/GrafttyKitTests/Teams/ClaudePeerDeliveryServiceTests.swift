@@ -315,6 +315,41 @@ struct ClaudePeerDeliveryServiceTests {
         await bridge.close()
     }
 
+    @Test("Cross-repository native delivery identifies the sender's team and consumes the recipient's inbox")
+    func crossRepositoryDeliveryPreservesSenderLabel() async throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let repos = [
+            TeamTestFixtures.makeRepo(path: "/source", displayName: "source", branches: ["main"]),
+            RepoEntry(path: fixture.teamID, displayName: "target", worktrees: [
+                WorktreeEntry(path: fixture.teamID, branch: "main"),
+                WorktreeEntry(path: fixture.worktree, branch: "feature"),
+            ]),
+        ]
+        let dispatcher = TeamEventDispatcher(
+            inbox: fixture.inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let message = try #require(try dispatcher.dispatchTeamMessage(
+            fromWorktree: "/source", to: fixture.worktree,
+            text: "cross repository brief", priority: .normal,
+            repos: repos, teamsEnabled: true,
+            senderRuntime: .codex, senderAgentID: "codex-0123456789ab"
+        ))
+        #expect(message.repoPath == fixture.teamID)
+        #expect(try fixture.inbox.messages(teamID: "/source").isEmpty)
+
+        await fixture.service.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
+        let call = try #require(await fixture.client.calls.first)
+        #expect(call.senderName == "source/main#codex-0123456789ab")
+        #expect(call.body.contains("/source#codex-0123456789ab"))
+        #expect(call.body.contains("cross repository brief"))
+        #expect(try fixture.inbox.worktreePendingMessages(
+            teamID: fixture.teamID, recipientWorktree: fixture.worktree
+        ).isEmpty)
+    }
+
     @Test("Native reply listener failure preserves delivery with the message-ID reply command")
     func unavailableNativeBridgeKeepsCLIReply() async throws {
         let bridge = ClaudePeerReplyBridge { _, _, _ in .ok }
