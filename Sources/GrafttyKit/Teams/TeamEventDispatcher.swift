@@ -49,7 +49,8 @@ public final class TeamEventDispatcher {
 
         return try inbox.appendMessage(
             teamID: TeamLookup.id(of: target.team),
-            teamName: target.team.repoDisplayName,
+            // Native peer labels use this display name to identify the sender.
+            teamName: team.repoDisplayName,
             repoPath: target.team.repoPath,
             from: TeamInboxEndpoint(
                 member: senderMember.name,

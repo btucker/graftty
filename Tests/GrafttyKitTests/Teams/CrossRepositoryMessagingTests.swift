@@ -3,7 +3,7 @@ import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec TEAM-4.12: When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.")
+@Suite("@spec TEAM-4.12: When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.")
 struct CrossRepositoryMessagingTests {
     private static func handler(
         inbox: TeamInbox,
@@ -45,7 +45,7 @@ struct CrossRepositoryMessagingTests {
             repos: repos, teamsEnabled: true
         )
         #expect(delivery.recipient.worktreePath == target)
-        #expect(delivery.message.team == "target")
+        #expect(delivery.message.team == "source")
         #expect(delivery.message.repoPath == "/target")
         #expect(delivery.message.from.worktree == "/source")
         #expect(delivery.message.from.member == "main")

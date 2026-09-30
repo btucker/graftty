@@ -2132,7 +2132,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.11** When a nonempty unread team inbox response lacks the fixed-snapshot capability, the CLI shall reject it before output or advancement rather than risk misordered or silently truncated delivery.
 
-**TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
+**TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
 ### TEAM-5.x — `team_*` Inbox Events
 
