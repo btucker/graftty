@@ -485,12 +485,14 @@ public struct AgentPluginInstaller: Sendable {
         let enabled: Bool
     }
 
-    static func bundledResourceRoot() -> URL? {
-        // `resourceURL` covers both the flat SwiftPM bundle and the
-        // `Contents/Resources` layout Swift Build produces.
-        let bundle = GrafttyKitResourceBundle.bundle
-        return (bundle.resourceURL ?? bundle.bundleURL)
-            .appendingPathComponent("AgentPlugins", isDirectory: true)
+    /// SwiftPM's flat bundle keeps resources at its root, but Foundation
+    /// reports its `Resources` subdirectory (the web assets) as
+    /// `resourceURL`; Swift Build nests them under `Contents/Resources`.
+    /// Use whichever location actually holds the plugins.
+    static func bundledResourceRoot(in bundle: Bundle = GrafttyKitResourceBundle.bundle) -> URL? {
+        [bundle.resourceURL, bundle.bundleURL]
+            .compactMap { $0?.appendingPathComponent("AgentPlugins", isDirectory: true) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private static func describe(_ error: Error) -> String {

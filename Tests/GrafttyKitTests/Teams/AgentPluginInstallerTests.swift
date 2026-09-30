@@ -476,6 +476,31 @@ struct AgentPluginInstallerTests {
         }
     }
 
+    @Test("Bundled plugin resources resolve in both flat and Contents/Resources bundle layouts.")
+    func bundledResourceRootHandlesBothBundleLayouts() throws {
+        let fileManager = FileManager.default
+        let temporary = fileManager.temporaryDirectory
+            .appendingPathComponent("graftty-bundle-layouts-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: temporary) }
+        // Flat SwiftPM bundle: resources at the root beside a `Resources`
+        // directory, which Foundation reports as the bundle's resourceURL.
+        let flat = temporary.appendingPathComponent("Flat.bundle")
+        let deep = temporary.appendingPathComponent("Deep.bundle")
+        for directory in [
+            flat.appendingPathComponent("AgentPlugins"),
+            flat.appendingPathComponent("Resources"),
+            deep.appendingPathComponent("Contents/Resources/AgentPlugins"),
+        ] {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        for bundleURL in [flat, deep] {
+            let bundle = try #require(Bundle(url: bundleURL))
+            let root = try #require(AgentPluginInstaller.bundledResourceRoot(in: bundle))
+            #expect(fileManager.fileExists(atPath: root.path))
+            #expect(root.lastPathComponent == "AgentPlugins")
+        }
+    }
+
     @Test("""
     @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
     """)
