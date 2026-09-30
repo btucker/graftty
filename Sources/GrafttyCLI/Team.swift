@@ -175,7 +175,9 @@ struct TeamHook: ParsableCommand {
     @Option(name: [.customLong("session-id"), .customLong("session")], help: "Stable runtime session identifier")
     var sessionID: String?
 
-    @Flag(name: .customLong("skill-managed"), help: "Suppress legacy team primer because the provider plugin supplies the Graftty skill")
+    /// AGENT-6.48: the provider plugins pass this flag; hooks from sessions
+    /// launched by an older Graftty omit it. Both are handled identically.
+    @Flag(name: .customLong("skill-managed"), help: .hidden)
     var skillManaged = false
 
     func validate() throws {
@@ -235,7 +237,6 @@ struct TeamHook: ParsableCommand {
             stageAttentionProgress()
         }
         if runtime == .claude,
-           skillManaged,
            event == .sessionStart || event == .postToolUse || event == .stop,
            let resolvedSessionID {
             updateClaudeNativePresence(
@@ -279,7 +280,6 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    skillManaged: skillManaged,
                     stopHookActive: stopHookActive
                 )
             )
@@ -290,24 +290,35 @@ struct TeamHook: ParsableCommand {
                 if event == .postToolUse || event == .postToolUseFailure {
                     stageAttentionProgress()
                 }
-                print("{}")
+                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             case .ok, .paneList, .paneShow, .teamList, .teamInbox,
                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-                print("{}")
+                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
         } catch {
             if event == .postToolUse || event == .postToolUseFailure {
                 stageAttentionProgress()
             }
-            if event == .sessionStart, skillManaged,
-               let output = try? TeamHookRenderer.sessionStart(
-                   runtime: runtime, teamContext: "", skillManaged: true
-               ) {
-                print(output)
-            } else {
-                print("{}")
-            }
+            print(Self.unrenderedHookOutput(runtime: runtime, event: event))
         }
+    }
+
+    /// AGENT-6.49: hook output when Graftty could not render the hook. The
+    /// SessionStart skill guidance is the only Graftty context a session
+    /// receives, so keep it when the app is unreachable, busy, or failing —
+    /// but only inside a Graftty terminal. The plugins are user-global, and
+    /// agents started elsewhere must not get Graftty's worktree rules.
+    static func unrenderedHookOutput(
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        guard event == .sessionStart,
+              environment["GRAFTTY_SOCK"]?.isEmpty == false,
+              let output = try? TeamHookRenderer.sessionStart(runtime: runtime) else {
+            return "{}"
+        }
+        return output
     }
 
     private func updateClaudeNativePresence(
@@ -1114,175 +1125,27 @@ enum TeamCodexAppServerCore {
     }
 }
 
+/// AGENT-6.47: compatibility stub for Claude sessions launched by an older
+/// Graftty, whose inline `--settings` Stop hooks still spawn
+/// `graftty team watch-inbox claude`. The provider plugins deliver inbox
+/// messages natively now, so the watcher exits at once without output.
 struct TeamWatchInbox: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "watch-inbox",
-        abstract: "Long-running inbox watcher; exits 2 on a new directed message (used by Claude asyncRewake)."
+        abstract: "Removed; accepted so sessions from older Graftty versions exit cleanly.",
+        shouldDisplay: false
     )
 
-    @Argument(help: "Runtime: codex or claude")
-    var runtime: String
+    @Argument(parsing: .allUnrecognized)
+    var ignoredArguments: [String] = []
 
     func run() throws {
-        guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
-            throw ValidationError("runtime must be one of: codex, claude")
-        }
-
-        // Hook payload is JSON on stdin: { "session_id": "...", "cwd": "..." }.
-        // Read to EOF rather than `availableData` so the runtime's write
-        // doesn't hit EPIPE if the payload is delivered in chunks; both
-        // fields are best-effort, and we no-op silently if cwd isn't a
-        // team worktree since wrapper hooks call us unconditionally.
-        let stdinData = FileHandle.standardInput.readDataToEndOfFile()
-        let payload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
-
-        // TEAM-9.1
-        if AgentStopHookFilter.isSubagentStop(stdinJSON: payload) {
-            return
-        }
-
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
-            return
-        }
-        let teamID = TeamLookup.id(of: resolved.team)
-        let presenceStorage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
-        let records = try presenceStorage.listAll()
-        let resolver = TeamDeliveryOwnershipResolver(
-            records: { records },
-            liveness: TeamWatchInboxDeliveryLiveness()
-        )
-        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
-            env: ProcessInfo.processInfo.environment
-        )
-        let decision = TeamWatchInboxOwnership.decision(
-            runtime: runtimeValue,
-            hookPayloadSessionID: payload["session_id"] as? String,
-            fallbackSessionID: { UUID().uuidString },
-            teamID: teamID,
-            worktree: resolved.worktreePath,
-            paneSessionName: paneSessionName,
-            resolver: resolver
-        )
-
-        let inboxRoot = AppState.defaultDirectory
-            .appendingPathComponent("team-inbox", isDirectory: true)
-        let pidRoot = TeamPresenceStorage.defaultRoot()
-
-        // The claim path skips rows pinned to other agents, so the watcher
-        // must know this session's own canonical identity: the wrapper's
-        // exported nonce, else the presence record it matches, else the
-        // canonical hash of the native session ID (the same derivation the
-        // hook and send paths use).
-        let hookSessionID = payload["session_id"] as? String
-        let inheritedIdentity = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"]
-            .flatMap(TeamAgentIdentity.init(rawValue:))
-        let watcherAgentID = (inheritedIdentity?.runtime == runtimeValue
-            ? inheritedIdentity?.rawValue
-            : nil)
-            ?? TeamAgentSessionIdentityResolver.agentID(
-                records: records,
-                teamID: teamID,
-                worktree: resolved.worktreePath,
-                runtime: runtimeValue,
-                sessionID: hookSessionID,
-                paneSessionName: paneSessionName
-            )
-            ?? hookSessionID.map {
-                TeamAgentIdentity(runtime: runtimeValue, nativeSessionID: $0).rawValue
-            }
-
-        let outcome = WatcherOutcome()
-        guard let watcher = Self.makeWatcherIfOwner(decision: decision, makeWatcher: {
-            InboxWatcher(
-                sessionID: decision.sessionID,
-                recipient: .init(
-                    member: resolved.memberName,
-                    worktree: resolved.worktreePath,
-                    runtime: runtimeValue
-                ),
-                agentID: watcherAgentID,
-                teamID: teamID,
-                inboxRootDirectory: inboxRoot,
-                outcome: outcome,
-                pidFileRoot: pidRoot
-            )
-        }) else {
-            return
-        }
-
-        Task.detached { await watcher.runUntilSignal() }
-
-        // Block synchronously waiting for the watcher to resolve, then
-        // bridge the outcome back to a real process exit. The internal
-        // timeout matches Claude's asyncRewake ceiling and is normal,
-        // silent teardown if this process wins that race.
-        let semaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var capturedExit: Int32 = 0
-        nonisolated(unsafe) var capturedStderr = ""
-        Task.detached {
-            let result = await Self.waitForOutcome(outcome, timeout: 86_400)
-            capturedExit = result.exitCode
-            capturedStderr = result.stderr
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        Self.writeToStderr(capturedStderr)
-        Foundation.exit(capturedExit)
+        Self.drainHookPayload(.standardInput)
     }
 
-    static func waitForOutcome(
-        _ outcome: WatcherOutcome,
-        timeout: TimeInterval
-    ) async -> WatcherOutcome.Result {
-        do {
-            return try await outcome.wait(timeout: timeout)
-        } catch WatcherOutcome.WaitError.timeout {
-            return WatcherOutcome.Result(exitCode: 0, stderr: "")
-        } catch {
-            return WatcherOutcome.Result(
-                exitCode: 1,
-                stderr: "watch-inbox wait failed: \(error)\n"
-            )
-        }
-    }
-
-    @discardableResult
-    static func writeToStderr(
-        _ text: String,
-        fileDescriptor: Int32 = STDERR_FILENO
-    ) -> Bool {
-        guard !text.isEmpty else { return true }
-
-        // A long-lived asyncRewake watcher may outlive the hook process that
-        // owns its stderr pipe. Disable SIGPIPE for this descriptor, then use
-        // the POSIX writer so EPIPE/EBADF becomes a discarded Swift error
-        // instead of an uncatchable NSFileHandleOperationException.
-        _ = Darwin.fcntl(fileDescriptor, F_SETNOSIGPIPE, 1)
-        do {
-            try SocketIO.writeAll(fd: fileDescriptor, string: text)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    static func makeWatcherIfOwner<Watcher>(
-        decision: TeamWatchInboxOwnershipDecision,
-        makeWatcher: () throws -> Watcher
-    ) rethrows -> Watcher? {
-        guard decision.shouldArmWatcher else { return nil }
-        return try makeWatcher()
-    }
-}
-
-private struct TeamWatchInboxDeliveryLiveness: TeamDeliveryLivenessChecking {
-    func isLivePaneSession(_ sessionName: String) -> Bool {
-        !sessionName.isEmpty
-    }
-
-    func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
-        ProcessIdentityReader.startTimeMicroseconds(ofPID: pid)
+    /// Drains the hook payload so the runtime's stdin write never hits EPIPE.
+    static func drainHookPayload(_ stdin: FileHandle) {
+        _ = stdin.readDataToEndOfFile()
     }
 }
 
@@ -1354,18 +1217,15 @@ struct SyncCodexHome: ParsableCommand {
     )
 
     func run() throws {
-        let cliPath = Bundle.main.executablePath ?? CommandLine.arguments[0]
         let mirror = CodexHomeMirror(
             sourceDirectory: CodexHomeMirror.defaultSourceDirectory(),
-            mirrorDirectory: CodexHomeMirror.defaultMirrorDirectory(),
-            grafttyCLIPath: cliPath,
-            grafttyHooksEnabled: ProcessInfo.processInfo.environment["GRAFTTY_PROVIDER_PLUGINS"] != "1"
+            mirrorDirectory: CodexHomeMirror.defaultMirrorDirectory()
         )
         try mirror.rebuild()
     }
 }
 
-/// Helpers shared by `team register` / `team unregister` / `team watch-inbox`.
+/// Helpers shared by `team register` / `team unregister` / `team hook`.
 /// Presence ownership and inbox delivery use the canonical worktree path;
 /// the member name is display-only compatibility metadata.
 /// Returns nil when the cwd is not in a tracked, team-enabled worktree

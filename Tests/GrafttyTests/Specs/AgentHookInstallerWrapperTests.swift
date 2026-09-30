@@ -5,76 +5,10 @@ import Darwin
 
 @Suite("AgentHookInstaller — wrapper script shapes", .serialized)
 struct AgentHookInstallerWrapperTests {
-    @Test("@spec TEAM-IDLE-1.2: When the Claude wrapper runs with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the application shall exec `claude --settings '<inline JSON>'` so graftty's hooks layer additively over the user's settings.")
-    func claudeWrapperUsesInlineSettings() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .claude,
-            wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
-        )
-
-        // Inline JSON includes lifecycle hooks plus explicit attention signals.
-        #expect(script.contains("--settings"))
-        #expect(script.contains("\"SessionStart\""))
-        #expect(script.contains("\"PermissionRequest\""))
-        #expect(script.contains("\"PreToolUse\""))
-        #expect(script.contains("\"UserPromptSubmit\""))
-        #expect(script.contains("\"PostToolUse\""))
-        #expect(script.contains("\"PostToolUseFailure\""))
-        #expect(script.contains("\"Stop\""))
-        #expect(script.contains("graftty team hook claude session-start"))
-        #expect(script.contains("graftty team hook claude permission-request"))
-        #expect(script.contains("graftty team hook claude pre-tool-use"))
-        #expect(script.contains("\"timeout\":2"))
-
-        // Foreground child: the wrapper keeps a post-runtime cleanup phase.
-        #expect(!script.contains("trap"))
-        #expect(script.contains("'/usr/local/bin/graftty' team unregister --runtime claude"))
-
-        // No on-disk settings file path is referenced.
-        #expect(!script.contains("claude-settings.json"))
-    }
-
-    @Test("Claude wrapper falls through to plain claude when GRAFTTY_DISABLE_AGENT_HOOKS=1.")
-    func claudeWrapperRespectsDisable() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .claude,
-            wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
-        )
-        #expect(script.contains("GRAFTTY_DISABLE_AGENT_HOOKS"))
-        // Both branches run the real binary in the foreground, not as a
-        // background child and not via exec.
-        #expect(script.contains(#""$real_binary" --settings"#))
-        #expect(script.contains(#""$real_binary" "$@""#))
-        #expect(!script.contains(" ) &"))
-        #expect(!script.contains("exec "))
-    }
-
-    @Test("@spec TEAM-IDLE-1.3: Claude wrapper Stop hook spawns the asyncRewake watcher.")
-    func claudeWrapperStopIncludesWatcher() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .claude,
-            wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
-        )
-        #expect(script.contains("graftty team hook claude stop"))
-        #expect(script.contains("graftty team watch-inbox claude"))
-        #expect(script.contains("\"asyncRewake\":true"))
-    }
-
     @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before launch.")
     func codexWrapperSetsCodexHome() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "codex",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -346,15 +280,13 @@ struct AgentHookInstallerWrapperTests {
         #expect(run.terminationStatus == 0)
         #expect(run.didSync)
         #expect(run.forwardedCodexHome == run.durableCodexHome)
-        #expect(run.standardError.contains("starting without Graftty's managed hook configuration"))
+        #expect(run.standardError.contains("starting with the durable Codex home instead"))
     }
 
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "codex",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -404,10 +336,8 @@ struct AgentHookInstallerWrapperTests {
     @spec TEAM-10.14: When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
     """)
     func codexWrapperResolvesNativeBinaryForAppServer() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "codex",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -418,21 +348,16 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains(#""$real_binary" --enable hooks --remote"#))
     }
 
-    @Test(
-        "@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register a PID whose lifetime covers the foreground runtime process, not the short-lived registration helper PID.",
-        arguments: [TeamHookRuntime.claude, .codex]
-    )
-    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch(runtime: TeamHookRuntime) {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: runtime,
+    @Test("@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register a PID whose lifetime covers the foreground runtime process, not the short-lived registration helper PID.")
+    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch() {
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: runtime.rawValue,
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
 
         #expect(script.contains(
-            #"'/usr/local/bin/graftty' team register --runtime \#(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true"#
+            #"'/usr/local/bin/graftty' team register --runtime codex --pid "$$" >/dev/null 2>&1 || true"#
         ))
         #expect(script.contains("cleanup_after_runtime"))
 
@@ -446,10 +371,8 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Wrapper launches the runtime in the foreground.")
     func wrapperLaunchesRuntimeInForeground() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "codex",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -461,29 +384,6 @@ struct AgentHookInstallerWrapperTests {
         #expect(!script.contains(#"exec env CODEX_HOME="#))
         #expect(script.contains(#"env CODEX_HOME="#))
         #expect(script.contains(#""$real_binary" "$@""#))
-    }
-
-    @Test("Wrapper runtime launch shape includes hooks arguments.")
-    func wrapperRuntimeLaunchShapeIncludesHookArguments() {
-        let claude = AgentHookInstaller.wrapperScript(
-            runtime: .claude,
-            wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
-        )
-        let codex = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
-            wrapperDirectory: "/Users/x/agent-hooks/bin",
-            realCommandName: "codex",
-            grafttyCLIPath: "/usr/local/bin/graftty",
-            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
-        )
-
-        #expect(claude.contains(#""$real_binary" --settings"#))
-        #expect(claude.contains(#""$real_binary" "$@""#))
-        #expect(codex.contains(#"env CODEX_HOME="#))
-        #expect(codex.contains(#""$real_binary" "$@""#))
     }
 
     @Test("Generated wrapper registers its own PID while the runtime is running.")
@@ -530,10 +430,8 @@ struct AgentHookInstallerWrapperTests {
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
+            AgentHookInstaller.codexWrapperScript(
                 wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -602,10 +500,8 @@ struct AgentHookInstallerWrapperTests {
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
+            AgentHookInstaller.codexWrapperScript(
                 wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -739,10 +635,8 @@ struct AgentHookInstallerWrapperTests {
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
+            AgentHookInstaller.codexWrapperScript(
                 wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -805,10 +699,8 @@ struct AgentHookInstallerWrapperTests {
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
+            AgentHookInstaller.codexWrapperScript(
                 wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -936,10 +828,8 @@ struct AgentHookInstallerWrapperTests {
             lockCommand = "/usr/bin/lockf"
         }
         try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
+            AgentHookInstaller.codexWrapperScript(
                 wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: codexHome.path,
                 codexSourceDirectory: codexSource.path,

@@ -46,7 +46,7 @@ struct AgentPluginAutomaticUpdateTests {
     }
 
     @Test("""
-    @spec AGENT-6.30: When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
+    @spec AGENT-6.30: When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, record the build only after complete success, and retry incomplete updates on a later launch.
     """)
     func updatesOncePerBuildAndRetriesAfterFailure() async {
         let suite = "AgentPluginAutoUpdate-\(UUID().uuidString)"
@@ -54,7 +54,6 @@ struct AgentPluginAutomaticUpdateTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: SettingsKeys.agentTeamsEnabled)
         defaults.set(AgentPluginInstaller.integrationRevision, forKey: SettingsKeys.agentPluginInstalledRevision)
-        defaults.set(false, forKey: SettingsKeys.nativeAgentMessagingEnabled)
         var attempts = 0
         var refreshes = 0
         let updater = AgentPluginAutomaticUpdate()
@@ -68,7 +67,6 @@ struct AgentPluginAutomaticUpdateTests {
         #expect(attempts == 1)
         #expect(refreshes == 1)
         #expect(!updater.isRunning)
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
         #expect(defaults.string(forKey: SettingsKeys.agentPluginInstalledBuildVersion) == "100.60.00")
         await AgentPluginAutomaticUpdate().runIfNeeded(defaults: defaults, buildVersion: "100.60.00", update: {
             attempts += 1
@@ -135,13 +133,12 @@ struct AgentPluginAutomaticUpdateTests {
         #expect(defaults.string(forKey: SettingsKeys.agentPluginInstalledBuildVersion) == nil)
     }
 
-    @Test("A reentrant launch cannot start a second update or overwrite a messaging selection.")
+    @Test("A reentrant launch cannot start a second update.")
     func guardsReentryAndPreservesSelections() async {
         let suite = "AgentPluginAutoUpdateReentry-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(true, forKey: SettingsKeys.agentTeamsEnabled)
-        defaults.set(true, forKey: SettingsKeys.nativeAgentMessagingEnabled)
         defaults.set(7, forKey: SettingsKeys.agentPluginInstalledRevision)
         let updater = AgentPluginAutomaticUpdate()
         await updater.runIfNeeded(defaults: defaults, buildVersion: "100.60.00", update: {
@@ -149,10 +146,8 @@ struct AgentPluginAutomaticUpdateTests {
                 Issue.record("Reentrant update executed twice")
                 return Self.report(succeeded: true)
             }, refreshHookAssets: {})
-            defaults.set(false, forKey: SettingsKeys.nativeAgentMessagingEnabled)
             return Self.report(succeeded: true)
         }, refreshHookAssets: {})
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
     }
 
     private static func report(succeeded: Bool) -> AgentPluginInstallationReport {

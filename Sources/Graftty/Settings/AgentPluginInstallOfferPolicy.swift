@@ -67,52 +67,18 @@ enum AgentPluginInstallOfferPolicy {
         }
         recordAcknowledged(in: defaults)
     }
-}
 
-enum AgentPluginIntegrationActivation {
-    static func userSelectionRevision(in defaults: UserDefaults) -> Int {
-        defaults.integer(forKey: SettingsKeys.nativeAgentMessagingSelectionRevision)
-    }
-
-    /// Applies the user's messaging-mode selection independently of provider
-    /// plugin availability. A user may intentionally choose native delivery
-    /// before installing Codex, Claude, or either bundled plugin.
+    /// Records a provider installation attempt. Only a complete installation
+    /// records the installed revision; an incomplete one records nothing so
+    /// the launch offer and the Agent Teams warning keep prompting.
     @discardableResult
-    static func applyUserSelection(
-        enabled: Bool,
-        defaults: UserDefaults,
-        refreshHookAssets: () -> Void
+    static func recordInstallation(
+        succeeded: Bool,
+        in defaults: UserDefaults,
+        buildVersion: String? = currentBuildVersion
     ) -> Bool {
-        defaults.set(
-            userSelectionRevision(in: defaults) &+ 1,
-            forKey: SettingsKeys.nativeAgentMessagingSelectionRevision
-        )
-        defaults.set(enabled, forKey: SettingsKeys.nativeAgentMessagingEnabled)
-        refreshHookAssets()
-        return enabled
-    }
-
-    /// Records a complete provider installation and optionally enables native
-    /// messaging when the accepted action was explicitly "Install and
-    /// Enable." An install-only action, a failed installation, and any install
-    /// superseded by a newer Settings selection preserve the independently
-    /// selected messaging mode.
-    @discardableResult
-    static func apply(
-        successfulInstallation: Bool,
-        enableNativeMessagingOnSuccess: Bool,
-        userSelectionRevisionAtStart: Int,
-        defaults: UserDefaults,
-        refreshHookAssets: () -> Void
-    ) -> Bool {
-        if successfulInstallation,
-           enableNativeMessagingOnSuccess,
-           userSelectionRevision(in: defaults) == userSelectionRevisionAtStart {
-            defaults.set(true, forKey: SettingsKeys.nativeAgentMessagingEnabled)
-        }
-        refreshHookAssets()
-        guard successfulInstallation else { return false }
-        AgentPluginInstallOfferPolicy.recordInstalled(in: defaults)
+        guard succeeded else { return false }
+        recordInstalled(in: defaults, buildVersion: buildVersion)
         return true
     }
 }

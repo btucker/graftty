@@ -11,12 +11,12 @@ struct AgentHookInstallerTests {
         let first = try installer.install()
         let second = try installer.install()
 
-        // Two wrappers (claude, codex) + four zsh-init shim files
+        // One wrapper (codex) + four zsh-init shim files
         // (.zshenv, .zprofile, .zshrc, .zlogin) + two bash-init files
-        // (bash-launcher, .bashrc) = 8.
-        #expect(first.writtenFiles.count == 8)
+        // (bash-launcher, .bashrc) = 7.
+        #expect(first.writtenFiles.count == 7)
         #expect(second.writtenFiles.isEmpty)
-        #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/claude").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("bin/claude").path))
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/codex").path))
         for shim in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
             let path = root.appendingPathComponent("zsh-init").appendingPathComponent(shim).path
@@ -162,7 +162,7 @@ struct AgentHookInstallerTests {
         let root = try Self.temporaryDirectory()
         let bin = root.appendingPathComponent("bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        let stale = bin.appendingPathComponent("claude")
+        let stale = bin.appendingPathComponent("codex")
         try "# GRAFTTY_AGENT_HOOK_WRAPPER version=old\n".write(to: stale, atomically: true, encoding: .utf8)
 
         let installer = AgentHookInstaller(rootDirectory: root, grafttyCLIPath: "/usr/local/bin/graftty")
@@ -171,14 +171,12 @@ struct AgentHookInstallerTests {
 
         #expect(result.writtenFiles.contains(stale))
         #expect(repaired.contains("version=\(AgentHookInstaller.version)"))
-        #expect(repaired.contains("graftty team hook claude"))
+        #expect(repaired.contains("team register --runtime codex"))
     }
 
     @Test func wrapperSearchSkipsGeneratedBinDirectory() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .codex,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/app/hooks/bin",
-            realCommandName: "codex",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/app/hooks/codex-home"
         )
@@ -190,61 +188,57 @@ struct AgentHookInstallerTests {
     }
 
     @Test func wrapperQuotesShellPathsWithoutExpansion() {
-        let script = AgentHookInstaller.wrapperScript(
-            runtime: .claude,
+        let script = AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/tmp/has $dollar/it's/bin",
-            realCommandName: "claude",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/tmp/has $dollar/it's/codex-home"
         )
 
         #expect(script.contains(#"if [ "$dir" = '/tmp/has $dollar/it'"'"'s/bin' ]; then"#))
-        // Inline JSON is passed via --settings, single-quoted (with escaped single quotes if any).
-        #expect(script.contains(#"--settings '"#))
+        #expect(script.contains(#"_graftty_codex_runtime_home='/tmp/has $dollar/it'"'"'s/codex-home'"#))
     }
 
     @Test("""
-    @spec AGENT-6.11: While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
+    @spec AGENT-6.11: When Graftty installs its agent hook assets, the application shall never write a Claude launch wrapper, shall remove a previously generated Claude wrapper that carries Graftty's wrapper marker while preserving any unmarked file at that path, leave Claude lifecycle hooks and team instructions to the installed provider plugin, and retain only Codex's app-server/remote transport wrapper.
     """)
-    func providerPluginModeRemovesClaudeWrapperAndKeepsCodexTransport() throws {
+    func installRemovesManagedClaudeWrapperAndKeepsCodexTransport() throws {
         let root = try Self.temporaryDirectory()
-        _ = try AgentHookInstaller(
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let claudeURL = bin.appendingPathComponent("claude")
+        let codexURL = bin.appendingPathComponent("codex")
+        try "#!/bin/sh\n# GRAFTTY_AGENT_HOOK_WRAPPER version=old\n".write(
+            to: claudeURL, atomically: true, encoding: .utf8
+        )
+
+        let result = try AgentHookInstaller(
             rootDirectory: root,
             grafttyCLIPath: "/app/graftty"
-        ).install()
-        let claudeURL = root.appendingPathComponent("bin/claude")
-        let codexURL = root.appendingPathComponent("bin/codex")
-        #expect(FileManager.default.fileExists(atPath: claudeURL.path))
-
-        _ = try AgentHookInstaller(
-            rootDirectory: root,
-            grafttyCLIPath: "/app/graftty",
-            providerPluginsEnabled: true
         ).install()
         let codex = try String(contentsOf: codexURL, encoding: .utf8)
 
         #expect(!FileManager.default.fileExists(atPath: claudeURL.path))
-        #expect(codex.contains("GRAFTTY_PROVIDER_PLUGINS=1"))
+        #expect(!result.writtenFiles.contains(claudeURL))
+        #expect(!codex.contains("GRAFTTY_PROVIDER_PLUGINS"))
         #expect(codex.contains("app-server --listen"))
         #expect(codex.contains(#"--remote "unix://$_graftty_codex_socket""#))
+
+        let userFile = "#!/bin/sh\nexec /opt/claude \"$@\"\n"
+        try userFile.write(to: claudeURL, atomically: true, encoding: .utf8)
+        _ = try AgentHookInstaller(rootDirectory: root, grafttyCLIPath: "/app/graftty").install()
+        #expect(try String(contentsOf: claudeURL, encoding: .utf8) == userFile)
     }
 
     @Test("Every wrapper launch replaces an inherited identity with a new runtime-prefixed ID.")
     func wrapperMintsValidCanonicalAgentID() {
-        for runtime in [TeamHookRuntime.codex, .claude] {
-            let script = AgentHookInstaller.wrapperScript(
-                runtime: runtime,
-                wrapperDirectory: "/app/hooks/bin",
-                realCommandName: runtime.rawValue,
-                grafttyCLIPath: "/app/graftty",
-                codexHomeDirectory: "/app/hooks/codex-home"
-            )
-            #expect(script.contains(
-                #"GRAFTTY_AGENT_ID=""# + runtime.rawValue + #"-$_graftty_agent_suffix""#
-            ))
-            #expect(!script.contains(#"if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then"#))
-            #expect(!script.contains("(runtime.rawValue)"))
-        }
+        let script = AgentHookInstaller.codexWrapperScript(
+            wrapperDirectory: "/app/hooks/bin",
+            grafttyCLIPath: "/app/graftty",
+            codexHomeDirectory: "/app/hooks/codex-home"
+        )
+        #expect(script.contains(#"GRAFTTY_AGENT_ID="codex-$_graftty_agent_suffix""#))
+        #expect(!script.contains(#"if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then"#))
+        #expect(!script.contains("(runtime.rawValue)"))
     }
 
     private static func temporaryDirectory() throws -> URL {

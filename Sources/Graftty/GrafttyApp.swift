@@ -1900,15 +1900,7 @@ struct GrafttyApp: App {
             liveness: deliveryLiveness,
             client: CodexAppServerClient()
         )
-        // Constructed unconditionally — these inits only store closures — so
-        // enabling native agent messaging mid-session takes effect without a
-        // relaunch. Every use site live-reads the setting instead
-        // (`Self.nativeAgentMessagingEnabled()`), so toggling it off also
-        // stops delivery immediately.
         let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
-            guard Self.nativeAgentMessagingEnabled() else {
-                return .error("Native agent messaging is disabled")
-            }
             // The bridge binds a socket to the recipient that received the
             // original row. Refuse a reply after that exact session disappears.
             let reachable = await OffMainIO.run {
@@ -1957,8 +1949,7 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: teamsEnabled,
-                    claudeEnabled: Self.nativeAgentMessagingEnabled()
+                    enabled: teamsEnabled
                 )
             )
         }
@@ -2001,7 +1992,7 @@ struct GrafttyApp: App {
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
                     }
-                    if let claudePeerDeliveryService, Self.nativeAgentMessagingEnabled() {
+                    if let claudePeerDeliveryService {
                         deliveries.append(claudePeerDeliveryService)
                     }
                     await Self.drainNativeDeliveryMessages(
@@ -2053,8 +2044,7 @@ struct GrafttyApp: App {
                     deliveries: Self.nativeDeliveries(
                         codex: codexAppServerDeliveryService,
                         claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                        claudeEnabled: Self.nativeAgentMessagingEnabled()
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                     )
                 )
             }
@@ -2077,8 +2067,7 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    claudeEnabled: Self.nativeAgentMessagingEnabled()
+                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                 )
             )
         }
@@ -3238,26 +3227,13 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Live read of the native agent messaging setting. The delivery
-    /// services are constructed unconditionally at startup, so every use
-    /// site consults the current value rather than a launch-time snapshot;
-    /// toggling the setting takes effect without an app relaunch.
-    nonisolated static func nativeAgentMessagingEnabled() -> Bool {
-        UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
-    }
-
     nonisolated static func nativeDeliveries(
         codex: CodexAppServerDeliveryService,
         claude: ClaudePeerDeliveryService,
-        enabled: Bool = true,
-        claudeEnabled: Bool
+        enabled: Bool = true
     ) -> [any CodexAppServerDeliveryTrigger] {
         guard enabled else { return [] }
-        var deliveries: [any CodexAppServerDeliveryTrigger] = [codex]
-        if claudeEnabled {
-            deliveries.append(claude)
-        }
-        return deliveries
+        return [codex, claude]
     }
 
     nonisolated static func retryNativeDeliveryForPresenceWorktrees(
@@ -4040,7 +4016,6 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged,
             let stopHookActive
         ):
             return await handleTeamHook(
@@ -4051,7 +4026,6 @@ struct GrafttyApp: App {
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
                 attentionReason: attentionReason,
-                skillManaged: skillManaged,
                 stopHookActive: stopHookActive,
                 appState: appState,
                 teamInbox: teamInbox,
@@ -4490,6 +4464,24 @@ struct GrafttyApp: App {
         }
     }
 
+    /// Hooks that exist only to carry attention signals. Codex PostToolUse
+    /// belongs here too: Codex has no PostToolUse context channel, so the
+    /// team handler would only ever render `{}` for it after scanning
+    /// presence on every tool call.
+    nonisolated static func isAttentionOnlyTeamHook(
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent
+    ) -> Bool {
+        switch event {
+        case .preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure:
+            return true
+        case .postToolUse:
+            return runtime == .codex
+        case .sessionStart, .stop:
+            return false
+        }
+    }
+
     @MainActor
     private static func handleTeamHook(
         callerPath: String,
@@ -4499,7 +4491,6 @@ struct GrafttyApp: App {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason?,
-        skillManaged: Bool,
         stopHookActive: Bool,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
@@ -4555,20 +4546,14 @@ struct GrafttyApp: App {
 
         // Attention-only hooks must return quickly and must not depend on the
         // team feature being enabled. They carry no inbox or instruction data.
-        if event == .preToolUse || event == .permissionRequest
-            || event == .userPromptSubmit || event == .postToolUseFailure
-            || (runtime == .codex && event == .postToolUse && !skillManaged) {
+        if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput("{}")
         }
 
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            if event == .sessionStart, skillManaged, !teamsEnabled {
-                return .teamHookOutput(try TeamHookRenderer.sessionStart(
-                    runtime: runtime,
-                    teamContext: "",
-                    skillManaged: true
-                ))
+            if event == .sessionStart, !teamsEnabled {
+                return .teamHookOutput(try TeamHookRenderer.sessionStart(runtime: runtime))
             }
             // Snapshotted before the instruction render's `await`; the
             // ownership decision below therefore reads presence as it stood
@@ -4604,10 +4589,6 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager
             )
             let instructions: String
-            // Instructions render for wrapper- and plugin-managed sessions
-            // alike: the hook threads them independently of the legacy
-            // primer, whose skill-managed suppression lives in
-            // TeamInboxRequestHandler.hook.
             if event == .sessionStart,
                teamsEnabled,
                let team = TeamLookup.team(
@@ -4673,18 +4654,13 @@ struct GrafttyApp: App {
                     repos: repos,
                     teamsEnabled: teamsEnabled,
                     instructions: instructions,
-                    agentID: currentAgentID,
-                    skillManaged: skillManaged
+                    agentID: currentAgentID
                 )
             }
             return .teamHookOutput(output)
         } catch let error as TeamInboxRequestError {
-            if event == .sessionStart, skillManaged,
-               let output = try? TeamHookRenderer.sessionStart(
-                   runtime: runtime, teamContext: "", skillManaged: true
-               ) {
-                return .teamHookOutput(output)
-            }
+            // The CLI decides whether an unrendered SessionStart still gets
+            // skill guidance (AGENT-6.49): only inside a Graftty terminal.
             return .error(error.description)
         } catch {
             return .error("failed to render team hook context: \(error)")
@@ -4966,7 +4942,6 @@ struct GrafttyApp: App {
         TeamInboxRequestHandler(
             inbox: inbox,
             dispatcher: dispatcher,
-            sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
             automaticDeliveryOwner: automaticDeliveryOwner,
             agentRecords: {
                 (try? TeamPresenceStorage(
@@ -4974,15 +4949,6 @@ struct GrafttyApp: App {
                 ).listAll()) ?? []
             },
             agentReachability: agentReachability
-        )
-    }
-
-    private static func renderTeamSessionPrompt(team: TeamView, viewer: TeamMember) -> String? {
-        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
-        return TeamInstructionsRenderer.render(
-            template: template,
-            team: team,
-            viewer: viewer
         )
     }
 
@@ -6085,10 +6051,7 @@ struct GrafttyApp: App {
         do {
             _ = try AgentHookInstaller(
                 rootDirectory: AgentHookInstaller.rootDirectory(),
-                grafttyCLIPath: agentHookCLIPath(),
-                providerPluginsEnabled: UserDefaults.standard.bool(
-                    forKey: SettingsKeys.nativeAgentMessagingEnabled
-                )
+                grafttyCLIPath: agentHookCLIPath()
             ).install()
         } catch {
             NSLog("[Graftty] Agent hook asset install failed: %@", String(describing: error))

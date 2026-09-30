@@ -7,10 +7,9 @@ import Foundation
 /// runtime writes to the hook's stdin — present means subagent context,
 /// absent means top-level agent. `SubagentStop` is a separate event,
 /// but graftty only registers `Stop`, so the same handler receives both
-/// and needs to disambiguate from the payload. Stop-event CLI commands
-/// (`team hook`, `team watch-inbox`) call this to skip per-Stop work
-/// — lifecycle delivery and idle-watcher spawn — that should only run for
-/// a top-level agent.
+/// and needs to disambiguate from the payload. The Stop-event CLI command
+/// (`team hook`) calls this to skip per-Stop lifecycle work that should
+/// only run for a top-level agent.
 public enum AgentStopHookFilter {
     public static func isSubagentStop(stdinJSON: [String: Any]) -> Bool {
         stdinJSON["agent_id"] is String
