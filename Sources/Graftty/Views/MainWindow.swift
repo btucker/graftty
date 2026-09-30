@@ -57,6 +57,7 @@ struct MainWindow: View {
     @State private var isShowingAddRemoteMacSheet = false
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
+    @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
     @State private var attentionSidebarWidth: Double?
     @StateObject private var voiceDictation = VoiceDictationController()
@@ -174,6 +175,13 @@ struct MainWindow: View {
                         : nil,
                     theme: terminalManager.theme,
                     sidebarHidden: columnVisibility == .detailOnly,
+                    canGoBack: worktreeHistory.target(forward: false, isAvailable: isHistoryTargetAvailable) != nil,
+                    canGoForward: worktreeHistory.target(forward: true, isAvailable: isHistoryTargetAvailable) != nil,
+                    historyItems: worktreeHistory.recentTargets.compactMap(historyItem),
+                    currentTarget: currentNavigationTarget,
+                    onGoBack: { navigateWorktreeHistory(forward: false) },
+                    onGoForward: { navigateWorktreeHistory(forward: true) },
+                    onSelectHistory: selectHistoryTarget,
                     onRefreshPR: refreshPR
                 )
 
@@ -391,6 +399,9 @@ struct MainWindow: View {
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
         }
+        .onChange(of: currentNavigationTarget, initial: true) { _, target in
+            worktreeHistory.record(target)
+        }
         .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
@@ -489,6 +500,58 @@ struct MainWindow: View {
     private var selectedRepo: RepoEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.repo(forWorktreePath: path)
+    }
+
+    private var currentNavigationTarget: WorktreeNavigationTarget? {
+        if let identity = selectedRemoteIdentity {
+            return selectedRemoteWorktreePath.map { .remote(identity, $0) }
+        }
+        return appState.selectedWorktreePath.map { .local($0) }
+    }
+
+    private func historyItem(_ target: WorktreeNavigationTarget) -> BreadcrumbHistoryItem? {
+        switch target {
+        case .local(let path):
+            guard let worktree = appState.worktree(forPath: path),
+                  worktree.state.hasOnDiskWorktree,
+                  let repo = appState.repo(forWorktreePath: path) else { return nil }
+            let name = SidebarWorktreeLabel.text(
+                for: worktree, inRepoAtPath: repo.path,
+                siblingPaths: repo.worktrees.map(\.path),
+                defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint)
+            )
+            return BreadcrumbHistoryItem(target: target, repoName: repo.displayName,
+                worktreeName: name, branchName: worktree.displayBranch, remoteMacName: nil)
+        case .remote(let identity, let path):
+            guard remoteMacsModel.connectionState(for: identity) == .connected,
+                  let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }),
+                  let worktree = remoteMacsModel.worktreePanesByRemote[identity]?.first(where: {
+                      $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
+                  }), worktree.state.hasOnDiskWorktree else { return nil }
+            return BreadcrumbHistoryItem(target: target, repoName: worktree.repoDisplayName,
+                worktreeName: worktree.displayName, branchName: worktree.displayBranch, remoteMacName: mac.label)
+        }
+    }
+
+    private func isHistoryTargetAvailable(_ target: WorktreeNavigationTarget) -> Bool {
+        historyItem(target) != nil
+    }
+
+    private func navigateWorktreeHistory(forward: Bool) {
+        worktreeHistory.record(currentNavigationTarget)
+        guard let target = worktreeHistory.navigate(forward: forward, isAvailable: isHistoryTargetAvailable) else { return }
+        selectHistoryTarget(target)
+    }
+
+    private func selectHistoryTarget(_ target: WorktreeNavigationTarget) {
+        guard isHistoryTargetAvailable(target) else { return }
+        switch target {
+        case .local(let path):
+            selectWorktree(path)
+        case .remote(let identity, let path):
+            guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else { return }
+            selectRemoteWorktree(mac, worktreePath: path)
+        }
     }
 
     private var remotePairingRequestBinding: Binding<PendingRemotePairingRequest?> {
