@@ -320,6 +320,12 @@ struct SidebarNavigationStateTests {
         #expect(navigation.hasViewed(incoming))
         #expect(navigation.selectedAttentionID == secondQuestion.id)
         for width in [220.0, 300, 420] { try await render(width, suffix: "-viewed") }
+        var running = item
+        running.occurrence = nil
+        running.isBusy = true
+        running.runningSince = Date().addingTimeInterval(-300)
+        navigation.updateAttentionItems([running])
+        for width in [220.0, 300, 420] { try await render(width, suffix: "-running") }
     }
     #endif
 

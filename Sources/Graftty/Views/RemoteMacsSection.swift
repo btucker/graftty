@@ -425,10 +425,6 @@ struct RemoteMacsSection: View {
                 }
             }
         } else {
-            if model.repositoriesByRemote[identity]?.contains(where: { $0.id == repositoryGroup.id }) == true {
-                HStack { Spacer(); addWorktreeButton(repositoryGroup, remoteMac: remoteMac, showsLabel: true) }
-                    .frame(height: 44)
-            }
             rows
         }
     }

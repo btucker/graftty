@@ -51,8 +51,8 @@ public struct SidebarAttentionList: View {
                         Text(navigation.query.isEmpty ? "No \(navigation.filter == .needsYou ? "pending requests" : "activity in this view")." : "No matching requests.")
                             .font(.callout).foregroundStyle(.secondary).padding(12)
                     }
-                    ForEach(rows) { item in
-                        row(item, wide: wide).id(item.id)
+                    ForEach(rows, id: \.worktreeIdentity) { item in
+                        row(item, wide: wide).id(item.worktreeIdentity.id)
                     }
                 }.padding(.horizontal, 10).padding(.bottom, 12).scrollTargetLayout()
             }.scrollPosition(id: Binding(get: { navigation.scrollAnchors["attention"] }, set: { navigation.scrollAnchors["attention"] = $0 }))
@@ -81,7 +81,7 @@ public struct SidebarAttentionList: View {
         let card = SidebarAttentionCardContent(item: item)
         let accent = project.map(ProjectAccentColor.color(for:)) ?? Color.secondary
         let viewed = navigation.hasViewed(item)
-        let selected = navigation.selectedAttentionID == item.id && isCurrentWorktree(item)
+        let selected = navigation.isSelectedAttention(item) && isCurrentWorktree(item)
         let presentation = rowStyle(for: item)
         return Button {
             open(item, navigateToProject: false)
@@ -185,7 +185,13 @@ public struct SidebarAttentionList: View {
                         worktreeName(card.headerName, font: .subheadline)
                         Spacer(minLength: 3)
                         if offline { Text("Offline").font(.caption2) }
-                        Text("Running").font(.caption).foregroundStyle(.green)
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Text(item.runningDuration(at: context.date) ?? "…")
+                                .font(.caption).monospacedDigit().foregroundStyle(.green)
+                                .help("Time since the agent resumed")
+                                .accessibilityLabel("Agent running")
+                                .accessibilityValue(item.runningDuration(at: context.date) ?? "Start time unavailable")
+                        }
                     }
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")

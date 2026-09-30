@@ -1384,6 +1384,54 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
+    @spec NOTIF-1.8: When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second generic agent alert for that worktree in the same snapshot.
+    """)
+    func remoteRecapsUseTaskContent() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+        let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
+                                   need: "Does this look right?")
+        func snapshot(time: Double?, userNotification: Bool = false) -> [WorktreePanes] {
+            let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
+                                                  recap: recap, paneSlotID: "slot") }
+            return [WorktreePanes(path: "/repo/sidebar", displayName: "sidebar", repoDisplayName: "Repo",
+                displayBranch: "sidebar", state: .running, isMainCheckout: false, prBadge: nil,
+                stats: nil, attentionText: time == nil ? nil : "Codex has a question", attentionSource: .agentStop,
+                layout: .leaf(sessionName: "agent-pane", title: "Agent",
+                              attentionText: userNotification ? "Check the preview" : time == nil ? nil : "Codex has a question", isBusy: false,
+                              attentionSource: userNotification ? .userNotify : .agentStop),
+                sidebar: .init(id: "stable", projectID: "project", paneIDs: ["agent-pane": "slot"], unseenAgentStop: stop, emoji: "📥"))]
+        }
+        registry.onPaneSnapshot(identity, snapshot(time: 10))
+        #expect(events.isEmpty)
+        registry.onPaneSnapshot(identity, snapshot(time: nil))
+        registry.onPaneSnapshot(identity, snapshot(time: 100))
+        #expect(events.count == 1)
+        let event = try #require(events.first)
+        #expect(event.title == recap.title)
+        #expect(event.body.contains("📥 sidebar"))
+        #expect(event.body.contains(recap.need!))
+        #expect(event.paneID == "agent-pane")
+        registry.onPaneSnapshot(identity, snapshot(time: 100))
+        #expect(events.count == 1)
+        registry.onPaneSnapshot(identity, snapshot(time: 200))
+        #expect(events.count == 2)
+        registry.onPaneSnapshot(identity, snapshot(time: 300, userNotification: true))
+        #expect(events.count == 4)
+        #expect(events.last?.kind == .userNotify)
+    }
+
+    @Test("""
     @spec REMOTE-13.11: When a Remote Mac reconnects with user-notify or \
     agent-stop attention that was not present in its final connected snapshot, \
     the application shall deliver one summary notification for all newly \

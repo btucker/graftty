@@ -161,45 +161,9 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
     }
 
     func post(_ notification: AgentStopNotificationContent) {
-        post(
-            title: notification.title,
-            body: notification.body,
-            userInfo: notification.userInfo
-        )
-    }
-
-    func post(_ event: RemoteNotificationEvent) {
-        guard let data = try? JSONEncoder().encode(event) else { return }
-        post(
-            title: event.title,
-            body: event.body,
-            userInfo: [
-                "kind": "remote_attention",
-                "event": data.base64EncodedString(),
-            ]
-        )
-    }
-
-    private func post(
-        title: String,
-        body: String,
-        userInfo: [String: String]
-    ) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
-            let post = {
-                let content = UNMutableNotificationContent()
-                content.title = title
-                content.body = body
-                content.sound = .default
-                content.userInfo = userInfo
-                let request = UNNotificationRequest(
-                    identifier: UUID().uuidString,
-                    content: content,
-                    trigger: nil
-                )
-                center.add(request)
-            }
+            let post = { center.add(Self.request(for: notification)) }
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
                 post()
@@ -211,6 +175,35 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
                 break
             }
         }
+    }
+
+    func post(_ event: RemoteNotificationEvent) {
+        guard let data = try? JSONEncoder().encode(event) else { return }
+        post(AgentStopNotificationContent(
+            title: event.title,
+            body: event.body,
+            userInfo: [
+                "kind": "remote_attention",
+                "event": data.base64EncodedString(),
+            ],
+            identifier: event.kind == .agentStop
+                ? "remote-agent-attention:\(event.originFingerprint?.display ?? event.origin.deviceID.value):\(event.worktreeID)"
+                : nil
+        ))
+    }
+
+    static func request(for notification: AgentStopNotificationContent) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = notification.title
+        content.subtitle = notification.subtitle ?? ""
+        content.body = notification.body
+        content.sound = .default
+        content.userInfo = notification.userInfo
+        return UNNotificationRequest(identifier: notification.identifier ?? UUID().uuidString, content: content, trigger: nil)
+    }
+
+    static func foregroundPresentationOptions(kind: String?) -> UNNotificationPresentationOptions {
+        kind == "agent_stop" || kind == "remote_attention" ? [.banner, .sound] : []
     }
 
     nonisolated func userNotificationCenter(
@@ -245,10 +238,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        notification.request.content.userInfo["kind"] as? String
-            == "remote_attention"
-            ? [.banner, .sound]
-            : []
+        Self.foregroundPresentationOptions(kind: notification.request.content.userInfo["kind"] as? String)
     }
 }
 
@@ -4668,7 +4658,7 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    private static func recordStoppedTurn(
+    static func recordStoppedTurn(
         callerPath: String,
         runtime: TeamHookRuntime,
         callerAgentID: String?,
@@ -4677,7 +4667,8 @@ struct GrafttyApp: App {
         recap: AttentionRecap?,
         stoppedAt: Date,
         appState: Binding<AppState>,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        postNotification: (AgentStopNotificationContent) -> Void = { AgentNotificationRouter.shared.post($0) }
     ) {
         let paneSlot = paneSessionName
             .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
@@ -4694,10 +4685,23 @@ struct GrafttyApp: App {
                 runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
             )
         )
+        if let previous = appState.wrappedValue.worktree(forPath: callerPath)?.lastAgentStop {
+            if previous.timestamp > stop.timestamp { return }
+            if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey,
+               previous.recap == stop.recap { return }
+        }
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &appState.wrappedValue.repos)
         for ri in appState.wrappedValue.repos.indices {
             if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
                 appState.wrappedValue.repos[ri].worktrees[wi].recordAgentStop(stop)
+                let worktree = appState.wrappedValue.repos[ri].worktrees[wi]
+                if let notification = AgentStopNotification.stoppedTurnContent(
+                    runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(worktree.branch),
+                    worktreePath: callerPath, sessionID: sessionID ?? callerAgentID ?? "",
+                    paneSessionName: paneSessionName, stop: stop, emoji: worktree.emoji
+                ) {
+                    postNotification(notification)
+                }
                 break
             }
         }

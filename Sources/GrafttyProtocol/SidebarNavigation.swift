@@ -276,6 +276,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var title: String
     public var occurrence: SidebarAttentionOccurrence?
     public var isBusy: Bool
+    public var runningSince: Date?
     public var agentStop: SidebarAgentStop?
     public var prBadge: PRBadge?
     public init(id: String, projectID: String, worktreeID: String, paneID: String?,
@@ -286,6 +287,25 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
         self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge; self.worktreeEmoji = worktreeEmoji
     }
     public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
+
+    public struct WorktreeIdentity: Hashable, Sendable, Identifiable {
+        public let projectID: String
+        public let worktreeID: String
+        public var id: String { "\(projectID.utf8.count):\(projectID)\(worktreeID)" }
+    }
+    public var worktreeIdentity: WorktreeIdentity {
+        .init(projectID: projectID, worktreeID: worktreeID)
+    }
+
+    public func runningDuration(at now: Date) -> String? {
+        guard isBusy, let runningSince else { return nil }
+        let seconds = max(0, now.timeIntervalSince(runningSince))
+        guard seconds.isFinite else { return nil }
+        let (duration, unit): (Double, String) = seconds >= 86400 ? (86400, "d")
+            : seconds >= 3600 ? (3600, "h") : (60, "m")
+        let count = Int(min(seconds / duration, Double(Int.max / 2)))
+        return "\(count)\(unit)"
+    }
 }
 
 public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
@@ -452,6 +472,9 @@ public enum SidebarProjection {
                                    title: leaf.attentionText ?? leaf.displayTitle,
                                    occurrence: leaf.attentionText.map { .init(timestamp: wt.sidebar?.attentionTimestamps?[wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName].map(Date.init(timeIntervalSinceReferenceDate:)) ?? leaf.attentionTimestamp, text: $0, source: leaf.attentionSource) },
                                    isBusy: leaf.isBusy, worktreeEmoji: wt.sidebar?.emoji))
+                if leaf.isBusy, let startedAt = wt.sidebar?.agentProgressTimes?.values.max() {
+                    items[items.count - 1].runningSince = Date(timeIntervalSinceReferenceDate: startedAt)
+                }
             }
             return items.map { item in
                 var item = item
