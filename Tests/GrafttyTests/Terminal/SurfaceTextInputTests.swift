@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 import Testing
 @testable import Graftty
 
@@ -190,6 +191,47 @@ struct NativeDictationDeliveryTests {
         fixture.view.keyUp(with: try fixture.keyEvent(0, text: "a", type: .keyUp, modifiers: modifiers))
         #expect(fixture.keyCodes == [0, 0])
         #expect(fixture.writes.isEmpty)
+    }
+
+    @Test("@spec KEY-1.10: When a host-managed terminal receives Shift-modified editing or navigation keys, the application shall forward their presses, repeats, and releases to libghostty with Shift preserved instead of writing unmodified escape sequences.",
+          arguments: [UInt16(0x33), 0x75, 0x73, 0x77, 0x74, 0x79, 0x7B, 0x7C, 0x7D, 0x7E])
+    func shiftedHostManagedKeys(keyCode: UInt16) throws {
+        let fixture = TextInputFixture()
+        var directWrites: [Data] = []
+        var actions: [ghostty_input_action_e] = []
+        fixture.view.hostManagedInputWriter = { directWrites.append($0) }
+        fixture.view.surfaceOperations.key = { _, key in
+            #expect(key.keycode == UInt32(keyCode))
+            #expect(key.mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0)
+            actions.append(key.action)
+            return true
+        }
+        fixture.view.keyDown(with: try fixture.keyEvent(keyCode, text: "", modifiers: .shift))
+        fixture.view.keyDown(with: try fixture.keyEvent(keyCode, text: "", modifiers: .shift, repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(keyCode, text: "", type: .keyUp, modifiers: .shift))
+        #expect(directWrites.isEmpty)
+        #expect(actions == [GHOSTTY_ACTION_PRESS, GHOSTTY_ACTION_REPEAT, GHOSTTY_ACTION_RELEASE])
+    }
+
+    @Test("Changing Shift while holding Left preserves the Ghostty key release", arguments: [false, true])
+    func shiftChangesDuringNavigation(initiallyShifted: Bool) throws {
+        let fixture = TextInputFixture()
+        var actions: [ghostty_input_action_e] = []
+        fixture.view.hostManagedInputWriter = { _ in }
+        fixture.view.surfaceOperations.key = { _, key in
+            actions.append(key.action)
+            return true
+        }
+        let initial: NSEvent.ModifierFlags = initiallyShifted ? .shift : []
+        let changed: NSEvent.ModifierFlags = initiallyShifted ? [] : .shift
+        fixture.view.keyDown(with: try fixture.keyEvent(0x7B, text: "\u{F702}", modifiers: initial))
+        fixture.view.keyDown(with: try fixture.keyEvent(0x7B, text: "\u{F702}", modifiers: changed, repeatKey: true))
+        fixture.view.keyDown(with: try fixture.keyEvent(0x7B, text: "\u{F702}", modifiers: initial, repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(0x7B, text: "\u{F702}", type: .keyUp, modifiers: initial))
+        let expected = initiallyShifted
+            ? [GHOSTTY_ACTION_PRESS, GHOSTTY_ACTION_REPEAT, GHOSTTY_ACTION_RELEASE]
+            : [GHOSTTY_ACTION_REPEAT, GHOSTTY_ACTION_RELEASE]
+        #expect(actions == expected)
     }
 
     @Test("Dictation indicator uses the terminal cursor in screen coordinates")

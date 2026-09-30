@@ -1286,7 +1286,9 @@ final class SurfaceNSView: NSView {
             forKeyCode: event.keyCode,
             modifierFlags: event.modifierFlags
         ), let hostManagedInputWriter {
-            hostManagedDirectInputKeyCodes.insert(event.keyCode)
+            if !event.isARepeat {
+                hostManagedDirectInputKeyCodes.insert(event.keyCode)
+            }
             hostManagedInputWriter(directInput)
             return
         }
@@ -1298,6 +1300,9 @@ final class SurfaceNSView: NSView {
         // dispatch, so the menu fires first and libghostty never sees
         // them. If libghostty returns "not handled", bubble up the
         // responder chain so unhandled shortcuts still have a chance.
+        // Once Ghostty sees this key, it needs the release even if a later
+        // repeat switches back to direct input after a modifier changes.
+        hostManagedDirectInputKeyCodes.remove(event.keyCode)
         let handled = sendKeyEvent(
             event,
             action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
@@ -1533,7 +1538,9 @@ final class SurfaceNSView: NSView {
         forKeyCode keyCode: UInt16,
         modifierFlags flags: NSEvent.ModifierFlags
     ) -> Data? {
-        guard flags.intersection([.command, .control, .option]).isEmpty else {
+        // These fixed sequences encode unmodified keys only. Let libghostty
+        // preserve modifiers and apply terminal keybindings for modified keys.
+        guard flags.intersection([.command, .control, .option, .shift]).isEmpty else {
             return nil
         }
         switch keyCode {
