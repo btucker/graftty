@@ -61,7 +61,7 @@ run_test_shard() {
   xcodebuild \
     -xctestrun "${XCTESTRUN_PATHS[0]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
-    -destination-timeout 15 \
+    -destination-timeout 60 \
     "${TEST_ARGUMENTS_ARRAY[@]}" \
     test-without-building
 }

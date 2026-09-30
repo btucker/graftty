@@ -29,6 +29,10 @@ public final class SidebarNavigationState {
     private var workspace: SidebarAttentionWorkspace
     private var opening: [UUID: Opening] = [:]
     private var selectionOpeningID: UUID?
+    private var bannerSnapshotReceived = false
+    private var bannerOccurrences: [String: SidebarAttentionOccurrence] = [:]
+    private var attentionBanners: [SidebarActivityItem] = []
+    public var attentionBanner: SidebarActivityItem? { attentionBanners.first }
     private let defaults: UserDefaults
     private let prefix: String
     public init(prefix: String, defaults: UserDefaults = .standard, collapsed: Bool = false) {
@@ -48,6 +52,7 @@ public final class SidebarNavigationState {
         updateAttentionItems([item])
         history.open(item)
         persistHistory()
+        attentionBanners.removeAll { $0.worktreeIdentity == item.worktreeIdentity }
     }
     public func beginOpening(_ item: SidebarActivityItem) -> UUID {
         let id = UUID()
@@ -75,8 +80,14 @@ public final class SidebarNavigationState {
     public func hasViewed(_ item: SidebarActivityItem) -> Bool {
         workspace.isDismissed(item) || history.entries.contains { $0.id == item.id && $0.item.occurrence == item.occurrence }
     }
+    public func isSelectedAttention(_ item: SidebarActivityItem) -> Bool {
+        guard let selectedAttentionID else { return false }
+        if item.id == selectedAttentionID { return true }
+        return workspace.items.first { $0.id == selectedAttentionID }?.worktreeIdentity == item.worktreeIdentity
+    }
     public func enterAttention(projects: [SidebarProject], items: [SidebarActivityItem]) {
         updateAttentionItems(items)
+        attentionBanners.removeAll()
         selectionOpeningID = nil
         let pending = items.filter { $0.needsAttention && !hasViewed($0) }
         let counts = Dictionary(grouping: pending, by: \.projectID).mapValues { group in
@@ -115,17 +126,21 @@ public final class SidebarNavigationState {
         }.map(\.element)
     }
     public func attentionItems(live: [SidebarActivityItem], projects: [SidebarProject]) -> [SidebarActivityItem] {
-        if filter == .running { return filter.apply(to: live, query: query) }
         var current = workspace
         current.merge(opening.values.map(\.item))
         current.merge(live)
         var rows = current.items
-        if filter == .all {
+        if filter != .needsYou {
             let retainedIDs = Set(rows.map(\.id))
             rows += SidebarActivityFilter.all.apply(to: live).filter {
                 !retainedIDs.contains($0.id) && !current.isDismissed($0)
             }
         }
+        if filter == .running {
+            let runningWorktrees = Set(live.filter(\.isBusy).map(\.worktreeIdentity))
+            rows = rows.filter { $0.isBusy && runningWorktrees.contains($0.worktreeIdentity) }
+        }
+        rows = SidebarAttentionWorkspace.cards(from: rows)
         // Search must not re-sort the durable card order by report timestamp.
         let matching = Set(SidebarActivityFilter.all.apply(to: rows, query: query).map(\.id))
         // Mobile shares navigation storage across hosts. Keep other hosts' cards
@@ -134,9 +149,54 @@ public final class SidebarNavigationState {
         return rows.filter { matching.contains($0.id) && projectIDs.contains($0.projectID) }
     }
     public func updateAttentionItems(_ live: [SidebarActivityItem]) {
+        observeAttentionBanners(live)
+        pruneAttentionBanners(live: live)
         var next = workspace
         next.merge(live)
         storeWorkspace(next)
+    }
+
+    private func observeAttentionBanners(_ live: [SidebarActivityItem]) {
+        var incoming: [SidebarActivityItem] = []
+        for item in SidebarActivityFilter.all.apply(to: live).reversed() where item.needsAttention {
+            guard let occurrence = item.occurrence else { continue }
+            if let previous = bannerOccurrences[item.id] {
+                if previous == occurrence { continue }
+                if let timestamp = occurrence.timestamp, let previousTimestamp = previous.timestamp,
+                   timestamp <= previousTimestamp { continue }
+            }
+            bannerOccurrences[item.id] = occurrence
+            if bannerSnapshotReceived, !showsAttention, !item.isBusy, !hasViewed(item) {
+                incoming.append(item)
+            }
+        }
+        bannerSnapshotReceived = true
+        attentionBanners = showsAttention ? [] : SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
+    }
+
+    public func dismissAttentionBanner(_ item: SidebarActivityItem) {
+        attentionBanners.removeAll { $0.id == item.id && $0.occurrence == item.occurrence }
+    }
+
+    private func pruneAttentionBanners(live: [SidebarActivityItem], authoritativeProjectIDs: Set<String> = []) {
+        let current = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        attentionBanners = attentionBanners.compactMap { item in
+            guard !hasViewed(item) else { return nil }
+            guard let pending = current[item.id] else {
+                return authoritativeProjectIDs.contains(item.projectID) ? nil : item
+            }
+            if pending.occurrence != item.occurrence,
+               let timestamp = pending.occurrence?.timestamp, let queuedTimestamp = item.occurrence?.timestamp,
+               timestamp <= queuedTimestamp { return item }
+            return pending.needsAttention && !pending.isBusy && pending.occurrence == item.occurrence ? pending : nil
+        }
+    }
+
+    public func beginOpeningAttentionBanner(_ item: SidebarActivityItem, projects: [SidebarProject],
+                                            items: [SidebarActivityItem]) -> UUID {
+        filter = .needsYou
+        enterAttention(projects: projects, items: items)
+        return beginOpening(item)
     }
     private func storeWorkspace(_ next: SidebarAttentionWorkspace) {
         guard next != workspace else { return }
@@ -144,19 +204,33 @@ public final class SidebarNavigationState {
         defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".attentionWorkspace")
     }
 
-    public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject]) {
+    public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject], authoritativeProjectIDs: Set<String>? = nil) {
+        observeAttentionBanners(SidebarProjection.activity(worktrees))
+        let availableProjectIDs = Set(projects.filter(\.isAvailable).map(\.id))
+            .intersection(authoritativeProjectIDs ?? Set(projects.map(\.id)))
+        pruneAttentionBanners(live: SidebarProjection.activity(worktrees), authoritativeProjectIDs: availableProjectIDs)
         var cards = workspace
-        cards.reconcile(worktrees: worktrees)
+        cards.reconcile(worktrees: worktrees, availableProjectIDs: availableProjectIDs)
+        let deletedIDs = Set(workspace.items.map(\.id)).subtracting(cards.items.map(\.id))
+        attentionBanners.removeAll { deletedIDs.contains($0.id) }
+        opening = opening.filter { !deletedIDs.contains($0.value.item.id) }
+        if let selectedAttentionID, deletedIDs.contains(selectedAttentionID) {
+            self.selectedAttentionID = nil
+            selectionOpeningID = nil
+        }
         storeWorkspace(cards)
         var next = history
-        next.reconcile(worktrees: worktrees, availableProjectIDs: Set(projects.filter(\.isAvailable).map(\.id)))
+        next.reconcile(worktrees: worktrees, availableProjectIDs: availableProjectIDs)
         if next != history { history = next; persistHistory() }
     }
     public func forget(_ id: String) {
         var next = workspace
+        let target = next.items.first { $0.id == id }
+        let forgotten = next.items.filter { $0.worktreeIdentity == target?.worktreeIdentity }.map(\.id)
         next.dismiss(id)
         storeWorkspace(next)
-        history.remove(id)
+        attentionBanners.removeAll { $0.worktreeIdentity == target?.worktreeIdentity }
+        for forgottenID in forgotten { history.remove(forgottenID) }
         persistHistory()
     }
     private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: prefix + ".recent") }

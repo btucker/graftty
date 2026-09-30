@@ -200,6 +200,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.85** While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 
+**LAYOUT-2.86** While Attention is displayed, the application shall show at most one card per project and worktree in every filter, prefer pending requests over resumed activity and the latest request among pending requests, and preserve the worktree's position as its representative changes.
+
+**LAYOUT-2.87** When an Attention worktree card is dismissed, the application shall hide all retained requests for that worktree until a later request arrives.
+
+**LAYOUT-2.88** While an Attention card's agent is running, the application shall display elapsed running time in compact units from its resume time, preserve that time across snapshots and relaunches, and clear it when a new request arrives.
+
+**LAYOUT-2.89** While the project worktree list scrolls, the application shall keep Add Worktree fixed above the list for the selected editable project.
+
+**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the search area, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
+
+**LAYOUT-2.91** When an Attention banner is clicked, the application shall select its worktree, switch to the Needs You queue, and retain the existing queue order.
+
+**LAYOUT-2.92** When an available project's worktree is deleted, the application shall remove all of its retained Attention cards and queued banners while preserving cards for offline projects.
+
+**LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -960,6 +976,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
+**NOTIF-1.4** When a stopped agent turn has a recap, the application shall send a macOS notification with its task title, worktree identity, and user question or completed result; a bare Stop shall remain silent.
+
+**NOTIF-1.5** When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.
+
+**NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
+
+**NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
+
+**NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
@@ -1085,6 +1111,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### TECH-6.x
 
 **TECH-6.1** If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
+
+**TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
 
 ## ZMX — zmx Session Backing
 

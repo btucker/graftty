@@ -5,6 +5,46 @@ import GrafttyProtocol
 
 @Suite("Agent Stop Notification")
 struct AgentStopNotificationTests {
+    @Test("@spec NOTIF-1.4: When a stopped agent turn has a recap, the application shall send a macOS notification with its task title, worktree identity, and user question or completed result; a bare Stop shall remain silent.")
+    func stoppedRecapUsesAttentionContent() throws {
+        let recap = AttentionRecap(title: "Attention queue", completed: "Queue and banner tests pass.",
+                                   next: "Review the sidebar.", need: "Does the banner look right?")
+        var stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 1_800_000_000), recap: recap)
+        let content = try #require(AgentStopNotification.stoppedTurnContent(runtime: .codex,
+            worktreeName: "sidebar", worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: "pane",
+            stop: stop, emoji: "📥"))
+        #expect(content.title == recap.title)
+        #expect(content.subtitle == "📥 sidebar")
+        #expect(content.body == recap.need)
+        let payload = try AgentStopNotification.payload(from: content.userInfo)
+        #expect(payload.worktreePath == "/repo/sidebar")
+        #expect(payload.paneSessionName == "pane")
+        stop.recap?.need = nil
+        #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
+            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil)?.body == recap.completed)
+        stop.recap = nil
+        #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
+            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil) == nil)
+    }
+
+    @Test("@spec NOTIF-1.5: When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.")
+    func requestsShareWorktreeIdentity() throws {
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+            recap: .init(title: "Sidebar", completed: "Done.", next: "Review."))
+        func content(_ path: String) throws -> AgentStopNotificationContent {
+            try #require(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
+                worktreePath: path, sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil))
+        }
+        let first = try content("/repo/sidebar")
+        let other = try content("/other/sidebar")
+        let prompt = AgentStopNotification.content(runtime: .claude, worktreeName: "sidebar",
+            worktreePath: "/repo/sidebar", sessionID: "different-session", paneSessionName: "pane",
+            reason: .question, timestamp: .now)
+        #expect(first.identifier != nil)
+        #expect(first.identifier == prompt.identifier)
+        #expect(first.identifier != other.identifier)
+    }
+
     @Test func contentBuildsExpectedTitleBodyAndPayload() throws {
         let timestamp = Date(timeIntervalSince1970: 1_800_000_000)
         let content = AgentStopNotification.content(

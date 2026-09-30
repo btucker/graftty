@@ -1,14 +1,19 @@
 import Foundation
+import GrafttyProtocol
 
 public struct AgentStopNotificationContent: Sendable, Equatable {
     public let title: String
+    public let subtitle: String?
     public let body: String
     public let userInfo: [String: String]
+    public let identifier: String?
 
-    public init(title: String, body: String, userInfo: [String: String]) {
+    public init(title: String, subtitle: String? = nil, body: String, userInfo: [String: String], identifier: String? = nil) {
         self.title = title
+        self.subtitle = subtitle
         self.body = body
         self.userInfo = userInfo
+        self.identifier = identifier
     }
 }
 
@@ -52,14 +57,40 @@ public enum AgentStopNotification {
         reason: AgentHookAttentionReason,
         timestamp: Date
     ) -> AgentStopNotificationContent {
-        // Keep the legacy kind so notifications delivered by older builds still
-        // route through the same click handler after an update.
+        var userInfo = payloadMetadata(runtime: runtime, worktreePath: worktreePath, sessionID: sessionID,
+                                       paneSessionName: paneSessionName, timestamp: timestamp)
+        userInfo["attention_reason"] = reason.rawValue
+        return AgentStopNotificationContent(
+            title: attentionText(runtime: runtime, reason: reason),
+            body: "\(worktreeName) requires your response.",
+            userInfo: userInfo,
+            identifier: "agent-attention:\(worktreePath)"
+        )
+    }
+
+    public static func stoppedTurnContent(
+        runtime: TeamHookRuntime, worktreeName: String, worktreePath: String,
+        sessionID: String, paneSessionName: String?, stop: SidebarAgentStop, emoji: String?
+    ) -> AgentStopNotificationContent? {
+        guard let recap = stop.recap else { return nil }
+        return AgentStopNotificationContent(
+            title: recap.title,
+            subtitle: [emoji, worktreeName].compactMap { $0 }.joined(separator: " "),
+            body: recap.need ?? recap.completed,
+            userInfo: payloadMetadata(runtime: runtime, worktreePath: worktreePath, sessionID: sessionID,
+                                      paneSessionName: paneSessionName, timestamp: stop.stoppedAt),
+            identifier: "agent-attention:\(worktreePath)"
+        )
+    }
+
+    private static func payloadMetadata(runtime: TeamHookRuntime, worktreePath: String, sessionID: String,
+                                        paneSessionName: String?, timestamp: Date) -> [String: String] {
+        // Preserve activation compatibility with older delivered notifications.
         var userInfo = [
             "kind": "agent_stop",
             "runtime": runtime.rawValue,
             "worktree_path": worktreePath,
             "session_id": sessionID,
-            "attention_reason": reason.rawValue,
             "attention_timestamp": timestampString(timestamp),
         ]
         // Optional: only present when the agent runs in a Graftty pane, so
@@ -67,11 +98,7 @@ public enum AgentStopNotification {
         if let paneSessionName {
             userInfo["pane_session_name"] = paneSessionName
         }
-        return AgentStopNotificationContent(
-            title: attentionText(runtime: runtime, reason: reason),
-            body: "\(worktreeName) requires your response.",
-            userInfo: userInfo
-        )
+        return userInfo
     }
 
     public static func payload(from userInfo: [String: Any]) throws -> AgentStopNotificationPayload {

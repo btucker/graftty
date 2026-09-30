@@ -87,6 +87,7 @@ struct SidebarView: View {
     @State private var fetchedIconRevisions: [String: String] = [:]
     @State private var navigationError: String?
     @State private var showsRemoteManagement = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var owner: WorktreeOrigin { iconStore.owner }
     private func localProjectID(_ repo: RepoEntry) -> String { "\(owner.deviceID.value):\(repo.id.uuidString)" }
@@ -112,7 +113,12 @@ struct SidebarView: View {
         let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
         if projects != snapshot.projects { projects = snapshot.projects }
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects)
+        let authoritativeProjects = Set(appState.repos.map(localProjectID))
+            .union(remote.projects.filter {
+                $0.owner.map { remote.authoritativeOwnerIDs.contains($0.deviceID) } == true
+            }.map(\.id))
+        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects,
+            authoritativeProjectIDs: authoritativeProjects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
         }
@@ -267,10 +273,30 @@ struct SidebarView: View {
                 } else {
                     TextField("Find any project or worktree", text: $navigation.query)
                         .textFieldStyle(.roundedBorder).padding(10)
+                        .frame(minHeight: 62)
+                        .overlay(alignment: .top) {
+                            if let item = navigation.attentionBanner {
+                                SidebarAttentionBanner(item: item, onOpen: {
+                                    onNavigationIntent()
+                                    let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
+                                    Task {
+                                        let opened = await onOpenAttention(item)
+                                        navigation.finishOpening(visit, succeeded: opened)
+                                        if !opened { navigationError = "This target is unavailable or its request has changed." }
+                                    }
+                                }, onDismiss: { navigation.dismissAttentionBanner(item) })
+                                .padding(.horizontal, 6).padding(.top, 4)
+                                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                            }
+                        }
+                        .clipped()
+                        .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail {
-                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
+                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject, header: {
+                                    selectedProjectAddWorktreeHeader
+                                }) {
                                     worktreeRows
                                 }
                             }
@@ -507,10 +533,6 @@ struct SidebarView: View {
             }
         }
         if showsProjectRail {
-            if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
-                HStack { Spacer(); addWorktreeButton(repo, showsLabel: true) }
-                    .frame(height: 44)
-            }
             rows
         } else {
             DisclosureGroup(isExpanded: Binding(
@@ -560,6 +582,33 @@ struct SidebarView: View {
         remoteBranchStore.pulse()
         prStatusStore.pulse()
         pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
+    }
+
+    @ViewBuilder
+    private var selectedProjectAddWorktreeHeader: some View {
+        if navigation.query.isEmpty,
+           let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }),
+           canAddWorktree(to: project) {
+            HStack {
+                Spacer()
+                Button(action: addWorktreeToSelectedProject) { Label("Add worktree", systemImage: "plus") }
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.sidebarDimIcon)
+                    .help("Add worktree to \(project.name)")
+                    .accessibilityLabel("Add worktree to \(project.name)")
+            }.padding(.horizontal, 6).frame(height: 44)
+        }
+    }
+
+    private func canAddWorktree(to project: SidebarProject) -> Bool {
+        if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
+            return SidebarMenuVisibility.showsAddWorktree(repo: repo)
+        }
+        guard project.supportsWorktreeEditing == true,
+              let ownerID = project.owner?.deviceID,
+              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }) else { return false }
+        return remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
+            .contains(where: { $0.id == project.repositoryID }) == true
     }
 
     private func addWorktreeToSelectedProject() {
