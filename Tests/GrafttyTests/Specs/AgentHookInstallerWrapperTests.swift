@@ -8,7 +8,7 @@ struct AgentHookInstallerWrapperTests {
     @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before launch.")
     func codexWrapperSetsCodexHome() {
         let script = AgentHookInstaller.codexWrapperScript(
-                        wrapperDirectory: "/Users/x/agent-hooks/bin",
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -280,13 +280,13 @@ struct AgentHookInstallerWrapperTests {
         #expect(run.terminationStatus == 0)
         #expect(run.didSync)
         #expect(run.forwardedCodexHome == run.durableCodexHome)
-        #expect(run.standardError.contains("starting without Graftty's managed hook configuration"))
+        #expect(run.standardError.contains("starting with the durable Codex home instead"))
     }
 
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
         let script = AgentHookInstaller.codexWrapperScript(
-                        wrapperDirectory: "/Users/x/agent-hooks/bin",
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -337,7 +337,7 @@ struct AgentHookInstallerWrapperTests {
     """)
     func codexWrapperResolvesNativeBinaryForAppServer() {
         let script = AgentHookInstaller.codexWrapperScript(
-                        wrapperDirectory: "/Users/x/agent-hooks/bin",
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -372,7 +372,7 @@ struct AgentHookInstallerWrapperTests {
     @Test("Wrapper launches the runtime in the foreground.")
     func wrapperLaunchesRuntimeInForeground() {
         let script = AgentHookInstaller.codexWrapperScript(
-                        wrapperDirectory: "/Users/x/agent-hooks/bin",
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
@@ -431,7 +431,7 @@ struct AgentHookInstallerWrapperTests {
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
             AgentHookInstaller.codexWrapperScript(
-                                wrapperDirectory: wrapperDirectory.path,
+                wrapperDirectory: wrapperDirectory.path,
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -501,7 +501,7 @@ struct AgentHookInstallerWrapperTests {
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
             AgentHookInstaller.codexWrapperScript(
-                                wrapperDirectory: wrapperDirectory.path,
+                wrapperDirectory: wrapperDirectory.path,
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -636,7 +636,7 @@ struct AgentHookInstallerWrapperTests {
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
             AgentHookInstaller.codexWrapperScript(
-                                wrapperDirectory: wrapperDirectory.path,
+                wrapperDirectory: wrapperDirectory.path,
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -700,7 +700,7 @@ struct AgentHookInstallerWrapperTests {
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         try writeExecutable(
             AgentHookInstaller.codexWrapperScript(
-                                wrapperDirectory: wrapperDirectory.path,
+                wrapperDirectory: wrapperDirectory.path,
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
             ),
@@ -829,7 +829,7 @@ struct AgentHookInstallerWrapperTests {
         }
         try writeExecutable(
             AgentHookInstaller.codexWrapperScript(
-                                wrapperDirectory: wrapperDirectory.path,
+                wrapperDirectory: wrapperDirectory.path,
                 grafttyCLIPath: fakeGraftty.path,
                 codexHomeDirectory: codexHome.path,
                 codexSourceDirectory: codexSource.path,

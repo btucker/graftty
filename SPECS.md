@@ -2320,6 +2320,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section after the Graftty skill guidance and before queued messages, and shall add no section for empty instructions.
 
+**INSTR-6.4** The Graftty Team provider skill shall explain the repository-wide and hierarchical worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads without a commit, peer-visible role descriptions above the private section, that agents create or modify instruction files only when authorized, and how to place an exact-worktree file where a new child's first session can see it.
+
 **INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's exact-worktree instruction file from that new checkout's filesystem so the child receives its role in the first session.
 
 **INSTR-6.6** When instruction content exceeds a load limit, the application shall prioritize the viewer's instruction stack ahead of peer-only instruction content so the agent's own role is not displaced by the org chart.
@@ -2875,6 +2877,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.47** When a Claude session launched by an older Graftty invokes the removed `graftty team watch-inbox <runtime>` Stop hook, the CLI shall accept its arguments, drain the hook payload from standard input, and exit successfully without output or inbox work, and shall hide the command from help.
 
 **AGENT-6.48** When an older Graftty session invokes `graftty team hook` without `--skill-managed`, the CLI shall handle it exactly as a provider-plugin hook, and shall keep accepting the `--skill-managed` flag as a hidden no-op.
+
+**AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
 ## CLI — CLI
 

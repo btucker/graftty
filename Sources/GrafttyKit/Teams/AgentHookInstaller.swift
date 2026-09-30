@@ -668,7 +668,7 @@ public struct AgentHookInstaller: Sendable {
           fi
           if [ "$_graftty_codex_sync_status" -ne 0 ]; then
             _graftty_codex_runtime_home=\(codexSourceLiteral)
-            printf '%s\\n' "graftty: could not prepare the managed Codex home; starting without Graftty's managed hook configuration" >&2
+            printf '%s\\n' "graftty: could not prepare the managed Codex home; starting with the durable Codex home instead" >&2
           fi
           if _graftty_codex_uses_durable_home "$@"; then
             _graftty_codex_run_administration \(codexSourceLiteral) "$@"

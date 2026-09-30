@@ -95,7 +95,10 @@ public enum AgentPluginInstallerError: Error, Equatable {
 public struct AgentPluginInstaller: Sendable {
     /// Bump when the integration changes enough to re-offer first-time setup
     /// to users who declined it. Completed installations refresh per app build.
-    public static let integrationRevision = 9
+    /// Revision 10: the plugins became the only agent integration, so users
+    /// who declined revision 9 while legacy wrapper hooks still worked must
+    /// be offered again.
+    public static let integrationRevision = 10
 
     private let resourceRoot: URL?
     private let grafttyCLIPath: String

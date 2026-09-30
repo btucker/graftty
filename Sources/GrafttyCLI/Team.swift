@@ -290,22 +290,35 @@ struct TeamHook: ParsableCommand {
                 if event == .postToolUse || event == .postToolUseFailure {
                     stageAttentionProgress()
                 }
-                print("{}")
+                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             case .ok, .paneList, .paneShow, .teamList, .teamInbox,
                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-                print("{}")
+                print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
         } catch {
             if event == .postToolUse || event == .postToolUseFailure {
                 stageAttentionProgress()
             }
-            if event == .sessionStart,
-               let output = try? TeamHookRenderer.sessionStart(runtime: runtime) {
-                print(output)
-            } else {
-                print("{}")
-            }
+            print(Self.unrenderedHookOutput(runtime: runtime, event: event))
         }
+    }
+
+    /// AGENT-6.49: hook output when Graftty could not render the hook. The
+    /// SessionStart skill guidance is the only Graftty context a session
+    /// receives, so keep it when the app is unreachable, busy, or failing —
+    /// but only inside a Graftty terminal. The plugins are user-global, and
+    /// agents started elsewhere must not get Graftty's worktree rules.
+    static func unrenderedHookOutput(
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        guard event == .sessionStart,
+              environment["GRAFTTY_SOCK"]?.isEmpty == false,
+              let output = try? TeamHookRenderer.sessionStart(runtime: runtime) else {
+            return "{}"
+        }
+        return output
     }
 
     private func updateClaudeNativePresence(

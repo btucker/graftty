@@ -57,6 +57,18 @@ struct AgentPluginInstallOfferPolicyTests {
         #expect(AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(in: defaults))
     }
 
+    /// Revision 9 was the last integration that kept a working non-plugin
+    /// delivery path, so declining its offer left agents connected. Once the
+    /// plugins became the only path, that old "Not Now" must not suppress the
+    /// launch offer.
+    @Test("A launch offer declined while legacy wrapper delivery still worked is offered again.")
+    func offerDeclinedBeforePluginOnlyDeliveryIsRepeated() {
+        #expect(AgentPluginInstallOfferPolicy.shouldOffer(
+            lastAcknowledgedRevision: 9,
+            installedRevision: nil
+        ))
+    }
+
     @Test("Acknowledgement and successful installation persist independently.")
     func recordsOfferLifecycle() {
         let suite = "AgentPluginInstallOfferPolicy-\(UUID().uuidString)"

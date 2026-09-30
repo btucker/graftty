@@ -176,7 +176,7 @@ struct AgentHookInstallerTests {
 
     @Test func wrapperSearchSkipsGeneratedBinDirectory() {
         let script = AgentHookInstaller.codexWrapperScript(
-                        wrapperDirectory: "/app/hooks/bin",
+            wrapperDirectory: "/app/hooks/bin",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/app/hooks/codex-home"
         )

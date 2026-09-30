@@ -4462,6 +4462,24 @@ struct GrafttyApp: App {
         }
     }
 
+    /// Hooks that exist only to carry attention signals. Codex PostToolUse
+    /// belongs here too: Codex has no PostToolUse context channel, so the
+    /// team handler would only ever render `{}` for it after scanning
+    /// presence on every tool call.
+    nonisolated static func isAttentionOnlyTeamHook(
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent
+    ) -> Bool {
+        switch event {
+        case .preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure:
+            return true
+        case .postToolUse:
+            return runtime == .codex
+        case .sessionStart, .stop:
+            return false
+        }
+    }
+
     @MainActor
     private static func handleTeamHook(
         callerPath: String,
@@ -4526,8 +4544,7 @@ struct GrafttyApp: App {
 
         // Attention-only hooks must return quickly and must not depend on the
         // team feature being enabled. They carry no inbox or instruction data.
-        if event == .preToolUse || event == .permissionRequest
-            || event == .userPromptSubmit || event == .postToolUseFailure {
+        if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput("{}")
         }
 
@@ -4640,10 +4657,8 @@ struct GrafttyApp: App {
             }
             return .teamHookOutput(output)
         } catch let error as TeamInboxRequestError {
-            if event == .sessionStart,
-               let output = try? TeamHookRenderer.sessionStart(runtime: runtime) {
-                return .teamHookOutput(output)
-            }
+            // The CLI decides whether an unrendered SessionStart still gets
+            // skill guidance (AGENT-6.49): only inside a Graftty terminal.
             return .error(error.description)
         } catch {
             return .error("failed to render team hook context: \(error)")
