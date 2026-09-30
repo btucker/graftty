@@ -3,6 +3,17 @@ import Testing
 
 @Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
+    @Test("@spec TECH-6.2: While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.")
+    func allowsColdDestinationDiscovery() throws {
+        for retry in [false, true] {
+            let result = try runFixture(firstExitCode: retry ? 70 : 0, removeSimulator: retry,
+                                        minimumDestinationTimeout: 60)
+            #expect(result.exitCode == 0)
+            #expect(result.xcodebuildAttempts == (retry ? 2 : 1))
+            #expect(result.simulatorsRemaining == 0)
+        }
+    }
+
     @Test("recreates a simulator that disappears during destination resolution")
     func retriesMissingSimulatorOnce() throws {
         let result = try runFixture(firstExitCode: 70, removeSimulator: true)
@@ -85,6 +96,7 @@ struct IOSTestShardRunnerTests {
         markSimulatorUnavailable: Bool = false,
         reportDestinationResolutionFailure: Bool = false,
         availableTrailingLines: Int = 0,
+        minimumDestinationTimeout: Int = 0,
         secondExitCode: Int32 = 0
     ) throws -> FixtureResult {
         let fileManager = FileManager.default
@@ -133,6 +145,7 @@ struct IOSTestShardRunnerTests {
         environment["FAKE_REPORT_DESTINATION_RESOLUTION_FAILURE"] =
             reportDestinationResolutionFailure ? "1" : "0"
         environment["FAKE_AVAILABLE_TRAILING_LINES"] = String(availableTrailingLines)
+        environment["FAKE_MINIMUM_DESTINATION_TIMEOUT"] = String(minimumDestinationTimeout)
         environment["GITHUB_ENV"] = root.appendingPathComponent("github-env").path
         environment["SHARD_NAME"] = "fixture"
         environment["SIMULATOR_UDID"] = "sim-1"
@@ -232,6 +245,19 @@ struct IOSTestShardRunnerTests {
     fi
     count="$((count + 1))"
     echo "$count" > "$FAKE_STATE/xcodebuild-count"
+    destination_timeout=0
+    while [[ "$#" -gt 0 ]]; do
+      if [[ "$1" == "-destination-timeout" ]]; then
+        destination_timeout="$2"
+        shift 2
+      else
+        shift
+      fi
+    done
+    if [[ "$destination_timeout" -lt "$FAKE_MINIMUM_DESTINATION_TIMEOUT" ]]; then
+      echo "xcodebuild: error: Unable to find a device matching the provided destination specifier:" >&2
+      exit 70
+    fi
     if [[ "$count" -eq 1 ]]; then
       if [[ "$FAKE_REMOVE_SIMULATOR" == "1" ]]; then
         current="$(cat "$FAKE_STATE/current")"
