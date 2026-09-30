@@ -323,6 +323,7 @@ final class AppServices {
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
+    let idleSleepController = IdleSleepController()
     private var lanRemoteAccessServer: LANRemoteAccessServer?
     private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
     private var remoteAccessRouteRefreshTask: Task<Void, Never>?
@@ -1110,6 +1111,7 @@ struct GrafttyApp: App {
             TabView {
                 SettingsView(
                     updaterController: updaterController,
+                    idleSleepController: services.idleSleepController,
                     onRestartZMX: { restartZMXWithConfirmation() },
                     editorPreference: terminalManager.editorPreference
                 )

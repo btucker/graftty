@@ -2434,6 +2434,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.19** When the mobile client signals a paired Mac over Tailscale, the application shall permit HTTP signaling to Tailscale IPv4 and IPv6 ranges without disabling App Transport Security globally.
 
+**REMOTE-2.20** While the user has enabled Keep Mac awake while Graftty is running, the application shall prevent idle system sleep without preventing display sleep, restore the preference on launch, and release its assertion when disabled or the controller is destroyed; the preference shall default to off.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

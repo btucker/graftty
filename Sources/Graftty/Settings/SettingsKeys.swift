@@ -3,6 +3,7 @@ import GrafttyKit
 
 /// Centralized UserDefaults key strings used across Settings panes and observers.
 enum SettingsKeys {
+    static let keepMacAwake              = "keepMacAwake"
     static let agentTeamsEnabled         = "agentTeamsEnabled"
     static let nativeAgentMessagingEnabled = "nativeAgentMessagingEnabled"
     static let nativeAgentMessagingSelectionRevision = "nativeAgentMessagingSelectionRevision"

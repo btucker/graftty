@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var availableApps: [TextEditorApp] = []
 
     @ObservedObject var updaterController: UpdaterController
+    @ObservedObject var idleSleepController: IdleSleepController
 
     let onRestartZMX: () -> Void
 
@@ -36,6 +37,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Toggle("Keep Mac awake while Graftty is running", isOn: Binding(
+                get: { idleSleepController.isEnabled },
+                set: { idleSleepController.setEnabled($0) }
+            ))
+            Text("Keeps this Mac available for remote connections, including on battery. The display can still turn off. Closing the lid or choosing Sleep can still put the Mac to sleep.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error = idleSleepController.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            Divider().padding(.vertical, 4)
+
             Toggle("Show project rail", isOn: $showsProjectRail)
             Text("Turn off to group all projects and worktrees in one sidebar.")
                 .font(.caption).foregroundStyle(.secondary)
