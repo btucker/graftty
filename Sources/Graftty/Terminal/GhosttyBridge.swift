@@ -224,8 +224,9 @@ struct GhosttyTheme: Equatable {
 ///
 /// # Threading
 /// libghostty may invoke the wakeup callback from any thread. We hop to the main queue and
-/// post `Notification.Name.ghosttyWakeup` so observers can safely call `tick()` on the main
-/// thread. The action callback may also fire from any thread; the supplied `actionHandler`
+/// post `Notification.Name.ghosttyWakeup`. GhosttyWakeupBridge always defers `tick()` to
+/// avoid reentering libghostty while the posting stack holds its renderer mutex.
+/// The action callback may also fire from any thread; the supplied `actionHandler`
 /// must be thread-safe (or dispatch to the main queue before touching UI state).
 final class GhosttyApp {
     /// Underlying `ghostty_app_t` handle (opaque pointer).
@@ -489,12 +490,4 @@ private final class ActionHandlerBox {
     init(handler: @escaping (ghostty_target_s, ghostty_action_s) -> Bool) {
         self.handler = handler
     }
-}
-
-// MARK: - Notification
-
-extension Notification.Name {
-    /// Posted on the main thread whenever libghostty's wakeup callback fires. Observers
-    /// should call `GhosttyApp.tick()` in response.
-    static let ghosttyWakeup = Notification.Name("com.graftty.ghostty.wakeup")
 }
