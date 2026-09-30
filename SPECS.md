@@ -28,6 +28,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.10** If a visited worktree is unavailable, then the application shall skip it in Back, Forward, and the recent-worktrees dropdown, and shall distinguish local and remote visits with the same filesystem path.
 
+**LAYOUT-1.11** When assistive technology focuses the breadcrumb button, the application shall expose the selected repository, worktree, and branch alongside the recent-worktrees action.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.

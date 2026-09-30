@@ -6,6 +6,23 @@ import GrafttyKit
 
 @Suite("Breadcrumb history presentation")
 struct BreadcrumbHistoryPresentationTests {
+    @MainActor
+    @Test("@spec LAYOUT-1.11: When assistive technology focuses the breadcrumb button, the application shall expose the selected repository, worktree, and branch alongside the recent-worktrees action.")
+    func accessibilityIncludesCurrentLocation() {
+        let bar = BreadcrumbBar(repoName: "Graftty", worktreeDisplayName: "header-nav", worktreeEmoji: nil,
+            worktreePath: "/repo/header-nav", branchName: "feature/header", isHomeCheckout: false,
+            prInfo: nil, theme: .fallback, sidebarHidden: false,
+            canGoBack: false, canGoForward: false, historyItems: [], currentTarget: .local("/repo/header-nav"),
+            onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {})
+        #expect(bar.currentLocationAccessibilityValue == "Graftty, header-nav, Branch feature/header")
+        let empty = BreadcrumbBar(repoName: nil, worktreeDisplayName: nil, worktreeEmoji: nil,
+            worktreePath: nil, branchName: nil, isHomeCheckout: false,
+            prInfo: nil, theme: .fallback, sidebarHidden: false,
+            canGoBack: false, canGoForward: false, historyItems: [], currentTarget: nil,
+            onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {})
+        #expect(empty.currentLocationAccessibilityValue.isEmpty)
+    }
+
     @Test("Recent entries identify their repository, branch, and remote Mac")
     func menuTitles() {
         let local = BreadcrumbHistoryItem(target: .local("/repo/feature"), repoName: "repo",

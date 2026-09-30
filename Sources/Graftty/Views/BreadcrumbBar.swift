@@ -56,6 +56,7 @@ struct BreadcrumbBar: View {
             .fixedSize(horizontal: false, vertical: true)
             .disabled(historyItems.isEmpty)
             .accessibilityLabel("Recent worktrees")
+            .accessibilityValue(currentLocationAccessibilityValue)
             .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
                 historyDropdown
             }
@@ -73,6 +74,12 @@ struct BreadcrumbBar: View {
         .background(theme.background)
         // Follow NavigationSplitView's column slide.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
+    }
+
+    var currentLocationAccessibilityValue: String {
+        [repoName, worktreeDisplayName, branchName.map { "Branch \($0)" }]
+            .compactMap { $0 }
+            .joined(separator: ", ")
     }
 
     private var historyDropdown: some View {
