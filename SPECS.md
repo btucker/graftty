@@ -448,6 +448,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.18** When a local terminal view joins a window after receiving an offscreen frame size or its backing properties change, the application shall resynchronize libghostty's content scale and backing-pixel viewport in that order even if its point size did not change.
 
+**TERM-11.19** When libghostty posts a wakeup notification, the application shall defer its tick to the main queue without running it inline or waiting for the main queue on the posting thread.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
