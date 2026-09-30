@@ -20,9 +20,21 @@ public enum TeamLookup {
         return nil
     }
 
+    /// Canonical paths may address any tracked repository. Convenience names
+    /// stay in the caller's team so duplicate branch names cannot misroute.
+    public static func recipient(
+        named address: String,
+        from callerTeam: TeamView,
+        in repos: [RepoEntry]
+    ) -> (team: TeamView, member: TeamMember)? {
+        let targetTeam = team(for: address, in: repos) ?? callerTeam
+        guard let member = targetTeam.memberNamed(address) else { return nil }
+        return (targetTeam, member)
+    }
+
     /// Finds the first member whose sanitized `name` matches across all
-    /// teams in `repos`. Used by the dispatcher when routing
-    /// `team_message` to a named recipient.
+    /// teams in `repos`. Direct-message routing uses `recipient` instead
+    /// to keep convenience names scoped to the caller's team.
     public static func member(named name: String, in repos: [RepoEntry]) -> TeamMember? {
         for repo in repos {
             guard let first = repo.worktrees.first else { continue }

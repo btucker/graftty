@@ -44,7 +44,7 @@ struct TeamTodo {
     func team_4_1() async throws { }
 
     @Test("""
-@spec TEAM-4.2: `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) the calling worktree has no team, (b) `<member-name>` is not a teammate of the caller, or (c) no non-empty body is supplied. In case (b) the error shall list the current teammates' member names.
+@spec TEAM-4.2: When `graftty team send [--urgent] [--stdin] <address> [text]` is invoked, the application shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, resolve short member names within the caller's team or canonical worktree paths across tracked repositories, and write a `team_message` row in the recipient repository's inbox with the caller's member name and supplied body. If the caller has no team, the recipient cannot be resolved, or no non-empty body is supplied, then the CLI shall exit non-zero with a stderr message; unresolved-recipient errors shall list the caller's current teammates.
 """, .disabled("not yet implemented"))
     func team_4_2() async throws { }
 

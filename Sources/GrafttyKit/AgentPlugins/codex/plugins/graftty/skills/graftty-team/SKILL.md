@@ -23,6 +23,8 @@ Treat canonical addresses as routing identities:
 - Copy exact addresses from the roster. Native provider sender labels are display metadata and may be truncated. Never route by them.
 - Native subagents are not independently routable.
 
+Canonical worktree paths and their provider or exact-agent suffixes can target any tracked local repository. Short worktree names resolve only within the caller's repository. For another repository, inspect it with `graftty team members --worktree '<absolute-worktree-path>' --json` and copy the canonical address.
+
 Send existing agents questions or tasks with context, the requested result, and your reply address. A question alone does not require a new worktree.
 
 ## Delegate work into a new worktree
