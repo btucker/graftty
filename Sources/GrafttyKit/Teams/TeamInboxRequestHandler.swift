@@ -124,7 +124,6 @@ public struct TeamInboxDelivery: Sendable, Equatable {
 public final class TeamInboxRequestHandler {
     private let inbox: TeamInbox
     private let dispatcher: TeamEventDispatcher
-    private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
     private let automaticDeliveryOwner: (@Sendable (
         _ teamID: String,
         _ worktree: String,
@@ -137,7 +136,6 @@ public final class TeamInboxRequestHandler {
     public init(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
         automaticDeliveryOwner: (@Sendable (
             _ teamID: String,
             _ worktree: String,
@@ -149,7 +147,6 @@ public final class TeamInboxRequestHandler {
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
-        self.sessionPromptRenderer = sessionPromptRenderer
         self.automaticDeliveryOwner = automaticDeliveryOwner
         self.agentRecords = agentRecords
         self.agentReachability = agentReachability
@@ -485,8 +482,7 @@ public final class TeamInboxRequestHandler {
         repos: [RepoEntry],
         teamsEnabled: Bool,
         instructions: String = "",
-        agentID: String? = nil,
-        skillManaged: Bool = false
+        agentID: String? = nil
     ) throws -> String {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let sessionID = sessionID ?? "\(runtime.rawValue):\(context.sender.name):\(context.sender.worktreePath)"
@@ -528,22 +524,11 @@ public final class TeamInboxRequestHandler {
                 readPosition = nil
                 pending = []
             }
-            let text: String
-            if skillManaged {
-                text = ""
-            } else if let sessionPromptRenderer {
-                // A configured session template owns the complete prompt.
-                // Empty or invalid templates intentionally suppress it.
-                text = sessionPromptRenderer(context.team, context.sender) ?? ""
-            } else {
-                text = TeamInstructionsRenderer.render(
-                    team: context.team,
-                    viewer: context.sender
-                )
-            }
+            // AGENT-6.9: team guidance comes from the provider plugin's
+            // Graftty skills; the hook adds only GRAFTTY.md instructions and
+            // queued messages.
             let output = try TeamHookRenderer.sessionStart(
                 runtime: runtime,
-                teamContext: text,
                 instructions: instructions,
                 messages: pending
             )
@@ -612,9 +597,9 @@ public final class TeamInboxRequestHandler {
             // `hookSpecificOutput.additionalContext`, so we can't
             // deliver content here. Skip the cursor advance too, since
             // advancing it would silently mark messages "delivered"
-            // and bury them past the next real delivery path. The
-            // Claude side picks them up via the asyncRewake watcher;
-            // Codex hook delivery is intentionally disabled.
+            // and bury them past the next real delivery path. Native
+            // delivery (Claude peer sockets, the Codex app-server)
+            // picks them up instead.
             return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }
     }

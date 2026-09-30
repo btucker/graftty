@@ -55,7 +55,7 @@ struct BundledResourceLayoutTests {
     @Test(arguments: [Layout.flat, .standard])
     private func agentPluginsResolve(_ layout: Layout) throws {
         let bundle = try makeBundle(layout)
-        let root = try #require(AgentPluginInstaller.bundledResourceRoot(bundle: bundle))
+        let root = try #require(AgentPluginInstaller.bundledResourceRoot(in: bundle))
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("claude").path))
     }
 

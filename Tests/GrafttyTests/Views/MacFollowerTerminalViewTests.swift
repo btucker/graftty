@@ -1,12 +1,108 @@
 import AppKit
 import GhosttyKit
+import GrafttyKit
 import GrafttyProtocol
 import Testing
 @testable import Graftty
 
 @MainActor
 struct MacFollowerTerminalViewTests {
-    @Test("@spec OWN-2.5: While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.")
+    @Test("@spec TERM-2.7: When a user clicks or types in a native Mac terminal pane, the application shall update the pane focus model used for dimming even when a scroll-view wrapper consumes SwiftUI tap gestures.")
+    func nativeClickUpdatesFocusAndDimming() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let terminal = SurfaceNSView()
+        let wrapper = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        window.contentView = wrapper
+        let first = PaneSlotID()
+        let second = PaneSlotID()
+        var selected = first
+        wrapper.onFocusTerminal = { selected = second }
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 100, y: 100), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        terminal.mouseDown(with: click)
+        #expect(window.firstResponder === terminal)
+        #expect(selected == second)
+        #expect(!GhosttyTheme.fallback.paneFocusDimmingStyle(isUnfocused: selected != second).isVisible)
+        selected = first
+        let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "x", charactersIgnoringModifiers: "x", isARepeat: false, keyCode: 7))
+        terminal.keyDown(with: key)
+        #expect(selected == second)
+        // SwiftUI can replace the callback while retaining the native wrapper.
+        wrapper.onFocusTerminal = { selected = first }
+        terminal.mouseDown(with: click)
+        #expect(selected == first)
+    }
+
+    @Test("@spec OWN-2.9: When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.")
+    func zoomRoutesByDisplayOwnership() throws {
+        let terminal = SurfaceNSView()
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
+        defer { terminal.surface = nil }
+        var actions: [String] = []
+        terminal.surfaceOperations = .init(setSize: { _, _, _ in }, size: { _ in .testSize132x43 }, refresh: { _ in })
+        terminal.surfaceOperations.bindingAction = { _, action in actions.append(action); return true }
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        view.layout()
+        view.performZoomAction(.increaseFontSize)
+        view.performZoomAction(.resetFontSize)
+        view.beginMagnification()
+        view.magnify(by: 0.25, around: CGPoint(x: 300, y: 200))
+        #expect(actions == ["increase_font_size:1", "reset_font_size", "increase_font_size:2"])
+        actions.removeAll()
+        view.followerGrid = try DisplayGrid(cols: 200, rows: 50)
+        view.layout()
+        view.performZoomAction(.increaseFontSize)
+        #expect(view.followerZoomScale > 1)
+        view.performZoomAction(.resetFontSize)
+        #expect(view.followerZoomScale == 1)
+        view.beginMagnification()
+        view.magnify(by: 0.5, around: CGPoint(x: 300, y: 200))
+        #expect(view.followerZoomScale == 1.5)
+        #expect(actions.isEmpty)
+        #expect(view.followerGrid == (try DisplayGrid(cols: 200, rows: 50)))
+    }
+
+    @Test("@spec OWN-2.8: When a Mac follower is magnified, the application shall scale its entire canvas and allow horizontal scrolling without changing its native grid, then discard the presentation zoom when it becomes leader.")
+    func followerZoomKeepsNativePixels() throws {
+        let terminal = SurfaceNSView()
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
+        defer { terminal.surface = nil }
+        var pixels: CGSize?
+        var resizeCount = 0
+        terminal.surfaceOperations = .init(
+            setSize: { _, width, height in
+                pixels = CGSize(width: Int(width), height: Int(height))
+                resizeCount += 1
+            },
+            size: { _ in .testSize132x43 }, refresh: { _ in }
+        )
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        view.followerGrid = try DisplayGrid(cols: 200, rows: 50)
+        view.layout()
+        let nativePixels = pixels
+        let nativeBounds = terminal.bounds
+        let nativeResizeCount = resizeCount
+        view.setFollowerZoomScale(2, around: CGPoint(x: 300, y: 200))
+        #expect(pixels == nativePixels)
+        #expect(terminal.bounds == nativeBounds)
+        #expect(resizeCount == nativeResizeCount)
+        #expect(view.scrollView.documentView!.frame.width == 1200)
+        #expect(view.scaledView.frame.width == 1200)
+        #expect(view.scrollView.contentView.bounds.minX == 300)
+        view.layout()
+        #expect(view.scrollView.contentView.bounds.minX == 300)
+        view.followerGrid = nil
+        view.layout()
+        #expect(view.followerZoomScale == 1)
+        #expect(view.scrollView.contentView.bounds.origin == .zero)
+        #expect(terminal.bounds.size == view.scrollView.contentSize)
+    }
+
+    @Test("@spec OWN-2.5: While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, center a narrower canvas, and restore the Mac's physical viewport before taking control.")
     func followerFitsNativeGridAndRestoresPhysicalSize() throws {
         let terminal = SurfaceNSView()
         let surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
@@ -26,6 +122,7 @@ struct MacFollowerTerminalViewTests {
         view.layout()
         #expect(pixels == CGSize(width: 540, height: 1120))
         #expect(view.scaledView.frame.size == view.scaledView.bounds.size)
+        #expect(abs(view.scaledView.frame.midX - view.scrollView.contentSize.width / 2) < 0.1)
         #expect(view.scaledView.frame.height > view.scrollView.contentSize.height)
         #expect(abs(view.scrollView.contentView.bounds.maxY - view.scrollView.documentView!.bounds.height) < 1)
         view.followerGrid = nil
@@ -105,6 +202,14 @@ struct MacFollowerTerminalViewTests {
         #expect(Self.viewportText(source)?.contains("mac-row-099") == true)
         #expect(ghostty_surface_size(source).columns == 200)
         #expect(ghostty_surface_size(source).rows == 50)
+        let originalFontSize = ghostty_surface_font_size(source)
+        follower.setFollowerZoomScale(1.5, around: CGPoint(x: 300, y: 200))
+        #expect(ghostty_surface_size(source).columns == 200)
+        #expect(ghostty_surface_size(source).rows == 50)
+        #expect(ghostty_surface_font_size(source) == originalFontSize)
+        #expect(abs(follower.scaledView.frame.width - 900) < 1)
+        #expect(follower.scrollView.contentView.bounds.minX > 0)
+        follower.setFollowerZoomScale(1, around: CGPoint(x: 300, y: 200))
         follower.scrollView.contentView.scroll(to: .zero)
         follower.scrollView.reflectScrolledClipView(follower.scrollView.contentView)
         #expect(Self.viewportText(source)?.contains("mac-row-000") == true)

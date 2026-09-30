@@ -1369,9 +1369,7 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// IOS-6.10: owner promotion must explicitly ask the mounted Ghostty
-    /// surface to publish its post-font-restore grid. Otherwise the PTY can
-    /// retain the previous owner's dimensions until the next key press.
+    /// @spec IOS-6.10: When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
     func testOwnerTransitionSynchronizesViewportWithoutWaitingForInput() {
         XCTAssertTrue(SingleSessionView.shouldSynchronizeViewportOnOwnerTransition(
             wasOwner: false,

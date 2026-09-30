@@ -31,9 +31,6 @@ enum AgentPluginInstallOfferPresenter {
         let installer = suppliedInstaller ?? AgentPluginInstaller(
             grafttyCLIPath: GrafttyApp.agentHookCLIPath()
         )
-        let nativeMessagingWasEnabled = defaults.bool(
-            forKey: SettingsKeys.nativeAgentMessagingEnabled
-        )
 
         Task { @MainActor in
             // prepare() rewrites the app-owned marketplace snapshots on disk
@@ -58,7 +55,6 @@ enum AgentPluginInstallOfferPresenter {
             presentOffer(
                 plan: plan,
                 installer: installer,
-                nativeMessagingWasEnabled: nativeMessagingWasEnabled,
                 defaults: defaults,
                 on: window
             )
@@ -69,49 +65,30 @@ enum AgentPluginInstallOfferPresenter {
     private static func presentOffer(
         plan: AgentPluginSetupPlan,
         installer: AgentPluginInstaller,
-        nativeMessagingWasEnabled: Bool,
         defaults: UserDefaults,
         on window: NSWindow
     ) {
-        let actionDescription = nativeMessagingWasEnabled
-            ? "Installing both plugins preserves your messaging-mode selection."
-            : "This install-and-enable action enables native messaging after every command succeeds."
         SheetAlert.present(
             .init(
-                messageText: nativeMessagingWasEnabled
-                    ? "Install Codex and Claude Plugins?"
-                    : "Install Plugins and Enable Native Messaging?",
-                informativeText: "Graftty can run the provider-native commands that install the shared team skill and lifecycle hooks. After installation, Graftty will refresh these plugins automatically when the app updates. \(actionDescription) If a provider CLI is not installed, you can still enable native messaging independently in Agent Teams Settings.",
+                messageText: "Install Codex and Claude Plugins?",
+                informativeText: "Graftty connects Codex and Claude to its Attention and agent team features through provider plugins that add its skills and lifecycle hooks. Until they are installed, agents won't be connected to Graftty. Graftty can run the provider-native install commands now and will refresh the plugins automatically when the app updates. You can also install them later from Agent Teams Settings.",
                 style: .informational,
-                primaryButton: nativeMessagingWasEnabled
-                    ? "Install Both Plugins"
-                    : "Install and Enable",
+                primaryButton: "Install Plugins",
                 secondaryButton: "Not Now"
             ),
             on: window
         ) { response in
             AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
             guard response == .primary else { return }
-            let userSelectionRevision = AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults)
 
             Task { @MainActor in
-                let report = await installer.install(plan)
-                let enabledByInstallation = report.succeeded
-                    && !nativeMessagingWasEnabled
-                    && AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)
-                        == userSelectionRevision
-                _ = AgentPluginIntegrationActivation.apply(
-                    successfulInstallation: report.succeeded,
-                    enableNativeMessagingOnSuccess: !nativeMessagingWasEnabled,
-                    userSelectionRevisionAtStart: userSelectionRevision,
-                    defaults: defaults,
-                    refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
+                let report = await installer.installReplacingLegacy(plan)
+                AgentPluginInstallOfferPolicy.recordInstallation(
+                    succeeded: report.succeeded,
+                    in: defaults
                 )
                 let details = report.succeeded
-                    ? report.summary + (enabledByInstallation
-                        ? " Native messaging is now enabled."
-                        : "")
+                    ? report.summary + " Start new agent sessions to use the plugins."
                     : report.summary + " Review and retry the displayed commands in Agent Teams Settings."
                 SheetAlert.present(
                     .init(

@@ -2,14 +2,13 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 
-/// Settings pane that exposes the `agentTeamsEnabled` toggle, the routing
-/// matrix, and the two user-editable prompts.
+/// Settings pane for provider integration, team event routing, and the
+/// per-event prompt.
 struct AgentTeamsSettingsPane: View {
-    @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
-    @AppStorage(SettingsKeys.nativeAgentMessagingEnabled)
-    private var nativeAgentMessagingEnabled: Bool = false
-    @AppStorage private var teamSessionPrompt: String
     @AppStorage private var teamPrompt: String
+    /// Mirrors `SettingsKeys.agentPluginInstalledRevision` so the missing-plugin
+    /// warning updates as soon as an installation records its revision.
+    @AppStorage private var installedPluginRevision: Int
     @AppStorage("teamEventRoutingPreferences") private var teamEventRoutingPreferences = TeamEventRoutingPreferences()
     private let defaults: UserDefaults
     @State private var pluginSetupCommands = ""
@@ -23,14 +22,9 @@ struct AgentTeamsSettingsPane: View {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        _nativeAgentMessagingEnabled = AppStorage(
-            wrappedValue: false,
-            SettingsKeys.nativeAgentMessagingEnabled,
-            store: defaults
-        )
-        _teamSessionPrompt = AppStorage(
-            wrappedValue: DefaultPrompts.sessionPrompt,
-            SettingsKeys.teamSessionPrompt,
+        _installedPluginRevision = AppStorage(
+            wrappedValue: 0,
+            SettingsKeys.agentPluginInstalledRevision,
             store: defaults
         )
         _teamPrompt = AppStorage(
@@ -43,121 +37,90 @@ struct AgentTeamsSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable agent teams", isOn: $agentTeamsEnabled)
+                if let pluginsWarning {
+                    Label(pluginsWarning, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+                Button(
+                    pluginsWarning == nil
+                        ? "Reinstall Codex and Claude Plugins…"
+                        : "Install Codex and Claude Plugins…"
+                ) {
+                    prepareProviderPlugins()
+                }
+                .disabled(pluginSetupIsBusy)
+                if preparedPluginPlan != nil {
+                    Button("Install Prepared Plugins…") {
+                        showingPluginInstallOffer = true
+                    }
+                    .disabled(pluginSetupIsBusy)
+                }
+                if pluginInstallInProgress {
+                    ProgressView("Installing provider plugins…")
+                        .controlSize(.small)
+                }
+                if !pluginSetupCommands.isEmpty {
+                    Text(pluginSetupCommands)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                if let pluginSetupStatus {
+                    Text(pluginSetupStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let status = automaticUpdate.status {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Provider plugins")
             } footer: {
-                Text("When native provider integration is off, Graftty installs compatibility wrappers that register sessions, inject lifecycle hooks, and deliver team inbox messages. Native integration moves hooks and team instructions into provider plugins.")
+                Text("The Codex and Claude plugins give agents Graftty's skills and lifecycle hooks, which connect them to Attention and agent teams. Install them once; Graftty then refreshes them automatically after app updates, and failed updates retry on the next launch. Start new agent sessions after installation or an update to use the new plugins. To customize agents, add `.graftty/GRAFTTY.md` instruction files to a repository.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if agentTeamsEnabled {
-                Section {
-                    Toggle(
-                        "Use native agent messaging (experimental)",
-                        isOn: nativeAgentMessagingBinding
-                    )
-                    Button("Prepare Codex and Claude Plugins…") {
-                        prepareProviderPlugins()
-                    }
-                    .disabled(pluginSetupIsBusy)
-                    if preparedPluginPlan != nil {
-                        Button("Install Prepared Plugins…") {
-                            showingPluginInstallOffer = true
-                        }
-                        .disabled(pluginSetupIsBusy)
-                    }
-                    if pluginInstallInProgress {
-                        ProgressView("Installing provider plugins…")
-                            .controlSize(.small)
-                    }
-                    if !pluginSetupCommands.isEmpty {
-                        Text(pluginSetupCommands)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                    if let pluginSetupStatus {
-                        Text(pluginSetupStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let status = automaticUpdate.status {
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Native provider integration")
-                } footer: {
-                    Text("Prepare and install the shared team skill and lifecycle hooks once. Graftty then refreshes the plugins automatically after app updates while agent teams are enabled. Failed updates retry on the next launch. You can enable native messaging before either provider is installed. Start new provider sessions after installation or an update to use the new plugins.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    ChannelRoutingMatrixView(prefs: $teamEventRoutingPreferences)
-                } header: {
-                    Text("Team event routing")
-                } footer: {
-                    Text("Choose which agents receive each automated team event. Events flow into the team inbox and are delivered to agents through hook context. \"Worktree agent\" means the agent in the worktree the event is about; \"Other worktree agents\" means agents in every other linked worktree in the same repo.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    TextEditor(text: $teamSessionPrompt)
-                        .frame(minHeight: 260)
-                        .font(.system(.body, design: .monospaced))
-                    AgentVariablesDocs(includesEventScope: false)
-                } header: {
-                    PromptSectionHeader(title: "Session prompt") {
-                        DefaultPrompts.restoreSessionPrompt(in: defaults) {
-                            teamSessionPrompt = $0
-                        }
-                    }
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Complete Stencil template rendered once when each Codex or Claude session starts. This is the team context delivered by the session-start hook; dynamic identity and roster values are represented by the placeholders listed below.")
-                        Text("Clearing the editor disables this session-start prompt. Restore Graftty Default immediately reloads the complete built-in template and removes your saved override so future built-in updates apply.")
-                        Text("Changes apply when each agent session next starts. Live in-session refresh has been removed.")
-                    }
+            Section {
+                ChannelRoutingMatrixView(prefs: $teamEventRoutingPreferences)
+            } header: {
+                Text("Team event routing")
+            } footer: {
+                Text("Choose which agents receive each automated team event. Events flow into the team inbox and are delivered to agents through hook context. \"Worktree agent\" means the agent in the worktree the event is about; \"Other worktree agents\" means agents in every other linked worktree in the same repo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                }
+            }
 
-                Section {
-                    TextEditor(text: $teamPrompt)
-                        .frame(minHeight: 100)
-                        .font(.system(.body, design: .monospaced))
-                    AgentVariablesDocs(includesEventScope: true)
-                } header: {
-                    PromptSectionHeader(title: "Per-event prompt") {
-                        DefaultPrompts.restoreEventPrompt(in: defaults) {
-                            teamPrompt = $0
-                        }
+            Section {
+                TextEditor(text: $teamPrompt)
+                    .frame(minHeight: 100)
+                    .font(.system(.body, design: .monospaced))
+                AgentVariablesDocs()
+            } header: {
+                PromptSectionHeader(title: "Per-event prompt") {
+                    DefaultPrompts.restoreEventPrompt(in: defaults) {
+                        teamPrompt = $0
                     }
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Stencil template rendered freshly for each automated event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
-                        Text("Clearing the editor disables this prompt. Restore Graftty Default immediately reloads the built-in text and removes your saved override so future built-in updates apply.")
-                        Text("Changes apply to automated events written after the change. Already-written inbox events keep their existing rendered prompt.")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Stencil template rendered freshly for each automated event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
+                    Text("Clearing the editor disables this prompt. Restore Graftty Default immediately reloads the built-in text and removes your saved override so future built-in updates apply.")
+                    Text("Changes apply to automated events written after the change. Already-written inbox events keep their existing rendered prompt.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .confirmationDialog(
-            nativeAgentMessagingEnabled
-                ? "Install Codex and Claude plugins now?"
-                : "Install plugins and enable native messaging?",
+            "Install Codex and Claude plugins now?",
             isPresented: $showingPluginInstallOffer,
             titleVisibility: .visible
         ) {
-            Button(nativeAgentMessagingEnabled ? "Install Both Plugins" : "Install and Enable") {
+            Button("Install Plugins") {
                 AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
-                installPreparedProviderPlugins(
-                    enableNativeMessagingOnSuccess: !nativeAgentMessagingEnabled
-                )
+                installPreparedProviderPlugins()
             }
             Button("Not Now", role: .cancel) {
                 AgentPluginInstallOfferPolicy.recordAcknowledged(in: defaults)
@@ -165,41 +128,31 @@ struct AgentTeamsSettingsPane: View {
         } message: {
             Text("Graftty will run the five displayed provider-native commands and refresh these plugins automatically after future app updates. Failures are reported without preventing the other provider from being attempted.")
         }
-        .onChange(of: agentTeamsEnabled) { _, enabled in
-            guard enabled else { return }
-            Task { @MainActor in
-                await automaticUpdate.runAtLaunch(defaults: defaults)
-                guard AgentPluginInstallOfferPolicy.shouldOffer(in: defaults) else { return }
-                // Enabling teams must not silently replace the clipboard.
-                prepareProviderPlugins(copyToClipboard: false)
-            }
-        }
         // Tall enough to fit the pane without scrolling on a typical laptop;
         // macOS clamps to the screen, so smaller displays still scroll.
         .frame(minWidth: 540, minHeight: 640)
     }
 
-    private var nativeAgentMessagingBinding: Binding<Bool> {
-        Binding(
-            get: { nativeAgentMessagingEnabled },
-            set: { enabled in
-                nativeAgentMessagingEnabled = AgentPluginIntegrationActivation.applyUserSelection(
-                    enabled: enabled,
-                    defaults: defaults,
-                    refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
-                )
-                guard enabled else {
-                    return
-                }
-                guard AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(in: defaults) else {
-                    prepareProviderPlugins()
-                    return
-                }
-            }
+    private var pluginsWarning: String? {
+        Self.missingPluginsWarning(installedRevision: installedPluginRevision)
+    }
+
+    /// AGENT-6.46: shown until the current provider plugin integration is
+    /// installed, because without the plugins agents have no Graftty hooks.
+    static func missingPluginsWarning(installedRevision: Int?) -> String? {
+        guard !AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(
+            installedRevision: installedRevision
+        ) else { return nil }
+        return "Codex and Claude agents won't be connected to Graftty until the provider plugins are installed. Install them below, then start new agent sessions."
+    }
+
+    static func missingPluginsWarning(in defaults: UserDefaults) -> String? {
+        missingPluginsWarning(
+            installedRevision: defaults.object(forKey: SettingsKeys.agentPluginInstalledRevision) as? Int
         )
     }
 
-    private func prepareProviderPlugins(copyToClipboard: Bool = true) {
+    private func prepareProviderPlugins() {
         guard !pluginSetupIsBusy else { return }
         do {
             let plan = try AgentPluginInstaller(
@@ -207,13 +160,9 @@ struct AgentTeamsSettingsPane: View {
             ).prepare()
             preparedPluginPlan = plan
             pluginSetupCommands = plan.shellScript
-            if copyToClipboard {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(plan.shellScript, forType: .string)
-                pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
-            } else {
-                pluginSetupStatus = "Setup commands prepared. Approve the installation offer to run them now, or review and run them in a terminal."
-            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(plan.shellScript, forType: .string)
+            pluginSetupStatus = "Setup commands copied. Approve the installation offer to run them now, or review and run them in a terminal."
             showingPluginInstallOffer = true
         } catch {
             preparedPluginPlan = nil
@@ -222,31 +171,18 @@ struct AgentTeamsSettingsPane: View {
         }
     }
 
-    private func installPreparedProviderPlugins(
-        enableNativeMessagingOnSuccess: Bool
-    ) {
+    private func installPreparedProviderPlugins() {
         guard !pluginSetupIsBusy, let plan = preparedPluginPlan else { return }
         pluginInstallInProgress = true
         pluginSetupStatus = "Installing Codex and Claude plugins…"
-        let userSelectionRevision = AgentPluginIntegrationActivation
-            .userSelectionRevision(in: defaults)
         Task {
             let report = await AgentPluginInstaller(
                 grafttyCLIPath: GrafttyApp.agentHookCLIPath()
-            ).install(plan)
-            if AgentPluginIntegrationActivation.apply(
-                successfulInstallation: report.succeeded,
-                enableNativeMessagingOnSuccess: enableNativeMessagingOnSuccess,
-                userSelectionRevisionAtStart: userSelectionRevision,
-                defaults: defaults,
-                refreshHookAssets: { GrafttyApp.installAgentHookAssets() }
-            ), enableNativeMessagingOnSuccess,
-               AgentPluginIntegrationActivation.userSelectionRevision(in: defaults)
-                == userSelectionRevision {
-                nativeAgentMessagingEnabled = defaults.bool(
-                    forKey: SettingsKeys.nativeAgentMessagingEnabled
-                )
-            }
+            ).installReplacingLegacy(plan)
+            AgentPluginInstallOfferPolicy.recordInstallation(
+                succeeded: report.succeeded,
+                in: defaults
+            )
             pluginInstallInProgress = false
             pluginSetupStatus = report.summary
         }
@@ -268,39 +204,25 @@ private struct PromptSectionHeader: View {
     }
 }
 
-/// Disclosure list of `agent.*` Stencil variables shown beneath each prompt
-/// editor. The session prompt suppresses the event-scoped variables, since
-/// they're always `false` at session start.
+/// Disclosure list of the Stencil variables available to the per-event
+/// prompt editor.
 private struct AgentVariablesDocs: View {
-    let includesEventScope: Bool
-
     var body: some View {
         DisclosureGroup("Available variables in your template") {
             VStack(alignment: .leading, spacing: 4) {
                 Text("agent.branch (String) — agent's branch.")
                 Text("agent.main_worktree (Bool) — true iff this agent is in the repo's main worktree.")
-                if includesEventScope {
-                    Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
-                    Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
-                    Text("event.type (String) — wire-format event type. One of:")
-                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.prStateChanged)\" — PR opened/closed/draft/merged.")
-                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.ciConclusionChanged)\" — PR's CI conclusion changed.")
-                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.mergeStateChanged)\" — branch mergeability vs. default branch changed.")
-                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberJoined)\" — new worktree joined the team.")
-                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberLeft)\" — worktree left the team.")
-                    Text("body (String) — original event body.")
-                    Text("event.attrs (Object) — event attribute dictionary.")
-                    Text("event.body (String) — original event body.")
-                } else {
-                    Text("agent.name (String) — stable member name.")
-                    Text("agent.worktree (String) — absolute worktree path.")
-                    Text("agent.running (Bool) — whether the worktree currently has a running pane backend.")
-                    Text("team.repo (String) — repository display name.")
-                    Text("team.repo_path (String) — main repository worktree path.")
-                    Text("team.main_worktree (Object) — main member; exposes name, branch, worktree, main_worktree, and running.")
-                    Text("team.members (Array) — all team members using that same object shape.")
-                    Text("team.other_worktrees (Array) — linked worktrees other than the current agent, using that same object shape.")
-                }
+                Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
+                Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
+                Text("event.type (String) — wire-format event type. One of:")
+                Text(verbatim: "    \"\(TeamChannelEvents.WireType.prStateChanged)\" — PR opened/closed/draft/merged.")
+                Text(verbatim: "    \"\(TeamChannelEvents.WireType.ciConclusionChanged)\" — PR's CI conclusion changed.")
+                Text(verbatim: "    \"\(TeamChannelEvents.WireType.mergeStateChanged)\" — branch mergeability vs. default branch changed.")
+                Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberJoined)\" — new worktree joined the team.")
+                Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberLeft)\" — worktree left the team.")
+                Text("body (String) — original event body.")
+                Text("event.attrs (Object) — event attribute dictionary.")
+                Text("event.body (String) — original event body.")
             }
             .font(.caption)
             .foregroundStyle(.secondary)

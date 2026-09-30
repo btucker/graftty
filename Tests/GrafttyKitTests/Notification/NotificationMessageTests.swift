@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GrafttyProtocol
 @testable import GrafttyKit
 
 @Suite("NotificationMessage Tests")
@@ -156,6 +157,26 @@ struct NotificationMessageTests {
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test("@spec AGENT-3.12: When a legacy socket client sends an Attention report message, the protocol shall preserve its structured recap, calling worktree, and agent identity.")
+    func attentionReportRoundTrips() throws {
+        let recap = AttentionRecap(title: "Model evals", completed: "v3 scored 0.910.",
+                                   next: "Run holdout evals.", need: "Choose a target score.")
+        let original: NotificationMessage = .attentionReport(
+            callerWorktree: "/r/w", callerAgentID: "codex-1", recap: recap
+        )
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(original)) == original)
+    }
+
+    @Test("Stop hook continuation flag survives the CLI socket request.")
+    func stopHookActiveRoundTrips() throws {
+        let original: NotificationMessage = .teamHook(
+            callerWorktree: "/r/w", callerAgentID: "codex-1", runtime: .codex,
+            event: .stop, sessionID: "session-1", paneSessionName: nil,
+            stopHookActive: true
+        )
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(original)) == original)
     }
 
     @Test("@spec TEAM-IDLE-2.9: .teamHook encodes and decodes paneSessionName when present.")

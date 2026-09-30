@@ -3,13 +3,14 @@ import GrafttyKit
 import GrafttyProtocol
 
 /// The row that sits at the very top of the detail column. Shows:
-/// `{repo} / {worktree-display-name} ({branch})` on the left and, when
+/// `{repo} / {emoji} {worktree-display-name} ({branch})` on the left and, when
 /// available, a PR button on the trailing edge. Home checkout renders
 /// the worktree name in italic to distinguish it from feature worktrees.
 /// The worktree-name carries a tooltip with the full filesystem path.
 struct BreadcrumbBar: View {
     let repoName: String?
     let worktreeDisplayName: String?
+    let worktreeEmoji: String?
     let worktreePath: String?
     let branchName: String?
     let isHomeCheckout: Bool
@@ -39,6 +40,9 @@ struct BreadcrumbBar: View {
                     .foregroundColor(theme.foreground.opacity(0.3))
             }
             if let worktreeDisplayName {
+                if let worktreeEmoji {
+                    Text(worktreeEmoji)
+                }
                 worktreeLabel(worktreeDisplayName)
             }
             if let branchName {
@@ -63,6 +67,11 @@ struct BreadcrumbBar: View {
         // own column slide. Without this the padding flips instantly while
         // the column animates, so the breadcrumb appears to teleport.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
+    }
+
+    static func selectedWorktreeEmoji(localEmoji: String?, remoteWorktree: WorktreePanes?) -> String? {
+        if let remoteWorktree { return remoteWorktree.sidebar?.emoji }
+        return localEmoji
     }
 
     private func worktreeLabel(_ name: String) -> some View {

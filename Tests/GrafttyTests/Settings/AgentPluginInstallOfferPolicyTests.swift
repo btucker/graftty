@@ -6,13 +6,12 @@ import GrafttyKit
 @Suite("Native provider plugin launch offer")
 struct AgentPluginInstallOfferPolicyTests {
     @Test("""
-    @spec AGENT-6.15: When Graftty launches with agent teams enabled, no previously completed provider installation, and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
+    @spec AGENT-6.15: When Graftty launches with no previously completed provider installation and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; a complete installation shall record the installed integration revision, and an incomplete installation shall record nothing so the offer and the Settings warning persist.
     """)
     func launchOfferIsGatedAndVersioned() {
         let revision = AgentPluginInstaller.integrationRevision
 
         #expect(AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: nil,
             installedRevision: nil
         ))
@@ -24,105 +23,50 @@ struct AgentPluginInstallOfferPolicyTests {
             installedRevision: revision
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: false,
-            lastAcknowledgedRevision: nil,
-            installedRevision: nil
-        ))
-        #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: revision,
             installedRevision: nil
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: nil,
             installedRevision: revision
         ))
         #expect(!AgentPluginInstallOfferPolicy.shouldOffer(
-            agentTeamsEnabled: true,
             lastAcknowledgedRevision: revision - 1,
             installedRevision: revision - 1
         ))
 
-        let suite = "AgentPluginSelection-\(UUID().uuidString)"
+        let suite = "AgentPluginInstallResult-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        var refreshCount = 0
-        #expect(AgentPluginIntegrationActivation.applyUserSelection(
-            enabled: true,
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
+
+        #expect(!AgentPluginInstallOfferPolicy.recordInstallation(
+            succeeded: false,
+            in: defaults,
+            buildVersion: "100"
         ))
-        #expect(defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
         #expect(defaults.object(forKey: SettingsKeys.agentPluginInstalledRevision) == nil)
-        #expect(refreshCount == 1)
+        #expect(!AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(in: defaults))
 
-        // Models accepting the follow-up offer on a machine where neither
-        // provider executable exists: the installation is incomplete, but
-        // the explicit selection remains active and no revision is recorded.
-        #expect(!AgentPluginIntegrationActivation.apply(
-            successfulInstallation: false,
-            enableNativeMessagingOnSuccess: false,
-            userSelectionRevisionAtStart: AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults),
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
+        #expect(AgentPluginInstallOfferPolicy.recordInstallation(
+            succeeded: true,
+            in: defaults,
+            buildVersion: "100"
         ))
-        #expect(defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(defaults.object(forKey: SettingsKeys.agentPluginInstalledRevision) == nil)
-        #expect(refreshCount == 2)
-
-        #expect(!AgentPluginIntegrationActivation.applyUserSelection(
-            enabled: false,
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
-        ))
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(refreshCount == 3)
-
-        #expect(AgentPluginIntegrationActivation.apply(
-            successfulInstallation: true,
-            enableNativeMessagingOnSuccess: false,
-            userSelectionRevisionAtStart: AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults),
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
-        ))
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision)
-            == AgentPluginInstaller.integrationRevision)
-        #expect(refreshCount == 4)
+        #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision) == revision)
+        #expect(defaults.string(forKey: SettingsKeys.agentPluginInstalledBuildVersion) == "100")
+        #expect(AgentPluginInstallOfferPolicy.isCurrentIntegrationInstalled(in: defaults))
     }
 
-    @Test("A newer Settings selection wins over an older install-and-enable action.")
-    func newerUserSelectionWinsOverInstallationCompletion() {
-        let suite = "AgentPluginSelectionRace-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let installStartRevision = AgentPluginIntegrationActivation
-            .userSelectionRevision(in: defaults)
-
-        _ = AgentPluginIntegrationActivation.applyUserSelection(
-            enabled: true,
-            defaults: defaults,
-            refreshHookAssets: {}
-        )
-        _ = AgentPluginIntegrationActivation.applyUserSelection(
-            enabled: false,
-            defaults: defaults,
-            refreshHookAssets: {}
-        )
-
-        #expect(AgentPluginIntegrationActivation.apply(
-            successfulInstallation: true,
-            enableNativeMessagingOnSuccess: true,
-            userSelectionRevisionAtStart: installStartRevision,
-            defaults: defaults,
-            refreshHookAssets: {}
+    /// Revision 9 was the last integration that kept a working non-plugin
+    /// delivery path, so declining its offer left agents connected. Once the
+    /// plugins became the only path, that old "Not Now" must not suppress the
+    /// launch offer.
+    @Test("A launch offer declined while legacy wrapper delivery still worked is offered again.")
+    func offerDeclinedBeforePluginOnlyDeliveryIsRepeated() {
+        #expect(AgentPluginInstallOfferPolicy.shouldOffer(
+            lastAcknowledgedRevision: 9,
+            installedRevision: nil
         ))
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision)
-            == AgentPluginInstaller.integrationRevision)
     }
 
     @Test("Acknowledgement and successful installation persist independently.")
@@ -139,58 +83,5 @@ struct AgentPluginInstallOfferPolicyTests {
         AgentPluginInstallOfferPolicy.recordInstalled(in: defaults)
         #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision)
             == AgentPluginInstaller.integrationRevision)
-    }
-
-    @Test("A successful install-and-enable action activates native messaging; a failed installation preserves the prior mode in both directions.")
-    func activationPreservesPriorMessagingModeOnFailure() {
-        let suite = "AgentPluginIntegrationActivation-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var refreshCount = 0
-
-        // Previously-false (legacy mode) stays false after a failed
-        // installation, and the installed revision is not recorded.
-        defaults.set(false, forKey: SettingsKeys.nativeAgentMessagingEnabled)
-        #expect(!AgentPluginIntegrationActivation.apply(
-            successfulInstallation: false,
-            enableNativeMessagingOnSuccess: true,
-            userSelectionRevisionAtStart: AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults),
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
-        ))
-        #expect(!defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(defaults.object(forKey: SettingsKeys.agentPluginInstalledRevision) == nil)
-        #expect(refreshCount == 1)
-
-        // A complete installation activates native messaging and records
-        // the installed revision.
-        #expect(AgentPluginIntegrationActivation.apply(
-            successfulInstallation: true,
-            enableNativeMessagingOnSuccess: true,
-            userSelectionRevisionAtStart: AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults),
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
-        ))
-        #expect(defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision)
-            == AgentPluginInstaller.integrationRevision)
-        #expect(refreshCount == 2)
-
-        // Previously-true (native mode) stays true when a later
-        // (re)installation fails: a revision-bump re-offer that fails must
-        // not demote an already-native user to legacy mode while the old
-        // plugins remain installed.
-        #expect(!AgentPluginIntegrationActivation.apply(
-            successfulInstallation: false,
-            enableNativeMessagingOnSuccess: true,
-            userSelectionRevisionAtStart: AgentPluginIntegrationActivation
-                .userSelectionRevision(in: defaults),
-            defaults: defaults,
-            refreshHookAssets: { refreshCount += 1 }
-        ))
-        #expect(defaults.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled))
-        #expect(refreshCount == 3)
     }
 }

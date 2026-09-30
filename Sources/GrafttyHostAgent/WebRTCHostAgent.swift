@@ -708,7 +708,7 @@ public actor WebRTCHostAgent {
                         }
                     },
                     allocator: transport.channel.allocator,
-                    onAuthenticatedPeer: { [weak self] peer in
+                    onAuthenticatedPeer: { [weak self = self] peer in
                         peerBox.peer = peer
                         // REMOTE-3.1 revocation (W4): `onAuthenticatedPeer` runs
                         // synchronously on the transport's event loop, not

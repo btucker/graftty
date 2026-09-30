@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "graftty-team",
+      "name": "graftty",
       "source": {
         "source": "local",
-        "path": "./plugins/graftty-team"
+        "path": "./plugins/graftty"
       },
       "policy": {
         "installation": "AVAILABLE",

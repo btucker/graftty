@@ -27,10 +27,9 @@ public enum WorktreeAgentLaunchCommand {
         "agent prompts cannot exceed \(maximumPromptBytes) UTF-8 bytes; start with a shorter task and send follow-up context after launch"
     }
 
-    /// An agent launched with no user task still needs one completed turn:
-    /// Claude installs its async inbox watcher from the Stop hook. Without
-    /// this bootstrap, a message sent after SessionStart can remain queued
-    /// forever in an untouched session.
+    /// An agent launched with no user task still gets one initial turn so it
+    /// reviews messages queued before it started and reports that it is
+    /// ready, rather than sitting idle at an empty prompt.
     public static let bootstrapPrompt = """
     This Graftty agent session was launched without a user task. During this initial turn, review any Graftty team messages included in the session context and respond when relevant to the scoped repository work. If there are none, briefly report that the session is ready, then wait for a task.
     """

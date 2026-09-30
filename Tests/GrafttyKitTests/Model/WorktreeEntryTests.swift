@@ -44,6 +44,7 @@ struct WorktreeEntryTests {
         )
 
         #expect(decoded.staleSince == nil)
+        #expect(decoded.paneTitleMetadata.isEmpty)
     }
 
     @Test func repeatedStaleSignalDoesNotExtendGracePeriod() {

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
     case codex
@@ -121,8 +122,9 @@ public enum NotificationMessage: Sendable, Equatable {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason? = nil,
-        skillManaged: Bool = false
+        stopHookActive: Bool = false
     )
+    case attentionReport(callerWorktree: String, callerAgentID: String, recap: AttentionRecap)
     case teamInbox(TeamInboxPageRequest)
     case teamInboxAdvance(
         callerWorktree: String,
@@ -190,7 +192,8 @@ extension NotificationMessage: Codable {
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
         case attentionReason = "attention_reason"
-        case skillManaged = "skill_managed"
+        case stopHookActive = "stop_hook_active"
+        case recap
         case pressEnter = "press_enter"
     }
 
@@ -279,7 +282,7 @@ extension NotificationMessage: Codable {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged
+            let stopHookActive
         ):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -289,7 +292,12 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
             try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
-            try container.encode(skillManaged, forKey: .skillManaged)
+            try container.encode(stopHookActive, forKey: .stopHookActive)
+        case .attentionReport(let path, let callerAgentID, let recap):
+            try container.encode("attention_report", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(callerAgentID, forKey: .callerAgentID)
+            try container.encode(recap, forKey: .recap)
         case .teamInbox(let request):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(request.callerWorktree, forKey: .callerWorktree)
@@ -460,12 +468,18 @@ extension NotificationMessage: Codable {
                 AgentHookAttentionReason.self,
                 forKey: .attentionReason
             )
-            let skillManaged = try container.decodeIfPresent(Bool.self, forKey: .skillManaged) ?? false
+            let stopHookActive = try container.decodeIfPresent(Bool.self, forKey: .stopHookActive) ?? false
             self = .teamHook(callerWorktree: path, callerAgentID: callerAgentID,
                              runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
                              attentionReason: attentionReason,
-                             skillManaged: skillManaged)
+                             stopHookActive: stopHookActive)
+        case "attention_report":
+            self = .attentionReport(
+                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                callerAgentID: try container.decode(String.self, forKey: .callerAgentID),
+                recap: try container.decode(AttentionRecap.self, forKey: .recap)
+            )
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)

@@ -14,6 +14,66 @@ public enum FollowerTerminalLayout {
     public struct Layout: Equatable {
         public let size: CGSize
         public let scale: CGFloat
+
+        public func presentation(
+            viewport: CGSize, nativeRowHeight: CGFloat, historyRows: UInt64,
+            zoomScale: CGFloat = 1, maximumBaseScale: CGFloat = .infinity,
+            fillsSpareHeightWithHistory: Bool = true
+        ) -> Presentation {
+            let scale = min(scale, maximumBaseScale) * zoomScale
+            let screen = CGSize(width: size.width * scale, height: size.height * scale)
+            return Presentation(
+                scale: scale, rowHeight: nativeRowHeight * scale, screen: screen,
+                viewport: viewport, historyRows: historyRows,
+                fillsSpareHeightWithHistory: fillsSpareHeightWithHistory
+            )
+        }
+    }
+
+    /// Geometry shared by the native Mac and mobile scroll containers.
+    /// The terminal's bounds remain `Layout.size`; only its presentation changes.
+    public struct Presentation {
+        public let scale: CGFloat
+        public let rowHeight: CGFloat
+        private let screen: CGSize
+        private let viewport: CGSize
+        private let historyRows: UInt64
+        private let fillsSpareHeightWithHistory: Bool
+
+        fileprivate init(scale: CGFloat, rowHeight: CGFloat, screen: CGSize,
+                         viewport: CGSize, historyRows: UInt64, fillsSpareHeightWithHistory: Bool) {
+            self.scale = scale
+            self.rowHeight = rowHeight
+            self.screen = screen
+            self.viewport = viewport
+            self.historyRows = historyRows
+            self.fillsSpareHeightWithHistory = fillsSpareHeightWithHistory
+        }
+
+        public var contentSize: CGSize {
+            CGSize(width: max(viewport.width, screen.width),
+                   height: CGFloat(historyRows) * rowHeight + max(viewport.height, screen.height))
+        }
+
+        public func screenFrame(at row: UInt64) -> CGRect {
+            let spareHeight = max(0, viewport.height - screen.height)
+            return CGRect(
+                x: (contentSize.width - screen.width) / 2,
+                y: CGFloat(row) * rowHeight + spareHeight / (fillsSpareHeightWithHistory ? 1 : 2),
+                width: screen.width, height: screen.height
+            )
+        }
+
+        public func anchoredOffset(from oldFrame: CGRect, oldOffset: CGPoint,
+                                   to newFrame: CGRect, anchor: CGPoint) -> CGPoint {
+            let ratio = newFrame.width / oldFrame.width
+            return CGPoint(
+                x: min(max(0, newFrame.minX + (oldOffset.x + anchor.x - oldFrame.minX) * ratio - anchor.x),
+                       max(0, contentSize.width - viewport.width)),
+                y: min(max(0, newFrame.minY + (oldOffset.y + anchor.y - oldFrame.minY) * ratio - anchor.y),
+                       max(0, contentSize.height - viewport.height))
+            )
+        }
     }
 
     public static func layout(

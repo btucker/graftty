@@ -143,15 +143,11 @@ private struct PaneTile: View {
         }
     }
 
-    /// Renders the per-tile controller at the tile's natural width and
-    /// trusts `PanePreviewFontSizing` to have sized the font for fit.
-    /// Deliberately does NOT apply a `scaleEffect` driven by
-    /// `client.cellWidthPoints`: that value is updated by libghostty's
-    /// resize callback and shared with the fullscreen view, which renders
-    /// at a much larger font, so a feedback-loop safety-net would
-    /// oscillate / progressively shrink the preview. The explicit
-    /// `frame + clipped` keeps libghostty's Metal layer from rendering
-    /// outside the tile if its intrinsic size briefly disagrees.
+    /// Renders the per-tile controller within the tile's bounds.
+    /// TerminalPaneView fits authoritative grids through its canvas. Without
+    /// an authoritative grid, PanePreviewFontSizing selects the preview font.
+    /// The explicit frame and clipping contain the Metal layer while its
+    /// intrinsic size catches up with the tile.
     @ViewBuilder
     private func paneContent(client: SessionClient) -> some View {
         if let controller, controllerSourceConfig == baseConfig {

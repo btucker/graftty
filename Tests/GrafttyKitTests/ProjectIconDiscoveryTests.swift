@@ -6,6 +6,13 @@ import UniformTypeIdentifiers
 @testable import GrafttyKit
 
 struct ProjectIconDiscoveryTests {
+    @Test("@spec PROJECT-3.5: When a project icon has colored pixels, the application shall derive a stable accent from the icon for tinted Attention cards and project initials.")
+    func iconAccentFollowsColor() throws {
+        let red = try #require(ProjectIconDiscovery.accentHex(png(red: 1, blue: 0)))
+        let blue = try #require(ProjectIconDiscovery.accentHex(png(red: 0, blue: 1)))
+        #expect(red != blue)
+        #expect(ProjectIconDiscovery.accentHex(try png(red: 0, blue: 0)) == nil)
+    }
     @Test("@spec PROJECT-3.4: When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.")
     func discoversNestedIconsAndLogoFallback() throws {
         let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)

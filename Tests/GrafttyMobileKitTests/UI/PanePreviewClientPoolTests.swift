@@ -104,3 +104,47 @@ struct PanePreviewClientPoolTests {
         #expect(made.map(\.stopCount) == [0, 0])
     }
 }
+
+@Suite("Retained interactive pane connections")
+@MainActor
+struct RetainedPaneClientPoolTests {
+    typealias Client = PanePreviewClientPoolTests.FakePreviewClient
+
+    @Test("@spec IOS-7.9: While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.")
+    func switchingReusesConnectionsAndEvictsLeastRecentlyUsed() {
+        let pool = RetainedPaneClientPool<Client>(capacity: 2)
+        let host = UUID()
+        let a = RetainedPaneClientPool<Client>.Key(hostID: host, sessionName: "a")
+        let b = RetainedPaneClientPool<Client>.Key(hostID: host, sessionName: "b")
+        let c = RetainedPaneClientPool<Client>.Key(hostID: host, sessionName: "c")
+        let first = pool.acquire(a) { Client(sessionName: "a") }
+        let second = pool.acquire(b) { Client(sessionName: "b") }
+        let revisited = pool.acquire(a) { Client(sessionName: "a") }
+        #expect(revisited === first)
+        #expect(first.startCount == 1)
+        #expect(first.stopCount == 0)
+        _ = pool.acquire(c) { Client(sessionName: "c") }
+        #expect(second.stopCount == 1)
+        #expect(first.stopCount == 0)
+        pool.stopAll()
+        #expect(first.stopCount == 1)
+    }
+
+    @Test("Retained panes are host scoped and all suspend on background")
+    func hostIdentityAndSuspension() {
+        let pool = RetainedPaneClientPool<Client>()
+        let a = RetainedPaneClientPool<Client>.Key(hostID: UUID(), sessionName: "same")
+        let b = RetainedPaneClientPool<Client>.Key(hostID: UUID(), sessionName: "same")
+        let first = pool.acquire(a) { Client(sessionName: "same") }
+        let second = pool.acquire(b) { Client(sessionName: "same") }
+        #expect(first !== second)
+        pool.suspendAll()
+        #expect(first.suspendCount == 1)
+        #expect(second.suspendCount == 1)
+        #expect(pool.acquire(a) { Client(sessionName: "same") } === first)
+        #expect(first.resumeCount == 1)
+        pool.remove(a)
+        #expect(first.stopCount == 1)
+        #expect(second.stopCount == 0)
+    }
+}

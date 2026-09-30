@@ -66,22 +66,16 @@ enum StaleWorktreeDismissal {
             now: now,
             gracePeriod: gracePeriod
         ))
-        typealias ExpiredWorktree = (id: WorktreeEntry.ID, staleSince: Date)
-        typealias Candidate = (repo: RepoEntry, worktrees: [ExpiredWorktree])
-        // The explicit closure return type keeps Swift 6.4's type checker
-        // from crashing on the nested labeled-tuple compactMap.
-        let candidates: [Candidate] =
-            appState.wrappedValue.repos.compactMap { repo -> Candidate? in
-                let worktrees: [ExpiredWorktree] =
-                    repo.worktrees.compactMap { worktree in
-                        guard expired.contains(worktree.id),
-                              let staleSince = worktree.staleSince else {
-                            return nil
-                        }
-                        return (id: worktree.id, staleSince: staleSince)
-                    }
-                return worktrees.isEmpty ? nil : (repo: repo, worktrees: worktrees)
+        var candidates: [(repo: RepoEntry, worktrees: [(id: WorktreeEntry.ID, staleSince: Date)])] = []
+        for repo in appState.wrappedValue.repos {
+            var worktrees: [(id: WorktreeEntry.ID, staleSince: Date)] = []
+            for worktree in repo.worktrees {
+                if expired.contains(worktree.id), let staleSince = worktree.staleSince {
+                    worktrees.append((id: worktree.id, staleSince: staleSince))
+                }
             }
+            if !worktrees.isEmpty { candidates.append((repo: repo, worktrees: worktrees)) }
+        }
 
         var dismissed: [WorktreeEntry.ID] = []
         for candidate in candidates {

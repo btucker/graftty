@@ -93,7 +93,7 @@ struct WorktreeEntryAttentionTests {
     }
 
     @Test("""
-    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
     """)
     func providerProgressClearsOnlyMatchingSessionAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
@@ -104,6 +104,8 @@ struct WorktreeEntryAttentionTests {
         e.paneAttention[target] = att("needs input", .agentStop, providerSessionKey: "claude:session:one")
         e.paneAttention[notify] = att("user ping", .userNotify)
         e.paneAttention[sibling] = att("needs input", .agentStop, providerSessionKey: "claude:session:two")
+        e.unseenAgentStop = SidebarAgentStop(agentName: "Claude", stoppedAt: Date(),
+                                              providerSessionKey: "claude:session:one")
 
         e.clearAgentStopAttention(providerSessionKey: "claude:session:one")
 
@@ -111,6 +113,7 @@ struct WorktreeEntryAttentionTests {
         #expect(e.paneAttention[target] == nil)
         #expect(e.paneAttention[notify] != nil)
         #expect(e.paneAttention[sibling] != nil)
+        #expect(e.unseenAgentStop == nil)
     }
 
     @Test func missingProviderIdentityDoesNotClearPersistedAttention() {
@@ -118,5 +121,50 @@ struct WorktreeEntryAttentionTests {
         e.attention = att("needs input", .agentStop)
         e.clearAgentStopAttention(providerSessionKey: nil)
         #expect(e.attention != nil)
+    }
+
+    @Test func providerProgressClearsLegacyUnownedStop() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        e.unseenAgentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one")
+        #expect(e.unseenAgentStop == nil)
+    }
+
+    @Test func olderProgressCannotClearNewerStop() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 200),
+                                    providerSessionKey: "codex:session:one")
+        e.unseenAgentStop = stop
+        e.attention = Attention(text: "Approve", timestamp: Date(timeIntervalSince1970: 200),
+                                source: .agentStop, providerSessionKey: "codex:session:one")
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                  progressedAt: Date(timeIntervalSince1970: 100))
+        #expect(e.unseenAgentStop == stop)
+        #expect(e.attention?.text == "Approve")
+    }
+
+    @Test func progressTimestampSurvivesViewedStopAndRelaunch() throws {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    providerSessionKey: "codex:session:one")
+        e.recordAgentStop(stop)
+        e.acknowledgeAttention()
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                  progressedAt: Date(timeIntervalSince1970: 200))
+        e.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                  progressedAt: Date(timeIntervalSince1970: 300))
+        let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(e))
+        #expect(restored.agentProgressTimes["codex:session:one"]
+                == Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate)
+        #expect(restored.lastAgentStop == stop)
+
+        var resumed = restored
+        resumed.recordAgentStop(SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 400),
+                                               providerSessionKey: "codex:session:one"))
+        resumed.acknowledgeAttention()
+        resumed.clearAgentStopAttention(providerSessionKey: "codex:session:one",
+                                        progressedAt: Date(timeIntervalSince1970: 500))
+        #expect(resumed.agentProgressTimes["codex:session:one"]
+                == Date(timeIntervalSince1970: 500).timeIntervalSinceReferenceDate)
     }
 }

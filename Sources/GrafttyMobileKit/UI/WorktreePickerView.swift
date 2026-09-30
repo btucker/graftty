@@ -10,10 +10,12 @@ import SwiftUI
 public struct WorktreePickerView: View {
     public var navigation: SidebarNavigationState? = nil
     public let host: Host
+    let project: SidebarProject?
     public let theme: GhosttyThemeColors?
     public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
     private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
@@ -24,14 +26,17 @@ public struct WorktreePickerView: View {
         coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
-        navigation: SidebarNavigationState? = nil
+        navigation: SidebarNavigationState? = nil,
+        project: SidebarProject? = nil
     ) {
         self.navigation = navigation
         self.host = host
+        self.project = project
         self.theme = theme
         self.coordinator = coordinator
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
+        self.onSelectWorktreeDetail = nil
         self.onSelectPaneWithWorktree = nil
     }
 
@@ -41,14 +46,18 @@ public struct WorktreePickerView: View {
         coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
-        navigation: SidebarNavigationState? = nil
+        navigation: SidebarNavigationState? = nil,
+        project: SidebarProject? = nil,
+        onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
     ) {
         self.navigation = navigation
         self.host = host
+        self.project = project
         self.theme = theme
         self.coordinator = coordinator
         self.onSelect = onSelect
         self.onSelectPane = { _ in }
+        self.onSelectWorktreeDetail = onSelectWorktreeDetail
         self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
     }
 
@@ -82,14 +91,17 @@ public struct WorktreePickerView: View {
             remoteSidebarProvider: { rows in
                 guard coordinator.isPaired(host) else { return .snapshot(rows) }
                 return await coordinator.navigationSnapshot(for: host, matching: rows)
-            }
+            },
+            project: project,
+            onSelectWorktreeDetail: onSelectWorktreeDetail
         )
         // Set on this iPhone-compact wrapper rather than inside
         // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the
         // sidebar nav bar's `.topBarLeading` slot) as its sole host
         // indicator and a system nav-bar title there would duplicate
         // the host label as a second row above it (IPAD-1.2).
-        .navigationTitle(host.label)
+        .navigationTitle(project?.name ?? host.label)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

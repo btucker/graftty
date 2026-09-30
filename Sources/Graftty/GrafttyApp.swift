@@ -257,6 +257,7 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
+    var attentionFileObserver: AttentionFileHandoffObserver?
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
@@ -322,6 +323,7 @@ final class AppServices {
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
+    let idleSleepController = IdleSleepController()
     private var lanRemoteAccessServer: LANRemoteAccessServer?
     private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
     private var remoteAccessRouteRefreshTask: Task<Void, Never>?
@@ -736,6 +738,7 @@ struct GrafttyApp: App {
         + GhosttyCommandRegistry.macPaneFocusActions
         + GhosttyCommandRegistry.macPaneLayoutActions
         + GhosttyCommandRegistry.macPaneLifecycleActions
+        + GhosttyCommandRegistry.macZoomActions
         + GhosttyCommandRegistry.macSettingsActions
 
     @State private var appState: AppState
@@ -808,7 +811,9 @@ struct GrafttyApp: App {
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
-        UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
+        var registeredDefaults = DefaultPrompts.registrations
+        registeredDefaults[SettingsKeys.agentTeamsEnabled] = true
+        UserDefaults.standard.register(defaults: registeredDefaults)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
@@ -1054,6 +1059,15 @@ struct GrafttyApp: App {
                 }
             }
 
+            CommandGroup(after: .toolbar) {
+                ForEach(GhosttyCommandRegistry.macZoomActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                    .disabled(terminalManager.focusedTerminalID == nil)
+                }
+            }
+
             // TEAM-7.1: *Window → Team Activity Log* opens the activity
             // window for the focused worktree's team. Disabled when the
             // current selection has no team (single-worktree repo or
@@ -1097,6 +1111,7 @@ struct GrafttyApp: App {
             TabView {
                 SettingsView(
                     updaterController: updaterController,
+                    idleSleepController: services.idleSleepController,
                     onRestartZMX: { restartZMXWithConfirmation() },
                     editorPreference: terminalManager.editorPreference
                 )
@@ -1237,7 +1252,7 @@ struct GrafttyApp: App {
             // PORTS-4.5: panes registered before zmx wrote their `pty
             // spawned` log line need their PID resolved later.
             // `[weak]` breaks the cycle through TerminalManager.portScanner.
-            await portScanner.setPIDResolver { [weak tmRef] id in
+            await portScanner.setPIDResolver { [weak tmRef = tmRef] id in
                 await tmRef?.lookupShellPID(for: id)
             }
         }
@@ -1659,6 +1674,55 @@ struct GrafttyApp: App {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
+        let attentionHandoff = AttentionFileHandoff()
+        let attentionObserver = AttentionFileHandoffObserver(handoff: attentionHandoff)
+        do {
+            try attentionObserver.start {
+                Task { @MainActor in
+                    do {
+                        try attentionHandoff.consumeActivities { activity in
+                            switch activity {
+                            case .progress(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                Self.clearAgentAttention(
+                                    callerPath: event.worktree,
+                                    callerAgentID: event.agentID,
+                                    runtime: event.runtime,
+                                    sessionID: event.sessionID,
+                                    progressedAt: event.progressedAt,
+                                    appState: binding
+                                )
+                            case .stop(let event):
+                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                if let pane = event.paneSessionName,
+                                   binding.wrappedValue.worktree(forPath: event.worktree)?
+                                    .paneSlot(forSessionName: pane) != nil {
+                                    services.claudeSessionRegistry.recordHook(
+                                        runtime: event.runtime, event: .stop,
+                                        sessionID: event.sessionID ?? event.agentID,
+                                        paneSessionName: pane, attentionReason: nil
+                                    )
+                                }
+                                Self.recordStoppedTurn(
+                                    callerPath: event.worktree, runtime: event.runtime,
+                                    callerAgentID: event.agentID, sessionID: event.sessionID,
+                                    paneSessionName: event.paneSessionName, recap: event.recap,
+                                    stoppedAt: event.stoppedAt, appState: binding,
+                                    terminalManager: tm
+                                )
+                            }
+                            Self.persistAppState(binding.wrappedValue)
+                        }
+                    } catch {
+                        NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
+                    }
+                }
+            }
+            services.attentionFileObserver = attentionObserver
+        } catch {
+            NSLog("[Graftty] Attention file observer failed: %@", String(describing: error))
+        }
+
         let remoteBranchStore = services.remoteBranchStore
         let prStatusStore = services.prStatusStore
         remoteBranchStore.onChange = { repoPath, old, new in
@@ -1836,15 +1900,7 @@ struct GrafttyApp: App {
             liveness: deliveryLiveness,
             client: CodexAppServerClient()
         )
-        // Constructed unconditionally — these inits only store closures — so
-        // enabling native agent messaging mid-session takes effect without a
-        // relaunch. Every use site live-reads the setting instead
-        // (`Self.nativeAgentMessagingEnabled()`), so toggling it off also
-        // stops delivery immediately.
         let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
-            guard Self.nativeAgentMessagingEnabled() else {
-                return .error("Native agent messaging is disabled")
-            }
             // The bridge binds a socket to the recipient that received the
             // original row. Refuse a reply after that exact session disappears.
             let reachable = await OffMainIO.run {
@@ -1893,8 +1949,7 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: teamsEnabled,
-                    claudeEnabled: Self.nativeAgentMessagingEnabled()
+                    enabled: teamsEnabled
                 )
             )
         }
@@ -1937,7 +1992,7 @@ struct GrafttyApp: App {
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
                     }
-                    if let claudePeerDeliveryService, Self.nativeAgentMessagingEnabled() {
+                    if let claudePeerDeliveryService {
                         deliveries.append(claudePeerDeliveryService)
                     }
                     await Self.drainNativeDeliveryMessages(
@@ -1989,13 +2044,13 @@ struct GrafttyApp: App {
                     deliveries: Self.nativeDeliveries(
                         codex: codexAppServerDeliveryService,
                         claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                        claudeEnabled: Self.nativeAgentMessagingEnabled()
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                     )
                 )
             }
         }
 
+        tm.restorePaneTitleMetadata(appState.savedPaneTitleMetadata)
         restoreRunningWorktrees()
 
         // Restoring running worktrees installs the durable pane-to-session
@@ -2012,8 +2067,7 @@ struct GrafttyApp: App {
                 deliveries: Self.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    claudeEnabled: Self.nativeAgentMessagingEnabled()
+                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                 )
             )
         }
@@ -2139,7 +2193,7 @@ struct GrafttyApp: App {
                                 paneLayoutNode(
                                     from: $0,
                                     paneSessions: wt.paneSessions,
-                                    titles: terminalManager.titles,
+                                    titles: terminalManager.displayTitles,
                                     paneAttention: wt.paneAttention,
                                     liveness: panesClaudeRegistry.livenessBySession
                                 )
@@ -3041,6 +3095,7 @@ struct GrafttyApp: App {
             MainActor.assumeIsolated {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
+                stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -3172,26 +3227,13 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Live read of the native agent messaging setting. The delivery
-    /// services are constructed unconditionally at startup, so every use
-    /// site consults the current value rather than a launch-time snapshot;
-    /// toggling the setting takes effect without an app relaunch.
-    nonisolated static func nativeAgentMessagingEnabled() -> Bool {
-        UserDefaults.standard.bool(forKey: SettingsKeys.nativeAgentMessagingEnabled)
-    }
-
     nonisolated static func nativeDeliveries(
         codex: CodexAppServerDeliveryService,
         claude: ClaudePeerDeliveryService,
-        enabled: Bool = true,
-        claudeEnabled: Bool
+        enabled: Bool = true
     ) -> [any CodexAppServerDeliveryTrigger] {
         guard enabled else { return [] }
-        var deliveries: [any CodexAppServerDeliveryTrigger] = [codex]
-        if claudeEnabled {
-            deliveries.append(claude)
-        }
-        return deliveries
+        return [codex, claude]
     }
 
     nonisolated static func retryNativeDeliveryForPresenceWorktrees(
@@ -3822,7 +3864,8 @@ struct GrafttyApp: App {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
-             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree:
+             .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
+             .attentionReport:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3973,7 +4016,7 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let skillManaged
+            let stopHookActive
         ):
             return await handleTeamHook(
                 callerPath: callerPath,
@@ -3983,7 +4026,7 @@ struct GrafttyApp: App {
                 sessionID: sessionID,
                 paneSessionName: paneSessionName,
                 attentionReason: attentionReason,
-                skillManaged: skillManaged,
+                stopHookActive: stopHookActive,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
@@ -3991,6 +4034,12 @@ struct GrafttyApp: App {
                 remoteBranchStore: remoteBranchStore,
                 agentRegistry: agentRegistry
             )
+        case .attentionReport(let callerPath, let callerAgentID, let recap):
+            guard recap.isValid, appState.wrappedValue.worktree(forPath: callerPath) != nil else {
+                return .error("invalid attention recap or unknown worktree")
+            }
+            AttentionRecapCoordinator.shared.report(recap, worktree: callerPath, agentID: callerAgentID)
+            return .ok
         case .teamInbox(let request):
             return await handleTeamInbox(
                 request: request,
@@ -4415,6 +4464,24 @@ struct GrafttyApp: App {
         }
     }
 
+    /// Hooks that exist only to carry attention signals. Codex PostToolUse
+    /// belongs here too: Codex has no PostToolUse context channel, so the
+    /// team handler would only ever render `{}` for it after scanning
+    /// presence on every tool call.
+    nonisolated static func isAttentionOnlyTeamHook(
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent
+    ) -> Bool {
+        switch event {
+        case .preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure:
+            return true
+        case .postToolUse:
+            return runtime == .codex
+        case .sessionStart, .stop:
+            return false
+        }
+    }
+
     @MainActor
     private static func handleTeamHook(
         callerPath: String,
@@ -4424,7 +4491,7 @@ struct GrafttyApp: App {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason?,
-        skillManaged: Bool,
+        stopHookActive: Bool,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
@@ -4439,13 +4506,22 @@ struct GrafttyApp: App {
         }
         switch AgentHookAttentionTransition.action(event: event, reason: attentionReason) {
         case .recordStoppedTurn:
-            let stop = SidebarAgentStop(agentName: AgentStopNotification.displayName(runtime), stoppedAt: Date())
-            for ri in appState.wrappedValue.repos.indices {
-                if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
-                    appState.wrappedValue.repos[ri].worktrees[wi].unseenAgentStop = stop
-                    break
-                }
+            let outcome = AttentionRecapCoordinator.shared.stop(
+                worktree: callerPath,
+                agentID: callerAgentID,
+                stopHookActive: stopHookActive
+            )
+            if outcome == .requestRecap {
+                return .teamHookOutput(TeamHookRenderer.requestRecap())
             }
+            guard case .record(let recap) = outcome else { return .teamHookOutput("{}") }
+            recordStoppedTurn(
+                callerPath: callerPath, runtime: runtime,
+                callerAgentID: callerAgentID, sessionID: sessionID,
+                paneSessionName: paneSessionName, recap: recap,
+                stoppedAt: Date(), appState: appState,
+                terminalManager: terminalManager
+            )
         case .record(let reason):
             recordAgentAttention(
                 callerPath: callerPath,
@@ -4470,14 +4546,15 @@ struct GrafttyApp: App {
 
         // Attention-only hooks must return quickly and must not depend on the
         // team feature being enabled. They carry no inbox or instruction data.
-        if event == .preToolUse || event == .permissionRequest
-            || event == .userPromptSubmit || event == .postToolUseFailure
-            || (runtime == .codex && event == .postToolUse && !skillManaged) {
+        if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput("{}")
         }
 
         do {
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            if event == .sessionStart, !teamsEnabled {
+                return .teamHookOutput(try TeamHookRenderer.sessionStart(runtime: runtime))
+            }
             // Snapshotted before the instruction render's `await`; the
             // ownership decision below therefore reads presence as it stood
             // at hook entry, not as it stands when the decision runs. That
@@ -4512,10 +4589,6 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager
             )
             let instructions: String
-            // Instructions render for wrapper- and plugin-managed sessions
-            // alike: the hook threads them independently of the legacy
-            // primer, whose skill-managed suppression lives in
-            // TeamInboxRequestHandler.hook.
             if event == .sessionStart,
                teamsEnabled,
                let team = TeamLookup.team(
@@ -4581,15 +4654,52 @@ struct GrafttyApp: App {
                     repos: repos,
                     teamsEnabled: teamsEnabled,
                     instructions: instructions,
-                    agentID: currentAgentID,
-                    skillManaged: skillManaged
+                    agentID: currentAgentID
                 )
             }
             return .teamHookOutput(output)
         } catch let error as TeamInboxRequestError {
+            // The CLI decides whether an unrendered SessionStart still gets
+            // skill guidance (AGENT-6.49): only inside a Graftty terminal.
             return .error(error.description)
         } catch {
             return .error("failed to render team hook context: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func recordStoppedTurn(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        callerAgentID: String?,
+        sessionID: String?,
+        paneSessionName: String?,
+        recap: AttentionRecap?,
+        stoppedAt: Date,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) {
+        let paneSlot = paneSessionName
+            .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
+        let paneTitle = paneSlot
+            .map { terminalManager.displayTitle(for: $0) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let stop = SidebarAgentStop(
+            agentName: AgentStopNotification.displayName(runtime),
+            stoppedAt: stoppedAt,
+            recap: recap,
+            paneTitle: paneTitle,
+            paneSlotID: paneSlot?.id.uuidString,
+            providerSessionKey: AgentHookAttentionIdentity.key(
+                runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID
+            )
+        )
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &appState.wrappedValue.repos)
+        for ri in appState.wrappedValue.repos.indices {
+            if let wi = appState.wrappedValue.repos[ri].worktrees.firstIndex(where: { $0.path == callerPath }) {
+                appState.wrappedValue.repos[ri].worktrees[wi].recordAgentStop(stop)
+                break
+            }
         }
     }
 
@@ -4658,6 +4768,7 @@ struct GrafttyApp: App {
         callerAgentID: String?,
         runtime: TeamHookRuntime,
         sessionID: String?,
+        progressedAt: Date = Date(),
         appState: Binding<AppState>
     ) {
         let providerSessionKey = AgentHookAttentionIdentity.key(
@@ -4667,7 +4778,8 @@ struct GrafttyApp: App {
         )
         appState.wrappedValue.clearAgentStopAttention(
             worktreePath: callerPath,
-            providerSessionKey: providerSessionKey
+            providerSessionKey: providerSessionKey,
+            progressedAt: progressedAt
         )
     }
 
@@ -4830,7 +4942,6 @@ struct GrafttyApp: App {
         TeamInboxRequestHandler(
             inbox: inbox,
             dispatcher: dispatcher,
-            sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
             automaticDeliveryOwner: automaticDeliveryOwner,
             agentRecords: {
                 (try? TeamPresenceStorage(
@@ -4838,15 +4949,6 @@ struct GrafttyApp: App {
                 ).listAll()) ?? []
             },
             agentReachability: agentReachability
-        )
-    }
-
-    private static func renderTeamSessionPrompt(team: TeamView, viewer: TeamMember) -> String? {
-        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
-        return TeamInstructionsRenderer.render(
-            template: template,
-            team: team,
-            viewer: viewer
         )
     }
 
@@ -5818,6 +5920,9 @@ struct GrafttyApp: App {
 
     private func handleUnsupportedGhosttyAction(_ action: GhosttyAction) {
         switch action {
+        case .increaseFontSize, .decreaseFontSize, .resetFontSize:
+            guard let id = terminalManager.focusedTerminalID else { return }
+            terminalManager.handle(for: id)?.followerPresentation?.performZoomAction(action)
         case .toggleSplitZoom:
             handleToggleZoom()
         case .equalizeSplits:
@@ -5946,10 +6051,7 @@ struct GrafttyApp: App {
         do {
             _ = try AgentHookInstaller(
                 rootDirectory: AgentHookInstaller.rootDirectory(),
-                grafttyCLIPath: agentHookCLIPath(),
-                providerPluginsEnabled: UserDefaults.standard.bool(
-                    forKey: SettingsKeys.nativeAgentMessagingEnabled
-                )
+                grafttyCLIPath: agentHookCLIPath()
             ).install()
         } catch {
             NSLog("[Graftty] Agent hook asset install failed: %@", String(describing: error))
@@ -6286,7 +6388,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             for wt in repo.worktrees where wt.state == .running {
                 store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
-            remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
+            remoteBranchStore.refresh(repoPath: repoPath) { [weak self = self] in
                 self?.refreshPushedPRs(repoPath: repoPath)
                 self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
             }
@@ -6358,8 +6460,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
 /// Convert the Mac-side `SplitTree.Node` into the wire-format
 /// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
-/// current title (or the empty string if libghostty hasn't emitted
-/// one yet), and the pane-scoped attention text from the worktree's
+/// current displayed title (or the empty string if no metadata has arrived
+/// yet), and the pane-scoped attention text from the worktree's
 /// `paneAttention`.
 @MainActor
 func paneLayoutNode(

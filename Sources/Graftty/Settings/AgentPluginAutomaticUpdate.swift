@@ -28,7 +28,6 @@ final class AgentPluginAutomaticUpdate {
         refreshHookAssets: () -> Void
     ) async {
         guard !attempted,
-              defaults.bool(forKey: SettingsKeys.agentTeamsEnabled),
               defaults.integer(forKey: SettingsKeys.agentPluginInstalledRevision) > 0,
               let buildVersion, !buildVersion.isEmpty,
               defaults.string(forKey: SettingsKeys.agentPluginInstalledBuildVersion) != buildVersion

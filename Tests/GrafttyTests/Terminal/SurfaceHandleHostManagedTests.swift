@@ -122,7 +122,7 @@ struct SurfaceHandleHostManagedTests {
 
         #expect(!handle.startForBackgroundLaunch())
         #expect(backend.closeCount == 1)
-        #expect(harness.processExitCalls.count == 1)
+        #expect(harness.processExitCalls.isEmpty)
     }
 
     @Test("A commandless background launch starts its shell without mounting the view")
@@ -466,7 +466,10 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.freeCalls.isEmpty)
     }
 
-    @Test func backendStartFailureReportsDiagnosticAndNonzeroExitWithoutImmediateFree() {
+    @Test("""
+    @spec TERM-5.11: If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.
+    """)
+    func backendStartFailurePreservesPaneWithoutProcessExit() {
         struct ForcedStartFailure: Error {}
 
         let backend = FakeSurfaceHandleZmxBackend(startError: ForcedStartFailure())
@@ -495,9 +498,7 @@ struct SurfaceHandleHostManagedTests {
             String(data: harness.writeBufferCalls[0].data, encoding: .utf8)?
                 .contains("zmx attach failed") == true
         )
-        #expect(harness.processExitCalls == [
-            ProcessExitCall(surface: surface, exitCode: 1)
-        ])
+        #expect(harness.processExitCalls.isEmpty)
     }
 
     @Test("""

@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 
@@ -10,6 +11,7 @@ public struct RootView: View {
     @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
+    @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
     /// transitions on the iPad path — both `compactBody`'s
@@ -42,7 +44,9 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
         .onChange(of: horizontalSizeClass) { previous, current in
+            retainedPanes.stopAll()
             guard previous == .regular, current != .regular else { return }
             navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts)?.path ?? NavigationPath()
         }
@@ -89,6 +93,7 @@ public struct RootView: View {
     }
 
     private func updateConnectionAccess() {
+        if scenePhase == .background || gate.state != .unlocked { retainedPanes.suspendAll() }
         coordinator.setConnectionsAllowed(
             scenePhase != .background && gate.state == .unlocked
         )
@@ -103,42 +108,10 @@ public struct RootView: View {
                 coordinator: coordinator
             )
                 .navigationDestination(for: Host.self) { host in
-                    WorktreePickerView(
-                        host: host,
-                        coordinator: coordinator,
-                        onSelect: { wt in
-                            iPadAppState.selectedHostId = host.id
-                            iPadAppState.selectedWorktreePath = wt.path
-                            iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
-                            switch MobileNavigationDecision.decide(layout: wt.layout) {
-                            case let .session(sessionName, title):
-                                navigationPath.append(SessionStep(
-                                    host: host,
-                                    worktreePath: wt.path,
-                                    sessionName: sessionName,
-                                    title: title
-                                ))
-                            case .worktreeDetail:
-                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
-                            }
-                        },
-                        onSelectPaneWithWorktree: { worktree, leaf in
-                            iPadAppState.selectedHostId = host.id
-                            iPadAppState.selectedWorktreePath = worktree.path
-                            iPadAppState.focusedPaneId = leaf.sessionName
-                            if case let .session(sessionName, title) =
-                                MobileNavigationDecision.decide(paneRow: leaf) {
-                                navigationPath.append(SessionStep(
-                                    host: host,
-                                    worktreePath: worktree.path,
-                                    sessionName: sessionName,
-                                    title: title
-                                ))
-                            }
-                        },
-                        navigation: iPadAppState.sidebarNavigation
-                    )
-                    .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
+                    compactPicker(host: host)
+                }
+                .navigationDestination(for: ProjectStep.self) { step in
+                    compactPicker(host: step.host, project: step.project)
                 }
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
@@ -157,12 +130,64 @@ public struct RootView: View {
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
-                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator)
+                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator,
+                                      sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
                             Self.applyCompactSession(step, to: iPadAppState)
                         }
                 }
+        }
+    }
+
+    private func compactPicker(host: Host, project: SidebarProject? = nil) -> some View {
+        WorktreePickerView(
+            host: host,
+            coordinator: coordinator,
+            onSelect: { wt in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = wt.path
+                iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+                switch MobileNavigationDecision.decide(layout: wt.layout) {
+                case let .session(sessionName, title):
+                    navigationPath.append(SessionStep(
+                        host: host,
+                        worktreePath: wt.path,
+                        sessionName: sessionName,
+                        title: title
+                    ))
+                case .worktreeDetail:
+                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                }
+            },
+            onSelectPaneWithWorktree: { worktree, leaf in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = worktree.path
+                iPadAppState.focusedPaneId = leaf.sessionName
+                if case let .session(sessionName, title) =
+                    MobileNavigationDecision.decide(paneRow: leaf) {
+                    navigationPath.append(SessionStep(
+                        host: host,
+                        worktreePath: worktree.path,
+                        sessionName: sessionName,
+                        title: title
+                    ))
+                }
+            },
+            navigation: iPadAppState.sidebarNavigation,
+            project: project,
+            onSelectWorktreeDetail: { worktree in
+                iPadAppState.selectedHostId = host.id
+                iPadAppState.selectedWorktreePath = worktree.path
+                navigationPath.append(WorktreeStep(host: host, worktree: worktree))
+            }
+        )
+        .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
+        .task {
+            if let project,
+               iPadAppState.sidebarNavigation.selectedProjectID != project.id || iPadAppState.sidebarNavigation.showsAttention {
+                iPadAppState.sidebarNavigation.showProject(project.id)
+            }
         }
     }
 
@@ -238,7 +263,13 @@ public struct RootView: View {
     }
 }
 
-/// Second-level nav: picked a worktree, now show its pane tree.
+/// @spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
+struct ProjectStep: Hashable {
+    let host: Host
+    let project: SidebarProject
+}
+
+/// Picked a worktree, now show its pane tree.
 struct WorktreeStep: Hashable {
     let host: Host
     let worktree: WorktreePanes
@@ -378,6 +409,10 @@ struct SingleSessionView: View {
     /// real route back to the worktree list.
     let onBackToWorktrees: (() -> Void)?
     private let fontSizeStore: TerminalFontSizeStore
+    private let sidebarNavigation: SidebarNavigationState?
+    private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
+    @State private var attentionWorktrees: [WorktreePanes] = []
+    @State private var attentionProjects: [SidebarProject] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -416,18 +451,11 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     /// The iOS-scaled Mac ghostty config used to build `controller`.
-    /// Cached so the follower/ownerless auto-fit path (IOS-5.6) can re-apply
-    /// the base config or a font-size override without re-fetching.
+    /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
     /// Latest owner-selected size. Pinch actions already update the live
-    /// Ghostty surface; this state keeps later follower fitting and owner
-    /// restoration anchored to that same size without replaying the action.
+    /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
-    /// Last font-size override applied via TerminalWidthLayout.decide while
-    /// not owner, so we can detect transitions (e.g. base ↔ override) and
-    /// avoid pointlessly rebuilding the controller config on every layout
-    /// tick. Set to nil while the base config is in effect.
-    @State private var liveFontOverride: Float?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -550,7 +578,9 @@ struct SingleSessionView: View {
         isEmbeddedPane: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
-        fontSizeStore: TerminalFontSizeStore = .shared
+        fontSizeStore: TerminalFontSizeStore = .shared,
+        sidebarNavigation: SidebarNavigationState? = nil,
+        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -564,6 +594,8 @@ struct SingleSessionView: View {
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
         self.fontSizeStore = fontSizeStore
+        self.sidebarNavigation = sidebarNavigation
+        self.retainedPanes = retainedPanes
     }
 
     var body: some View {
@@ -595,10 +627,8 @@ struct SingleSessionView: View {
             case .terminal:
                 GeometryReader { _ in
                     VStack(spacing: 0) {
-                        GeometryReader { termGeo in
-                            terminalContent(containerSize: termGeo.size)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        }
+                        terminalContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
@@ -766,18 +796,25 @@ struct SingleSessionView: View {
                     preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(
                         for: macConfig
                     )
-                    controller = MobileTerminalControllerFactory.make(configText: text)
+                    controller = retainedPanes?.cached(retainedPaneKey)?.container?.terminalView.controller
+                        ?? MobileTerminalControllerFactory.make(configText: text)
                     baseConfigText = text
                     preferredFontSize = GhosttyConfigFetcher.lastFontSize(in: text)
                         .map(Float.init)
                 }
             }
+            .task(id: dialKey) { await observeAttention() }
             .onDisappear {
-                client?.stop()
+                paneContainerBox.view?.resetStickyModifiers()
+                paneContainerBox.view?.terminalView.resignFirstResponder()
+                if let retainedPanes { retainedPanes.cached(retainedPaneKey)?.detachControls() }
+                else { client?.stop() }
                 client = nil
+                if connection != .ended { connection = .connecting }
             }
             .onChange(of: client?.connectionState) { _, state in
                 guard state == .ended else { return }
+                retainedPanes?.remove(retainedPaneKey)
                 client?.stop()
                 client = nil
                 connection = .ended
@@ -847,6 +884,7 @@ struct SingleSessionView: View {
             worktreesResult: result
         ) {
         case .ended:
+            retainedPanes?.remove(retainedPaneKey)
             client?.stop()
             client = nil
             connection = .ended
@@ -859,6 +897,24 @@ struct SingleSessionView: View {
         // Guard before the dial so we do not negotiate an authenticated
         // channel that we would immediately abort.
         if Task.isCancelled || connection == .ended { return }
+        if let cached = retainedPanes?.cached(retainedPaneKey) {
+            if cached.client.connectionState == .ended {
+                retainedPanes?.remove(retainedPaneKey)
+                connection = .ended
+                return
+            }
+            if cached.requiresValidation, let coordinator {
+                // Routes popped during backgrounding no longer have a view
+                // task to verify them on foreground. Validate on reuse.
+                if let rows = try? await coordinator.worktreePanes(for: step.host),
+                   SessionRehydration.decide(sessionName: step.sessionName, worktreesResult: .success(rows)) == .ended {
+                    retainedPanes?.remove(retainedPaneKey)
+                    connection = .ended
+                    return
+                }
+                guard !Task.isCancelled else { return }
+            }
+        }
         if let client {
             guard client.connectionState != .ended else {
                 client.stop()
@@ -870,7 +926,7 @@ struct SingleSessionView: View {
             connection = .live
             return
         }
-        let new = SessionClient.live(
+        let makeClient = { SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,
             role: Self.sessionRole,
@@ -888,14 +944,21 @@ struct SingleSessionView: View {
                 host: step.host,
                 sessionName: step.sessionName
             )
-        )
+        ) }
+        let new: SessionClient
+        if let retainedPanes {
+            new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient()) }.client
+        } else {
+            new = makeClient()
+            new.start()
+        }
         if Task.isCancelled || connection == .ended {
+            retainedPanes?.remove(retainedPaneKey)
             // Re-backgrounded (or ended) between channel construction and
             // assignment. Stop the orphan so the channel does not leak.
             new.stop()
             return
         }
-        new.start()
         client = new
         connection = .live
     }
@@ -925,12 +988,73 @@ struct SingleSessionView: View {
     private var backButton: some View {
         TerminalFloatingGlyphButton(
             systemName: "chevron.left",
-            accessibilityLabel: "Back",
+            accessibilityLabel: pendingAttentionCount > 0
+                ? "Needs Attention, \(pendingAttentionCount) new requests in other worktrees" : "Back",
             action: popToParent
         )
+        .overlay(alignment: .topTrailing) {
+            if pendingAttentionCount > 0 {
+                Text(pendingAttentionCount > 99 ? "99+" : "\(pendingAttentionCount)")
+                    .font(.caption2.bold())
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 20, minHeight: 20)
+                    .background(.orange, in: Capsule())
+                    .offset(x: 5, y: -5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var retainedPaneKey: RetainedPaneClientPool<RetainedMobilePane>.Key {
+        .init(hostID: step.host.id, sessionName: step.sessionName)
+    }
+
+    private var pendingAttentionCount: Int {
+        guard let sidebarNavigation else { return 0 }
+        let current = step.worktreePath ?? attentionWorktrees.first {
+            $0.layout?.leaves.contains { $0.sessionName == step.sessionName } == true
+        }?.path
+        return MobilePaneAttention.pendingCount(worktrees: attentionWorktrees,
+            currentWorktree: current, navigation: sidebarNavigation)
+    }
+
+    private func observeAttention() async {
+        guard isFullScreen, let sidebarNavigation, let coordinator,
+              LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
+        while !Task.isCancelled {
+            do {
+                let rows = try await coordinator.worktreePanes(for: step.host)
+                let snapshot = await coordinator.navigationSnapshot(for: step.host, matching: rows)
+                guard !Task.isCancelled else { return }
+                let projects: [SidebarProject]
+                if case let .snapshot(snapshotRows, metadata)? = snapshot, snapshotRows == rows {
+                    projects = metadata?.projects ?? SidebarProjection.projects(rows)
+                } else { projects = SidebarProjection.projects(rows) }
+                sidebarNavigation.reconcile(worktrees: rows, projects: projects)
+                attentionWorktrees = rows
+                attentionProjects = projects
+            } catch {
+                // Do not present a stale count while the host is unreachable.
+                attentionWorktrees = []
+                attentionProjects = []
+            }
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+        }
     }
 
     private func popToParent() {
+        if pendingAttentionCount > 0, let sidebarNavigation {
+            MobilePaneAttention.open(worktrees: attentionWorktrees, projects: attentionProjects,
+                                     navigation: sidebarNavigation)
+            // Skip a possible split-pane picker and return directly to the list.
+            var path = NavigationPath()
+            path.append(step.host)
+            navigationPath = path
+            return
+        }
         if let onBackToWorktrees {
             onBackToWorktrees()
             return
@@ -1137,17 +1261,13 @@ struct SingleSessionView: View {
         }
     }
 
-    /// The terminal body. While not the display owner, applies a font-size
-    /// override to the controller via `reconcileFontOverride` so that
-    /// `authoritativeCols × cellWidth ≤ containerWidth` and the pane renders at
-    /// the full container width with no horizontal ScrollView (IOS-5.6).
+    /// Followers scale an authoritative canvas; owners use the physical viewport.
     @ViewBuilder
-    private func terminalContent(containerSize: CGSize) -> some View {
+    private var terminalContent: some View {
         if let controller, let client {
             activeTerminal(
                 client: client,
-                controller: controller,
-                containerSize: containerSize
+                controller: controller
             )
         } else {
             // Mac-config fetch in flight, or client not yet assigned.
@@ -1158,8 +1278,7 @@ struct SingleSessionView: View {
     @ViewBuilder
     private func activeTerminal(
         client: SessionClient,
-        controller: TerminalController,
-        containerSize: CGSize
+        controller: TerminalController
     ) -> some View {
         let pane = TerminalPaneView(
             session: client.session,
@@ -1201,10 +1320,11 @@ struct SingleSessionView: View {
             },
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
+                retainedPanes?.cached(retainedPaneKey)?.container = view
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
                 }
-                view.onPhysicalViewportReady = { [weak client] viewport in
+                view.onPhysicalViewportReady = { [weak client = client] viewport in
                     client?.physicalViewportDidBecomeReady(viewport)
                 }
                 view.setStickyControlActivationChangeHandler { activation in
@@ -1215,37 +1335,16 @@ struct SingleSessionView: View {
                         stickyControlActivation = activation
                     }
                 }
-            }
+            },
+            retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container
         )
         pane
-            .task(id: TerminalFontFitTaskKey(
-                containerSize: containerSize,
-                authoritativeCols: client.authoritativeGrid?.cols,
-                isOwner: client.isOwner,
-                baseConfig: effectiveBaseConfigText
-            )) {
-                reconcileFontOverride(
-                    client: client,
-                    controller: controller,
-                    containerWidth: containerSize.width
-                )
-            }
             .onChange(of: client.isOwner) { wasOwner, isOwner in
                 if Self.shouldSynchronizeViewportOnOwnerTransition(
                     wasOwner: wasOwner,
                     isOwner: isOwner
                 ) {
-                    // Ownership may arrive while the surface still has the
-                    // follower-fit font. Restore the owner font synchronously,
-                    // then explicitly ask Ghostty for its resulting grid on
-                    // the next runloop. Relying on a later incidental layout
-                    // leaves the remote PTY at the previous owner's size until
-                    // the user types or shows the keyboard.
-                    reconcileFontOverride(
-                        client: client,
-                        controller: controller,
-                        containerWidth: containerSize.width
-                    )
+                    // Publish the physical viewport after the follower canvas is released.
                     DispatchQueue.main.async { [paneContainerBox] in
                         paneContainerBox.fitTerminalToCurrentSize()
                     }
@@ -1272,60 +1371,6 @@ struct SingleSessionView: View {
                 hostID: hostID,
                 worktreePath: worktreePath
             )
-        }
-    }
-
-    /// @spec IOS-6.10
-    /// Owner promotion restores the base config font: while a follower,
-    /// the auto-fit override shrinks the font to match the authoritative
-    /// (often desktop-width) grid. The owner-transition handler then
-    /// explicitly synchronizes Ghostty's metrics on the next runloop so
-    /// the resulting owner resize cannot wait for keyboard input.
-    /// While owner with no override active, the reconciler leaves the
-    /// font alone so pinch-to-zoom keeps adjusting from that baseline.
-    private func reconcileFontOverride(
-        client: SessionClient,
-        controller: TerminalController,
-        containerWidth: CGFloat
-    ) {
-        guard client.snapshotCanvasGrid == nil else { return }
-        guard let baseConfig = effectiveBaseConfigText else { return }
-        let configSize = Float(
-            GhosttyConfigFetcher.lastFontSize(in: baseConfig)
-                ?? GhosttyConfigFetcher.defaultIOSFontSize
-        )
-
-        // The font size currently applied to the controller — either the
-        // live override or the base config size. We pair this with
-        // libghostty's reported cellWidthPoints to derive the real
-        // monospace aspect of the currently-installed font.
-        let measuredAt: Float = liveFontOverride ?? configSize
-
-        let decision = TerminalWidthLayout.decide(
-            containerWidth: containerWidth,
-            authoritativeCols: client.authoritativeGrid?.cols,
-            configFontSize: configSize,
-            measuredCellWidthPoints: client.cellWidthPoints,
-            measuredAtFontSize: measuredAt,
-            isOwner: client.isOwner
-        )
-        switch TerminalWidthLayout.overrideAction(
-            decision: decision,
-            liveFontOverride: liveFontOverride
-        ) {
-        case .keep:
-            return
-        case .restoreConfigFont:
-            controller.updateConfigSource(.generated(baseConfig))
-            liveFontOverride = nil
-        case let .applyOverride(pointSize):
-            let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
-                to: baseConfig,
-                fontSize: pointSize,
-                comment: "GrafttyMobile auto-fit - non-owner"
-            )
-            controller.updateConfigSource(.generated(overridden))
-            liveFontOverride = pointSize
         }
     }
 

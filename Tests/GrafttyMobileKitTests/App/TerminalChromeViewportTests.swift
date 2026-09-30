@@ -10,8 +10,8 @@ import UIKit
 
 @Suite("""
 @spec IOS-6.11: While mobile terminal chrome is overlaid at the bottom of a
-fullscreen session, the terminal viewport used for rendering and font-fit
-decisions shall reserve that measured chrome height. The visual overlay
+fullscreen session, the terminal viewport used for rendering shall reserve
+that measured chrome height. The visual overlay
 placement remains bottom-aligned; only the terminal content size is reduced.
 """)
 struct TerminalChromeViewportTests {
@@ -67,23 +67,7 @@ struct TerminalChromeViewportTests {
         #expect(terminal.height == 1)
     }
 
-    @Test
-    func fontFitTaskKeyIncludesReducedTerminalHeight() {
-        let withFullBar = TerminalFontFitTaskKey(
-            containerSize: CGSize(width: 390, height: 444),
-            authoritativeCols: 120,
-            isOwner: false,
-            baseConfig: "font-size = 11"
-        )
-        let withCompactAffordance = TerminalFontFitTaskKey(
-            containerSize: CGSize(width: 390, height: 450),
-            authoritativeCols: 120,
-            isOwner: false,
-            baseConfig: "font-size = 11"
-        )
 
-        #expect(withFullBar != withCompactAffordance)
-    }
 }
 
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)

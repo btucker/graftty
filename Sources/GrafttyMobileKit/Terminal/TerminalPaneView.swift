@@ -82,9 +82,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Effective config font used as the starting point for libghostty's
     /// built-in one-point pinch steps.
     public let configuredFontSize: Float?
-    /// Present only while this pane owns the display. Follower auto-fit is a
-    /// temporary rendering choice and must never become the saved worktree
-    /// preference.
+    /// Present only while this pane owns the display. Follower presentation
+    /// zoom must never become the saved worktree font preference.
     public let onFontSizeChange: ((Float) -> Void)?
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
@@ -102,6 +101,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
+    public let retainedContainer: TerminalInputContainerView?
 
     public init(
         session: InMemoryTerminalSession,
@@ -119,7 +119,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onPasteRequested: (() -> Void)? = nil,
-        captureContainer: ((TerminalInputContainerView) -> Void)? = nil
+        captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
+        retainedContainer: TerminalInputContainerView? = nil
     ) {
         self.session = session
         self.controller = controller
@@ -137,6 +138,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onPasteRequested = onPasteRequested
         self.captureContainer = captureContainer
+        self.retainedContainer = retainedContainer
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -160,7 +162,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
-        let view = TerminalInputContainerView()
+        let view = retainedContainer ?? TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.addsVerticalRowPadding = addsVerticalRowPadding
         view.authoritativeGrid = authoritativeGrid
@@ -298,13 +300,13 @@ public final class TerminalInputContainerView: UIView,
         let canvas = snapshotCanvas
         snapshotScrollView.frame = paddedViewport(canvas: canvas)
         guard let grid = authoritativeGrid, let metrics = terminalGridMetrics, let canvas else {
-            snapshotScrollView.configure(canvas: nil, rowHeight: 0)
+            snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
             confirmPhysicalViewportIfReady()
             return
         }
         snapshotScrollView.configure(
             canvas: canvas,
-            rowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor * canvas.scale,
+            nativeRowHeight: CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor,
             columns: grid.cols
         )
     }
@@ -671,6 +673,9 @@ public final class TerminalInputContainerView: UIView,
             .compactMap { $0 as? UIPanGestureRecognizer }
             .forEach { recognizer in
                 recognizer.allowedScrollTypesMask = [.continuous, .discrete]
+                if recognizer.delegate == nil {
+                    recognizer.delegate = terminalView
+                }
             }
     }
 

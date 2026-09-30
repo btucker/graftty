@@ -9,7 +9,7 @@ struct CLIWorktreeRemovalTests {
     @Test("""
     @spec AGENT-5.7: `graftty worktree remove <worktree>` shall resolve a tracked worktree name, absolute path, or `.` for the current worktree; reject ambiguous names and the repository's main checkout; and route removal through the same application flow as the native Delete Worktree action so successful removal tears down its panes, removes it from the UI and per-path stores, emits team departure state, and preserves its Git branch. A normal removal shall fail when Git reports modified, staged, or untracked files, include `git status --short` in the CLI error, and instruct the user to rerun with `--force`; `--force` shall mirror the UI's Force Delete action. The CLI shall poll an asynchronous operation status so slow removal does not exceed the control socket request timeout.
     """)
-    func helpDocumentsBranchPreservationAndForce() {
+    func helpDocumentsBranchPreservationAndForce() throws {
         let help = WorktreeRemove.helpMessage()
 
         #expect(help.contains("preserving its branch"))
@@ -17,7 +17,7 @@ struct CLIWorktreeRemovalTests {
         #expect(help.contains("untracked"))
         #expect(help.contains("graftty team list"))
         #expect(
-            TeamInstructionsRenderer.defaultTemplate.contains(
+            try GrafttyTeamSkillText.load().contains(
                 "graftty worktree remove <worktree> [--force]"
             )
         )

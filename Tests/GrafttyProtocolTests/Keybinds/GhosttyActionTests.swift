@@ -21,9 +21,12 @@ struct GhosttyActionTests {
         #expect(GhosttyAction.openConfig.rawValue      == "open_config")
         #expect(GhosttyAction.nextTab.rawValue     == "next_tab")
         #expect(GhosttyAction.previousTab.rawValue == "previous_tab")
+        #expect(GhosttyAction.increaseFontSize.rawValue == "increase_font_size:1")
+        #expect(GhosttyAction.decreaseFontSize.rawValue == "decrease_font_size:1")
+        #expect(GhosttyAction.resetFontSize.rawValue == "reset_font_size")
     }
 
     @Test func allCasesCountMatchesEnumSize() {
-        #expect(GhosttyAction.allCases.count == 17)
+        #expect(GhosttyAction.allCases.count == 20)
     }
 }

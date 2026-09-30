@@ -18,6 +18,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.5** When the user drags to select text in a terminal pane beneath the titlebar, the application shall deliver the drag to the terminal instead of moving the window.
 
+**LAYOUT-1.6** When the breadcrumb displays a selected worktree with an assigned emoji, the application shall show that emoji before its worktree name, using the selected remote snapshot's emoji without falling back to a local worktree's emoji.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
@@ -114,11 +116,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.48** When the user drags the project rail edge, the application shall resize the rail, collapse it to icons below the collapse threshold, and retain the last expanded width across relaunches.
 
-**LAYOUT-2.49** While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column and omit the visible filter label.
+**LAYOUT-2.49** While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column, omit the visible filter label, and stack compact Needs You labels above their questions.
 
 **LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 
-**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across provider activity and relaunches, include it in Attention, and clear it when the user visits that worktree.
+**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
@@ -130,7 +132,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
-**LAYOUT-2.57** When an Attention item is opened, the application shall retain it at its occurrence-time position, highlight the selection, and place newer incoming items above it without moving it into a separate viewed section.
+**LAYOUT-2.57** When an Attention card body is opened, the application shall keep Attention open, keep existing cards in place as reports update, prepend new cards, and collapse a card only when its agent resumes.
 
 **LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
 
@@ -155,6 +157,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
 **LAYOUT-2.69** When the user double-clicks empty space after the last worktree in the project column, the application shall open Add Worktree for the selected editable project without changing a worktree row's click behavior.
+
+**LAYOUT-2.70** While an agent's stopped turn has a recap, the application shall retain its recognizable title, task context, completed work, next step, and user need in the Attention item across snapshot encoding.
+
+**LAYOUT-2.71** When the user searches Attention, the application shall match the stopped turn's recap title, task context, completed work, next step, and user need.
+
+**LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
+
+**LAYOUT-2.73** When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.
+
+**LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
+
+**LAYOUT-2.75** When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.
+
+**LAYOUT-2.76** When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.
+
+**LAYOUT-2.77** When an agent's proposed emoji is already used, the application shall try its task-related alternatives before assigning a worktree identity.
+
+**LAYOUT-2.78** When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
+
+**LAYOUT-2.79** While Attention cards are displayed, the application shall expand stopped reports regardless of viewing or selection and collapse resumed agents into Running rows.
+
+**LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
+
+**LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
+
+**LAYOUT-2.82** While the main checkout is not in flight, its project-view row shall use the project icon ahead of any PR/MR badge and the worktree name, even if the checkout has an assigned emoji.
+
+**LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
+
+**LAYOUT-2.84** When an agent resumes, the application shall retain its Attention card in place as Running and expand the same card when a new stopped report arrives.
+
+**LAYOUT-2.85** While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -260,6 +294,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-2.6** On application restart, persisted `.running` worktrees shall be marked as rehydrated but only the currently-selected worktree shall immediately recreate libghostty surfaces and run `zmx attach`. Other running worktrees shall attach lazily when selected. This keeps hidden panes from rendering or reattaching while they are not displayed, and prevents a large saved workspace from delaying input in the pane the user is actually returning to.
 
+**TERM-2.7** When a user clicks or types in a native Mac terminal pane, the application shall update the pane focus model used for dimming even when a scroll-view wrapper consumes SwiftUI tap gestures.
+
 ### TERM-3.x — Splitting
 
 **TERM-3.1** When the user triggers a horizontal split, the application shall insert a new terminal pane to the right of the focused pane with a 50/50 ratio.
@@ -299,6 +335,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-5.9** When `SurfaceHandle.setFrameSize` forwards a backing-pixel dimension to `ghostty_surface_set_size`, the conversion from `CGFloat` to `UInt32` shall be performed via a defensive clamp that maps `NaN` and values `≤ 1` to `1`, `+∞` and values `≥ UInt32.max` to `UInt32.max`, and all other finite values to their truncated `UInt32` representation. Naive `UInt32(max(1, Int(dim)))` traps on `NaN` and on out-of-`Int`-range values; SwiftUI `GeometryReader` has been observed to emit `.infinity` transiently during certain rebinding flows, and a trap on the view's layout pass crashes the whole process (every open pane dies). The helper is `SurfacePixelDimension.clamp(_:)` in GrafttyKit so the rule is unit-testable without an NSView host.
 
 **TERM-5.10** When `NativePtySession.close()` is called while a `writeToSurface` callback is mid-execution on the PTY reader thread, the application shall block `close()` until that callback returns and shall ensure no further `writeToSurface` invocation occurs after `close()` has returned. The barrier prevents `SurfaceHandle.deinit` (which calls `close()` and then `ghostty_surface_free`) from racing with an in-flight `ghostty_surface_write_buffer` on the reader thread; without it, the reader dereferences the freed surface and aborts with `BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt`.
+
+**TERM-5.11** If a terminal attachment fails, then the application shall preserve the pane without marking its shell exited or allowing ordinary typing to close it.
+
+**TERM-5.12** When the user retries a failed terminal attachment, the application shall preserve the pane identity and session mapping, and ignore failure or close callbacks from its replaced surface.
+
+**TERM-5.13** When attachment recovery confirms that the previous daemon is gone, the application shall reset shell readiness and exclude the previous shell PID until a replacement shell is observed.
 
 ### TERM-6.x — Stopping a Worktree
 
@@ -674,7 +716,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.22** When `pane show` or `pane send` errors out due to ambiguity, unknown worktree, or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run.
 
-**ATTN-1.23** When the team session-start hook renders the team protocol primer, the application shall include a concise block naming the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
+**ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
 ### ATTN-2.x — Communication Protocol
 
@@ -779,6 +821,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERSIST-3.6** When the application launches, it shall run worktree discovery for each repository to reconcile saved state against current disk state.
 
 **PERSIST-3.7** If `state.json` exists but fails to decode at launch (corruption from a crashed mid-write, hand-edit typo, or schema mismatch across app versions), then the application shall move the file aside to a timestamped backup at `state.json.corrupt.<milliseconds-since-epoch>` and proceed with a fresh `AppState`. The corrupt file shall remain on disk so the user can recover the prior data manually; the application shall not silently overwrite it on the next save.
+
+**PERSIST-3.8** When Graftty quits and reopens with running worktrees, the application shall restore each pane's last title or PWD label and preserve title-over-PWD precedence as fresh metadata arrives.
 
 ### PERSIST-4.x — Non-Persisted State
 
@@ -1342,9 +1386,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-2.4** When display ownership changes without terminal input, the application shall synchronize follower zmx attachment PTYs to the authoritative grid so the daemon's existing leader applies the new width immediately.
 
-**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, and restore the Mac's physical viewport before taking control.
+**OWN-2.5** While a Mac pane follows another display, the application shall preserve the leader's native grid, shrink it to fit the pane width without enlarging the configured font, center a narrower canvas, and restore the Mac's physical viewport before taking control.
 
 **OWN-2.6** When native text input commits to a follower terminal, the application shall acquire display ownership before delivering text and shall reject delivery if acquisition fails.
+
+**OWN-2.7** While a terminal follows another display, the application shall calculate canvas placement, scroll extent, and history row height from one presentation scale, center unused horizontal space, and preserve the native grid when zooming.
+
+**OWN-2.8** When a Mac follower is magnified, the application shall scale its entire canvas and allow horizontal scrolling without changing its native grid, then discard the presentation zoom when it becomes leader.
+
+**OWN-2.9** When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.
 
 ## UPDATE — Self-Update
 
@@ -1442,9 +1492,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PR-3.x — Sidebar Indicator
 
-**PR-3.1** While a worktree has a resolved PR/MR (open or merged), its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
+**PR-3.1** While a linked worktree has a resolved PR/MR (open or merged), no assigned emoji, and no in-flight operation, its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 
-**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between the leading icon and branch label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
+**PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between its leading project icon, emoji, or fallback icon and its worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
 
 **PR-3.3** The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
 
@@ -1656,6 +1706,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
 
+**IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display it through the shared Attention pane within a compact iPhone width.
+
+**IOS-4.34** While a mobile pane is open, its back button shall badge unviewed Needs Attention cards from other worktrees and open Needs Attention when tapped with a nonzero badge.
+
+**IOS-4.35** While Attention is displayed on a compact mobile screen, the application shall use an inline host title and a single-row filter and search header, revealing the search field only when requested or when a query is active.
+
+**IOS-4.36** While the mobile Attention list is displayed, stopped cards shall remain expanded with their available recap text visible regardless of viewing or selection, and resumed agents shall collapse into Running rows.
+
+**IOS-4.37** When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.
+
+**IOS-4.38** When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -1682,9 +1744,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is docked against the bottom edge of the `UIViewRepresentable`-wrapped `UITerminalView` container, the application shall raise the terminal layout by the keyboard's bottom-edge overlap so the terminal and the `IOS-6.1` control bar remain above it. A floating keyboard that does not reach the container's bottom edge shall not shrink the terminal tree.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font and explicitly resynchronize the mounted terminal's metrics on the next runloop, so an `ownerResize` adopts the iOS-natural grid without waiting for keyboard input or another incidental layout tick. While owner with no override active, the reconciler shall leave the font alone so libghostty's pinch-to-zoom (`IOS-6.8`) keeps adjusting from that baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
+**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -1714,6 +1776,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.25** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
 
+**IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -1731,6 +1795,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-7.7** When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
 
 **IOS-7.8** When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.") func failedReplayClosesChannelBeforeReconnect() async throws { let first = DelayedReceiveWS(paged: true) let client = SessionClient(sessionName: "s", webSocketFactory: { first }, pagedRenderer: PagingRenderer()) client.start() defer { client.stop() } try await waitUntil("initial receive") { first.receiveCalls == 1 } // Output before READY is a protocol failure on a still-open channel. first.deliver(.binary(Data("unexpected output".utf8))) try await waitUntil("reconnect backoff") { client.connectionState != .live } #expect(first.closed) } final class PagingRenderer: PagedTerminalRenderer { var installed: [UInt64] = [] var generations: [UInt64] = [] var nearTop = false var pages = 0 var holdResize = false var resizeContinuation: CheckedContinuation<Void, Never>? var resized: [SessionClient.GridSize] = [] func resize(cols: UInt16, rows: UInt16) async throws { if holdResize { await withCheckedContinuation { resizeContinuation = $0 } } resized.append(.init(cols: cols, rows: rows)) } func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws { installed.append(checkpoint.id) generations.append(generation) } func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult { pages += 1 return .applied } func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 } } @Test(
+
+**IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
 ### IOS-8.x — Non-goals (recorded for future specs)
 
@@ -1894,7 +1960,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
-**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same exact-grid canvas policy as `IOS-5.6` (per-leaf), initially fitting each leaf's canvas to the full leaf width before any local presentation zoom.
 
 **IPAD-2.6** While a focused pane exists in the iPad split tree, the application shall apply the same Ghostty `unfocused-split-fill` and `unfocused-split-opacity` dimming treatment as the Mac to every other live pane, without drawing an iPad-only focus outline. When no pane is focused, no pane shall be dimmed.
 
@@ -1996,15 +2062,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-1.x — Settings & Enablement
 
-**TEAM-1.1** The application shall provide a Settings tab named "Agent Teams" containing one boolean toggle, *Enable agent teams*, persisted via `@AppStorage("agentTeamsEnabled")` (Bool, default false).
+**TEAM-1.1** When Graftty starts, the application shall make Agent Teams available without an enable switch, including for users who previously disabled them.
 
-**TEAM-1.2** While `agentTeamsEnabled` is false, the application shall not write any team event rows to the inbox and `graftty team hook` shall return no-op responses; the agent team feature is fully gated by this flag.
+**TEAM-1.5** When the application routes a team event, it shall select recipients from the `teamEventRoutingPreferences` matrix (see TEAM-1.8) without consulting the retired `teamPRNotificationsEnabled` flag.
 
-**TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
+**TEAM-1.6** The Agent Teams Settings pane shall expose one user-editable Stencil-templated text area, `teamPrompt`, backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides it. Clearing the field to the empty string disables that prompt. It shall retain a non-empty compact automated-event default that renders the event body first, adds only event-specific actionable guidance, and omits generic delivery and same-worktree preambles; it shall render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`. Agents are customized per repository and worktree through `GRAFTTY.md` instruction files rather than a session prompt setting.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose two user-editable Stencil-templated text areas backed by `@AppStorage` and registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides them. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt`, shall visibly contain the complete built-in session-start context (`DefaultPrompts.sessionPrompt`), including the team protocol, commands, and role-specific text expressed with dynamic `agent` and `team` placeholders; its rendered value replaces, rather than follows, any hidden hard-coded primer. Its session context exposes `agent.name`, `agent.worktree`, `agent.branch`, `agent.running`, and `agent.main_worktree` plus `team.repo`, `team.repo_path`, `team.main_worktree`, `team.members`, and `team.other_worktrees`; legacy event-scoped `agent.this_worktree` and `agent.other_worktree` remain false. Queued inbox messages remain a separate transient hook section. A one-time migration shall preserve a legacy non-empty, renderable session suffix by appending it to the complete default template, shall back up and deactivate an invalid suffix so it cannot suppress the built-in context, and shall remove a legacy empty override so the registered complete default becomes visible. The second, `teamPrompt`, shall retain a non-empty compact automated-event default that renders the event body first, adds only event-specific actionable guidance, and omits generic delivery and same-worktree preambles; it shall render per recipient against the four event-scoped `agent` fields plus top-level `body` and `event` (`event.type`, `event.attrs`, `event.body`). Authored `team_message` rows bypass this event template and store no `agent_prompt`; automated events store rendered `agent_prompt` separately from their unchanged `body`. If an event template omits `{{ body }}`, the renderer appends it before rendering so older templates continue to surface event content. Hook delivery emits authored messages from raw `body`, automated events from `agent_prompt` when present, and otherwise falls through to `body`.
-
-**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
+**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the provider plugins section and the per-event prompt section.
 
 **TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable team event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `teamEventRoutingPreferences` for the corresponding row and write one inbox row per recipient resolved by `TeamEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
 
@@ -2012,9 +2076,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.11** When `EventBodyRenderer.split` renders the per-event `teamPrompt` template, the application shall expose a top-level `event` object on the render context with `event.type` (wire-format event-type string), `event.attrs` (the event's attribute dictionary), and `event.body` (the original event body) — letting templates branch on the event type via a chained `{% if event.type == "…" %} … {% elif … %}` block (Stencil has no `case`/`switch` tag).
 
-**TEAM-1.12** On startup, the application shall migrate `agent.lead` references in saved team session and event prompt templates to `agent.main_worktree` before any AppStorage binding reads them.
+**TEAM-1.12** On startup, the application shall migrate `agent.lead` references in the saved team event prompt template to `agent.main_worktree` before any AppStorage binding reads it.
 
-**TEAM-1.13** When the user activates "Restore Graftty Default" for either Agent Teams prompt editor, the application shall immediately replace the editor text with the corresponding built-in prompt and remove the persistent `UserDefaults` key so later built-in updates continue to apply.
+**TEAM-1.13** When the user activates Restore Graftty Default for the per-event prompt editor, the application shall immediately replace the editor text with the built-in prompt and remove the persistent `UserDefaults` key so later built-in updates continue to apply.
 
 ### TEAM-2.x — Team Identity & Membership
 
@@ -2024,25 +2088,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-2.3** A team's main worktree shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). Every other member is a linked worktree.
 
-**TEAM-2.4** Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
+**TEAM-2.4** Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist a separate team membership registry.
 
 **TEAM-2.5** TeamMembershipEvents.fireJoined writes a team_member_joined inbox row through the dispatcher.
 
 ### TEAM-3.x — Team-Aware Hook Instructions
 
-**TEAM-3.2** The complete built-in session template shall render a main-worktree variant when the viewer is the repository's main worktree and a linked-worktree variant otherwise. Both variants name the repository and viewer, identify the main worktree, and list the other linked worktrees from the template's dynamic `agent` and `team` context.
-
-**TEAM-3.3** Two user templates control agent-facing team text. At session start, the rendered `teamSessionPrompt` is the complete team context section delivered by the hook, with instruction files delivered as a separate section; empty, whitespace-only, or invalid templates suppress that context rather than revealing a hidden hard-coded primer, and render failures are logged. Queued inbox messages remain a separate transient session-start section. For automated-event delivery, the rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient, with the same render/empty/failure rules. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
+**TEAM-3.3** The per-event `teamPrompt` user template controls agent-facing automated-event text. The rendered `teamPrompt` is stored separately from the unchanged event body at write time per recipient; empty, whitespace-only, or invalid templates store no prompt, and render failures are logged. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent` plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
 
 ### TEAM-4.x — `graftty team` CLI
 
 **TEAM-4.1** The application shall provide a `graftty team` CLI group with direct-message, broadcast, inbox, and member-list commands. Direct-message and broadcast commands shall accept message text from standard input via `--stdin`.
 
-**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, (c) `<member-name>` is not a teammate of the caller, or (d) no non-empty body is supplied. In case (c) the error shall list the current teammates' member names.
+**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) the calling worktree has no team, (b) `<member-name>` is not a teammate of the caller, or (c) no non-empty body is supplied. In case (b) the error shall list the current teammates' member names.
 
-**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if the calling worktree has no team.
 
-**TEAM-4.4** The built-in session-start template shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.
+**TEAM-4.4** The Graftty Team provider skill shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.
 
 **TEAM-4.5** When team inbox diagnostics contain more than one page, the application shall return a newest-first page selection bounded by both message count and encoded size, preserve chronological order within each page, and provide an opaque cursor whose traversal neither duplicates nor omits messages.
 
@@ -2062,9 +2124,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
 
-**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a tracked repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 
-**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 
 **TEAM-5.4** When constructing a system endpoint, the application shall produce an endpoint with member='system', worktree=<repoPath>, and runtime=nil.
 
@@ -2108,7 +2170,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-9.x — Stop Hook Filtering
 
-**TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop` or the async `graftty team watch-inbox <runtime>`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent and no `InboxWatcher` is spawned. Without this filter, every Task subagent end can start redundant lifecycle and watcher work while the top-level agent is still working.
+**TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent. Without this filter, every Task subagent end can start redundant lifecycle work while the top-level agent is still working.
 
 ### TEAM-10.x — Codex Wrapper App-Server Routing
 
@@ -2146,21 +2208,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-11.x — Idle Delivery
 
-**TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
-
-**TEAM-11.2** When a Claude asyncRewake inbox watcher reaches its 24-hour timeout without a message, the CLI shall exit cleanly without writing a timeout diagnostic to the hook's stderr pipe.
-
-**TEAM-11.3** If a Claude asyncRewake inbox watcher resolves after the hook's stderr reader has closed, the CLI shall discard the output failure rather than terminate from SIGPIPE or an NSFileHandle exception.
-
-**TEAM-11.4** When a watcher starts for a recipient worktree and runtime, the application shall write its PID to <root>/<teamID>/watchers/<worktree>.<runtime>.pid and SIGTERM any prior watcher PID recorded there, regardless of the prior watcher's session ID.
-
-**TEAM-11.5** While its original parent process is no longer alive, the inbox watcher shall resolve its outcome with exit code 0 at the next poll tick instead of continuing to watch.
-
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
 
 **TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
-
-**TEAM-11.8** If a watcher's message claim fails because the watermark lock timed out, the watcher shall retry the claim on a later poll tick rather than remain armed but silent.
 
 **TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
 
@@ -2270,9 +2320,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-6.2** When rendering the session-start instructions section for a team member, the application shall resolve instruction content for that viewer from the filesystem overlay, omit unavailable files, and yield the empty string when no content can be read, so an instructions problem never blocks the session-start hook.
 
-**INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section alongside the team context and queued messages, so that a blank team session template suppresses the team context without suppressing instructions.
+**INSTR-6.3** When rendering session-start hook output, the application shall emit instruction content as its own section after the Graftty skill guidance and before queued messages, and shall add no section for empty instructions.
 
-**INSTR-6.4** When the built-in team session prompt is rendered, the application shall explain the hierarchical repository and worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads, safe-file exclusions, peer-visible role descriptions, when an agent may suggest or author a file, and how to place an exact-worktree file where a child can receive it in its first and later sessions.
+**INSTR-6.4** The Graftty Team provider skill shall explain the repository-wide and hierarchical worktree instruction-file forms, per-path Application Support/current-worktree/main-checkout precedence, current-filesystem reads without a commit, peer-visible role descriptions above the private section, that agents create or modify instruction files only when authorized, and how to place an exact-worktree file where a new child's first session can see it.
 
 **INSTR-6.5** When a child agent's session-start hook arrives while its worktree row is still creating, the application shall resolve the viewer's exact-worktree instruction file from that new checkout's filesystem so the child receives its role in the first session.
 
@@ -2367,6 +2417,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.17** When a route removes the optional replacement fields from a signed replacement offer, the application shall reject the downgraded offer without claiming its challenge so an intact route can still deliver the authenticated replacement.
 
 **REMOTE-2.18** When a client on any supported platform sends a wake packet for a host on an active local subnet, the application shall transmit it rather than report the wake as unsupported.
+
+**REMOTE-2.19** When the mobile client signals a paired Mac over Tailscale, the application shall permit HTTP signaling to Tailscale IPv4 and IPv6 ranges without disabling App Transport Security globally.
+
+**REMOTE-2.20** While the user has enabled Keep Mac awake while Graftty is running, the application shall prevent idle system sleep without preventing display sleep, restore the preference on launch, and release its assertion when disabled or the controller is destroyed; the preference shall default to off.
 
 ### REMOTE-3.x — Revocation
 
@@ -2479,6 +2533,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
 
 **REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
+
+**REMOTE-11.14** When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -2646,7 +2702,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
 
-**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure for the same stable provider session as an explicit attention request, the application shall clear only that session's provider-owned attention wherever it was recorded while preserving other sessions, user notifications, and command-finished markers.
+**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
 
 **AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 
@@ -2655,6 +2711,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.7** While provider-owned needs-input attention remains unacknowledged at a pane or worktree target, repeated signals from the same stable provider session shall not replace that attention or post another desktop notification.
 
 **AGENT-3.8** When Codex emits PermissionRequest before its approval reviewer decides whether user input is required, the application shall not create needs-input attention.
+
+**AGENT-3.9** When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+
+**AGENT-3.10** When an agent stops without reporting a recap, the application shall request one continuation once, then show a generic stopped card if the continued turn still has no report.
+
+**AGENT-3.11** While several agents share a worktree, the application shall accept only a recap from the agent whose stopped turn is being handled.
+
+**AGENT-3.12** When a legacy socket client sends an Attention report message, the protocol shall preserve its structured recap, calling worktree, and agent identity.
+
+**AGENT-3.13** When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.
+
+**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall request one recap once and then queue a generic stopped card if the continued turn still has none.
+
+**AGENT-3.15** When stopped-turn files exist before or arrive after the Attention watcher starts, the application shall process both through directory events with a periodic scan as backup.
+
+**AGENT-3.16** When duplicate Stop hooks run for the same Codex turn, the application shall queue one stopped card and shall not request another recap after the first hook consumes it.
+
+**AGENT-3.17** When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
+
+**AGENT-3.18** When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
+
+**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
+
+**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
+
+**AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
+
+**AGENT-3.22** When a new Attention report omits its task-specific emoji, the CLI shall reject it with an actionable error before staging it, while older saved recaps remain decodable.
+
+**AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.
+
+**AGENT-3.24** When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.
 
 ### AGENT-4.x
 
@@ -2672,7 +2760,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions that distinguish worktree creation from delegation, direct the agent to proactively hand suitable independent work to a new top-level agent through `graftty worktree add --agent --prompt-stdin`, require the parent to confirm child reachability before relinquishing that scope, identify the returned worktree address for later shell-safe messages, and deliver queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one agent per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 **AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
@@ -2718,17 +2806,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.8** When a wrapped Codex SessionStart hook reports its native `session_id`, the application shall bind that exact thread ID to the wrapper's canonical agent presence and app-server socket while preserving process identity and pane ownership.
 
-**AGENT-6.9** When a provider plugin invokes a skill-managed SessionStart hook, the application shall omit the legacy team primer supplied by the system-hook path while still delivering any queued exact-agent messages as separate transient context.
+**AGENT-6.9** When a SessionStart hook fires, with or without the legacy `--skill-managed` flag, the application shall render no team primer of its own, leaving team guidance to the provider plugin's Graftty skills, while still delivering any queued exact-agent messages as separate transient context.
 
-**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing the shared `graftty-team` skill and lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
+**AGENT-6.10** When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing separate Graftty Attention and team skills plus lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
 
-**AGENT-6.11** While provider plugins are enabled, the application shall remove its managed Claude wrapper, leave lifecycle hooks and team instructions to the installed plugins, retain only Codex's app-server/remote transport wrapper, and preserve legacy wrapper hook injection when plugin mode is disabled.
+**AGENT-6.11** When Graftty installs its agent hook assets, the application shall never write a Claude launch wrapper, shall remove a previously generated Claude wrapper that carries Graftty's wrapper marker while preserving any unmarked file at that path, leave Claude lifecycle hooks and team instructions to the installed provider plugin, and retain only Codex's app-server/remote transport wrapper.
 
 **AGENT-6.13** When one worktree has pending exact-agent rows for different runtimes, the application shall retry all available native delivery transports while shared delivery state changes so each provider can consume its rows without waiting for another provider or the presence ticker.
 
 **AGENT-6.14** If the user accepts the provider-plugin installation offer after preparation, then the application shall execute every provider-native marketplace and plugin installation step in displayed order, continue with the other provider after an individual failure, and report partial or complete success without requiring shell evaluation.
 
-**AGENT-6.15** When Graftty launches with agent teams enabled, no previously completed provider installation, and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; when the user selects native messaging in Settings, the application shall activate that mode without requiring either provider executable or an installed integration revision; an installation completion shall never overwrite a newer Settings selection, and installation-only or incomplete completions shall preserve the selected messaging mode.
+**AGENT-6.15** When Graftty launches with no previously completed provider installation and an unacknowledged integration revision, the application shall offer to install both plugins with explicit consent; a complete installation shall record the installed integration revision, and an incomplete installation shall record nothing so the offer and the Settings warning persist.
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
@@ -2756,15 +2844,45 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.29** When bundled provider skills or manifests use symbolic links, the application shall materialize their contents as regular files so each prepared plugin remains usable without the source bundle or sibling provider.
 
-**AGENT-6.30** When a new Graftty build launches with agent teams enabled and a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, preserve the messaging mode, record the build only after complete success, and retry incomplete updates on a later launch.
+**AGENT-6.30** When a new Graftty build launches with a previously completed provider installation, the application shall refresh its bundled provider plugins in the background without another installation prompt, record the build only after complete success, and retry incomplete updates on a later launch.
 
 **AGENT-6.31** When a released Graftty build prepares provider plugins, the application shall use its normalized build version in both plugin manifests so provider caches refresh even when the source plugin version is unchanged.
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+
+**AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+
+**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+
+**AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
+
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+
+**AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
+
+**AGENT-6.40** When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.
+
+**AGENT-6.41** When bundled plugin content changes in a development build, the application shall use its content version as the automatic-refresh checkpoint.
+
+**AGENT-6.42** When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+
+**AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
+
+**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.
+
+**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
+
+**AGENT-6.46** While the current Codex and Claude provider plugin integration is not installed, the Agent Teams Settings pane shall warn that agents will not be connected to Graftty until the plugins are installed and offer the install action; once the current integration is installed, the warning shall disappear.
+
+**AGENT-6.47** When a Claude session launched by an older Graftty invokes the removed `graftty team watch-inbox <runtime>` Stop hook, the CLI shall accept its arguments, drain the hook payload from standard input, and exit successfully without output or inbox work, and shall hide the command from help.
+
+**AGENT-6.48** When an older Graftty session invokes `graftty team hook` without `--skill-managed`, the CLI shall handle it exactly as a provider-plugin hook, and shall keep accepting the `--skill-managed` flag as a hidden no-op.
+
+**AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
 ## CLI — CLI
 
@@ -2911,6 +3029,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PROJECT-3.3** When an icon file is read, the application shall reject nonregular files and read no more than the supported image byte limit.
 
 **PROJECT-3.4** When discovering a project icon, the application shall prefer valid favicons and app icons, then search project asset directories for supported images containing logo in their filename before falling back to initials.
+
+**PROJECT-3.5** When a project icon has colored pixels, the application shall derive a stable accent from the icon for tinted Attention cards and project initials.
 
 ## SSH — SSH
 

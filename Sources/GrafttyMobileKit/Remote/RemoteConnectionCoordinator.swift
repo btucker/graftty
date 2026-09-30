@@ -226,8 +226,17 @@ public final class RemoteConnectionCoordinator {
     /// (see `failureCooldown`), and when negotiation fails for any
     /// reason. Callers surface authenticated-connection unavailability and
     /// never treat nil as permission to downgrade to an unpaired transport.
-    public func connection(for host: Host) async -> RemoteHostConnection? {
+    /// An explicit retry clears local state and signs permission to replace
+    /// this device's stale host connection. Automatic refreshes keep the
+    /// cooldown and never request replacement.
+    public func connection(
+        for host: Host,
+        replacingExistingConnection: Bool = false
+    ) async -> RemoteHostConnection? {
         guard desiredConnectionsAllowed else { return nil }
+        if replacingExistingConnection {
+            await invalidate(host: host)
+        }
         if let connectionTeardownTask {
             await connectionTeardownTask.value
         }
@@ -255,7 +264,8 @@ public final class RemoteConnectionCoordinator {
                 host: host,
                 pinnedHost: pinnedHost,
                 routes: routes,
-                attemptID: attemptID
+                attemptID: attemptID,
+                replacingExistingConnection: replacingExistingConnection
             )
         }
         inFlightAttempts[host.id] = Attempt(id: attemptID, task: task)
@@ -399,13 +409,14 @@ public final class RemoteConnectionCoordinator {
     /// connected Mac's one-hop Remote Mac rows; older peers fall back to V1.
     public func worktreePanes(
         for host: Host,
-        onProgress: RemoteWorktreeLoadProgress? = nil
+        onProgress: RemoteWorktreeLoadProgress? = nil,
+        reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
         let clock = ContinuousClock()
         let loadStarted = clock.now
         onProgress?(.connecting)
         guard isPaired(host) else { throw ConnectionError.pairingRequired }
-        guard let connection = await connection(for: host) else {
+        guard let connection = await connection(for: host, replacingExistingConnection: reconnect) else {
             throw ConnectionError.unavailable
         }
         let connectionFinished = clock.now
@@ -626,7 +637,8 @@ public final class RemoteConnectionCoordinator {
         host: Host,
         pinnedHost: PinnedHost,
         routes: [RemoteConnectionRoute],
-        attemptID: UUID
+        attemptID: UUID,
+        replacingExistingConnection: Bool
     ) async -> RemoteHostConnection? {
         let failureRoute = routes.first?.baseURL ?? host.baseURL
         // One-shot per attempt: cleared here regardless of outcome so a
@@ -657,6 +669,7 @@ public final class RemoteConnectionCoordinator {
                 clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
                 sdp: offer.sdp,
+                replacesExistingConnection: replacingExistingConnection,
                 wakeOnLAN: pinnedHost.wakeOnLAN
             )
             try await connection.applyAnswer(
