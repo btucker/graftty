@@ -1258,6 +1258,21 @@ final class SurfaceNSView: NSView {
         return GHOSTTY_MOUSE_MOMENTUM_NONE
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              window?.firstResponder === self,
+              surface != nil,
+              event.modifierFlags.contains(.control),
+              event.keyCode == 36 || event.keyCode == 76 else {
+            return super.performKeyEquivalent(with: event)
+        }
+        // KEY-1.11: AppKit reserves Control+Return for context menus. Dispatch
+        // it here before AppKit intercepts it, retaining the normal input path
+        // for composition, display ownership, and Ghostty's key encoding.
+        keyDown(with: event)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         userInteractionNotifier?()
         if event.isARepeat {
