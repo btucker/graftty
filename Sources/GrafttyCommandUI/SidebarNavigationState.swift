@@ -140,8 +140,8 @@ public final class SidebarNavigationState {
             let runningWorktrees = Set(live.filter(\.isBusy).map(\.worktreeIdentity))
             rows = rows.filter { $0.isBusy && runningWorktrees.contains($0.worktreeIdentity) }
         }
-        rows = SidebarAttentionWorkspace.cards(from: rows)
-        // Search must not re-sort the durable card order by report timestamp.
+        rows = SidebarAttentionWorkspace.newestFirst(SidebarAttentionWorkspace.cards(from: rows))
+        // Search filters the newest-first order without re-ranking matches.
         let matching = Set(SidebarActivityFilter.all.apply(to: rows, query: query).map(\.id))
         // Mobile shares navigation storage across hosts. Keep other hosts' cards
         // stored without offering routes through the currently connected host.

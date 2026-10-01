@@ -50,6 +50,21 @@ struct RightClickMenuTests {
         #expect(calls == 1)
     }
 
+    @Test("@spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost menu under the pointer.")
+    @MainActor func innermostNestedMenuWins() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        let content = NSView(frame: root.bounds)
+        let inner = RightClickMenuHostView(frame: NSRect(x: 10, y: 40, width: 20, height: 20))
+        content.addSubview(inner)
+        root.addSubview(content)
+        let outer = RightClickMenuHostView(frame: root.bounds)
+        root.addSubview(outer)
+        #expect(RightClickMenuHostView.innermostHost(at: NSPoint(x: 15, y: 45), in: root) === inner)
+        #expect(RightClickMenuHostView.innermostHost(at: NSPoint(x: 100, y: 45), in: root) === outer)
+        inner.isHidden = true
+        #expect(RightClickMenuHostView.innermostHost(at: NSPoint(x: 15, y: 45), in: root) === outer)
+    }
+
     private func makeEvent(type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags) -> NSEvent {
         NSEvent.mouseEvent(
             with: type,

@@ -129,6 +129,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// steady poll of the same resolved PR stays quiet.
     public var offeredDeleteForResolvedPR: Int?
 
+    /// Most recent attention, agent progress, or agent stop time. Drives
+    /// the sidebar's recent-activity worktree order.
+    public var lastActivity: Date? {
+        var times = paneAttention.values.map(\.timestamp)
+        if let attention { times.append(attention.timestamp) }
+        times += agentProgressTimes.values.map(Date.init(timeIntervalSinceReferenceDate:))
+        times += [unseenAgentStop, lastAgentStop].compactMap { $0 }.map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
+        return times.max()
+    }
+
     public init(
         path: String,
         branch: String,

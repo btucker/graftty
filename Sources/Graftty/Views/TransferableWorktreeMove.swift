@@ -1,6 +1,7 @@
 import CoreTransferable
 import CoreGraphics
 import Foundation
+import os
 import SwiftUI
 import UniformTypeIdentifiers
 import GrafttyKit
@@ -87,6 +88,8 @@ enum WorktreeRowDrop: Transferable {
 }
 
 private struct WorktreeRowDropDelegate: DropDelegate {
+    /// `log stream --predicate 'subsystem == "com.graftty.app" AND category == "sidebar-drag"'`
+    private static let log = Logger(subsystem: "com.graftty.app", category: "sidebar-drag")
     let rowHeight: CGFloat
     let allowsReordering: Bool
     let isInFlight: Bool
@@ -99,7 +102,12 @@ private struct WorktreeRowDropDelegate: DropDelegate {
             || (allowsReordering && info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])))
     }
 
-    func dropEntered(info: DropInfo) { updateIndicator(info) }
+    func dropEntered(info: DropInfo) {
+        // One line per drag entering a row: the first signal that a drag
+        // session started at all, and whether this row's gate accepted it.
+        Self.log.info("dropEntered valid=\(validateDrop(info: info), privacy: .public) reordering=\(allowsReordering, privacy: .public) inFlight=\(isInFlight, privacy: .public)")
+        updateIndicator(info)
+    }
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard validateDrop(info: info) else { return DropProposal(operation: .forbidden) }
         updateIndicator(info)
@@ -122,7 +130,11 @@ private struct WorktreeRowDropDelegate: DropDelegate {
         let destination = WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight)
         _ = provider.loadTransferable(type: WorktreeRowDrop.self) { result in
             Task { @MainActor in
-                if case .success(let payload) = result { onDrop(payload, destination) }
+                switch result {
+                case .success(let payload): onDrop(payload, destination)
+                case .failure(let error):
+                    Self.log.error("loadTransferable failed: \(String(describing: error), privacy: .public)")
+                }
             }
         }
         return true

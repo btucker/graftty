@@ -2162,7 +2162,7 @@ struct GrafttyApp: App {
                     inRepoAtPath: repo.path,
                     defaultBranch: defaultBranch
                 )
-                for wt in SidebarHostNavigation.canonicalWorktrees(in: repo) {
+                for wt in SidebarHostNavigation.displayedWorktrees(in: repo) {
                     let stats = wt.state.hasOnDiskWorktree
                         ? panesStatsStore.stats[wt.path]
                         : nil
@@ -2714,7 +2714,7 @@ struct GrafttyApp: App {
                 case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
                     return await MainActor.run {
                         guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
-                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout.", forceAllowed: false, shortStatus: nil)
+                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout, while the repository uses manual order.", forceAllowed: false, shortStatus: nil)
                         }
                         return .ok
                     }

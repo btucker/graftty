@@ -11,7 +11,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
 
     public init() {}
 
-    /// Choose a current request without moving its worktree's queue slot.
+    /// Collapse each worktree to one representative card; `newestFirst`
+    /// then ranks the result, so the slot kept here only breaks ties.
     public static func cards(from items: [SidebarActivityItem]) -> [SidebarActivityItem] {
         var rows: [SidebarActivityItem] = []
         var positions: [SidebarActivityItem.WorktreeIdentity: Int] = [:]
@@ -36,6 +37,18 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             }
         }
         return rows
+    }
+
+    /// @spec LAYOUT-2.94: While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
+    public static func newestFirst(_ rows: [SidebarActivityItem]) -> [SidebarActivityItem] {
+        rows.enumerated().sorted { left, right in
+            let leftTime = reportTime(left.element), rightTime = reportTime(right.element)
+            return leftTime == rightTime ? left.offset < right.offset : leftTime > rightTime
+        }.map(\.element)
+    }
+
+    private static func reportTime(_ item: SidebarActivityItem) -> Date {
+        item.occurrence?.timestamp ?? item.runningSince ?? .distantPast
     }
 
     public func isDismissed(_ item: SidebarActivityItem) -> Bool {

@@ -86,9 +86,45 @@ public enum SidebarHostNavigation {
         }
     }
 
+    /// The persisted order: main checkout first, stale entries last. The
+    /// manual arrangement lives here regardless of the display mode.
     public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         repo.worktrees.filter { $0.path == repo.path }
             + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path })
+    }
+
+    /// The displayed order (LAYOUT-2.95): canonical, re-ranked by recent
+    /// activity when the repository asks for it. Never written back, so the
+    /// manual order survives a round trip through recent activity.
+    public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
+        guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
+        return repo.worktrees.filter { $0.path == repo.path }
+            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { $0.path != repo.path })
+    }
+
+    /// Applies a user-picked emoji as a manual identity. Rejects anything
+    /// that is not exactly one emoji or that another worktree already uses.
+    @discardableResult
+    public static func setManualEmoji(_ value: String, worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
+        let emoji = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AttentionRecap.isSingleEmoji(emoji),
+              !repos.flatMap(\.worktrees).contains(where: { $0.id != worktreeID && $0.emoji == emoji }) else { return false }
+        return updateWorktree(worktreeID, in: &repos) { $0.emoji = emoji; $0.emojiSource = .manual }
+    }
+
+    @discardableResult
+    public static func clearEmoji(worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
+        updateWorktree(worktreeID, in: &repos) { $0.emoji = nil; $0.emojiSource = nil }
+    }
+
+    private static func updateWorktree(_ worktreeID: UUID, in repos: inout [RepoEntry],
+                                       _ change: (inout WorktreeEntry) -> Void) -> Bool {
+        for repoIndex in repos.indices {
+            guard let index = repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktreeID }) else { continue }
+            change(&repos[repoIndex].worktrees[index])
+            return true
+        }
+        return false
     }
 
     public static func metadata(for worktree: WorktreeEntry, projectID: String, folders: [String], folderIDs: [String]? = nil) -> SidebarWorktreeMetadata {
@@ -107,6 +143,9 @@ public enum SidebarHostNavigation {
         guard worktreeID != relativeTo,
               let ri = state.repos.firstIndex(where: { $0.path == repositoryID }) else { return false }
         let repo = state.repos[ri]
+        // Recent-activity order is a display projection; accepting a move
+        // would only have the next refresh sort it away again.
+        guard repo.worktreeOrderMode == .manual else { return false }
         let rows = repo.worktrees
         guard let source = rows.firstIndex(where: { $0.path == worktreeID }),
               let target = rows.firstIndex(where: { $0.path == relativeTo }),

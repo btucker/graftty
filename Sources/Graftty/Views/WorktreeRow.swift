@@ -260,6 +260,9 @@ struct WorktreeRow: View {
     var attentionCount: Int = 0
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
+    /// whose identity is not editable.
+    var identityMenu: ((NSView) -> NSMenu)? = nil
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -285,11 +288,11 @@ struct WorktreeRow: View {
                                         imageData: projectIconData, size: WorktreeRowGeometry.identityWidth)
                 case .emoji:
                     if let emoji = entry.emoji {
-                        Text(emoji).font(.system(size: 15))
-                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true)
+                        identityMenuTarget(Text(emoji).font(.system(size: 15))
+                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true))
                     }
                 case .typeIcon:
-                    typeIcon
+                    identityMenuTarget(typeIcon)
                 case .prBadge:
                     if let prBadge {
                         SidebarPRBadge(badge: prBadge)
@@ -313,6 +316,15 @@ struct WorktreeRow: View {
         .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func identityMenuTarget<Content: View>(_ content: Content) -> some View {
+        if let identityMenu, !entry.state.isInFlight {
+            content.rightClickMenu(anchored: identityMenu)
+        } else {
+            content
+        }
     }
 
     /// Fallback when a linked worktree has no emoji: `arrow.triangle.branch`,

@@ -95,6 +95,16 @@ def extract_carrier(text: str, marker_start: int) -> tuple[CarrierKind, str]:
         # TypeScript test/source comment carrier.
         return "doc", _extract_line_comment_block(text, marker_start, "//")
 
+    # A literal that opens and closes on the marker's own line wins over any
+    # surrounding `"""`: the nearest `"""` before the marker may be the closer
+    # of an earlier title, with a later `"""` literal in a test body supplying
+    # a matching close that would swallow the whole span.
+    single_open = text.rfind('"', line_start, marker_start)
+    if single_open != -1:
+        single_close = text.find('"', marker_start, line_end)
+        if single_close != -1:
+            return "single", text[single_open + 1 : single_close]
+
     triple_open = text.rfind('"""', 0, marker_start)
     if triple_open != -1:
         triple_close = text.find('"""', triple_open + 3)
