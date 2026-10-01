@@ -20,6 +20,12 @@ extension View {
     /// (current cwd, web-server port, etc.) is sampled fresh on each
     /// open instead of being captured at view-construction time.
     func rightClickMenu(_ build: @escaping () -> NSMenu) -> some View {
+        rightClickMenu(anchored: { _ in build() })
+    }
+
+    /// Variant that hands the builder the overlay's `NSView`, for menus
+    /// whose actions need a window or an on-screen anchor.
+    func rightClickMenu(anchored build: @escaping (NSView) -> NSMenu) -> some View {
         overlay(RightClickMenuOverlay(build: build))
     }
 }
@@ -40,27 +46,51 @@ enum RightClickHitTest {
 }
 
 private struct RightClickMenuOverlay: NSViewRepresentable {
-    let build: () -> NSMenu
+    let build: (NSView) -> NSMenu
 
     func makeNSView(context: Context) -> NSView {
-        let v = HostView()
+        let v = RightClickMenuHostView()
         v.build = build
         return v
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? HostView)?.build = build
+        (nsView as? RightClickMenuHostView)?.build = build
+    }
+}
+
+/// @spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost menu under the pointer.
+///
+/// Overlays applied further out in the SwiftUI tree sit above inner
+/// ones in AppKit z-order, so without this check an outer row menu
+/// would always shadow a menu attached to one of its own children.
+final class RightClickMenuHostView: NSView {
+    var build: ((NSView) -> NSMenu)?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard RightClickHitTest.shouldAcceptHit(for: NSApp.currentEvent) else { return nil }
+        guard let superview, let root = window?.contentView else { return self }
+        let innermost = Self.innermostHost(at: superview.convert(point, to: nil), in: root)
+        return innermost == nil || innermost === self ? self : nil
     }
 
-    final class HostView: NSView {
-        var build: (() -> NSMenu)?
-
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            RightClickHitTest.shouldAcceptHit(for: NSApp.currentEvent) ? self : nil
+    /// The smallest visible host whose window-space frame contains the point.
+    static func innermostHost(at windowPoint: NSPoint, in root: NSView) -> RightClickMenuHostView? {
+        var best: (host: RightClickMenuHostView, area: CGFloat)?
+        func visit(_ view: NSView) {
+            guard !view.isHidden else { return }
+            if let host = view as? RightClickMenuHostView {
+                let frame = host.convert(host.bounds, to: nil)
+                let area = frame.width * frame.height
+                if frame.contains(windowPoint), best.map({ area < $0.area }) ?? true { best = (host, area) }
+            }
+            view.subviews.forEach(visit)
         }
-
-        override func menu(for event: NSEvent) -> NSMenu? { build?() }
+        visit(root)
+        return best?.host
     }
+
+    override func menu(for event: NSEvent) -> NSMenu? { build?(self) }
 }
 
 /// `NSMenuItem` that runs a Swift closure on selection. Lets callers

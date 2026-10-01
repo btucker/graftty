@@ -240,6 +240,9 @@ struct SidebarView: View {
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
         let counts = SidebarActivityCounts(items: activity)
+        GeometryReader { geometry in
+        VStack(spacing: 0) {
+        searchRow(height: max(geometry.safeAreaInsets.top, Self.searchRowMinimumHeight))
         HStack(spacing: 0) {
             if showsProjectRail {
                 ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
@@ -264,33 +267,13 @@ struct SidebarView: View {
                 }
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
-                                         selectionColor: theme.foreground.opacity(0.16),
+                                         selectionColor: theme.foreground.opacity(0.16), showsSearchField: false,
                                          isCurrentWorktree: isCurrentAttentionWorktree) { item in
                         let opened = await onOpenAttention(item)
                         if !opened { navigationError = "This target is unavailable or its request has changed." }
                         return opened
                     }
                 } else {
-                    TextField("Find any project or worktree", text: $navigation.query)
-                        .textFieldStyle(.roundedBorder).padding(10)
-                        .frame(minHeight: 62)
-                        .overlay(alignment: .top) {
-                            if let item = navigation.attentionBanner {
-                                SidebarAttentionBanner(item: item, onOpen: {
-                                    onNavigationIntent()
-                                    let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
-                                    Task {
-                                        let opened = await onOpenAttention(item)
-                                        navigation.finishOpening(visit, succeeded: opened)
-                                        if !opened { navigationError = "This target is unavailable or its request has changed." }
-                                    }
-                                }, onDismiss: { navigation.dismissAttentionBanner(item) })
-                                .padding(.horizontal, 6).padding(.top, 4)
-                                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                            }
-                        }
-                        .clipped()
-                        .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail {
@@ -299,6 +282,7 @@ struct SidebarView: View {
                                 }) {
                                     worktreeRows
                                 }
+                                .emptySpaceMenu(selectedProjectEmptySpaceMenu)
                             }
                             else { List { worktreeRows }.listStyle(.sidebar) }
                         }
@@ -308,6 +292,25 @@ struct SidebarView: View {
                             }
                         }
                     }
+                    // LAYOUT-2.90: the banner slides over the top of the list
+                    // (search lives in the toolbar, so there is no search row).
+                    .overlay(alignment: .top) {
+                        if let item = navigation.attentionBanner {
+                            SidebarAttentionBanner(item: item, onOpen: {
+                                onNavigationIntent()
+                                let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
+                                Task {
+                                    let opened = await onOpenAttention(item)
+                                    navigation.finishOpening(visit, succeeded: opened)
+                                    if !opened { navigationError = "This target is unavailable or its request has changed." }
+                                }
+                            }, onDismiss: { navigation.dismissAttentionBanner(item) })
+                            .padding(.horizontal, 6).padding(.top, 4)
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .clipped()
+                    .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                 }
                 if !showsProjectRail {
                     Divider()
@@ -324,6 +327,12 @@ struct SidebarView: View {
                     }.buttonStyle(.plain).font(.caption).padding(10)
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
+        }
+        }
+        // The search row shares the title-bar strip with the traffic lights
+        // and the sidebar toggle, so the sidebar extends under the title bar
+        // the same way the detail column does for the breadcrumb.
+        .ignoresSafeArea(.container, edges: .top)
         }
         .task {
             while !Task.isCancelled {
@@ -407,6 +416,24 @@ struct SidebarView: View {
         }
     }
 
+    /// Clears the three traffic lights plus the sidebar-toggle button that
+    /// macOS parks to their right in the title-bar strip.
+    private static let searchRowLeadingInset: CGFloat = 112
+    /// Fallback when the sidebar is not under a title bar.
+    private static let searchRowMinimumHeight: CGFloat = 38
+
+    /// The one search box for both the worktree list and Attention. It lives
+    /// in the title-bar row beside the sidebar toggle, so the list starts
+    /// directly below the toolbar instead of under a search row of its own.
+    private func searchRow(height: CGFloat) -> some View {
+        TextField("Find any project or worktree", text: $navigation.query)
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.small)
+            .padding(.leading, Self.searchRowLeadingInset)
+            .padding(.trailing, 10)
+            .frame(height: height)
+    }
+
     private func voiceDictationButton(collapsed: Bool) -> some View {
         VoiceDictationButton(
             controller: voiceDictation,
@@ -437,7 +464,7 @@ struct SidebarView: View {
             ForEach(appState.repos) { repo in
                 let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
                     defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
-                ForEach(repo.worktrees.filter {
+                ForEach(SidebarHostNavigation.displayedWorktrees(in: repo).filter {
                     SidebarInteractionPolicy.matches(query: navigation.query, projectName: repo.displayName,
                         worktreeName: labels[$0.id] ?? $0.branch, branch: $0.branch)
                 }) { worktree in
@@ -507,7 +534,7 @@ struct SidebarView: View {
             hint: repo.defaultBranchHint
         )
         let worktreeNodes = SidebarWorktreeHierarchy.nodes(
-            for: repo.worktrees,
+            for: SidebarHostNavigation.displayedWorktrees(in: repo),
             inRepoAtPath: repo.path,
             defaultBranch: resolvedDefaultBranch
         )
@@ -557,6 +584,7 @@ struct SidebarView: View {
                     if let forge = forgeLink {
                         Button(forge.menuTitle) { NSWorkspace.shared.open(forge.url) }
                     }
+                    worktreeOrderPicker(repo)
                     Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
@@ -587,16 +615,32 @@ struct SidebarView: View {
     @ViewBuilder
     private var selectedProjectAddWorktreeHeader: some View {
         if navigation.query.isEmpty,
-           let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }),
-           canAddWorktree(to: project) {
-            HStack {
-                Spacer()
-                Button(action: addWorktreeToSelectedProject) { Label("Add worktree", systemImage: "plus") }
-                    .buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.sidebarDimIcon)
-                    .help("Add worktree to \(project.name)")
-                    .accessibilityLabel("Add worktree to \(project.name)")
-            }.padding(.horizontal, 6).frame(height: 44)
+           let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) {
+            let repo = appState.repos.first { localProjectID($0) == project.id }
+            let canAdd = canAddWorktree(to: project)
+            if repo != nil || canAdd {
+                HStack {
+                    if let repo {
+                        Menu { worktreeOrderPicker(repo).pickerStyle(.inline) } label: {
+                            Label(repo.worktreeOrderMode == .recentActivity ? "Recent Activity" : "Manual Order",
+                                  systemImage: "arrow.up.arrow.down")
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .help("Worktree order")
+                        .accessibilityLabel("Worktree order")
+                    }
+                    Spacer()
+                    if canAdd {
+                        Button(action: addWorktreeToSelectedProject) { Label("Add worktree", systemImage: "plus") }
+                            .buttonStyle(.plain)
+                            .help("Add worktree to \(project.name)")
+                            .accessibilityLabel("Add worktree to \(project.name)")
+                    }
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.sidebarDimIcon)
+                .padding(.horizontal, 6).frame(height: 44)
+            }
         }
     }
 
@@ -667,57 +711,53 @@ struct SidebarView: View {
             prBadge: prBadge,
             attentionStyle: attention.worktreeCapsule,
             attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
-            project: project, projectIconData: projectIcons[projectID]
+            project: project, projectIconData: projectIcons[projectID],
+            identityMenu: worktree.path == repo.path ? nil : { anchor in
+                WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
+                                        onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
+                                        onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
+            }
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
-        let panes = Group {
-            if worktree.state == .running {
-                ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
-                    let sessionName = worktree.paneSessions[terminalID]
-                        .map(ZmxLauncher.sessionName(for:))
-                    Button {
-                        onSelectPane(worktree.path, terminalID)
-                    } label: {
-                        PaneTitleRow(
-                            title: terminalManager.displayTitle(for: terminalID),
-                            isActiveWorktree: isActive,
-                            isFocusedPane: isActive
-                                && worktree.focusedPaneSlotID == terminalID,
-                            isBusy: AgentLivenessMerge.isPaneBusy(
-                                sessionName: sessionName,
-                                liveness: claudeSessionRegistry.livenessBySession),
-                            theme: theme,
-                            // The pane-scoped capsule (agent-stop icon, or
-                            // notify/✓! text) renders directly; busy/idle no
-                            // longer feed it.
-                            attentionStyle: attention.paneCapsules[terminalID],
-                            portBindings: portBindings.bindings[terminalID] ?? [],
-                            attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    // PWD-1.4: pane rows are drag sources. The payload
-                    // is a typed wrapper around the pane's UUID so
-                    // SwiftUI's Transferable matching keeps unrelated
-                    // drops from being mis-decoded as panes.
-                    .draggable(TransferablePaneSlotID(id: terminalID.id))
-                    .rightClickMenu {
-                        buildPaneMenu(terminalID: terminalID)
-                    }
-                }
+        let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
+        let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
+            let sessionName = worktree.paneSessions[terminalID]
+                .map(ZmxLauncher.sessionName(for:))
+            return PaneTitleRow(
+                title: terminalManager.displayTitle(for: terminalID),
+                isActiveWorktree: isActive,
+                isFocusedPane: isActive
+                    && worktree.focusedPaneSlotID == terminalID,
+                isBusy: AgentLivenessMerge.isPaneBusy(
+                    sessionName: sessionName,
+                    liveness: claudeSessionRegistry.livenessBySession),
+                theme: theme,
+                // The pane-scoped capsule (agent-stop icon, or
+                // notify/✓! text) renders directly; busy/idle no
+                // longer feed it.
+                attentionStyle: attention.paneCapsules[terminalID],
+                portBindings: portBindings.bindings[terminalID] ?? [],
+                attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
+                    + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+            )
+        }
+        let panes = ForEach(paneLeaves, id: \.self) { terminalID in
+            Button {
+                onSelectPane(worktree.path, terminalID)
+            } label: {
+                paneRow(terminalID)
+            }
+            .buttonStyle(.plain)
+            // PWD-1.4: pane rows are drag sources. The payload
+            // is a typed wrapper around the pane's UUID so
+            // SwiftUI's Transferable matching keeps unrelated
+            // drops from being mis-decoded as panes.
+            .draggable(TransferablePaneSlotID(id: terminalID.id))
+            .rightClickMenu {
+                buildPaneMenu(terminalID: terminalID)
             }
         }
-        let preview = AnyView(
-            VStack(spacing: 0) {
-                heading
-                panes
-            }
-            .padding(.vertical, groupsPanes ? 8 : 0)
-            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
-            .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
-        )
         VStack(spacing: 0) {
             Button {
                 onSelect(worktree.path)
@@ -726,17 +766,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .id(worktree.path)
-            .worktreeReorderTarget(
-                repoID: repo.id,
-                worktreeID: worktree.id,
-                appState: $appState, isEnabled: navigation.query.isEmpty,
-                preview: preview,
-                onMovePane: onMovePane,
-                onPaneTargeted: { targeted in
-                    if targeted { dropTargetWorktreeID = worktree.id }
-                    else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-                }
-            )
+            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0 }
             .rightClickMenu {
                 buildWorktreeMenu(worktree, repo: repo)
             }
@@ -755,21 +785,26 @@ struct SidebarView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
         )
+        // The whole block (heading + pane rows) is the drag image and the
+        // drop target, so a worktree never lands between another's panes.
+        .worktreeReorderTarget(
+            repoID: repo.id,
+            worktreeID: worktree.id,
+            appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
+            onSelect: { onSelect(worktree.path) },
+            onMovePane: onMovePane,
+            onPaneTargeted: { targeted in
+                if targeted { dropTargetWorktreeID = worktree.id }
+                else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
+            }
+        )
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
     /// SwiftUI `.contextMenu`) for the List-row hoisting reason
-    /// `.rightClickMenu` documents.
-    private func worktreeNeighbor(_ worktree: WorktreeEntry, repo: RepoEntry, offset: Int) -> WorktreeEntry? {
-        let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
-        let siblings = repo.worktrees.filter { parents[$0.id] == parents[worktree.id] }
-        guard let index = siblings.firstIndex(where: { $0.id == worktree.id }), siblings.indices.contains(index + offset) else { return nil }
-        let target = siblings[index + offset]
-        var copy = appState
-        return SidebarHostNavigation.moveWorktree(in: &copy, repositoryID: repo.path, worktreeID: worktree.path,
-                                                  relativeTo: target.path, after: offset > 0) ? target : nil
-    }
-
+    /// `.rightClickMenu` documents. Reordering is drag-only and the
+    /// emoji identity has its own menu on the identity slot
+    /// (LAYOUT-2.96), so neither appears here.
     private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> NSMenu {
         let menu = NSMenu()
         // In-flight rows have nothing the menu actions can act on
@@ -777,31 +812,6 @@ struct SidebarView: View {
         // either error or race the flow that owns the placeholder.
         if worktree.state.isInFlight {
             return menu
-        }
-        menu.addItem(ClosureMenuItem(title: "Edit Worktree Emoji…") {
-            editWorktreeEmoji(worktree)
-        })
-        if worktree.emoji != nil {
-            menu.addItem(ClosureMenuItem(title: "Clear Worktree Emoji") {
-                for repoIndex in appState.repos.indices {
-                    if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
-                        appState.repos[repoIndex].worktrees[index].emoji = nil
-                        appState.repos[repoIndex].worktrees[index].emojiSource = nil
-                        return
-                    }
-                }
-            })
-        }
-        menu.addItem(.separator())
-        if navigation.query.isEmpty {
-            for (title, offset) in [("Move Up", -1), ("Move Down", 1)] {
-                if let target = worktreeNeighbor(worktree, repo: repo, offset: offset) {
-                    menu.addItem(ClosureMenuItem(title: title) {
-                        SidebarHostNavigation.moveWorktree(in: &appState, repositoryID: repo.path,
-                                                           worktreeID: worktree.path, relativeTo: target.path, after: offset > 0)
-                    })
-                }
-            }
         }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
@@ -846,32 +856,55 @@ struct SidebarView: View {
         return menu
     }
 
-    private func editWorktreeEmoji(_ worktree: WorktreeEntry) {
-        let alert = NSAlert()
-        alert.messageText = "Worktree emoji"
-        alert.informativeText = "Choose one emoji for \(worktree.branch). It will appear beside this worktree and on its Attention cards."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: worktree.emoji ?? "")
-        field.placeholderString = "Emoji"
-        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
-        alert.accessoryView = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let chosen = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard AttentionRecap.isSingleEmoji(chosen),
-              !appState.repos.flatMap(\.worktrees).contains(where: { $0.id != worktree.id && $0.emoji == chosen }) else {
+    /// LAYOUT-2.97: the native emoji palette, anchored at the identity slot.
+    private func editWorktreeEmoji(_ worktree: WorktreeEntry, anchoredTo anchor: NSView) {
+        WorktreeEmojiPaletteCapture.present(anchoredTo: anchor) { chosen in
+            guard !SidebarHostNavigation.setManualEmoji(chosen, worktreeID: worktree.id, in: &appState.repos) else { return }
             let error = NSAlert()
             error.messageText = "Choose one unused emoji"
             error.runModal()
-            return
         }
-        for repoIndex in appState.repos.indices {
-            if let index = appState.repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
-                appState.repos[repoIndex].worktrees[index].emoji = chosen
-                appState.repos[repoIndex].worktrees[index].emojiSource = .manual
-                return
-            }
+    }
+
+    // MARK: Worktree order (LAYOUT-2.95)
+
+    private func setWorktreeOrderMode(_ mode: WorktreeOrderMode, for repo: RepoEntry) {
+        guard let index = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+        appState.repos[index].worktreeOrderMode = mode
+    }
+
+    private static let worktreeOrderChoices: [(title: String, mode: WorktreeOrderMode)] = [
+        ("Manual Order", .manual), ("Recent Activity", .recentActivity),
+    ]
+
+    private func worktreeOrderPicker(_ repo: RepoEntry) -> some View {
+        Picker("Sort Worktrees", selection: Binding(
+            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
+            set: { setWorktreeOrderMode($0, for: repo) }
+        )) {
+            ForEach(Self.worktreeOrderChoices, id: \.mode) { Text($0.title).tag($0.mode) }
         }
+    }
+
+    private func worktreeOrderMenu(_ repo: RepoEntry) -> NSMenu {
+        let menu = NSMenu()
+        for choice in Self.worktreeOrderChoices {
+            let item = ClosureMenuItem(title: choice.title) { setWorktreeOrderMode(choice.mode, for: repo) }
+            item.state = repo.worktreeOrderMode == choice.mode ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Right-click below the last row in the project column.
+    private func selectedProjectEmptySpaceMenu() -> NSMenu {
+        let menu = NSMenu()
+        guard navigation.query.isEmpty,
+              let repo = appState.repos.first(where: { localProjectID($0) == navigation.selectedProjectID }) else { return menu }
+        let sort = NSMenuItem(title: "Sort Worktrees", action: nil, keyEquivalent: "")
+        sort.submenu = worktreeOrderMenu(repo)
+        menu.addItem(sort)
+        return menu
     }
 
     /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7

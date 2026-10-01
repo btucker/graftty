@@ -159,7 +159,7 @@ struct SidebarNavigationStateTests {
         navigation.enterAttention(projects: projects, items: [])
         #expect(navigation.attentionItems(live: [], projects: projects).map(\.id) == ["stop"])
     }
-    @Test("@spec LAYOUT-2.57: When an Attention card body is opened, the application shall keep Attention open, keep existing cards in place as reports update, prepend new cards, and collapse a card only when its agent resumes.")
+    @Test("@spec LAYOUT-2.57: When an Attention card body is opened, the application shall keep Attention open, keep the queue ordered newest first as reports update, and collapse a card only when its agent resumes.")
     func openingAttentionPreservesPosition() throws {
         let suite = "AttentionOrder." + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -204,8 +204,8 @@ struct SidebarNavigationStateTests {
         #expect(!navigation.hasViewed(older))
         #expect(navigation.selectedAttentionID == selected.id)
         let fresh = item("selected", 5)
-        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project]).map(\.id) == ["latest", "selected", "older"])
-        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project])[1] == fresh)
+        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project]).map(\.id) == ["selected", "latest", "older"])
+        #expect(navigation.attentionItems(live: [older, latest, fresh], projects: [project])[0] == fresh)
         #expect(!navigation.hasViewed(fresh))
         navigation.filter = .running
         #expect(navigation.attentionItems(live: [], projects: [project]).isEmpty)

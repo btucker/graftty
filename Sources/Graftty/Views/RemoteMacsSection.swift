@@ -645,19 +645,6 @@ struct RemoteMacsSection: View {
         remoteMac: RemoteMac
     ) -> NSMenu {
         let menu = NSMenu()
-        let siblings = (worktreePanesByRemote[RemoteMacIdentity(remoteMac)] ?? []).filter {
-            $0.repositoryID == worktree.repositoryID && ($0.sidebar?.folderIDs ?? $0.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders)
-        }
-        if canReorder(worktree, on: remoteMac),
-           let index = siblings.firstIndex(where: { $0.path == worktree.path }) {
-            if index > 0, !siblings[index - 1].isMainCheckout, !siblings[index - 1].state.isInFlight {
-                menu.addItem(ClosureMenuItem(title: "Move Up") { moveRemoteWorktree(worktree, relativeTo: siblings[index - 1], after: false, remoteMac: remoteMac) })
-            }
-            if index + 1 < siblings.count, !siblings[index + 1].state.isInFlight {
-                menu.addItem(ClosureMenuItem(title: "Move Down") { moveRemoteWorktree(worktree, relativeTo: siblings[index + 1], after: true, remoteMac: remoteMac) })
-            }
-        }
-
         guard !worktree.isMainCheckout, !worktree.state.isInFlight else {
             return menu
         }

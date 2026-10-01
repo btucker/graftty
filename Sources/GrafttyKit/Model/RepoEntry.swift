@@ -24,6 +24,8 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// (no remote, network failure, fresh launch before first poll).
     public var defaultBranchHint: String?
     public var iconOverride: ProjectIconOverride? = nil
+    /// How the sidebar orders this repository's linked worktrees.
+    public var worktreeOrderMode: WorktreeOrderMode = .manual
 
     public init(
         path: String,
@@ -50,7 +52,8 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
-        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint, iconOverride
+        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint, iconOverride,
+             worktreeOrderMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -64,6 +67,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
         self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
         self.iconOverride = try container.decodeIfPresent(ProjectIconOverride.self, forKey: .iconOverride)
+        self.worktreeOrderMode = try container.decodeIfPresent(WorktreeOrderMode.self, forKey: .worktreeOrderMode) ?? .manual
     }
 }
 

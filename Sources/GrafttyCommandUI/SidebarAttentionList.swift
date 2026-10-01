@@ -22,14 +22,18 @@ public struct SidebarAttentionList: View {
     public var onOpen: (SidebarActivityItem) async -> Bool
     public var expandsAllCards: Bool
     public var compactHeader: Bool
+    /// False when the host provides its own search box (the Mac toolbar).
+    public var showsSearchField: Bool
     public var selectionColor: Color
     public var isCurrentWorktree: (SidebarActivityItem) -> Bool
     public init(navigation: SidebarNavigationState, items: [SidebarActivityItem], projects: [SidebarProject],
                 selectionColor: Color = .primary.opacity(0.16), compactHeader: Bool = false, expandsAllCards: Bool = false,
+                showsSearchField: Bool = true,
                 isCurrentWorktree: @escaping (SidebarActivityItem) -> Bool = { _ in true },
                 onOpen: @escaping (SidebarActivityItem) async -> Bool) {
         self.expandsAllCards = expandsAllCards
         self.compactHeader = compactHeader
+        self.showsSearchField = showsSearchField
         self.selectionColor = selectionColor; self.isCurrentWorktree = isCurrentWorktree
         self.navigation = navigation; self.items = items; self.projects = projects; self.onOpen = onOpen
     }
@@ -43,7 +47,7 @@ public struct SidebarAttentionList: View {
 
     private func content(wide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            SidebarAttentionHeader(navigation: navigation, compact: compactHeader)
+            SidebarAttentionHeader(navigation: navigation, compact: compactHeader, showsSearchField: showsSearchField)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     let rows = navigation.attentionItems(live: items, projects: projects)
@@ -274,6 +278,7 @@ public struct SidebarAttentionList: View {
 struct SidebarAttentionHeader: View {
     @Bindable var navigation: SidebarNavigationState
     var compact: Bool
+    var showsSearchField = true
     @State private var showsSearch = false
     @FocusState private var searchFocused: Bool
 
@@ -285,6 +290,21 @@ struct SidebarAttentionHeader: View {
                 HStack {
                     filterPicker.pickerStyle(.menu).tint(.primary)
                     Spacer()
+                    if showsSearchField { searchToggle }
+                }.padding(.leading, 12).padding(.trailing, 4)
+                if showsSearchField && searchIsVisible { searchField }
+            } else {
+                Text("Attention").font(.headline).padding(.horizontal, 12)
+                if showsSearchField { searchField }
+                ViewThatFits(in: .horizontal) {
+                    filterPicker.pickerStyle(.segmented).fixedSize()
+                    filterPicker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 10)
+            }
+        }
+    }
+
+    private var searchToggle: some View {
                     Button {
                         if searchIsVisible {
                             navigation.query = ""
@@ -300,17 +320,6 @@ struct SidebarAttentionHeader: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(searchIsVisible ? "Close search" : "Search attention")
-                }.padding(.leading, 12).padding(.trailing, 4)
-                if searchIsVisible { searchField }
-            } else {
-                Text("Attention").font(.headline).padding(.horizontal, 12)
-                searchField
-                ViewThatFits(in: .horizontal) {
-                    filterPicker.pickerStyle(.segmented).fixedSize()
-                    filterPicker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, 10)
-            }
-        }
     }
 
     private var searchField: some View {

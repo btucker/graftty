@@ -1,6 +1,7 @@
 import CoreTransferable
 import CoreGraphics
 import Foundation
+import os
 import SwiftUI
 import UniformTypeIdentifiers
 import GrafttyKit
@@ -87,6 +88,8 @@ enum WorktreeRowDrop: Transferable {
 }
 
 private struct WorktreeRowDropDelegate: DropDelegate {
+    /// `log stream --predicate 'subsystem == "com.graftty.app" AND category == "sidebar-drag"'`
+    private static let log = Logger(subsystem: "com.graftty.app", category: "sidebar-drag")
     let rowHeight: CGFloat
     let allowsReordering: Bool
     let isInFlight: Bool
@@ -99,7 +102,12 @@ private struct WorktreeRowDropDelegate: DropDelegate {
             || (allowsReordering && info.hasItemsConforming(to: [TransferableWorktreeMove.contentType])))
     }
 
-    func dropEntered(info: DropInfo) { updateIndicator(info) }
+    func dropEntered(info: DropInfo) {
+        // One line per drag entering a row: the first signal that a drag
+        // session started at all, and whether this row's gate accepted it.
+        Self.log.info("dropEntered valid=\(validateDrop(info: info), privacy: .public) reordering=\(allowsReordering, privacy: .public) inFlight=\(isInFlight, privacy: .public)")
+        updateIndicator(info)
+    }
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard validateDrop(info: info) else { return DropProposal(operation: .forbidden) }
         updateIndicator(info)
@@ -122,23 +130,42 @@ private struct WorktreeRowDropDelegate: DropDelegate {
         let destination = WorktreeDropPlacement.fromRowDropLocation(info.location, rowHeight: rowHeight)
         _ = provider.loadTransferable(type: WorktreeRowDrop.self) { result in
             Task { @MainActor in
-                if case .success(let payload) = result { onDrop(payload, destination) }
+                switch result {
+                case .success(let payload): onDrop(payload, destination)
+                case .failure(let error):
+                    Self.log.error("loadTransferable failed: \(String(describing: error), privacy: .public)")
+                }
             }
         }
         return true
     }
 }
 
-/// @spec LAYOUT-2.67: While dragging a worktree, the application shall preview its heading and visible pane rows together at the sidebar row width while retaining separate pane drag gestures.
+/// Bounds of a worktree block's heading row, so the block-level drag
+/// source can accept presses on the heading only while dragging the
+/// whole block.
+struct WorktreeHeadingAnchor: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// Drag source + drop target for one worktree block (heading + pane
+/// rows). The source is an AppKit overlay (`WorktreeDragSourceOverlay`)
+/// because SwiftUI's `.draggable` never began a session for these rows on
+/// the project column; it sits over the heading and drags the block.
+/// Drops resolve against the block's midpoint, so a worktree lands before
+/// or after another whole worktree, never between its panes.
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
     @Binding var appState: AppState
     var isEnabled: Bool = true
-    let preview: AnyView
+    let onSelect: () -> Void
     let onMovePane: (PaneSlotID, String) -> Void
     let onPaneTargeted: (Bool) -> Void
-    @State private var rowSize: CGSize = .init(width: 280, height: 28)
+    @State private var rowHeight: CGFloat = 28
     @State private var placement: WorktreeDropPlacement?
 
     private var worktree: WorktreeEntry? {
@@ -152,8 +179,19 @@ struct WorktreeReorderTarget: ViewModifier {
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
         if canDrag {
-            content.draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID)) {
-                preview.frame(width: rowSize.width).fixedSize(horizontal: false, vertical: true)
+            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchor in
+                GeometryReader { proxy in
+                    if let anchor {
+                        let heading = proxy[anchor]
+                        WorktreeDragSourceOverlay(
+                            payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
+                            blockRect: CGRect(x: -heading.minX, y: -heading.minY,
+                                              width: proxy.size.width, height: proxy.size.height),
+                            onClick: onSelect)
+                        .frame(width: heading.width, height: heading.height)
+                        .offset(x: heading.minX, y: heading.minY)
+                    }
+                }
             }
         }
         else { content }
@@ -161,9 +199,9 @@ struct WorktreeReorderTarget: ViewModifier {
 
     func body(content: Content) -> some View {
         dragSource(content)
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { rowSize = $0 }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
             .onDrop(of: WorktreeRowDrop.contentTypes, delegate: WorktreeRowDropDelegate(
-                rowHeight: rowSize.height, allowsReordering: isEnabled,
+                rowHeight: rowHeight, allowsReordering: isEnabled,
                 isInFlight: worktree?.state.isInFlight ?? true,
                 placement: $placement, onPaneTargeted: onPaneTargeted,
                 onDrop: { payload, destination in
@@ -184,13 +222,13 @@ extension View {
         worktreeID: WorktreeEntry.ID,
         appState: Binding<AppState>,
         isEnabled: Bool = true,
-        preview: AnyView,
+        onSelect: @escaping () -> Void,
         onMovePane: @escaping (PaneSlotID, String) -> Void,
         onPaneTargeted: @escaping (Bool) -> Void
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID, worktreeID: worktreeID,
-            appState: appState, isEnabled: isEnabled, preview: preview,
+            appState: appState, isEnabled: isEnabled, onSelect: onSelect,
             onMovePane: onMovePane, onPaneTargeted: onPaneTargeted
         ))
     }

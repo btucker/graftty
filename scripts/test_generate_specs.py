@@ -68,6 +68,24 @@ class ParseCarrierTextTests(unittest.TestCase):
         self.assertEqual(result, "Each worktree shall expose a state.")
 
 
+class ExtractCarrierTests(unittest.TestCase):
+    def test_single_title_between_earlier_triple_title_and_later_triple_literal(self) -> None:
+        # The nearest `"""` before a single-line title may be the closer of an
+        # earlier triple-quoted title; a later `"""` string literal in a test
+        # body must not turn that span into the single title's carrier.
+        text = (
+            '@Test("""\n@spec ABC-1: earlier triple title.\n""")\n'
+            "func earlier() {}\n"
+            '@Test("@spec ABC-2: single line title.")\n'
+            "func single() {\n"
+            '    let json = """\n    {"a": 1}\n    """\n'
+            "}\n"
+        )
+        kind, carrier = gs.extract_carrier(text, text.index("@spec ABC-2"))
+        self.assertEqual(kind, "single")
+        self.assertEqual(carrier, "@spec ABC-2: single line title.")
+
+
 class RenderSpecsMdTests(unittest.TestCase):
     def test_empty_spec_text_does_not_render_trailing_space(self) -> None:
         marker = gs.SpecMarker(

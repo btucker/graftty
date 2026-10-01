@@ -18,7 +18,7 @@ struct SidebarAttentionBannerTests {
               isBusy: false)
     }
 
-    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the search area, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.")
+    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.")
     func onlyNewRequestsShowBanners() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
