@@ -6,19 +6,35 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.8.0-alpha.8</title>
+            <sparkle:channel>prerelease</sparkle:channel>
+            <sparkle:version>100.66.00</sparkle:version>
+            <sparkle:shortVersionString>0.8.0-alpha.8</sparkle:shortVersionString>
+            <pubDate>Thu, 01 Oct 2026 22:46:01 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.8.0-alpha.7 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5665347943" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/379" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/379/hovercard" href="https://github.com/btucker/graftty/pull/379">#379</a></li>
+<li>Forward Control+Enter to terminal input by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5668281325" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/380" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/380/hovercard" href="https://github.com/btucker/graftty/pull/380">#380</a></li>
+<li>Clean up worktree sidebar ordering, emoji editing, and Attention order by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5668442146" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/381" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/381/hovercard" href="https://github.com/btucker/graftty/pull/381">#381</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.8.0-alpha.7...v0.8.0-alpha.8"><tt>v0.8.0-alpha.7...v0.8.0-alpha.8</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.8.0-alpha.8/Graftty-0.8.0-alpha.8.zip" length="37787875" type="application/octet-stream" sparkle:edSignature="+WXMEBkoGMGK1mC642LvvWH77t86xaqr0znwUaA4KIE913iblEaoy6CDMDxu0HyAohTAjQF+Ts9Ou9X6LJOBDQ=="/>
+        </item>
+        <item>
             <title>Version 0.8.0-alpha.7</title>
             <sparkle:channel>prerelease</sparkle:channel>
             <sparkle:version>100.65.00</sparkle:version>
             <sparkle:shortVersionString>0.8.0-alpha.7</sparkle:shortVersionString>
             <pubDate>Thu, 01 Oct 2026 16:12:21 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>Isolate interactive WebRTC traffic from bulk transfers by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5663401832" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/377" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/377/hovercard" href="https://github.com/btucker/graftty/pull/377">#377</a></li>
-<li>appcast: v0.8.0-alpha.6 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5653477462" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/376" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/376/hovercard" href="https://github.com/btucker/graftty/pull/376">#376</a></li>
-<li>Make worktree creation async by default and preserve agent prompts by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5663731001" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/378" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/378/hovercard" href="https://github.com/btucker/graftty/pull/378">#378</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.8.0-alpha.6...v0.8.0-alpha.7"><tt>v0.8.0-alpha.6...v0.8.0-alpha.7</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;Isolate interactive WebRTC traffic from bulk transfers by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5663401832" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/377" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/377/hovercard" href="https://github.com/btucker/graftty/pull/377"&gt;#377&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;appcast: v0.8.0-alpha.6 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5653477462" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/376" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/376/hovercard" href="https://github.com/btucker/graftty/pull/376"&gt;#376&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Make worktree creation async by default and preserve agent prompts by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5663731001" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/378" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/378/hovercard" href="https://github.com/btucker/graftty/pull/378"&gt;#378&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.8.0-alpha.6...v0.8.0-alpha.7"&gt;&lt;tt&gt;v0.8.0-alpha.6...v0.8.0-alpha.7&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.8.0-alpha.7/Graftty-0.8.0-alpha.7.zip" length="37704112" type="application/octet-stream" sparkle:edSignature="xpbNHtuJDFKX3y17dfxVv22mI7ZX1EPmmjP+gJ2pPWiKC9A+B9OCWc9ZV8Nm1J8nLDxTyKhOGUyAvUa/kezCBw=="/>
         </item>
         <item>
