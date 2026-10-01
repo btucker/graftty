@@ -59,6 +59,31 @@ final class CLIWorktreeCreationStore {
         self.terminalRetention = terminalRetention
     }
 
+    /// The app owns this task independently of the requesting socket or CLI.
+    /// `createAndLaunch` waits for Git before starting the pane and returns a
+    /// failure message, or nil once the backend accepts the launch command.
+    func start(
+        worktreePath: String,
+        messageAddress: String,
+        stagedPromptFile: URL? = nil,
+        operationID: String? = nil,
+        createAndLaunch: @escaping @MainActor () async -> String?
+    ) -> WorktreeCreateStatus {
+        if let operationID, let existing = status(operationID: operationID) {
+            return existing
+        }
+        let status = begin(worktreePath: worktreePath, messageAddress: messageAddress,
+            stagedPromptFile: stagedPromptFile, operationID: operationID)
+        Task { @MainActor in
+            if let error = await createAndLaunch() {
+                markFailed(operationID: status.operationID, error: error)
+            } else {
+                markReady(operationID: status.operationID)
+            }
+        }
+        return status
+    }
+
     func begin(
         worktreePath: String,
         messageAddress: String,

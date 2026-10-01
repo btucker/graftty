@@ -1582,6 +1582,7 @@ struct GrafttyApp: App {
                                 existing: existing, base: base, command: command,
                                 agentRuntime: runtime, agentPrompt: prompt, operationID: id,
                                 appState: binding, terminalManager: tm,
+                                teamInbox: teamInbox,
                                 teamEventDispatcher: teamEventDispatcher,
                                 worktreeMonitor: services.worktreeMonitor,
                                 statsStore: services.statsStore,
@@ -4095,6 +4096,7 @@ struct GrafttyApp: App {
                 operationID: operationID,
                 appState: appState,
                 terminalManager: terminalManager,
+                teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -4211,6 +4213,7 @@ struct GrafttyApp: App {
         operationID: String?,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
+        teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
@@ -4280,16 +4283,30 @@ struct GrafttyApp: App {
             return .error(error.userMessage ?? "could not begin worktree creation")
         }
 
-        let status = worktreeCreations.begin(
+        // Persist before starting Git, so both a failed launch and a later
+        // manual launch can recover the task. Retries return above before
+        // reaching this write, preventing duplicate inbox copies.
+        if let agentRuntime {
+            do {
+                try WorktreeAgentLaunchCommand.saveInitialPrompt(
+                    agentPrompt, runtime: agentRuntime, repo: repo,
+                    worktreePath: worktreePath, branchName: branchName, inbox: teamInbox
+                )
+            } catch {
+                appState.wrappedValue.removeWorktree(atPath: worktreePath)
+                launch.discardPromptFile()
+                return .error("could not save initial agent prompt: \(error.localizedDescription)")
+            }
+        }
+        let initialCommand = launch.command.flatMap { value in
+            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+        }
+        let status = worktreeCreations.start(
             worktreePath: worktreePath,
             messageAddress: worktreePath,
             stagedPromptFile: launch.promptFile,
             operationID: operationID
-        )
-        let initialCommand = launch.command.flatMap { value in
-            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
-        }
-        Task { @MainActor in
+        ) {
             let result = await AddWorktreeFlow.finishCreate(
                 repoPath: repo.path,
                 worktreePath: worktreePath,
@@ -4306,7 +4323,7 @@ struct GrafttyApp: App {
             )
             switch result {
             case .success:
-                worktreeCreations.markReady(operationID: status.operationID)
+                return nil
             case .failure(let error):
                 let message: String
                 if case .discoveryFailed(let detail) = error {
@@ -4314,7 +4331,7 @@ struct GrafttyApp: App {
                 } else {
                     message = error.userMessage ?? "worktree creation failed"
                 }
-                worktreeCreations.markFailed(operationID: status.operationID, error: message)
+                return message
             }
         }
         return .worktreeCreate(status)

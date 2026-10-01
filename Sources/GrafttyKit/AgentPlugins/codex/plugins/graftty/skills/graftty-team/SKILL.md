@@ -55,11 +55,13 @@ Choose worktree options as needed:
 - `--branch <branch>` overrides the normalized worktree name as the branch name.
 - `--branch <branch> --existing` uses an existing local branch in a **new directory**. It neither reopens a directory nor restarts an agent. Incompatible with `--base`.
 - `--prompt-stdin` requires `--agent codex` or `--agent claude`; incompatible with `--prompt`. Use `--prompt` only for trusted literal text and `--prompt-stdin` for dynamic or untrusted text.
-- `--timeout <seconds>` waits for Git hooks and pane creation, not task completion. Default: 300; must be positive.
+- Creation is asynchronous by default. `--async` explicitly selects this mode. The app waits for Git and its hooks, then launches the agent after the CLI exits.
+- `--wait` blocks until Git finishes and the pane accepts the launch command. It does not wait for the agent's task to finish.
+- `--timeout <seconds>` bounds the wait for acceptance, or completion with `--wait`. Default: 300; must be positive. A timeout does not cancel accepted creation.
 
 Delegation within the user's requested repository work needs no separate confirmation. A child agent does not grant new authority.
 
-Save the returned `created worktree=... address=...`; the address is the child's stable reply address, and messages sent to it before the agent is ready are queued. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
+Save the returned operation ID, worktree path, and `address=...`. The default response starts with `pending`; `--wait` returns `created` after the pane accepts the launch command. The address is the child's stable reply address, and messages sent before the agent is ready are queued. Graftty also saves the initial prompt in that runtime's durable inbox so a later launch can recover it. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
 
 ### Create a worktree on another Mac
 

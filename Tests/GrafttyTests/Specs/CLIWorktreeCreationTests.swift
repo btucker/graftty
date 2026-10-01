@@ -3,10 +3,132 @@ import ArgumentParser
 import Testing
 @testable import Graftty
 @testable import GrafttyCLI
-import GrafttyKit
+@testable import GrafttyKit
 
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
+    @Test("@spec AGENT-5.17: When `graftty worktree add` is accepted, the CLI shall default to asynchronous creation and return the pending operation ID and stable worktree address without waiting for Git or agent launch, for local and remote creation; `--wait` shall retain blocking completion and `--async` shall explicitly select the default.")
+    func asyncCreationReturnsBeforePolling() throws {
+        for args in [["fix", "--agent", "codex"], ["fix", "--async", "--agent", "codex"],
+                     ["fix", "--async", "--remote", "Studio", "--agent", "claude"]] {
+            let command = try WorktreeAdd.parse(args)
+            let status = WorktreeCreateStatus(operationID: "slow-create", state: .pending,
+                worktreePath: "/repo/.worktrees/fix", messageAddress: "/repo/.worktrees/fix")
+            var lines: [String] = []
+            try command.waitForCreation(
+                response: .worktreeCreate(status), deadline: .distantPast,
+                sendStatus: { _ in
+                    Issue.record("async creation must not poll")
+                    return .worktreeCreate(status)
+                },
+                sleep: { _ in Issue.record("async creation must not sleep") },
+                writeLine: { lines.append($0) }
+            )
+            #expect(lines.contains { $0.contains("pending") && $0.contains("slow-create") })
+            #expect(lines.contains { $0.contains("address='/repo/.worktrees/fix'") })
+            #expect(!lines.contains { $0.hasPrefix("created ") })
+        }
+    }
+
+    @Test("Blocking creation polls until ready; conflicting wait options are rejected")
+    func waitingCreationPollsUntilReady() throws {
+        let command = try WorktreeAdd.parse(["fix", "--wait", "--agent", "codex"])
+        let pending = WorktreeCreateStatus(operationID: "slow-create", state: .pending,
+            worktreePath: "/repo/.worktrees/fix", messageAddress: "/repo/.worktrees/fix")
+        let ready = WorktreeCreateStatus(operationID: "slow-create", state: .ready,
+            worktreePath: pending.worktreePath, messageAddress: pending.messageAddress)
+        var polls = 0
+        var lines: [String] = []
+        try command.waitForCreation(response: .worktreeCreate(pending), deadline: .distantFuture,
+            sendStatus: { id in
+                #expect(id == pending.operationID)
+                polls += 1
+                return .worktreeCreate(ready)
+            }, sleep: { _ in }, writeLine: { lines.append($0) })
+        #expect(polls == 1)
+        #expect(lines.first?.hasPrefix("created ") == true)
+        #expect(throws: (any Error).self) { _ = try WorktreeAdd.parse(["fix", "--wait", "--async"]) }
+    }
+
+    @MainActor
+    @Test("@spec AGENT-5.18: While worktree creation is pending after the CLI disconnects or times out, the application shall retain the operation and staged launch command, wait for creation to finish, and then launch the agent without another CLI request.")
+    func backgroundCreationOutlivesCaller() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launch = try WorktreeAgentLaunchCommand.prepare(agent: .codex, prompt: "late task",
+            exactCommand: nil, promptDirectory: root)
+        let promptFile = try #require(launch.promptFile)
+        let store = CLIWorktreeCreationStore(terminalRetention: 1)
+        var finish: CheckedContinuation<String?, Never>?
+        var launches = 0
+        let status = store.start(worktreePath: "/repo/.worktrees/slow",
+            messageAddress: "/repo/.worktrees/slow", stagedPromptFile: promptFile, operationID: "slow-create") {
+            let result = await withCheckedContinuation { finish = $0 }
+            #expect(FileManager.default.fileExists(atPath: promptFile.path))
+            if result == nil { launches += 1 }
+            return result
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while finish == nil, ContinuousClock.now < deadline { await Task.yield() }
+        let completion = try #require(finish)
+        #expect(launches == 0)
+        let caller = try WorktreeAdd.parse(["slow", "--wait", "--agent", "codex"])
+        #expect(throws: ExitCode.self) {
+            try caller.waitForCreation(response: .worktreeCreate(status), deadline: .distantPast)
+        }
+        #expect(store.status(operationID: status.operationID, now: .distantFuture)?.state == .pending)
+        #expect(FileManager.default.fileExists(atPath: promptFile.path))
+        let retry = store.start(worktreePath: status.worktreePath, messageAddress: status.messageAddress,
+            operationID: status.operationID) {
+            Issue.record("retry must not create or launch twice")
+            return nil
+        }
+        #expect(retry == status)
+        completion.resume(returning: nil)
+        while store.status(operationID: status.operationID)?.state == .pending,
+              ContinuousClock.now < deadline { await Task.yield() }
+        #expect(launches == 1)
+        #expect(store.status(operationID: status.operationID)?.state == .ready)
+    }
+
+    @MainActor
+    @Test("@spec AGENT-5.19: When an agent worktree creation includes a non-empty initial prompt, the application shall save the exact prompt in the destination runtime's durable inbox before starting Git, preserve it if launch fails, and label its delivered context as the saved initial task.")
+    func initialPromptSurvivesFailedLaunch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main")
+        ])
+        let prompt = "Fix the slow checkout.\nKeep $(literal syntax) and trailing newlines.\n\n"
+        try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: .codex,
+            repo: repo, worktreePath: "/repo/.worktrees/slow", branchName: "slow", inbox: inbox)
+        let store = CLIWorktreeCreationStore()
+        let launch = try WorktreeAgentLaunchCommand.prepare(agent: .codex, prompt: prompt,
+            exactCommand: nil, promptDirectory: root.appendingPathComponent("prompts"))
+        let promptFile = try #require(launch.promptFile)
+        let operation = store.begin(worktreePath: "/repo/.worktrees/slow", messageAddress: "/repo/.worktrees/slow",
+            stagedPromptFile: promptFile)
+        store.markFailed(operationID: operation.operationID, error: "terminal unavailable")
+        #expect(!FileManager.default.fileExists(atPath: promptFile.path))
+
+        // Re-open from disk as a later app process or manual agent launch would.
+        let messages = try TeamInbox(rootDirectory: root).messages(teamID: repo.path)
+        let message = try #require(messages.first)
+        #expect(messages.count == 1)
+        #expect(message.body == prompt)
+        #expect(message.to.worktree == "/repo/.worktrees/slow")
+        #expect(message.to.runtime == "codex")
+        #expect(message.to.agentID == nil)
+        #expect(message.agentPrompt?.contains("saved initial prompt") == true)
+        #expect(message.agentPrompt?.contains(prompt) == true)
+        #expect(TeamInbox.runtimeDeliverableMessages(messages, runtime: "codex", agentID: "codex-later", acceptsUntargeted: true).count == 1)
+        #expect(TeamInbox.runtimeDeliverableMessages(messages, runtime: "claude", agentID: "claude-other", acceptsUntargeted: true).isEmpty)
+        try WorktreeAgentLaunchCommand.saveInitialPrompt(" \n", runtime: .codex,
+            repo: repo, worktreePath: "/repo/.worktrees/empty", branchName: "empty", inbox: inbox)
+        #expect(try inbox.messages(teamID: repo.path).count == 1)
+    }
+
     @Test("@spec AGENT-5.10: When `graftty worktree add --remote <Mac>` is invoked, the CLI shall accept a connected Mac name or device ID and an optional destination project, alongside the existing branch and agent launch options.")
     func remoteCreationOptions() throws {
         _ = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--agent", "codex"])
@@ -100,7 +222,7 @@ struct CLIWorktreeCreationTests {
     }
 
     @Test("""
-    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+    @spec AGENT-5.1: When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
