@@ -40,6 +40,7 @@ public final class DataChannelInbox: NSObject, RTCDataChannelDelegate, @unchecke
     private var closedObserved = false
     private var onOpen: (@Sendable () -> Void)?
     private var onClose: (@Sendable () -> Void)?
+    private var onBufferedAmountChange: (@Sendable () -> Void)?
     private var onMessage: (@Sendable (Data) -> Void)?
 
     /// Install the consumer and replay the backlog in arrival order:
@@ -50,13 +51,15 @@ public final class DataChannelInbox: NSObject, RTCDataChannelDelegate, @unchecke
     func attach(
         onOpen: @escaping @Sendable () -> Void,
         onClose: @escaping @Sendable () -> Void,
-        onMessage: @escaping @Sendable (Data) -> Void
+        onMessage: @escaping @Sendable (Data) -> Void,
+        onBufferedAmountChange: (@Sendable () -> Void)? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
         self.onOpen = onOpen
         self.onClose = onClose
         self.onMessage = onMessage
+        self.onBufferedAmountChange = onBufferedAmountChange
         if openObserved { onOpen() }
         for message in bufferedMessages { onMessage(message) }
         bufferedMessages = []
@@ -81,6 +84,12 @@ public final class DataChannelInbox: NSObject, RTCDataChannelDelegate, @unchecke
 
     public func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         receive(buffer.data)
+    }
+
+    public func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        onBufferedAmountChange?()
     }
 
     // MARK: - Ingestion (internal so unit tests can drive the inbox

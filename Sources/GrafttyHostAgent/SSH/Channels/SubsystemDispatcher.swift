@@ -58,6 +58,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     private let teamOnConnect: TeamChannelHandler.OnConnect
     private let teamOnDisconnect: TeamChannelHandler.OnDisconnect
     private let teamAllowed: @Sendable () -> Bool
+    private let bulkChannels: BulkTerminalChannels?
+    private let isBulkTransport: Bool
     private var dispatched = false
 
     public init(
@@ -75,8 +77,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         teamHandler: TeamChannelHandler.Handler? = nil,
         teamOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
         teamOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
-        teamAllowed: @escaping @Sendable () -> Bool = { false }
+        teamAllowed: @escaping @Sendable () -> Bool = { false },
+        bulkChannels: BulkTerminalChannels? = nil,
+        isBulkTransport: Bool = false
     ) {
+        self.bulkChannels = bulkChannels
+        self.isBulkTransport = isBulkTransport
         self.teamHandler = teamHandler
         self.teamOnConnect = teamOnConnect
         self.teamOnDisconnect = teamOnDisconnect
@@ -138,7 +144,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceID: deviceID,
-                        defaultKind: displayKindProvider()
+                        defaultKind: displayKindProvider(), bulkChannels: bulkChannels
                     ),
                     position: .after(self)
                 )
@@ -160,6 +166,29 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         _ request: SSHChannelRequestEvent.SubsystemRequest,
         context: ChannelHandlerContext
     ) {
+        if request.subsystem == GrafttyWebRTC.bulkSubsystem {
+            dispatched = true
+            if request.wantReply {
+                if bulkChannels != nil { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
+                else { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+            }
+            // The client closes after observing the reply. Closing here can
+            // race the success message on a freshly authenticated transport.
+            if bulkChannels == nil { context.close(promise: nil) }
+            return
+        }
+        if request.subsystem.hasPrefix(GrafttyWebRTC.historySubsystemPrefix) {
+            dispatched = true
+            let token = String(request.subsystem.dropFirst(GrafttyWebRTC.historySubsystemPrefix.count))
+            guard isBulkTransport, let bulkChannels, let deviceID = deviceIDProvider(),
+                  bulkChannels.register(token: token, deviceID: deviceID, channel: context.channel) else {
+                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+                context.close(promise: nil)
+                return
+            }
+            if request.wantReply { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
+            return
+        }
         switch request.subsystem {
         case SSHChannelTypeNames.team:
             dispatched = true
@@ -185,7 +214,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 try context.pipeline.syncOperations.addHandler(TerminalSessionHandler(
                     streamFactory: streamFactory, pagedFactory: pagedFactory,
                     ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
-                    deviceID: deviceIDProvider() ?? RemoteDeviceID.generate(), defaultKind: displayKindProvider()
+                    deviceID: deviceIDProvider() ?? RemoteDeviceID.generate(), defaultKind: displayKindProvider(), bulkChannels: bulkChannels
                 ), position: .after(self))
                 if request.wantReply { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
                 context.pipeline.syncOperations.removeHandler(context: context, promise: nil)

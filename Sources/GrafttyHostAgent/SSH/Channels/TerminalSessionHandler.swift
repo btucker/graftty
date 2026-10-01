@@ -62,6 +62,10 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private let pagedFactory: PagedTerminalStreamFactory?
+    private let bulkChannels: BulkTerminalChannels?
+    private var historyChannel: Channel?
+    private var historyForwardingTask: Task<Void, Never>?
+    private var historyForwardingContinuation: AsyncStream<Data>.Continuation?
     private var historyPending = false
     private var checkpointPending = false
     private var checkpointDeferred = false
@@ -128,8 +132,10 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceID: RemoteDeviceID,
-        defaultKind: DisplayClientKind = .ios
+        defaultKind: DisplayClientKind = .ios,
+        bulkChannels: BulkTerminalChannels? = nil
     ) {
+        self.bulkChannels = bulkChannels
         self.streamFactory = streamFactory
         self.pagedFactory = pagedFactory
         self.ownershipStore = ownershipStore
@@ -178,6 +184,17 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
         case let envEvent as SSHChannelRequestEvent.EnvironmentRequest:
+            if envEvent.name == GrafttyWebRTC.historyTokenEnvironment {
+                guard pagedFactory != nil, historyChannel == nil,
+                      let bulk = bulkChannels?.claim(token: envEvent.value, deviceID: deviceID), bulk.isActive else {
+                    context.close(promise: nil)
+                    return
+                }
+                historyChannel = bulk
+                startHistoryForwarding(to: bulk, terminal: context.channel)
+                let terminal = context.channel
+                bulk.closeFuture.whenComplete { _ in terminal.close(promise: nil) }
+            }
             if envEvent.name == "GRAFTTY_SESSION" {
                 envSessionName = envEvent.value
             }
@@ -270,6 +287,12 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     }
 
     public func channelInactive(context: ChannelHandlerContext) {
+        historyForwardingContinuation?.finish()
+        historyForwardingContinuation = nil
+        historyForwardingTask?.cancel()
+        historyForwardingTask = nil
+        historyChannel?.close(promise: nil)
+        historyChannel = nil
         isShuttingDown = true
         inboundForwardingTask?.cancel()
         ptyWriteContinuation?.finish()
@@ -522,6 +545,20 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         inboundForwardingTask = task
     }
 
+    private func startHistoryForwarding(to bulk: Channel, terminal: Channel) {
+        let pair = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(2))
+        historyForwardingContinuation = pair.continuation
+        historyForwardingTask = Task {
+            do {
+                for await bytes in pair.stream {
+                    guard !Task.isCancelled else { return }
+                    let data = SSHChannelData(type: .stdErr, data: .byteBuffer(bulk.allocator.buffer(bytes: bytes)))
+                    try await bulk.writeAndFlush(data).get()
+                }
+            } catch { terminal.close(promise: nil) }
+        }
+    }
+
     private func startPagedForwarding(stream: any PagedTerminalStream, channel: Channel, loop: EventLoop) {
         inboundForwardingTask = Task { [weak self] in
             do {
@@ -537,7 +574,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                         // Subsystem negotiation already proves carrier support.
                         // READY must not wait for an ownership hello.
                         let data = SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: framed)))
-                        try await loop.submit { [weak self] in
+                        let historyOutput = try await loop.submit { [weak self] in
                             switch event {
                             case .checkpoint: self?.checkpointPending = false
                             case .page, .unavailable:
@@ -548,8 +585,17 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                                 }
                             default: break
                             }
+                            return self?.historyForwardingContinuation
                         }.get()
-                        try await channel.writeAndFlush(data).get()
+                        // Only history pages move across transports. Checkpoints,
+                        // grid changes and live bytes keep their original order.
+                        if case .page = event, let historyOutput {
+                            guard case .enqueued = historyOutput.yield(Data(framed)) else {
+                                throw PagedTerminalEnvelope.Error.tooLarge
+                            }
+                        } else {
+                            try await channel.writeAndFlush(data).get()
+                        }
                         if case .grid(let cols, let rows) = event {
                             try await loop.submit { [weak self] in
                                 self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
