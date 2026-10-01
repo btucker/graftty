@@ -720,48 +720,52 @@ struct SidebarView: View {
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .contentShape(Rectangle())
-        let panes = Group {
-            if worktree.state == .running {
-                ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
-                    let sessionName = worktree.paneSessions[terminalID]
-                        .map(ZmxLauncher.sessionName(for:))
-                    Button {
-                        onSelectPane(worktree.path, terminalID)
-                    } label: {
-                        PaneTitleRow(
-                            title: terminalManager.displayTitle(for: terminalID),
-                            isActiveWorktree: isActive,
-                            isFocusedPane: isActive
-                                && worktree.focusedPaneSlotID == terminalID,
-                            isBusy: AgentLivenessMerge.isPaneBusy(
-                                sessionName: sessionName,
-                                liveness: claudeSessionRegistry.livenessBySession),
-                            theme: theme,
-                            // The pane-scoped capsule (agent-stop icon, or
-                            // notify/✓! text) renders directly; busy/idle no
-                            // longer feed it.
-                            attentionStyle: attention.paneCapsules[terminalID],
-                            portBindings: portBindings.bindings[terminalID] ?? [],
-                            attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                                + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    // PWD-1.4: pane rows are drag sources. The payload
-                    // is a typed wrapper around the pane's UUID so
-                    // SwiftUI's Transferable matching keeps unrelated
-                    // drops from being mis-decoded as panes.
-                    .draggable(TransferablePaneSlotID(id: terminalID.id))
-                    .rightClickMenu {
-                        buildPaneMenu(terminalID: terminalID)
-                    }
-                }
+        let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
+        let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
+            let sessionName = worktree.paneSessions[terminalID]
+                .map(ZmxLauncher.sessionName(for:))
+            return PaneTitleRow(
+                title: terminalManager.displayTitle(for: terminalID),
+                isActiveWorktree: isActive,
+                isFocusedPane: isActive
+                    && worktree.focusedPaneSlotID == terminalID,
+                isBusy: AgentLivenessMerge.isPaneBusy(
+                    sessionName: sessionName,
+                    liveness: claudeSessionRegistry.livenessBySession),
+                theme: theme,
+                // The pane-scoped capsule (agent-stop icon, or
+                // notify/✓! text) renders directly; busy/idle no
+                // longer feed it.
+                attentionStyle: attention.paneCapsules[terminalID],
+                portBindings: portBindings.bindings[terminalID] ?? [],
+                attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
+                    + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+            )
+        }
+        let panes = ForEach(paneLeaves, id: \.self) { terminalID in
+            Button {
+                onSelectPane(worktree.path, terminalID)
+            } label: {
+                paneRow(terminalID)
+            }
+            .buttonStyle(.plain)
+            // PWD-1.4: pane rows are drag sources. The payload
+            // is a typed wrapper around the pane's UUID so
+            // SwiftUI's Transferable matching keeps unrelated
+            // drops from being mis-decoded as panes.
+            .draggable(TransferablePaneSlotID(id: terminalID.id))
+            .rightClickMenu {
+                buildPaneMenu(terminalID: terminalID)
             }
         }
+        // The drag preview is rendered offscreen when a drag begins. It
+        // carries no buttons, nested drag sources, or AppKit overlays:
+        // those interactive layers inside the preview kept the worktree
+        // drag session from starting at all.
         let preview = AnyView(
             VStack(spacing: 0) {
                 heading
-                panes
+                ForEach(paneLeaves, id: \.self) { paneRow($0) }
             }
             .padding(.vertical, groupsPanes ? 8 : 0)
             .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
