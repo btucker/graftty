@@ -508,7 +508,7 @@ public final class SessionClient {
                                 }
                                 self.installingCheckpointGrid = nil
                             } else {
-                                self.handleTextFrame(text)
+                                guard try await self.receiveTextFrame(text, generation: generation) else { return }
                                 if !initialReplay.isEmpty, self.authoritativeGrid != nil {
                                     guard try await self.receiveNonPagedOutput(initialReplay, generation: generation) else { return }
                                     initialReplay.removeAll()
@@ -578,6 +578,22 @@ public final class SessionClient {
         }
         guard isCurrentTransport(generation) else { return false }
         session.receive(terminalReplay.prepare(data))
+        return true
+    }
+
+    private func receiveTextFrame(_ text: String, generation: UInt64) async throws -> Bool {
+        guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return true }
+        switch envelope {
+        case .grid, .ownership:
+            // Publishing an observable grid schedules layout independently of
+            // the receive loop. Finish earlier VT parsing before that resize.
+            try await terminalRenderer?.flushOutput()
+            try Task.checkCancellation()
+            guard isCurrentTransport(generation) else { return false }
+        default:
+            break
+        }
+        handleControlEnvelope(envelope)
         return true
     }
 
@@ -1191,6 +1207,10 @@ public final class SessionClient {
 
     internal func handleTextFrame(_ text: String) {
         guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return }
+        handleControlEnvelope(envelope)
+    }
+
+    private func handleControlEnvelope(_ envelope: WebControlEnvelope) {
         switch envelope {
         case .imagePaste(.available):
             supportsImagePaste = true

@@ -36,16 +36,21 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
         #endif
     }
 
+    func flushOutput() async throws {
+        #if GRAFTTY_PAGED_HISTORY
+        // A detached surface has no earlier output to drain. Grid readiness
+        // is checked separately when the mounted view is resized.
+        _ = await session.flushOutput()
+        #endif
+        try Task.checkCancellation()
+    }
+
     func resize(cols: UInt16, rows: UInt16) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        #if GRAFTTY_PAGED_HISTORY
         // receive() queues VT bytes. Drain them before layout can change the
         // native grid, otherwise the resize could overtake older output.
-        while !(await session.flushOutput()) {
-            guard ContinuousClock.now < deadline else { throw Error.gridUnavailable }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #endif
+        try await flushOutput()
+        try Task.checkCancellation()
         prepareGrid(cols, rows)
         // Layout owns the local grid. Wait outside Ghostty's renderer lock
         // until SwiftUI has fitted the mounted view to the authoritative grid.

@@ -446,7 +446,7 @@ final class RelayedTerminalByteStream:
     init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
         self.paged = paged
-        let events = AsyncStream<PagedTerminalEvent>.makeStream()
+        let events = AsyncStream<PagedTerminalEvent>.makeStream(bufferingPolicy: .bufferingOldest(256))
         self.pagedEvents = events.stream
         self.pagedContinuation = events.continuation
         var continuation: AsyncStream<Data>.Continuation!
@@ -466,11 +466,13 @@ final class RelayedTerminalByteStream:
                 do {
                     switch try await client.receive() {
                     case .binary(let data) where !data.isEmpty:
-                        if paged { self.pagedContinuation.yield(.output(data)) }
+                        if paged {
+                            guard self.enqueuePagedEvent(.output(data)) else { await self.close(); return }
+                        }
                         else { self.continuation.yield(data) }
                     case .text(let text):
                         if paged, let event = try? PagedTerminalEnvelope.parse(text).event {
-                            self.pagedContinuation.yield(event)
+                            guard self.enqueuePagedEvent(event) else { await self.close(); return }
                         } else {
                             self.handleTextFrame(text)
                         }
@@ -479,7 +481,7 @@ final class RelayedTerminalByteStream:
                     }
                 } catch {
                     if paged, case TerminalSessionClient.ClientError.sessionEnded(let status) = error {
-                        self.pagedContinuation.yield(.ended(Int32(clamping: status)))
+                        await self.enqueuePagedExit(Int32(clamping: status))
                     }
                     self.continuation.finish()
                     self.pagedContinuation.finish()
@@ -547,6 +549,32 @@ final class RelayedTerminalByteStream:
     private var isOwnerLocked: Bool {
         ownershipSnapshot?.ownerClientID == displayClientID
             && ownershipSnapshot?.ownerKind == .mac
+    }
+
+    /// The downstream transport can outpace a mobile channel. Closing on
+    /// overflow preserves replay integrity rather than skipping VT bytes.
+    private func enqueuePagedEvent(_ event: PagedTerminalEvent) -> Bool {
+        switch event {
+        case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
+        case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
+        default: break
+        }
+        switch pagedContinuation.yield(event) {
+        case .enqueued: return true
+        case .dropped, .terminated: return false
+        @unknown default: return false
+        }
+    }
+
+    private func enqueuePagedExit(_ status: Int32) async {
+        // EOF cannot use the output-overflow reconnect path: doing so can
+        // recreate an exited session. Retain it until the consumer catches up
+        // or the attachment is cancelled; only this final event may wait.
+        while !Task.isCancelled {
+            guard case .dropped = pagedContinuation.yield(.ended(status)) else { return }
+            do { try await Task.sleep(for: .milliseconds(10)) }
+            catch { return }
+        }
     }
 
     private func handleTextFrame(_ text: String) {

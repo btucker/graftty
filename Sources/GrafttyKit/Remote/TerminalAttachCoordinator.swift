@@ -119,6 +119,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     private var attached = false
     private var detached = false
     private var lastAcceptedOwnerGrid: DisplayGrid?
+    private var latestSourceGrid: DisplayGrid?
     private let supportsImagePaste: Bool
     private let pasteImage: @MainActor @Sendable (Data) -> Bool
     /// Run the final ownership check and input enqueue together on the
@@ -183,6 +184,11 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             )
             noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
             broadcaster.broadcast(snapshot)
+            // SSH suppresses control frames until hello. A source may have
+            // reported its initial grid before that carrier was enabled.
+            if let sourceGrid = lock.withLock({ latestSourceGrid }) {
+                sendText(WebControlEnvelope.grid(cols: sourceGrid.cols, rows: sourceGrid.rows).encoded())
+            }
             if supportsImagePaste { sendText(WebControlEnvelope.imagePaste(.available).encoded()) }
 
         case let .takeControl(protocolClientID, _, cols, rows):
@@ -330,6 +336,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
 
     public func handlePTYSize(cols: UInt16, rows: UInt16) {
         guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
+        lock.withLock { latestSourceGrid = grid }
         sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
         if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {

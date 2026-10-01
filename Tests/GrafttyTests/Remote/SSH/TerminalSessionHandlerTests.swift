@@ -20,6 +20,34 @@ import XCTest
 /// lands, and the side-effect assertions poll thread-safe fakes — no busy-poll
 /// of the embedded loop, no race.
 final class TerminalSessionHandlerTests: XCTestCase {
+    /// @spec REMOTE-9.11: When an SSH terminal's source grid arrives before its ownership hello, the host shall announce that source grid after the hello enables the control carrier.
+    func testSourceGridBeforeLateHelloIsReannounced() async throws {
+        let stream = SizeReportingStream(initialSize: (120, 67))
+        let capture = OutboundEventCapture()
+        let channel = try await Self.channel(capture, Self.makeHandler(streamFactory: { _ in stream }))
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { stream.onPTYSize != nil && capture.successCount >= 3 }
+        try await channel.eventLoop.submit {}.get()
+        try await sendControlEnvelope(channel, .hello(clientID: DisplayClientID("preview"), kind: .ios,
+            role: .preview, visible: false, cols: 108, rows: 177))
+        try await channel.eventLoop.submit {}.get()
+        var decoder = StdErrControlFraming.Decoder()
+        var grids: [DisplayGrid] = []
+        while let frame = try await channel.readOutbound(as: SSHChannelData.self) {
+            guard frame.type == .stdErr, case var .byteBuffer(buffer) = frame.data else { continue }
+            decoder.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
+            for payload in decoder.drain().0 {
+                if case let .grid(cols, rows) = try WebControlEnvelope.parse(payload) {
+                    grids.append(try DisplayGrid(cols: cols, rows: rows))
+                }
+            }
+        }
+        XCTAssertEqual(grids, [try DisplayGrid(cols: 120, rows: 67)])
+        _ = try? await channel.finish()
+    }
+
     /// @spec REMOTE-9.10: When an SSH attachment reports its source grid, the host shall not replace that grid with the attaching client's initial PTY request.
     func testReportedSourceGridDoesNotReceiveClientPTYFallback() async throws {
         let stream = SizeReportingStream(initialSize: (120, 67))
@@ -431,6 +459,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
         // Drain the ownership envelope produced by the attach itself
         // before exercising the byte-send-while-not-owner path below.
         _ = try await nextOutboundEnvelope(channel)
+        let helloGrid = try await nextOutboundEnvelope(channel)
+        XCTAssertEqual(helloGrid, .grid(cols: 80, rows: 24))
 
         let bytes = ByteBuffer(string: "should-not-reach-the-pty")
         try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
@@ -482,6 +512,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
             rows: 24
         ))
         _ = try await nextOutboundEnvelope(channel)
+        let helloGrid = try await nextOutboundEnvelope(channel)
+        XCTAssertEqual(helloGrid, .grid(cols: 80, rows: 24))
 
         try await sendControlEnvelope(channel, .takeControl(
             clientID: DisplayClientID("ipad-1"),

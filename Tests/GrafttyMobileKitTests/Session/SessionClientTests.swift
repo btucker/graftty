@@ -11,6 +11,106 @@ import GrafttyRemoteClient
 @Suite
 @MainActor
 struct SessionClientTests {
+    @Test("@spec IOS-5.10: When a non-paged mobile follower receives a grid announcement, the application shall drain earlier terminal output before publishing that grid to layout.")
+    func nonPagedGridAnnouncementDrainsEarlierOutput() async throws {
+        let ws = DelayedReceiveWS()
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: renderer)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        let first = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac,
+            cols: 120, rows: 50, epoch: 1, revision: 1)
+        ws.deliver(.text(WebControlEnvelope.ownership(first).encoded()))
+        try await waitUntil("initial grid") { ws.receiveCalls == 2 }
+        ws.deliver(.binary(Data("earlier output".utf8)))
+        try await waitUntil("earlier output queued") { ws.receiveCalls == 3 }
+        renderer.holdFlush = true
+        let next = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac,
+            cols: 80, rows: 30, epoch: 1, revision: 2)
+        ws.deliver(.text(WebControlEnvelope.ownership(next).encoded()))
+        try await waitUntil("grid drain") { renderer.flushContinuation != nil || ws.receiveCalls == 4 }
+        #expect(renderer.flushContinuation != nil)
+        #expect(client.authoritativeGrid == .init(cols: 120, rows: 50))
+        #expect(ws.receiveCalls == 3)
+        renderer.flushContinuation?.resume()
+        renderer.flushContinuation = nil
+        try await waitUntil("drained grid published") { ws.receiveCalls == 4 }
+        #expect(client.authoritativeGrid == .init(cols: 80, rows: 30))
+    }
+
+    @Test("@spec IOS-5.11: When a mobile transport is suspended while draining output for a grid announcement, the application shall reject that announcement after a replacement transport starts.")
+    func cancelledGridDrainCannotReplaceResumedGrid() async throws {
+        let first = DelayedReceiveWS()
+        let second = DelayedReceiveWS()
+        let sockets = WebSocketSequence([first, second])
+        let renderer = PagingRenderer()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sockets.next() }, pagedRenderer: renderer)
+        client.start()
+        defer {
+            renderer.flushContinuation?.resume()
+            renderer.flushContinuation = nil
+            client.stop(); first.fail(CancellationError()); second.fail(CancellationError())
+        }
+        try await waitUntil("initial receive") { first.receiveCalls == 1 }
+        renderer.holdFlush = true
+        let old = try ownershipSnapshot(ownerClientID: DisplayClientID("old"), ownerKind: .mac,
+            cols: 120, rows: 50, epoch: 1)
+        first.deliver(.text(WebControlEnvelope.ownership(old).encoded()))
+        try await waitUntil("old grid drain") { renderer.flushContinuation != nil || first.receiveCalls == 2 }
+        #expect(renderer.flushContinuation != nil)
+        client.suspend()
+        renderer.holdFlush = false
+        client.resume()
+        try await waitUntil("resumed receive") { second.receiveCalls == 1 }
+        let current = try ownershipSnapshot(ownerClientID: DisplayClientID("current"), ownerKind: .mac,
+            cols: 100, rows: 40, epoch: 1)
+        second.deliver(.text(WebControlEnvelope.ownership(current).encoded()))
+        try await waitUntil("resumed grid") { second.receiveCalls == 2 }
+        renderer.flushContinuation?.resume()
+        renderer.flushContinuation = nil
+        try await waitUntil("cancelled grid drain completed") { renderer.completedFlushes == 2 }
+        #expect(client.authoritativeGrid == .init(cols: 100, rows: 40))
+        #expect(first.receiveCalls == 1)
+    }
+
+    @Test("@spec IOS-5.12: While a mobile preview has spare height above a follower's live screen, the application shall display resident scrollback in that space while preserving the source grid.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func previewShowsResidentHistoryWithoutChangingSourceGrid() async throws {
+        let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac,
+            cols: 120, rows: 24)
+        let lines = (0..<60).map { String(format: "resident row %02d", $0) }
+        let replay = "\u{1b}[2J\u{1b}[H" + lines.joined(separator: "\r\n")
+        let ws = ImmediateReplayWS(frames: [.text(WebControlEnvelope.ownership(snapshot).encoded()), .binary(Data(replay.utf8))])
+        let client = SessionClient(sessionName: "left", webSocketFactory: { ws }, role: .preview)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "left", title: "Replay", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "right", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let host = UIHostingController(rootView: PaneLayoutView(layout: layout, baseConfig: "font-size = 11",
+            previewClient: { $0 == "left" ? client : nil }, onSelect: { _ in }))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        client.start()
+        defer { client.stop(); window.isHidden = true }
+        try await waitUntil("resident replay", timeout: .seconds(8)) {
+            client.session.readViewportText()?.contains("resident row 59") == true
+        }
+        func containers(_ view: UIView) -> [TerminalInputContainerView] {
+            (view as? TerminalInputContainerView).map { [$0] } ?? view.subviews.flatMap(containers)
+        }
+        let container = try #require(containers(host.view).first)
+        try await waitUntil("visible resident history") {
+            container.snapshotScrollView.refreshAdditionalHistory()
+            return container.snapshotScrollView.additionalHistoryTextForTesting?.contains("resident row 35") == true
+        }
+        #expect(container.terminalGridMetrics?.columns == 120)
+        #expect(container.terminalGridMetrics?.rows == 24)
+        let historyFrame = try #require(container.snapshotScrollView.additionalHistoryFrameForTesting)
+        #expect(historyFrame.height > 0)
+        #expect(historyFrame.maxY <= container.terminalView.frame.minY + 0.5)
+        #expect(historyFrame.minY >= 0)
+    }
+
     @Test("@spec IOS-5.9: When a mobile preview receives an ownerless ownership snapshot before any display has claimed the session, the application shall wait for the source grid before parsing replay instead of using the preview's echoed hello dimensions.")
     func ownerlessHelloGridDoesNotSizeReplay() async throws {
         let snapshot = try ownershipSnapshot(ownerClientID: nil, ownerKind: nil, cols: 108, rows: 177, epoch: 0)
@@ -470,6 +570,13 @@ struct SessionClientTests {
         var nearTop = false
         var pages = 0
         var holdResize = false
+        var holdFlush = false
+        var flushContinuation: CheckedContinuation<Void, Never>?
+        var completedFlushes = 0
+        func flushOutput() async throws {
+            if holdFlush { await withCheckedContinuation { flushContinuation = $0 } }
+            completedFlushes += 1
+        }
         var resizeContinuation: CheckedContinuation<Void, Never>?
         var resized: [SessionClient.GridSize] = []
         func resize(cols: UInt16, rows: UInt16) async throws {

@@ -1774,6 +1774,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-5.9** When a mobile preview receives an ownerless ownership snapshot before any display has claimed the session, the application shall wait for the source grid before parsing replay instead of using the preview's echoed hello dimensions.
 
+**IOS-5.10** When a non-paged mobile follower receives a grid announcement, the application shall drain earlier terminal output before publishing that grid to layout.
+
+**IOS-5.11** When a mobile transport is suspended while draining output for a grid announcement, the application shall reject that announcement after a replacement transport starts.
+
+**IOS-5.12** While a mobile preview has spare height above a follower's live screen, the application shall display resident scrollback in that space while preserving the source grid.
+
 ### IOS-6.x — Input
 
 **IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl state.
@@ -2554,6 +2560,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.10** When an SSH attachment reports its source grid, the host shall not replace that grid with the attaching client's initial PTY request.
 
+**REMOTE-9.11** When an SSH terminal's source grid arrives before its ownership hello, the host shall announce that source grid after the hello enables the control carrier.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -2679,6 +2687,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.25** While a mobile client follows a pane through one intermediary Mac, the application shall relay current-screen checkpoints with their source grid, live bytes, and history pages in order, and forward history and checkpoint requests to the source Mac.
 
 **REMOTE-13.26** When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.
+
+**REMOTE-13.27** If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.
+
+**REMOTE-13.28** When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.
 
 ### REMOTE-14.x — Shared project navigation
 

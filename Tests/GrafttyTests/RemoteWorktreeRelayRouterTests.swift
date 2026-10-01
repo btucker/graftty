@@ -8,6 +8,34 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.28: When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.")
+    func pagedRelayRetainsExitWhenQueueIsFull() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        for _ in 0..<256 { client.deliver(.binary(Data("output".utf8))) }
+        client.deliverEnd(status: 7)
+        try await waitUntil { client.didReceiveEnd }
+        // Keep the consumer stalled while the relay handles the received EOF.
+        try await Task.sleep(for: .milliseconds(30))
+        var events: [PagedTerminalEvent] = []
+        for await event in stream.events { events.append(event) }
+        #expect(events.count == 257)
+        #expect(events.last == .ended(7))
+        await stream.close()
+    }
+
+    @Test("@spec REMOTE-13.27: If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.")
+    func pagedRelayClosesWhenReceiverStalls() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        for _ in 0..<300 { client.deliver(.binary(Data("output".utf8))) }
+        try await waitUntil { client.didClose }
+        #expect(client.didClose)
+        await stream.close()
+    }
+
     @Test("@spec REMOTE-13.26: When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.")
     func ownerlessRelayHelloDoesNotOverrideSourceGrid() async throws {
         let client = RelayWebSocketClient()
@@ -533,32 +561,38 @@ private final class RelayWebSocketClient:
     let supportsWebControlTextFrames = true
     var supportsPagedHistory = false
     private let lock = NSLock()
-    private var frames: [WebSocketFrame] = []
+    private var frames: [Result<WebSocketFrame, Error>] = []
     private var receiveWaiters:
         [CheckedContinuation<WebSocketFrame, Error>] = []
     private var helloID: DisplayClientID?
     private var recordedTakeControls: [RelayTakeControl] = []
     private var recordedOwnerResizes: [RelayOwnerResize] = []
     private var sent: [WebSocketFrame] = []
+    private var receivedEnd = false
+    var didReceiveEnd: Bool { lock.withLock { receivedEnd } }
+    private var closed = false
+    var didClose: Bool { lock.withLock { closed } }
 
     func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
     func sentFrames() -> [WebSocketFrame] { lock.withLock { sent } }
 
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in
-            let frame = lock.withLock { () -> WebSocketFrame? in
+            let frame = lock.withLock { () -> Result<WebSocketFrame, Error>? in
                 guard frames.isEmpty else { return frames.removeFirst() }
                 receiveWaiters.append(continuation)
                 return nil
             }
             if let frame {
-                continuation.resume(returning: frame)
+                if case .failure = frame { lock.withLock { receivedEnd = true } }
+                continuation.resume(with: frame)
             }
         }
     }
 
     func close() {
         let waiters = lock.withLock {
+            closed = true
             let waiters = receiveWaiters
             receiveWaiters.removeAll()
             return waiters
@@ -601,7 +635,10 @@ private final class RelayWebSocketClient:
         }
     }
 
-    func deliver(_ frame: WebSocketFrame) {
+    func deliver(_ frame: WebSocketFrame) { deliverResult(.success(frame)) }
+    func deliverEnd(status: Int) { deliverResult(.failure(TerminalSessionClient.ClientError.sessionEnded(exitStatus: status))) }
+
+    private func deliverResult(_ frame: Result<WebSocketFrame, Error>) {
         let waiter = lock.withLock {
             guard !receiveWaiters.isEmpty else {
                 frames.append(frame)
@@ -611,7 +648,10 @@ private final class RelayWebSocketClient:
             }
             return receiveWaiters.removeFirst()
         }
-        waiter?.resume(returning: frame)
+        if let waiter {
+            if case .failure = frame { lock.withLock { receivedEnd = true } }
+            waiter.resume(with: frame)
+        }
     }
 
     func helloClientID() -> DisplayClientID? {
