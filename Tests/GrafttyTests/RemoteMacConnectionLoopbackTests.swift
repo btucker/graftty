@@ -78,6 +78,7 @@ struct RemoteMacConnectionLoopbackTests {
             paneControlMutator: { _ in .ok },
             displayOwnershipStore: SessionDisplayOwnershipStore()
         )
+        let hostAgentPool = WebRTCHostAgentPool(makeAgent: { hostAgent })
         let signalingServer = AuthenticatedSignalingServer(
             identityStore: hostIdentityStore,
             peerStore: trustedPeerStore,
@@ -110,7 +111,7 @@ struct RemoteMacConnectionLoopbackTests {
                     return .invalid(error.error)
                 }
                 do {
-                    let answer = try await hostAgent.acceptOffer(
+                    let answer = try await hostAgentPool.acceptOffer(
                         RTCSessionDescription(type: .offer, sdp: offer.sdp),
                         clientDeviceID: verified.offer.clientDeviceID,
                         replacingExistingConnection:
@@ -126,8 +127,10 @@ struct RemoteMacConnectionLoopbackTests {
                         return .internalFailure(error.error)
                     }
                 } catch WebRTCHostAgent.HostError.busy {
-                    return .hostBusy("host already has an active connection")
+                    await signalingServer.releaseOffer(verified)
+                    return .hostBusy("device connection is busy or host connection limit reached")
                 } catch {
+                    await signalingServer.releaseOffer(verified)
                     return .internalFailure(String(describing: error))
                 }
             }
@@ -210,14 +213,14 @@ struct RemoteMacConnectionLoopbackTests {
         } catch {
             terminal?.close()
             await connection.close()
-            await hostAgent.close()
+            await hostAgentPool.closeAll()
             server.stop()
             throw error
         }
 
         terminal?.close()
         await connection.close()
-        await hostAgent.close()
+        await hostAgentPool.closeAll()
         server.stop()
     }
 

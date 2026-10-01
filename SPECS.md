@@ -2570,7 +2570,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-11.x
 
-**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active and the offer is not a signed explicit reconnect from that same client, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+**REMOTE-11.1** If the host receives a signaling offer while a connection from the same device is active and the offer is not a signed explicit reconnect from that same client, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 **REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
 
@@ -2588,13 +2588,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.9** If an SSH subsystem reply does not arrive before its deadline, then the client shall abort the wait using elapsed time independently of the transport event-loop clock.
 
-**REMOTE-11.10** When a signed signaling offer explicitly requests a reconnect for the paired device that owns the current host connection lifecycle, the application shall replace that negotiating or connected lifecycle immediately; offers from another device and ordinary offers shall remain busy without disturbing it.
+**REMOTE-11.10** When a signed signaling offer requests reconnect for a paired device with an active connection, the host shall replace only that device's lifecycle, admit other devices independently, and reject ordinary same-device offers as busy.
 
-**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release the single-client slot; if ICE recovers first, the application shall keep the connection.
+**REMOTE-11.11** When the current host ICE connection does not return to a connected state within five seconds after disconnecting, the application shall close it and release that device's connection; if ICE recovers first, the application shall keep the connection.
 
 **REMOTE-11.12** When signaling authenticates a connection for one paired device, the host shall reject SSH user authentication from a different device before it can open a subsystem channel.
 
-**REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
+**REMOTE-11.13** If peer-connection allocation fails after an offer reserves that device's connection, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
 
 **REMOTE-11.14** When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.
 
@@ -2603,6 +2603,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.16** When a bulk history channel is bound to an already-open terminal, the host shall route history pages to it and continue forwarding live output while history writes are blocked.
 
 **REMOTE-11.17** When both peers support bulk transport, the client shall authenticate a second ordered WebRTC channel for background traffic; if the host rejects negotiation, the client shall retain the legacy transport.
+
+**REMOTE-11.18** When two different paired devices send signaling offers, the host shall admit both devices and maintain their connections concurrently.
+
+**REMOTE-11.19** While the host connection pool is at its maximum live connections, the host shall reject an offer from a further device with retryable busy status and leave existing connections untouched.
+
+**REMOTE-11.20** When a pooled connection is idle, closed, or failed, the host shall discard its agent so that device can reconnect without replacement proof.
+
+**REMOTE-11.21** When the host closes its connection pool, the host shall close every pooled connection and clear the pool.
+
+**REMOTE-11.22** When different devices send concurrent first offers with one pool slot available, the host shall admit exactly one offer and count pending agent creation and negotiation toward capacity.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
