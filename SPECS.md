@@ -926,6 +926,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KEY-1.10** When a host-managed terminal receives Shift-modified editing or navigation keys, the application shall forward their presses, repeats, and releases to libghostty with Shift preserved instead of writing unmodified escape sequences.
 
+**KEY-1.11** When the focused terminal receives Control+Return or Control+keypad Enter as a key equivalent, the application shall dispatch the press and repeats through terminal input with modifiers preserved and consume the equivalent before AppKit opens a context menu.
+
 ### KEY-2.x — Clipboard
 
 **KEY-2.1** When libghostty requests a clipboard write (e.g., from `Cmd+C` or the context menu Copy), the application shall write the provided content to `NSPasteboard.general`.
