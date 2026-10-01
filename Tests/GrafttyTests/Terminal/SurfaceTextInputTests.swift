@@ -193,6 +193,63 @@ struct NativeDictationDeliveryTests {
         #expect(fixture.writes.isEmpty)
     }
 
+    @Test("@spec KEY-1.11: When the focused terminal receives Control+Return or Control+keypad Enter as a key equivalent, the application shall dispatch the press and repeats through terminal input with modifiers preserved and consume the equivalent before AppKit opens a context menu.",
+          arguments: [UInt16(36), 76], [NSEvent.ModifierFlags.control, [.control, .shift], [.control, .option], [.control, .capsLock]])
+    func controlEnterKeyEquivalent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) throws {
+        let fixture = TextInputFixture()
+        var actions: [ghostty_input_action_e] = []
+        var directWrites: [Data] = []
+        fixture.view.hostManagedInputWriter = { directWrites.append($0) }
+        fixture.view.surfaceOperations.key = { _, key in
+            #expect(key.keycode == UInt32(keyCode))
+            #expect(key.mods == SurfaceNSView.ghosttyMods(from: modifiers))
+            #expect(key.text == nil)
+            actions.append(key.action)
+            return true
+        }
+        let text = keyCode == 36 ? "\r" : "\u{3}"
+        #expect(fixture.view.performKeyEquivalent(with: try fixture.keyEvent(keyCode, text: text, modifiers: modifiers)))
+        #expect(fixture.view.performKeyEquivalent(with: try fixture.keyEvent(keyCode, text: text, modifiers: modifiers, repeatKey: true)))
+        fixture.view.keyUp(with: try fixture.keyEvent(keyCode, text: text, type: .keyUp, modifiers: modifiers))
+        #expect(actions == [GHOSTTY_ACTION_PRESS, GHOSTTY_ACTION_REPEAT, GHOSTTY_ACTION_RELEASE])
+        #expect(directWrites.isEmpty)
+        #expect(fixture.writes.isEmpty)
+    }
+
+    @Test("Control+Enter equivalents leave unfocused and unavailable terminals alone")
+    func controlEnterRequiresFocusedSurface() throws {
+        let fixture = TextInputFixture()
+        let event = try fixture.keyEvent(36, text: "\r", modifiers: .control)
+        fixture.window.makeFirstResponder(nil)
+        #expect(!fixture.view.performKeyEquivalent(with: event))
+        fixture.window.makeFirstResponder(fixture.view)
+        fixture.view.surface = nil
+        #expect(!fixture.view.performKeyEquivalent(with: event))
+        #expect(fixture.keyCodes.isEmpty)
+    }
+
+    @Test("Control+Enter equivalents respect active text composition")
+    func controlEnterDuringComposition() throws {
+        let fixture = TextInputFixture()
+        var interpreted = 0
+        fixture.view.surfaceOperations.interpretComposition = { _, _ in interpreted += 1 }
+        fixture.view.setMarkedText("pending", selectedRange: .init(location: 7, length: 0), replacementRange: noReplacement)
+        #expect(fixture.view.performKeyEquivalent(with: try fixture.keyEvent(36, text: "\r", modifiers: .control)))
+        fixture.view.unmarkText()
+        fixture.view.keyUp(with: try fixture.keyEvent(36, text: "\r", type: .keyUp, modifiers: .control))
+        #expect(interpreted == 1)
+        #expect(fixture.keyCodes.isEmpty)
+        #expect(fixture.writes.isEmpty)
+    }
+
+    @Test("Other key equivalents keep normal AppKit dispatch",
+          arguments: [UInt16(0), 36], [NSEvent.ModifierFlags(), .command])
+    func unrelatedKeyEquivalents(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) throws {
+        let fixture = TextInputFixture()
+        #expect(!fixture.view.performKeyEquivalent(with: try fixture.keyEvent(keyCode, text: keyCode == 36 ? "\r" : "a", modifiers: modifiers)))
+        #expect(fixture.keyCodes.isEmpty)
+    }
+
     @Test("@spec KEY-1.10: When a host-managed terminal receives Shift-modified editing or navigation keys, the application shall forward their presses, repeats, and releases to libghostty with Shift preserved instead of writing unmodified escape sequences.",
           arguments: [UInt16(0x33), 0x75, 0x73, 0x77, 0x74, 0x79, 0x7B, 0x7C, 0x7D, 0x7E])
     func shiftedHostManagedKeys(keyCode: UInt16) throws {
