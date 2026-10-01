@@ -53,6 +53,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private let sessionName: String
     private let lock = NIOLock()
     private var childChannel: Channel?
+    private var historyChannel: Channel?
+    private var historyToken: String?
+    private var historySetupTask: Task<Void, Never>?
+    internal var hasHistoryChannelForTesting: Bool { lock.withLock { historyChannel != nil } }
     private var receiveBuffer = TerminalReceiveBuffer()
     private var pendingReceivers: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var didFailReceive: (any Error)?
@@ -66,6 +70,34 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.sessionName = sessionName
+    }
+
+    func setHistorySetupTask(_ task: Task<Void, Never>) {
+        let shouldCancel = lock.withLock {
+            guard !closed else { return true }
+            historySetupTask = task
+            return false
+        }
+        if shouldCancel { task.cancel() }
+    }
+
+    func connectHistory(parentChannel: Channel, parentHandler: NIOSSHHandler) async throws {
+        let token = UUID().uuidString
+        let child = try await openBulkSubsystem(
+            parentChannel: parentChannel, parentHandler: parentHandler,
+            subsystem: GrafttyWebRTC.historySubsystemPrefix + token
+        ) { [self] child, _ in child.pipeline.addHandler(InboundRelay(owner: self)) }
+        let accepted = lock.withLock {
+            guard !closed else { return false }
+            historyChannel = child
+            historyToken = token
+            return true
+        }
+        guard accepted else { child.close(promise: nil); throw ClientError.channelClosed }
+        child.closeFuture.whenComplete { [weak self] _ in self?.close() }
+        if let terminal = lock.withLock({ childChannel }) {
+            try await Self.sendEnv(channel: terminal, name: GrafttyWebRTC.historyTokenEnvironment, value: token)
+        }
     }
 
     /// Opens the SSH session child channel and completes env+pty+shell.
@@ -98,6 +130,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         // Only the shell reply is meaningful: it arrives after the async
         // streamFactory(name) completes on the server side.
         do {
+            if let token = lock.withLock({ historyToken }) {
+                try await Self.sendEnv(channel: child, name: GrafttyWebRTC.historyTokenEnvironment, value: token)
+            }
             try await Self.sendEnv(channel: child, name: "GRAFTTY_SESSION", value: sessionName)
             try await Self.sendPty(channel: child, term: "xterm-256color", cols: 80, rows: 24)
         } catch {
@@ -127,7 +162,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         }
 
         usesPagedHistory = paged
-        lock.withLock { childChannel = child }
+        let accepted = lock.withLock {
+            guard !closed else { return false }
+            childChannel = child
+            return true
+        }
+        guard accepted else { child.close(promise: nil); throw ClientError.channelClosed }
 
         // Watch for child-channel close so receivers waiting in
         // `receive()` see channelClosed instead of hanging.
@@ -192,11 +232,13 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     public func close() {
-        let child: Channel? = lock.withLock {
+        let channels = lock.withLock {
             closed = true
-            return childChannel
+            return (childChannel, historyChannel, historySetupTask)
         }
-        if let child {
+        channels.2?.cancel()
+        channels.1?.close(promise: nil)
+        if let child = channels.0 {
             child.close(promise: nil)
         } else {
             // No child yet — close() raced connect() before childChannel
@@ -324,6 +366,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     fileprivate func handleChildClose() {
+        lock.withLock { historySetupTask }?.cancel()
+        lock.withLock { historyChannel }?.close(promise: nil)
         let result: (
             [CheckedContinuation<WebSocketFrame, Error>],
             any Error

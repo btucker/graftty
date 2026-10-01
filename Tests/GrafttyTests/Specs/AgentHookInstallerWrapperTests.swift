@@ -283,6 +283,27 @@ struct AgentHookInstallerWrapperTests {
         #expect(run.standardError.contains("starting with the durable Codex home instead"))
     }
 
+    @Test("""
+    @spec TEAM-10.17: When a wrapped Codex TUI exits unsuccessfully, the application shall preserve its app-server log and report its path while preserving the TUI exit status; when it exits successfully, the application shall remove the log.
+    """, arguments: [Int32(0), Int32(37)])
+    func codexWrapperPreservesFailedSessionLog(exitStatus: Int32) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: [],
+            inheritManagedCodexHome: false,
+            codexExitStatus: exitStatus
+        )
+        #expect(run.terminationStatus == exitStatus)
+        if exitStatus == 0 {
+            #expect(run.retainedServerLogs.isEmpty)
+            #expect(!run.standardError.contains("app-server log"))
+        } else {
+            let log = try #require(run.retainedServerLogs.first)
+            #expect(run.retainedServerLogs.count == 1)
+            #expect(run.standardError.contains(log))
+            #expect(run.standardError.contains("app-server log"))
+        }
+    }
+
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
         let script = AgentHookInstaller.codexWrapperScript(
@@ -750,10 +771,15 @@ struct AgentHookInstallerWrapperTests {
         durableCodexHome: String,
         standardError: String,
         didSync: Bool,
-        wasBlockedByManagedHomeLock: Bool
+        wasBlockedByManagedHomeLock: Bool,
+        retainedServerLogs: [String]
     ) {
         let root = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
+        // Keep Unix socket paths below sockaddr_un's length limit.
+        let socketRoot = URL(fileURLWithPath: "/private/tmp/gw-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: socketRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: socketRoot) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
         let codexHome = root.appendingPathComponent("codex-home", isDirectory: true)
@@ -843,6 +869,7 @@ struct AgentHookInstallerWrapperTests {
         process.arguments = arguments
         var environment = [
             "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "TMPDIR": socketRoot.path,
             "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
             "GRAFTTY_TEST_CODEX_HOME_FILE": codexHomeFile.path,
             "GRAFTTY_TEST_SYNC_MARKER": syncMarker.path,
@@ -923,7 +950,11 @@ struct AgentHookInstallerWrapperTests {
             codexSource.path,
             standardError,
             FileManager.default.fileExists(atPath: syncMarker.path),
-            wasBlockedByManagedHomeLock
+            wasBlockedByManagedHomeLock,
+            ((try? FileManager.default.contentsOfDirectory(
+                at: socketRoot.appendingPathComponent("graftty-codex-app-server"),
+                includingPropertiesForKeys: nil
+            )) ?? []).filter { $0.pathExtension == "log" }.map(\.path)
         )
     }
 

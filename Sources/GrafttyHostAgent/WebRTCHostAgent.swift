@@ -52,6 +52,14 @@ public actor WebRTCHostAgent {
     private let displayOwnershipStore: SessionDisplayOwnershipStore
     private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
+    private var bulkTransport: SSHNIOTransport?
+    private var bulkDataChannel: RTCDataChannel?
+    private var bulkDataChannelInbox: DataChannelInbox?
+    private var bulkInstallStarted = false
+    private var bulkTransportEnabled = true
+    internal func setBulkTransportEnabledForTesting(_ enabled: Bool) { bulkTransportEnabled = enabled }
+    private var bulkChannels = BulkTerminalChannels()
+    private var primaryPeerBox = AuthenticatedPeerBox()
     private var sshInstallStarted = false
 
     /// Test-only observability for the `sshInstallStarted` latch — see
@@ -500,6 +508,14 @@ public actor WebRTCHostAgent {
         // the teardown below must only ever touch the objects THIS call
         // detached, never whatever is live when it resumes.
         let transport = sshTransport
+        let bulk = bulkTransport
+        let bulkDC = bulkDataChannel
+        bulkTransport = nil
+        bulkDataChannel = nil
+        bulkDataChannelInbox = nil
+        bulkInstallStarted = false
+        bulkChannels = BulkTerminalChannels()
+        primaryPeerBox = AuthenticatedPeerBox()
         sshTransport = nil
         let registration = authenticatedRegistration
         authenticatedRegistration = nil
@@ -510,6 +526,8 @@ public actor WebRTCHostAgent {
         dataChannel = nil
         dataChannelInbox = nil
 
+        if let bulk { await bulk.close() }
+        bulkDC?.close()
         if let transport {
             await transport.close()
         }
@@ -613,7 +631,8 @@ public actor WebRTCHostAgent {
             dc.close()
             return
         }
-        guard dc.label == GrafttyWebRTC.dataChannelLabel else {
+        let isBulk = dc.label == GrafttyWebRTC.bulkDataChannelLabel
+        guard dc.label == GrafttyWebRTC.dataChannelLabel || isBulk else {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
             // peer identity will be authenticated separately; this is belt-and-
             // suspenders.
@@ -628,6 +647,14 @@ public actor WebRTCHostAgent {
             dc.close()
             return
         }
+        if isBulk {
+            guard bulkTransportEnabled, primaryPeerBox.peer != nil, bulkDataChannel == nil else { dc.close(); return }
+            bulkDataChannel = dc
+            bulkDataChannelInbox = inbox
+            Task { await installSSHHandler(generation: generation, bulk: true) }
+            return
+        }
+        guard dataChannel == nil else { dc.close(); return }
         self.dataChannel = dc
         self.dataChannelInbox = inbox
         // Install the SSH stack immediately — `transport.start()` (inside
@@ -654,17 +681,15 @@ public actor WebRTCHostAgent {
         await installSSHHandler(generation: connectionGeneration)
     }
 
-    private func installSSHHandler(generation: UInt64) async {
-        guard generation == connectionGeneration,
-              state != .closed,
-              !sshInstallStarted
-        else {
-            return
-        }
-        sshInstallStarted = true
-        guard let dc = dataChannel, let inbox = dataChannelInbox else { return }
+    private func installSSHHandler(generation: UInt64, bulk: Bool = false) async {
+        guard generation == connectionGeneration, state != .closed,
+              !(bulk ? bulkInstallStarted : sshInstallStarted) else { return }
+        if bulk { bulkInstallStarted = true } else { sshInstallStarted = true }
+        guard let dc = bulk ? bulkDataChannel : dataChannel,
+              let inbox = bulk ? bulkDataChannelInbox : dataChannelInbox else { return }
         let transport = SSHNIOTransport(dataChannel: dc, inbox: inbox)
-        self.sshTransport = transport  // assign before start so close() can find it
+        if bulk { bulkTransport = transport } else { sshTransport = transport }
+        let bulkChannels = bulkTransportEnabled ? self.bulkChannels : nil
         let factory = streamFactory
         let pagedFactory = pagedFactory
         let panesStateSubscribe = self.panesStateSubscribe
@@ -675,7 +700,7 @@ public actor WebRTCHostAgent {
         let teamOnConnect = self.teamOnConnect
         let teamOnDisconnect = self.teamOnDisconnect
         let activeRemotePeers = self.activeRemotePeers
-        let expectedSignalingDeviceID = signalingClientDeviceID
+        let expectedSignalingDeviceID = bulk ? primaryPeerBox.peer?.id : signalingClientDeviceID
         transport.channel.closeFuture.whenComplete { [weak self, transport] _ in
             Task {
                 await self?.handleTransportClosed(
@@ -691,7 +716,7 @@ public actor WebRTCHostAgent {
         // inside `SSHUserAuthDelegate.requestReceived`, before the
         // success outcome is returned) always populates this box before
         // `inboundChildChannelInitializer` runs for the first channel.
-        let peerBox = AuthenticatedPeerBox()
+        let peerBox = bulk ? AuthenticatedPeerBox() : primaryPeerBox
         do {
             try await transport.eventLoop.submit { [self, hostKey, trustedPeerStore, activeRemotePeers, transport] in
                 let handler = SSHServerSetup.makeHandler(
@@ -722,12 +747,14 @@ public actor WebRTCHostAgent {
                         // the registry's only job is to make a FUTURE
                         // `revoke` able to find this connection — it
                         // doesn't gate channel-open.
-                        Task {
-                            await self?.registerAuthenticatedConnection(
-                                deviceID: peer.id,
-                                generation: generation,
-                                transport: transport
-                            )
+                        if !bulk {
+                            Task {
+                                await self?.registerAuthenticatedConnection(
+                                    deviceID: peer.id,
+                                    generation: generation,
+                                    transport: transport
+                                )
+                            }
                         }
                     },
                     inboundChildChannelInitializer: { child, channelType in
@@ -758,7 +785,9 @@ public actor WebRTCHostAgent {
                                 teamHandler: teamHandler,
                                 teamOnConnect: teamOnConnect,
                                 teamOnDisconnect: teamOnDisconnect,
-                                teamAllowed: { peerBox.peer?.kind == .mac }
+                                teamAllowed: { peerBox.peer?.kind == .mac },
+                                bulkChannels: bulkChannels,
+                                isBulkTransport: bulk
                             )
                             try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
@@ -778,7 +807,7 @@ public actor WebRTCHostAgent {
             self.state = .connected
         } catch {
             if isCurrentTransport(transport, generation: generation) {
-                await close(ifGeneration: generation)
+                await handleTransportClosed(generation: generation, transport: transport)
             } else {
                 await transport.close()
             }
@@ -791,7 +820,7 @@ public actor WebRTCHostAgent {
     ) -> Bool {
         generation == connectionGeneration
             && state != .closed
-            && sshTransport === transport
+            && (sshTransport === transport || bulkTransport === transport)
     }
 
     private func handleTransportClosed(
@@ -799,7 +828,15 @@ public actor WebRTCHostAgent {
         transport: SSHNIOTransport
     ) async {
         guard isCurrentTransport(transport, generation: generation) else { return }
-        await close()
+        if bulkTransport === transport {
+            bulkTransport = nil
+            bulkDataChannel = nil
+            bulkDataChannelInbox = nil
+            bulkInstallStarted = false
+            await transport.close()
+        } else {
+            await close()
+        }
     }
 
     /// REMOTE-3.1 revocation (W4): records this connection's close action

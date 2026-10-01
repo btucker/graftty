@@ -8,4 +8,11 @@ public enum GrafttyWebRTC {
     /// channel with this label; the host side validates incoming
     /// channels match before adopting them.
     public static let dataChannelLabel: String = "graftty"
+
+    /// Optional bulk transport, negotiated through an authenticated SSH probe.
+    public static let bulkDataChannelLabel = "graftty-bulk-v1"
+    public static let bulkSubsystem = "bulk-transport-v1@graftty.dev"
+    public static let historySubsystemPrefix = "terminal-history-v1@graftty.dev/"
+    public static let historyTokenEnvironment = "GRAFTTY_HISTORY_CHANNEL"
+
 }

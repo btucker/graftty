@@ -9,12 +9,14 @@ import WebRTC
 /// returning false.
 internal protocol DataChannelSink: AnyObject {
     var sinkReadyState: RTCDataChannelState { get }
+    var sinkBufferedAmount: UInt64 { get }
     func sinkSend(_ buffer: RTCDataBuffer) -> Bool
     func sinkClose()
 }
 
 extension RTCDataChannel: DataChannelSink {
     var sinkReadyState: RTCDataChannelState { readyState }
+    var sinkBufferedAmount: UInt64 { bufferedAmount }
     func sinkSend(_ buffer: RTCDataBuffer) -> Bool { sendData(buffer) }
     func sinkClose() { close() }
 }
@@ -229,6 +231,9 @@ public final class SSHNIOTransport: @unchecked Sendable {
                 self.embeddedLoop.execute {
                     self.deliverInbound(data)
                 }
+            },
+            onBufferedAmountChange: {
+                loop.execute { relay.resumeSending() }
             }
         )
     }
@@ -445,64 +450,101 @@ public final class SSHNIOTransport: @unchecked Sendable {
 /// SSH framing is byte-stream oriented, so the receiver re-assembles
 /// transparently — NIOSSHHandler doesn't care about SCTP message
 /// boundaries.
-internal final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sendable {
+internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
 
+    private struct Write {
+        var buffer: ByteBuffer
+        let promise: EventLoopPromise<Void>?
+    }
     private let sink: DataChannelSink
     private let mtu: Int
+    private let bufferedByteLimit: UInt64
+    private let pendingByteLimit: Int
+    private var pending = CircularBuffer<Write>()
+    private var pendingBytes = 0
+    private var context: ChannelHandlerContext?
+    private var stopped = false
 
-    init(sink: DataChannelSink, mtu: Int) {
+    init(sink: DataChannelSink, mtu: Int, bufferedByteLimit: Int = 256 * 1024,
+         pendingByteLimit: Int = 8 * 1024 * 1024) {
+        precondition(mtu > 0 && bufferedByteLimit >= mtu && pendingByteLimit > 0)
         self.sink = sink
         self.mtu = mtu
+        self.bufferedByteLimit = UInt64(bufferedByteLimit)
+        self.pendingByteLimit = pendingByteLimit
     }
 
-    func write(
-        context: ChannelHandlerContext,
-        data: NIOAny,
-        promise: EventLoopPromise<Void>?
-    ) {
+    func handlerAdded(context: ChannelHandlerContext) { self.context = context }
+    func handlerRemoved(context: ChannelHandlerContext) {
+        stop(error: ChannelError.ioOnClosedChannel)
+        self.context = nil
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let buffer = unwrapOutboundIn(data)
-        let bytes = Data(buffer.readableBytesView)
-        if bytes.isEmpty {
-            promise?.succeed(())
-            return
-        }
-        guard sink.sinkReadyState == .open else {
+        guard !stopped, sink.sinkReadyState == .open else {
             promise?.fail(ChannelError.ioOnClosedChannel)
             return
         }
-        var offset = 0
-        while offset < bytes.count {
-            let end = min(offset + mtu, bytes.count)
-            let slice = bytes.subdata(in: offset..<end)
-            let dcBuffer = RTCDataBuffer(data: slice, isBinary: true)
-            // Backpressure note: `RTCDataChannel.bufferedAmount` is not
-            // monitored here. R2's spike accepts this; R4+ should add
-            // a bufferedAmountLowThreshold-driven write gate before
-            // production use, otherwise a stalled receiver can OOM the
-            // sender by ballooning the SCTP send buffer.
-            if !sink.sinkSend(dcBuffer) {
-                // Partial-write: earlier slices have already shipped. We
-                // cannot safely send any more bytes via this DataChannel
-                // because the peer is mid-frame for an SSH packet and
-                // ANY further write would corrupt the stream. Close
-                // both ends so NIOSSHHandler tears down cleanly rather
-                // than parsing garbage.
-                promise?.fail(ChannelError.outputClosed)
-                sink.sinkClose()
-                context.close(mode: .all, promise: nil)
-                return
-            }
-            offset = end
+        guard buffer.readableBytes > 0 else { promise?.succeed(()); return }
+        guard buffer.readableBytes <= pendingByteLimit - pendingBytes else {
+            promise?.fail(ChannelError.outputClosed)
+            abort(context: context)
+            return
         }
-        promise?.succeed(())
+        pending.append(Write(buffer: buffer, promise: promise))
+        pendingBytes += buffer.readableBytes
+        resumeSending()
     }
 
-    // `flush` is a no-op: writes are sent synchronously above.
-    func flush(context: ChannelHandlerContext) {
-        // Intentionally no-op. SCTP send is synchronous from the API
-        // boundary's perspective; the WebRTC SDK does its own
-        // batching on top.
+    // Both callbacks and tests enter on the owning event loop. Limit the SDK
+    // queue as well as our queue; completing a promise only after its last
+    // slice reaches WebRTC lets producers that await writes pace themselves.
+    func resumeSending() {
+        guard !stopped, let context else { return }
+        guard sink.sinkReadyState == .open else { abort(context: context); return }
+        while !pending.isEmpty {
+            let length = min(mtu, pending[offset: 0].buffer.readableBytes)
+            if length == 0 {
+                let write = pending.removeFirst()
+                write.promise?.succeed(())
+                continue
+            }
+            let buffered = sink.sinkBufferedAmount
+            guard buffered <= bufferedByteLimit,
+                  UInt64(length) <= bufferedByteLimit - buffered else {
+                return
+            }
+            let bytes = pending[offset: 0].buffer.readBytes(length: length)!
+            guard sink.sinkSend(RTCDataBuffer(data: Data(bytes), isBinary: true)) else {
+                abort(context: context)
+                return
+            }
+            pendingBytes -= length
+        }
     }
+
+    private func abort(context: ChannelHandlerContext) {
+        stop(error: ChannelError.outputClosed)
+        sink.sinkClose()
+        context.close(mode: .all, promise: nil)
+    }
+
+    private func stop(error: any Error) {
+        stopped = true
+        let writes = pending
+        pending.removeAll()
+        pendingBytes = 0
+        for write in writes { write.promise?.fail(error) }
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        stop(error: ChannelError.ioOnClosedChannel)
+        context.fireChannelInactive()
+    }
+
+    func flush(context: ChannelHandlerContext) { resumeSending() }
 }

@@ -716,6 +716,12 @@ public struct AgentHookInstaller: Sendable {
           fi
           \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$" >/dev/null 2>&1 || true
           env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
+          _graftty_codex_tui_status=$?
+          if [ "$_graftty_codex_tui_status" -ne 0 ]; then
+            _graftty_preserve_codex_app_server_log=1
+            printf '%s\\n' "graftty: codex exited with status $_graftty_codex_tui_status; app-server log: $_graftty_codex_app_server_log" >&2
+          fi
+          (exit "$_graftty_codex_tui_status")
           fi
         else
           if _graftty_codex_uses_durable_home "$@"; then

@@ -10,6 +10,50 @@ import WebRTC
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
 struct SSHNIOTransportUnitTests {
 
+    @Test("@spec SSH-1.3: While the WebRTC send buffer is full, the SSH transport shall defer ordered writes, resume them after draining, and fail pending writes on close.")
+    func boundedSendingResumesInOrder() async throws {
+        let sink = BufferedSink()
+        let loop = NIOAsyncTestingEventLoop()
+        let channel = NIOAsyncTestingChannel(loop: loop)
+        let relay = OutboundRelayHandler(sink: sink, mtu: 4, bufferedByteLimit: 8, pendingByteLimit: 32)
+        try await loop.submit { try channel.pipeline.syncOperations.addHandler(relay) }.get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "bounded")).get()
+        let first: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: Array(UInt8(0)..<12)))
+        let second: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8(12), 13]))
+        try await loop.submit {
+            #expect(sink.bytes == Array(0..<8))
+            sink.sinkBufferedAmount = 0
+            relay.resumeSending()
+            #expect(sink.bytes == Array(0..<14))
+        }.get()
+        try await first.get()
+        try await second.get()
+        try await loop.submit { sink.sinkBufferedAmount = 8 }.get()
+        let pending: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8(99)]))
+        try await channel.close().get()
+        await #expect(throws: (any Error).self) { try await pending.get() }
+    }
+
+    @Test("@spec SSH-1.4: If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.")
+    func overflowingPendingOutputClosesTransport() async throws {
+        let sink = BufferedSink()
+        let loop = NIOAsyncTestingEventLoop()
+        let channel = NIOAsyncTestingChannel(loop: loop)
+        let relay = OutboundRelayHandler(sink: sink, mtu: 4, bufferedByteLimit: 8, pendingByteLimit: 8)
+        try await loop.submit {
+            try channel.pipeline.syncOperations.addHandler(relay)
+            sink.sinkBufferedAmount = 8
+        }.get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "bounded")).get()
+        let pending: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8](repeating: 1, count: 8)))
+        let overflow: EventLoopFuture<Void> = channel.writeAndFlush(channel.allocator.buffer(bytes: [UInt8(2)]))
+        await #expect(throws: (any Error).self) { try await overflow.get() }
+        await #expect(throws: (any Error).self) { try await pending.get() }
+        #expect(!channel.isActive)
+        #expect(sink.bytes.isEmpty)
+        #expect(sink.closed)
+    }
+
     @Test("@spec REMOTE-11.8: When the SSH parent channel closes, the remote connection shall tear down its WebRTC transport and notify consumers so they can evict the cached connection.")
     func closingParentChannelFailsRemoteConnection() async throws {
         let key = Curve25519.Signing.PrivateKey()
@@ -37,6 +81,7 @@ struct SSHNIOTransportUnitTests {
     func partialWriteAbortsAndClosesChannel() async throws {
         final class FakeSink: DataChannelSink, @unchecked Sendable {
             var sinkReadyState: RTCDataChannelState = .open
+            var sinkBufferedAmount: UInt64 = 0
             private(set) var sendCount = 0
             private(set) var closedCount = 0
             var failOnCall: Int?
@@ -135,4 +180,17 @@ struct SSHNIOTransportUnitTests {
         // suite shares a Swift Testing process with socket-heavy targets.
         await transport.close()
     }
+}
+
+private final class BufferedSink: DataChannelSink, @unchecked Sendable {
+    var sinkReadyState: RTCDataChannelState = .open
+    var sinkBufferedAmount: UInt64 = 0
+    var bytes: [UInt8] = []
+    var closed = false
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool {
+        bytes.append(contentsOf: buffer.data)
+        sinkBufferedAmount += UInt64(buffer.data.count)
+        return true
+    }
+    func sinkClose() { closed = true }
 }

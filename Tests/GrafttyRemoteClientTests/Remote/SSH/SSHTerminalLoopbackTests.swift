@@ -24,6 +24,99 @@ import WebRTC
 )
 struct SSHTerminalLoopbackTests {
 
+    // Measurement probe, not a timing assertion: simulator scheduling and
+    // network conditions vary. Keep byte-integrity assertions deterministic.
+    enum LatencyScenario: String, CaseIterable {
+        case idle, sharedConnection, separateDataChannel, separateConnection
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: LatencyScenario.allCases)
+    func interactiveLatencyWithSiblingTraffic(scenario: LatencyScenario) async throws {
+        let bulkBytes = scenario == .idle ? 0 : 4 * 1024 * 1024
+        let bulkStream = EchoStream()
+        let connection = try await makeLoopbackConnection { channel, type in
+            guard case .session = type else {
+                return channel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return channel.eventLoop.makeCompletedFuture {
+                try channel.pipeline.syncOperations.addHandler(TerminalSessionHandler(
+                    streamFactory: { name in name == "bulk" ? bulkStream : EchoStream() }
+                ))
+            }
+        }
+        let separateConnection: LoopbackConnection?
+        do {
+            separateConnection = scenario == .separateConnection || scenario == .separateDataChannel
+                ? try await makeLoopbackConnection(
+                    reusing: scenario == .separateDataChannel ? connection : nil
+                ) { channel, type in
+                    guard case .session = type else {
+                        return channel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandler(TerminalSessionHandler(
+                            streamFactory: { _ in bulkStream }
+                        ))
+                    }
+                } : nil
+        } catch {
+            await connection.close()
+            throw error
+        }
+        let bulkConnection = separateConnection ?? connection
+        let interactive = TerminalSessionClient(
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler, sessionName: "interactive"
+        )
+        let bulk = TerminalSessionClient(
+            parentChannel: bulkConnection.clientTransport.channel,
+            parentHandler: bulkConnection.sshHandler, sessionName: "bulk"
+        )
+        let timeout = Task {
+            do { try await Task.sleep(for: .seconds(45)) } catch { return }
+            interactive.close()
+            bulk.close()
+        }
+        defer { timeout.cancel(); interactive.close(); bulk.close() }
+        do {
+            try await interactive.connect()
+            try await bulk.connect()
+            var samples: [Double] = []
+            for index in 0..<20 {
+                let drain = Task {
+                    var received = 0
+                    while received < bulkBytes {
+                        if case .binary(let data) = try await bulk.receive() {
+                            received += data.count
+                        }
+                    }
+                    #expect(received == bulkBytes)
+                }
+                if bulkBytes > 0 {
+                    try await bulkStream.send(Data(repeating: 120, count: bulkBytes))
+                    await Task.yield()
+                }
+                let byte = Data([UInt8(65 + index)])
+                let start = ContinuousClock.now
+                try await interactive.send(.binary(byte))
+                #expect(try await interactive.receive() == .binary(byte))
+                let elapsed = start.duration(to: .now).components
+                samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
+                try await drain.value
+            }
+            samples.sort()
+            print("[terminal-latency] scenario=\(scenario.rawValue) siblingBytes=\(bulkBytes) samples=\(samples.count) p50_ms=\(samples[10]) p95_ms=\(samples[18]) max_ms=\(samples[19])")
+        } catch {
+            interactive.close()
+            bulk.close()
+            await connection.close()
+            await separateConnection?.close()
+            throw error
+        }
+        await connection.close()
+        await separateConnection?.close()
+    }
+
     /// End-to-end: client opens session channel, sends env+pty+shell,
     /// writes "hi\n", server-side echo stream returns "hi\n".
     @Test(.timeLimit(.minutes(3)))
@@ -446,6 +539,7 @@ struct SSHTerminalLoopbackTests {
     /// store are generated internally: no caller needed the concrete keys
     /// themselves, only a connection whose handshake succeeds.
     private func makeLoopbackConnection(
+        reusing existing: LoopbackConnection? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) async throws -> LoopbackConnection {
         let serverKey = Curve25519.Signing.PrivateKey()
@@ -453,15 +547,22 @@ struct SSHTerminalLoopbackTests {
         let peerStore = InMemoryTrustedPeerSet()
         peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
 
-        let offerer = LoopbackPeer(role: .offerer)
-        let answerer = LoopbackPeer(role: .answerer)
-        let offer = try await offerer.createOffer()
-        let answer = try await answerer.accept(offer: offer)
-        await offerer.bindIceCandidates(to: answerer)
-        await answerer.bindIceCandidates(to: offerer)
-        try await offerer.applyAnswer(answer)
-        let offererDC = try await offerer.openedDataChannel()
-        let answererDC = try await answerer.openedDataChannel()
+        let offerer = existing?.offerer ?? LoopbackPeer(role: .offerer)
+        let answerer = existing?.answerer ?? LoopbackPeer(role: .answerer)
+        let label: String
+        if existing != nil {
+            label = "graftty-bulk"
+            try await offerer.createDataChannel(label: label)
+        } else {
+            label = "graftty-ssh"
+            let offer = try await offerer.createOffer()
+            let answer = try await answerer.accept(offer: offer)
+            await offerer.bindIceCandidates(to: answerer)
+            await answerer.bindIceCandidates(to: offerer)
+            try await offerer.applyAnswer(answer)
+        }
+        let offererDC = try await offerer.openedDataChannel(label: label)
+        let answererDC = try await answerer.openedDataChannel(label: label)
 
         let clientTransport = SSHNIOTransport(dataChannel: offererDC)
         let serverTransport = SSHNIOTransport(dataChannel: answererDC)
@@ -501,7 +602,8 @@ struct SSHTerminalLoopbackTests {
             serverTransport: serverTransport,
             sshHandler: sshHandler,
             offerer: offerer,
-            answerer: answerer
+            answerer: answerer,
+            ownsPeers: existing == nil
         )
     }
 
@@ -849,12 +951,15 @@ private struct LoopbackConnection {
     let sshHandler: NIOSSHHandler
     let offerer: LoopbackPeer
     let answerer: LoopbackPeer
+    let ownsPeers: Bool
 
     func close() async {
         await clientTransport.close()
         await serverTransport.close()
-        await offerer.close()
-        await answerer.close()
+        if ownsPeers {
+            await offerer.close()
+            await answerer.close()
+        }
     }
 }
 
@@ -1693,7 +1798,7 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private let role: Role
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
-    private var dataChannel: RTCDataChannel?
+    private var dataChannels: [String: RTCDataChannel] = [:]
     private nonisolated let pcDelegate = LoopbackPeerConnectionDelegate()
 
     private var pendingLocalCandidates: [RTCIceCandidate] = []
@@ -1701,8 +1806,8 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
     private var gatheringContinuation: CheckedContinuation<Void, Never>?
     private var gatheringTimeoutTask: Task<Void, Never>?
-    private var openContinuation: CheckedContinuation<RTCDataChannel, Error>?
-    private var resolvedOpenDataChannel: RTCDataChannel?
+    private var openContinuations: [String: CheckedContinuation<RTCDataChannel, Error>] = [:]
+    private var resolvedOpenDataChannels: [String: RTCDataChannel] = [:]
 
     private static let gatheringTimeout: Duration = .seconds(5)
 
@@ -1726,13 +1831,7 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
         }
         self.peerConnection = pc
 
-        let dcConfig = RTCDataChannelConfiguration()
-        dcConfig.isOrdered = true
-        guard let dc = pc.dataChannel(forLabel: "graftty-ssh", configuration: dcConfig) else {
-            throw NSError(domain: "LoopbackPeer", code: 2)
-        }
-        self.dataChannel = dc
-        installOpenTracker(on: dc)
+        try createDataChannel(label: "graftty-ssh")
 
         let offer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
             pc.offer(for: constraints) { sdp, error in
@@ -1774,10 +1873,20 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
         try await Self.setRemoteDescription(pc, answer)
     }
 
-    func openedDataChannel() async throws -> RTCDataChannel {
-        if let dc = resolvedOpenDataChannel { return dc }
+    func createDataChannel(label: String) throws {
+        let config = RTCDataChannelConfiguration()
+        config.isOrdered = true
+        guard let dc = peerConnection?.dataChannel(forLabel: label, configuration: config) else {
+            throw NSError(domain: "LoopbackPeer", code: 2)
+        }
+        dataChannels[label] = dc
+        installOpenTracker(on: dc)
+    }
+
+    func openedDataChannel(label: String = "graftty-ssh") async throws -> RTCDataChannel {
+        if let dc = resolvedOpenDataChannels[label] { return dc }
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCDataChannel, Error>) in
-            self.openContinuation = continuation
+            self.openContinuations[label] = continuation
         }
     }
 
@@ -1810,11 +1919,11 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
     }
 
     private func adoptInboundDataChannel(_ dc: RTCDataChannel) {
-        self.dataChannel = dc
+        self.dataChannels[dc.label] = dc
         installOpenTracker(on: dc)
     }
 
-    private nonisolated(unsafe) var currentOpenTracker: OpenTrackerDelegate?
+    private var openTrackers: [String: OpenTrackerDelegate] = [:]
 
     private func installOpenTracker(on dc: RTCDataChannel) {
         let tracker = OpenTrackerDelegate()
@@ -1825,17 +1934,16 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
             Task { self.handleDataChannelOpen(dc) }
         }
         dc.delegate = tracker
-        self.currentOpenTracker = tracker
+        self.openTrackers[dc.label] = tracker
     }
 
     private func handleDataChannelOpen(_ dc: RTCDataChannel) {
-        guard resolvedOpenDataChannel == nil else { return }
-        resolvedOpenDataChannel = dc
-        if let continuation = openContinuation {
-            openContinuation = nil
+        guard resolvedOpenDataChannels[dc.label] == nil else { return }
+        resolvedOpenDataChannels[dc.label] = dc
+        if let continuation = openContinuations.removeValue(forKey: dc.label) {
             continuation.resume(returning: dc)
         }
-        currentOpenTracker = nil
+        openTrackers[dc.label] = nil
     }
 
     private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
@@ -1873,11 +1981,12 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
             gatheringTimeoutTask = nil
             pending.resume()
         }
-        if let pending = openContinuation {
-            openContinuation = nil
+        for pending in openContinuations.values {
             pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
         }
-        dataChannel?.close()
+        openContinuations.removeAll()
+        for channel in dataChannels.values { channel.close() }
+        dataChannels.removeAll()
         peerConnection?.close()
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
