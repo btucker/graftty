@@ -37,7 +37,12 @@ struct WorktreeAdd: ParsableCommand {
         main checkout. Local commits and uncommitted edits are not transferred.
         Both Macs need a Graftty version supporting remote worktree creation.
 
-        On success, the command prints the worktree's stable message address.
+        By default, the command returns once the app accepts creation and
+        prints the pending operation ID and stable message address. The app
+        waits for Git and its hooks to finish, then launches the agent even
+        after this CLI exits. Use --wait to block until launch is accepted.
+        Initial agent prompts are also saved in the worktree's durable inbox
+        so an agent launched later can recover the task.
         Send guidance with `graftty team send --stdin <address>`; messages
         queued before the agent process finishes starting are delivered at
         session start.
@@ -74,10 +79,19 @@ struct WorktreeAdd: ParsableCommand {
     @Option(name: .long, help: "Exact shell command to launch instead of --agent")
     var command: String?
 
-    @Option(name: .long, help: "Maximum seconds to wait for Git hooks and pane creation")
+    @Flag(name: .long, help: "Wait until Git hooks finish and the pane accepts the launch command")
+    var wait: Bool = false
+
+    @Flag(name: .long, help: "Return once creation is accepted, then create and launch in the app (default)")
+    var async: Bool = false
+
+    @Option(name: .long, help: "Maximum seconds to wait for acceptance, or completion with --wait; the app continues after timeout")
     var timeout: Int = 300
 
     func validate() throws {
+        if wait && async {
+            throw ValidationError("--wait and --async are mutually exclusive")
+        }
         if project != nil && remote == nil {
             throw ValidationError("--project requires --remote")
         }
@@ -158,7 +172,7 @@ struct WorktreeAdd: ParsableCommand {
         }
         let callerWorktree = project == nil ? try CLIEnv.resolveWorktree() : ""
         let operationID = UUID().uuidString.lowercased()
-        var response = try Self.sendRequestRetryingTimeout(
+        let response = try Self.sendRequestRetryingTimeout(
             creationRequest(
                 callerWorktree: callerWorktree,
                 names: names,
@@ -170,30 +184,55 @@ struct WorktreeAdd: ParsableCommand {
             deadline: deadline
         )
 
+        try waitForCreation(response: response, deadline: deadline)
+    }
+
+    func waitForCreation(
+        response initialResponse: ResponseMessage,
+        deadline: Date,
+        sendStatus: ((String) throws -> ResponseMessage)? = nil,
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        writeLine: (String) -> Void = { print($0) }
+    ) throws {
+        var response = initialResponse
         while true {
             switch response {
             case .worktreeCreate(let operation):
                 switch operation.state {
                 case .pending:
+                    if !wait {
+                        let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
+                        let address = WorktreeAgentLaunchCommand.shellLiteral(operation.messageAddress)
+                        writeLine("pending operation=\(operation.operationID)  worktree=\(path)  address=\(address)")
+                        if let agent {
+                            writeLine("agent=\(agent)  launch=after-worktree-ready  message-with=graftty team send --stdin \(address)")
+                            writeLine("handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json")
+                        }
+                        return
+                    }
                     guard Date() < deadline else {
                         CLIEnv.printError(
                             "timed out waiting for worktree creation; operation \(operation.operationID) may still finish"
                         )
                         throw ExitCode(1)
                     }
-                    Thread.sleep(forTimeInterval: 0.1)
-                    response = try Self.sendRequestRetryingTimeout(
-                        statusRequest(operationID: operation.operationID),
-                        operationID: operation.operationID,
-                        deadline: deadline
-                    )
+                    sleep(0.1)
+                    if let sendStatus {
+                        response = try sendStatus(operation.operationID)
+                    } else {
+                        response = try Self.sendRequestRetryingTimeout(
+                            statusRequest(operationID: operation.operationID),
+                            operationID: operation.operationID,
+                            deadline: deadline
+                        )
+                    }
                 case .ready:
                     for line in Self.successOutputLines(
                         worktreePath: operation.worktreePath,
                         messageAddress: operation.messageAddress,
                         agent: agent
                     ) {
-                        print(line)
+                        writeLine(line)
                     }
                     return
                 case .failed:

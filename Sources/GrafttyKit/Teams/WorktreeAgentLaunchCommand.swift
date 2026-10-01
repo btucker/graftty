@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 public struct PreparedWorktreeAgentLaunch {
     public let command: String?
@@ -43,6 +44,45 @@ public enum WorktreeAgentLaunchCommand {
             return oversizedPromptError
         }
         return nil
+    }
+
+    /// Keep the task independently of the short-lived shell loader file.
+    /// Runtime addressing allows a manually launched replacement session to
+    /// recover it without tying the task to an agent that has not started yet.
+    public static func saveInitialPrompt(
+        _ prompt: String?,
+        runtime: TeamHookRuntime,
+        repo: RepoEntry,
+        worktreePath: String,
+        branchName: String,
+        inbox: TeamInbox
+    ) throws {
+        guard let prompt,
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let obsolete = try inbox.worktreePendingMessages(
+            teamID: repo.path, recipientWorktree: worktreePath
+        ).filter { $0.kind == "agent_initial_prompt" && $0.to.runtime == runtime.rawValue }
+        try inbox.appendMessage(
+            teamID: repo.path,
+            teamName: repo.displayName,
+            repoPath: repo.path,
+            from: .system(repoPath: repo.path),
+            to: TeamInboxEndpoint(member: WorktreeNameSanitizer.sanitize(branchName),
+                worktree: worktreePath, runtime: runtime.rawValue),
+            priority: .normal,
+            kind: "agent_initial_prompt",
+            body: prompt,
+            agentPrompt: """
+            This is the saved initial prompt for this worktree's agent. If your launch prompt already contains this task, treat this as its recovery copy and carry out the task once. If you were launched later without it, use this as your task.
+
+            \(prompt)
+            """
+        )
+        // Commit the replacement before superseding recovery tasks left by a
+        // failed creation. Preserve history and unrelated pending messages.
+        try inbox.acknowledgeMessages(
+            teamID: repo.path, worktree: worktreePath, messageIDs: obsolete.map(\.id)
+        )
     }
 
     public static func prepare(
