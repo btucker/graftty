@@ -2250,6 +2250,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.16** When a Codex hook binds an app-server record without owner identity, the application shall restore the wrapper PID and start time from the matching presence record.
 
+**TEAM-10.17** When a wrapped Codex TUI exits unsuccessfully, the application shall preserve its app-server log and report its path while preserving the TUI exit status; when it exits successfully, the application shall remove the log.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
@@ -2579,6 +2581,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.13** If peer-connection allocation fails after an offer reserves the host slot, then the application shall close that lifecycle so a later authenticated offer can connect immediately.
 
 **REMOTE-11.14** When the user retries a failed mobile worktree connection, the application shall bypass the failure cooldown and sign a request to replace only that device's existing host connection.
+
+**REMOTE-11.15** When a terminal binds a bulk history channel, the host shall require a single-use token owned by the same authenticated device and connection lifecycle.
+
+**REMOTE-11.16** When a bulk history channel is bound to an already-open terminal, the host shall route history pages to it and continue forwarding live output while history writes are blocked.
+
+**REMOTE-11.17** When both peers support bulk transport, the client shall authenticate a second ordered WebRTC channel for background traffic; if the host rejects negotiation, the client shall retain the legacy transport.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -3091,3 +3099,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.1** When `RTCDataChannel.sendData` returns false mid-loop in `OutboundRelayHandler.write` (SCTP backpressure on a multi-slice write), the handler shall close both the DataChannel AND the NIO embedded channel — the peer cannot safely continue interpreting bytes after a partial SSH frame.
 
 **SSH-1.2** When `pendingInbound` accumulates more than 1 MiB without the embedded channel becoming active, `SSHNIOTransport` shall close the underlying DataChannel and transition to closed — bounding memory under a flooding peer.
+
+**SSH-1.3** While the WebRTC send buffer is full, the SSH transport shall defer ordered writes, resume them after draining, and fail pending writes on close.
+
+**SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.

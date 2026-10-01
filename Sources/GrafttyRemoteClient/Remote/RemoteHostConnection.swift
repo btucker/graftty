@@ -123,6 +123,12 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
+    private var bulkTransport: SSHNIOTransport?
+    private var bulkHandlerBox: SSHHandlerBox?
+    private var bulkTransportID: UUID?
+    private var bulkSetupTask: Task<Void, Never>?
+    internal var bulkTransportForTesting: SSHNIOTransport? { bulkTransport }
+    internal var hasBulkTransportForTesting: Bool { bulkHandlerBox != nil }
 
     /// Test seam: whether the inbound-buffering transport is armed.
     /// REMOTE-11.3 pins that this is non-nil from channel creation.
@@ -385,10 +391,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// Open a new SSH terminal session over the established connection.
     /// Throws `ConnectionError.notConnected` if the SSH handshake has not
     /// completed yet (i.e. `applyAnswer` has not returned successfully).
-    public func openTerminalSession(sessionName: String, preferPaged: Bool = false) async throws -> TerminalSessionClient {
+    public func openTerminalSession(sessionName: String, preferPaged: Bool = false, background: Bool = false) async throws -> TerminalSessionClient {
+        if background { await bulkSetupTask?.value }
         guard
-            let transport = sshTransport,
-            let box = sshHandlerBox
+            let transport = background ? (bulkTransport ?? sshTransport) : sshTransport,
+            let box = background ? (bulkHandlerBox ?? sshHandlerBox) : sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
@@ -398,9 +405,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             )
             do {
                 try await paged.connect(paged: true)
+                if !background { scheduleHistoryConnection(for: paged) }
                 return paged
             } catch TerminalSessionClient.ClientError.pagingUnsupported {
                 paged.close()
+            } catch {
+                paged.close()
+                throw error
             }
         }
         let client = TerminalSessionClient(
@@ -420,7 +431,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
         onClosed: @escaping @Sendable (String) async -> Void
     ) async throws -> PanesStateChannelClient {
-        let client = try makePanesStateClient(
+        let client = try await makePanesStateClient(
             onSnapshot: onSnapshot,
             onClosed: onClosed
         )
@@ -439,10 +450,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         onClosed: @escaping @Sendable (String) async -> Void,
         originAware: Bool = false,
         requestReply: Bool = false
-    ) throws -> PanesStateChannelClient {
+    ) async throws -> PanesStateChannelClient {
+        await waitBrieflyForBulkTransport()
         guard
-            let transport = sshTransport,
-            let box = sshHandlerBox
+            let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
+            let box = bulkHandlerBox ?? sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
@@ -489,7 +501,9 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
     /// The TCP destination and DNS lookup both live on the paired host.
     public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
-        guard let transport = sshTransport, let box = sshHandlerBox,
+        await waitBrieflyForBulkTransport()
+        guard let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
+              let box = bulkHandlerBox ?? sshHandlerBox,
               (1...65535).contains(port) else { throw ConnectionError.notConnected }
         let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
         let channel = try await openChildChannel(
@@ -583,6 +597,12 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// Called exactly once, from `setState`, on the first `.failed` or
     /// `.closed` transition.
     private func performTeardown() {
+        bulkSetupTask?.cancel()
+        bulkSetupTask = nil
+        if let bulk = bulkTransport { Task { await bulk.close() } }
+        bulkTransport = nil
+        bulkHandlerBox = nil
+        bulkTransportID = nil
         if let transport = sshTransport {
             Task { await transport.close() }
             sshTransport = nil
@@ -689,6 +709,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             // `.connected` — but don't hand out the handler box either.
             guard !isTerminal else { return }
             self.sshHandlerBox = box
+            bulkSetupTask = Task { [weak self] in await self?.setUpBulkTransport() }
             setState(.connected)
         } catch {
             let surfacedError: Error = didTimeOutOpeningDataChannel
@@ -700,6 +721,91 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             self.sshTransport = nil
             setState(.failed(reason: "SSH handshake failed: \(surfacedError)"))
             throw surfacedError
+        }
+    }
+
+    private func scheduleHistoryConnection(for client: TerminalSessionClient) {
+        let setup = bulkSetupTask
+        let task = Task { [weak self, weak client] in
+            await setup?.value
+            guard !Task.isCancelled, let self, let client else { return }
+            await self.attachHistory(to: client)
+        }
+        client.setHistorySetupTask(task)
+    }
+
+    private func attachHistory(to client: TerminalSessionClient) async {
+        guard !isTerminal, let bulk = bulkTransport, let handler = bulkHandlerBox else { return }
+        do {
+            try await client.connectHistory(parentChannel: bulk.channel, parentHandler: handler.handler)
+        } catch {
+            // A partially bound side channel cannot safely be abandoned:
+            // reopen this terminal so every requested page has a receiver.
+            client.close()
+        }
+    }
+
+    private func waitBrieflyForBulkTransport() async {
+        guard bulkHandlerBox == nil, let setup = bulkSetupTask else { return }
+        let waiter = SSHSubsystemReplyWaiter()
+        // Optional acceleration must not turn a healthy interactive connection
+        // into a multi-second wait for an unsupported or stalled bulk channel.
+        try? await waiter.wait(
+            timeout: .milliseconds(150), timeoutError: ConnectionError.notOpen,
+            onAbort: {}, start: {
+                Task { await setup.value; waiter.finish(.success(())) }
+            }
+        )
+    }
+
+    private func handleBulkTransportClosed(id: UUID) {
+        guard bulkTransportID == id else { return }
+        bulkTransport = nil
+        bulkHandlerBox = nil
+        bulkTransportID = nil
+    }
+
+    private func setUpBulkTransport() async {
+        guard let primary = sshTransport, let handler = sshHandlerBox else { return }
+        do {
+            let probe = try await openBulkSubsystem(parentChannel: primary.channel, parentHandler: handler.handler)
+            try await probe.close().get()
+            try Task.checkCancellation()
+            guard !isTerminal, let pc = peerConnection else { return }
+            let config = RTCDataChannelConfiguration()
+            config.isOrdered = true
+            guard let dc = pc.dataChannel(forLabel: GrafttyWebRTC.bulkDataChannelLabel, configuration: config) else { return }
+            let id = UUID()
+            bulkTransportID = id
+            let transport = SSHNIOTransport(dataChannel: dc) { [weak self] in
+                Task { await self?.handleBulkTransportClosed(id: id) }
+            }
+            bulkTransport = transport
+            let deadline = Task {
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                await transport.close()
+            }
+            defer { deadline.cancel() }
+            let box = try await transport.eventLoop.submit { [clientKey, expectedHostFingerprint] in
+                let handler = SSHClientSetup.makeHandler(
+                    clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint,
+                    allocator: transport.channel.allocator
+                )
+                try transport.channel.pipeline.syncOperations.addHandler(handler)
+                return SSHHandlerBox(handler)
+            }.get()
+            try await transport.start()
+            // The second probe cannot succeed until host-key validation and
+            // user authentication have completed on the new SSH transport.
+            let authenticated = try await openBulkSubsystem(parentChannel: transport.channel, parentHandler: box.handler)
+            try await authenticated.close().get()
+            try Task.checkCancellation()
+            guard !isTerminal, bulkTransport === transport else { await transport.close(); return }
+            bulkHandlerBox = box
+        } catch {
+            if let transport = bulkTransport { await transport.close() }
+            bulkTransport = nil
+            bulkHandlerBox = nil
         }
     }
 
