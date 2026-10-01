@@ -141,16 +141,17 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// @spec LAYOUT-2.67: While dragging a worktree, the application shall preview its heading and visible pane rows together at the sidebar row width while retaining separate pane drag gestures.
+/// Drag source + drop target for one worktree heading. The drag uses the
+/// system default preview (the heading itself): a custom preview closure
+/// kept the drag session from ever starting on the project column.
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
     @Binding var appState: AppState
     var isEnabled: Bool = true
-    let preview: AnyView
     let onMovePane: (PaneSlotID, String) -> Void
     let onPaneTargeted: (Bool) -> Void
-    @State private var rowSize: CGSize = .init(width: 280, height: 28)
+    @State private var rowHeight: CGFloat = 28
     @State private var placement: WorktreeDropPlacement?
 
     private var worktree: WorktreeEntry? {
@@ -163,19 +164,15 @@ struct WorktreeReorderTarget: ViewModifier {
     }
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
-        if canDrag {
-            content.draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID)) {
-                preview.frame(width: rowSize.width).fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        if canDrag { content.draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID)) }
         else { content }
     }
 
     func body(content: Content) -> some View {
         dragSource(content)
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { rowSize = $0 }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
             .onDrop(of: WorktreeRowDrop.contentTypes, delegate: WorktreeRowDropDelegate(
-                rowHeight: rowSize.height, allowsReordering: isEnabled,
+                rowHeight: rowHeight, allowsReordering: isEnabled,
                 isInFlight: worktree?.state.isInFlight ?? true,
                 placement: $placement, onPaneTargeted: onPaneTargeted,
                 onDrop: { payload, destination in
@@ -196,13 +193,12 @@ extension View {
         worktreeID: WorktreeEntry.ID,
         appState: Binding<AppState>,
         isEnabled: Bool = true,
-        preview: AnyView,
         onMovePane: @escaping (PaneSlotID, String) -> Void,
         onPaneTargeted: @escaping (Bool) -> Void
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID, worktreeID: worktreeID,
-            appState: appState, isEnabled: isEnabled, preview: preview,
+            appState: appState, isEnabled: isEnabled,
             onMovePane: onMovePane, onPaneTargeted: onPaneTargeted
         ))
     }

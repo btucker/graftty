@@ -162,8 +162,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.66** When the macOS application is bundled, the application shall export its local worktree, remote worktree, and pane drag types as data so the system can recognize sidebar drag sessions.
 
-**LAYOUT-2.67** While dragging a worktree, the application shall preview its heading and visible pane rows together at the sidebar row width while retaining separate pane drag gestures.
-
 **LAYOUT-2.68** While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.
 
 **LAYOUT-2.69** When the user double-clicks empty space after the last worktree in the project column, the application shall open Add Worktree for the selected editable project without changing a worktree row's click behavior.

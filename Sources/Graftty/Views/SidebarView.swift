@@ -758,19 +758,6 @@ struct SidebarView: View {
                 buildPaneMenu(terminalID: terminalID)
             }
         }
-        // The drag preview is rendered offscreen when a drag begins. It
-        // carries no buttons, nested drag sources, or AppKit overlays:
-        // those interactive layers inside the preview kept the worktree
-        // drag session from starting at all.
-        let preview = AnyView(
-            VStack(spacing: 0) {
-                heading
-                ForEach(paneLeaves, id: \.self) { paneRow($0) }
-            }
-            .padding(.vertical, groupsPanes ? 8 : 0)
-            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
-            .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
-        )
         VStack(spacing: 0) {
             Button {
                 onSelect(worktree.path)
@@ -783,7 +770,6 @@ struct SidebarView: View {
                 repoID: repo.id,
                 worktreeID: worktree.id,
                 appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
-                preview: preview,
                 onMovePane: onMovePane,
                 onPaneTargeted: { targeted in
                     if targeted { dropTargetWorktreeID = worktree.id }
