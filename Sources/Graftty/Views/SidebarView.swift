@@ -240,6 +240,9 @@ struct SidebarView: View {
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
         let counts = SidebarActivityCounts(items: activity)
+        GeometryReader { geometry in
+        VStack(spacing: 0) {
+        searchRow(height: max(geometry.safeAreaInsets.top, Self.searchRowMinimumHeight))
         HStack(spacing: 0) {
             if showsProjectRail {
                 ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
@@ -325,9 +328,12 @@ struct SidebarView: View {
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
-        // The one search box for both the worktree list and Attention; it
-        // sits in the toolbar row beside the sidebar toggle.
-        .searchable(text: $navigation.query, placement: .sidebar, prompt: Text("Find any project or worktree"))
+        }
+        // The search row shares the title-bar strip with the traffic lights
+        // and the sidebar toggle, so the sidebar extends under the title bar
+        // the same way the detail column does for the breadcrumb.
+        .ignoresSafeArea(.container, edges: .top)
+        }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
@@ -408,6 +414,24 @@ struct SidebarView: View {
                 onCancel: { pendingAddWorktree = nil }
             )
         }
+    }
+
+    /// Clears the three traffic lights plus the sidebar-toggle button that
+    /// macOS parks to their right in the title-bar strip.
+    private static let searchRowLeadingInset: CGFloat = 112
+    /// Fallback when the sidebar is not under a title bar.
+    private static let searchRowMinimumHeight: CGFloat = 38
+
+    /// The one search box for both the worktree list and Attention. It lives
+    /// in the title-bar row beside the sidebar toggle, so the list starts
+    /// directly below the toolbar instead of under a search row of its own.
+    private func searchRow(height: CGFloat) -> some View {
+        TextField("Find any project or worktree", text: $navigation.query)
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.small)
+            .padding(.leading, Self.searchRowLeadingInset)
+            .padding(.trailing, 10)
+            .frame(height: height)
     }
 
     private func voiceDictationButton(collapsed: Bool) -> some View {

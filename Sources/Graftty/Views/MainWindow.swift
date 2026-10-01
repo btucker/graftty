@@ -146,11 +146,10 @@ struct MainWindow: View {
                 ideal: max(minimumSidebarWidth, attentionSidebarWidth ?? appState.sidebarWidth),
                 max: 676
             )
-            // Deliberately do NOT call ignoresSafeArea here. The sidebar
-            // respects the title-bar safe area so its content begins below
-            // the traffic lights rather than colliding with them. The
-            // detail column opts out so the breadcrumb sits alongside the
-            // traffic lights.
+            // SidebarView opts out of the title-bar safe area itself and
+            // places its search row in that strip, inset past the traffic
+            // lights and the sidebar toggle; the detail column does the
+            // same for the breadcrumb.
         } detail: {
             VStack(spacing: 0) {
                 BreadcrumbBar(
