@@ -76,8 +76,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
+      - name: Resolve Swift dependencies
+        timeout-minutes: 5
+        # Cached manifests can still trigger remote refreshes. Retry transient
+        # fetch failures here, before the build, which must fail normally.
+        run: |
+          for attempt in 1 2 3; do
+            if swift package resolve; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "::error::Swift dependency resolution failed after three attempts"
+              exit 1
+            fi
+            echo "Swift dependency resolution failed; retrying in 5 seconds"
+            sleep 5
+          done
+
       - name: Build app + tests (warnings as errors)
-        run: swift build --build-tests -Xswiftc -warnings-as-errors
+        # Resolution above prepares the lockfile and sources. Avoid a second
+        # remote refresh, and fail if the resolved graph unexpectedly changes.
+        run: swift build --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
 
       - name: Test package targets in isolated processes
         # The complete serial suite, test discovery, and process startup can
