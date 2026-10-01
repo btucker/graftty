@@ -26,8 +26,11 @@ final class WorktreeDragPasteboardWriter: NSObject, NSPasteboardWriting {
 /// overlay owns the left mouse button: a press-and-release selects, and a
 /// drag past the threshold begins an `NSDraggingSession` with the move
 /// payload. Right-clicks and ctrl-clicks pass through to the menu overlay.
+/// `blockRect` is the whole worktree block in the overlay's (top-left)
+/// coordinates; it is what lifts under the cursor.
 struct WorktreeDragSourceOverlay: NSViewRepresentable {
     let payload: TransferableWorktreeMove
+    var blockRect: CGRect? = nil
     let onClick: () -> Void
 
     func makeNSView(context: Context) -> WorktreeDragSourceView {
@@ -40,17 +43,23 @@ struct WorktreeDragSourceOverlay: NSViewRepresentable {
 
     private func update(_ view: WorktreeDragSourceView) {
         view.payload = payload
+        view.blockRect = blockRect
         view.onClick = onClick
     }
 }
 
 final class WorktreeDragSourceView: NSView, NSDraggingSource {
     var payload: TransferableWorktreeMove?
+    /// The block to lift, in this view's coordinates; nil lifts the view itself.
+    var blockRect: CGRect?
     var onClick: (() -> Void)?
     private var press: (event: NSEvent, origin: NSPoint)?
 
     /// Movement before a press becomes a drag instead of a click.
     static let dragThreshold: CGFloat = 4
+
+    /// Top-left origin, matching the SwiftUI geometry that supplies `blockRect`.
+    override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let event = NSApp.currentEvent, event.type == .leftMouseDown,
@@ -67,8 +76,9 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x - press.origin.x, point.y - press.origin.y) >= Self.dragThreshold else { return }
         self.press = nil
+        let lifted = blockRect ?? bounds
         let item = NSDraggingItem(pasteboardWriter: writer)
-        item.setDraggingFrame(bounds, contents: snapshot())
+        item.setDraggingFrame(lifted, contents: snapshot(of: lifted))
         beginDraggingSession(with: [item], event: press.event, source: self)
             .animatesToStartingPositionsOnCancelOrFail = true
     }
@@ -79,11 +89,11 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
 
-    /// The row as currently drawn, for the drag image.
-    private func snapshot() -> NSImage {
-        let image = NSImage(size: bounds.size)
+    /// The block as currently drawn, for the drag image.
+    private func snapshot(of localRect: CGRect) -> NSImage {
+        let image = NSImage(size: localRect.size)
         guard let contentView = window?.contentView else { return image }
-        let rect = convert(bounds, to: contentView)
+        let rect = convert(localRect, to: contentView)
         guard let rep = contentView.bitmapImageRepForCachingDisplay(in: rect) else { return image }
         contentView.cacheDisplay(in: rect, to: rep)
         image.addRepresentation(rep)

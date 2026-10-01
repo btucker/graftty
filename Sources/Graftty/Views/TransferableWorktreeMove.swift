@@ -141,9 +141,22 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Drag source + drop target for one worktree heading. The source is an
-/// AppKit overlay (`WorktreeDragSourceOverlay`) because SwiftUI's
-/// `.draggable` never began a session for these rows on the project column.
+/// Bounds of a worktree block's heading row, so the block-level drag
+/// source can accept presses on the heading only while dragging the
+/// whole block.
+struct WorktreeHeadingAnchor: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// Drag source + drop target for one worktree block (heading + pane
+/// rows). The source is an AppKit overlay (`WorktreeDragSourceOverlay`)
+/// because SwiftUI's `.draggable` never began a session for these rows on
+/// the project column; it sits over the heading and drags the block.
+/// Drops resolve against the block's midpoint, so a worktree lands before
+/// or after another whole worktree, never between its panes.
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
@@ -166,8 +179,20 @@ struct WorktreeReorderTarget: ViewModifier {
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
         if canDrag {
-            content.overlay(WorktreeDragSourceOverlay(
-                payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID), onClick: onSelect))
+            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchor in
+                GeometryReader { proxy in
+                    if let anchor {
+                        let heading = proxy[anchor]
+                        WorktreeDragSourceOverlay(
+                            payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
+                            blockRect: CGRect(x: -heading.minX, y: -heading.minY,
+                                              width: proxy.size.width, height: proxy.size.height),
+                            onClick: onSelect)
+                        .frame(width: heading.width, height: heading.height)
+                        .offset(x: heading.minX, y: heading.minY)
+                    }
+                }
+            }
         }
         else { content }
     }

@@ -62,7 +62,7 @@ struct WorktreeDropReorderTests {
         #expect(TransferablePaneSlotID.contentType != TransferableWorktreeMove.contentType)
     }
 
-    @Test("Row drop location maps upper half before and lower half after")
+    @Test("@spec LAYOUT-2.101: When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.")
     func rowDropLocationMapsToPlacement() {
         #expect(WorktreeDropPlacement.fromRowDropLocation(CGPoint(x: 0, y: 18), rowHeight: 44) == .before)
         #expect(WorktreeDropPlacement.fromRowDropLocation(CGPoint(x: 0, y: 24), rowHeight: 44) == .after)
@@ -259,7 +259,7 @@ struct WorktreeDropReorderTests {
 
 @Suite("AppKit worktree drag source")
 struct WorktreeDragSourceTests {
-    @Test("@spec LAYOUT-2.100: When a user drags a worktree heading, the application shall begin an AppKit drag session whose pasteboard payload the worktree row drop destination decodes as that worktree move.")
+    @Test("@spec LAYOUT-2.100: When a user drags a worktree heading, the application shall begin an AppKit drag session that lifts the whole worktree block and whose pasteboard payload the worktree row drop destination decodes as that worktree move.")
     func pasteboardPayloadRoundTripsThroughRowDrop() async throws {
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
             WorktreeEntry(path: "/repo", branch: "main"),

@@ -766,17 +766,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .id(worktree.path)
-            .worktreeReorderTarget(
-                repoID: repo.id,
-                worktreeID: worktree.id,
-                appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
-                onSelect: { onSelect(worktree.path) },
-                onMovePane: onMovePane,
-                onPaneTargeted: { targeted in
-                    if targeted { dropTargetWorktreeID = worktree.id }
-                    else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-                }
-            )
+            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0 }
             .rightClickMenu {
                 buildWorktreeMenu(worktree, repo: repo)
             }
@@ -794,6 +784,19 @@ struct SidebarView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
+        )
+        // The whole block (heading + pane rows) is the drag image and the
+        // drop target, so a worktree never lands between another's panes.
+        .worktreeReorderTarget(
+            repoID: repo.id,
+            worktreeID: worktree.id,
+            appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
+            onSelect: { onSelect(worktree.path) },
+            onMovePane: onMovePane,
+            onPaneTargeted: { targeted in
+                if targeted { dropTargetWorktreeID = worktree.id }
+                else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
+            }
         )
     }
 
