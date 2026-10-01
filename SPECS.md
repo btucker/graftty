@@ -2836,7 +2836,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.18** While worktree creation is pending after the CLI disconnects or times out, the application shall retain the operation and staged launch command, wait for creation to finish, and then launch the agent without another CLI request.
 
-**AGENT-5.19** When an agent worktree creation includes a non-empty initial prompt, the application shall save the exact prompt in the destination runtime's durable inbox before starting Git, preserve it if launch fails, and label its delivered context as the saved initial task.
+**AGENT-5.19** When an agent worktree creation includes a non-empty initial prompt, the application shall save the exact prompt in the destination runtime's durable inbox before starting Git, preserve it if launch fails, and label its delivered context as the saved initial task. When a new initial task is saved for the same worktree and runtime, the application shall supersede older pending initial tasks while preserving their history and unrelated messages.
+
+**AGENT-5.20** When worktree creation specifies an explicit base, the application shall capture its immutable commit in the caller's worktree before accepting asynchronous creation and shall share that capture across retries of the same operation.
 
 ### AGENT-6.x
 

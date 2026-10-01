@@ -92,7 +92,7 @@ struct CLIWorktreeCreationTests {
     }
 
     @MainActor
-    @Test("@spec AGENT-5.19: When an agent worktree creation includes a non-empty initial prompt, the application shall save the exact prompt in the destination runtime's durable inbox before starting Git, preserve it if launch fails, and label its delivered context as the saved initial task.")
+    @Test("@spec AGENT-5.19: When an agent worktree creation includes a non-empty initial prompt, the application shall save the exact prompt in the destination runtime's durable inbox before starting Git, preserve it if launch fails, and label its delivered context as the saved initial task. When a new initial task is saved for the same worktree and runtime, the application shall supersede older pending initial tasks while preserving their history and unrelated messages.")
     func initialPromptSurvivesFailedLaunch() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -127,6 +127,58 @@ struct CLIWorktreeCreationTests {
         try WorktreeAgentLaunchCommand.saveInitialPrompt(" \n", runtime: .codex,
             repo: repo, worktreePath: "/repo/.worktrees/empty", branchName: "empty", inbox: inbox)
         #expect(try inbox.messages(teamID: repo.path).count == 1)
+    }
+
+    @Test("A replacement initial task supersedes the failed creation's task without consuming other messages")
+    func replacementPromptSupersedesObsoleteTask() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        let repo = RepoEntry(path: "/repo", displayName: "repo")
+        let path = "/repo/.worktrees/fix"
+        try WorktreeAgentLaunchCommand.saveInitialPrompt("old task", runtime: .codex,
+            repo: repo, worktreePath: path, branchName: "fix", inbox: inbox)
+        let followup = try inbox.appendMessage(teamID: repo.path, teamName: repo.displayName,
+            repoPath: repo.path, from: .system(repoPath: repo.path),
+            to: TeamInboxEndpoint(member: "fix", worktree: path, runtime: "codex"),
+            priority: .normal, body: "follow-up")
+        try WorktreeAgentLaunchCommand.saveInitialPrompt("other runtime", runtime: .claude,
+            repo: repo, worktreePath: path, branchName: "fix", inbox: inbox)
+        try WorktreeAgentLaunchCommand.saveInitialPrompt("new task", runtime: .codex,
+            repo: repo, worktreePath: path, branchName: "fix", inbox: inbox)
+        let reopened = TeamInbox(rootDirectory: root)
+        let pending = try reopened.worktreePendingMessages(teamID: repo.path, recipientWorktree: path)
+        #expect(pending.map(\.body) == ["follow-up", "other runtime", "new task"])
+        #expect(pending.contains { $0.id == followup.id })
+        #expect(try reopened.messages(teamID: repo.path).map(\.body) == ["old task", "follow-up", "other runtime", "new task"])
+    }
+
+    @MainActor
+    @Test("@spec AGENT-5.20: When worktree creation specifies an explicit base, the application shall capture its immutable commit in the caller's worktree before accepting asynchronous creation and shall share that capture across retries of the same operation.")
+    func baseCaptureIsSharedAcrossRetries() async throws {
+        var head = "original-commit"
+        var resolutions = 0
+        var finish: CheckedContinuation<Void, Never>?
+        let store = CLIWorktreeCreationStore(baseResolver: { base, path in
+            #expect(base == "HEAD")
+            #expect(path == "/repo/caller")
+            resolutions += 1
+            let snapshot = head
+            await withCheckedContinuation { finish = $0 }
+            return snapshot
+        })
+        let first = Task { try await store.captureBase("HEAD", at: "/repo/caller", operationID: "create") }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while finish == nil, ContinuousClock.now < deadline { await Task.yield() }
+        let completion = try #require(finish)
+        head = "changed-commit"
+        let retry = Task { try await store.captureBase("HEAD", at: "/repo/caller", operationID: "create") }
+        completion.resume()
+        #expect(try await first.value == "original-commit")
+        #expect(try await retry.value == "original-commit")
+        #expect(resolutions == 1)
+        #expect(try await store.captureBase(nil, at: "/repo/caller", operationID: "without-base") == nil)
+        store.discardBaseCapture(operationID: "create")
     }
 
     @Test("@spec AGENT-5.10: When `graftty worktree add --remote <Mac>` is invoked, the CLI shall accept a connected Mac name or device ID and an optional destination project, alongside the existing branch and agent launch options.")

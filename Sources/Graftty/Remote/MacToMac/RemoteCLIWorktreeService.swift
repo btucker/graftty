@@ -11,7 +11,7 @@ enum RemoteCLIWorktreeService {
         from device: RemoteDeviceID,
         repos: [RepoEntry],
         status: (String) -> WorktreeCreateStatus?,
-        create: (NotificationMessage) -> ResponseMessage,
+        create: (NotificationMessage) async -> ResponseMessage,
         readOrigin: GitRepositoryOrigin.Loader? = nil
     ) async -> RemoteTeamResponse {
         let id = request.operationID
@@ -36,7 +36,7 @@ enum RemoteCLIWorktreeService {
                     if let retained = status(scopedID) {
                         response = .worktreeCreate(retained)
                     } else {
-                        response = create(.createWorktree(
+                        response = await create(.createWorktree(
                             callerWorktree: repo.path, worktreeName: options.worktreeName,
                             branchName: options.branchName, existing: options.existing,
                             base: options.base, command: options.command,

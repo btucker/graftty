@@ -51,32 +51,7 @@ public enum GitWorktreeAdd {
         if let startPointResolutionPath,
            let startPoint,
            !startPoint.isEmpty {
-            let result: CLIOutput
-            do {
-                result = try await GitRunner.captureAll(
-                    args: [
-                        "rev-parse",
-                        "--verify",
-                        "--end-of-options",
-                        "\(startPoint)^{commit}",
-                    ],
-                    at: startPointResolutionPath
-                )
-            } catch let err as CLIError {
-                throw Error.cliFailure(err)
-            }
-            guard result.exitCode == 0 else {
-                let stderr = result.stderr
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw Error.gitFailed(
-                    exitCode: result.exitCode,
-                    stderr: stderr.isEmpty
-                        ? "base revision does not resolve to a commit: \(startPoint)"
-                        : stderr
-                )
-            }
-            resolvedStartPoint = result.stdout
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            resolvedStartPoint = try await resolveStartPoint(startPoint, at: startPointResolutionPath)
         } else {
             resolvedStartPoint = startPoint
         }
@@ -98,6 +73,35 @@ public enum GitWorktreeAdd {
                 stderr: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
+    }
+
+    /// Freeze a caller-local revision before asynchronous creation is accepted.
+    public static func resolveStartPoint(_ startPoint: String, at path: String) async throws -> String {
+        let result: CLIOutput
+        do {
+            result = try await GitRunner.captureAll(
+                args: [
+                    "rev-parse",
+                    "--verify",
+                    "--end-of-options",
+                    "\(startPoint)^{commit}",
+                ],
+                at: path
+            )
+        } catch let err as CLIError {
+            throw Error.cliFailure(err)
+        }
+        guard result.exitCode == 0 else {
+            let stderr = result.stderr
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw Error.gitFailed(
+                exitCode: result.exitCode,
+                stderr: stderr.isEmpty
+                    ? "base revision does not resolve to a commit: \(startPoint)"
+                    : stderr
+            )
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated static func argvFor(

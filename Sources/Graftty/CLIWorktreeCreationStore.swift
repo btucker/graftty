@@ -53,10 +53,36 @@ final class CLIWorktreeCreationStore {
     }
 
     private var records: [String: Record] = [:]
+    private var baseCaptures: [String: Task<String, Error>] = [:]
     private let terminalRetention: TimeInterval
+    private let baseResolver: @MainActor (String, String) async throws -> String
 
-    init(terminalRetention: TimeInterval = 10 * 60) {
+    init(
+        terminalRetention: TimeInterval = 10 * 60,
+        baseResolver: @escaping @MainActor (String, String) async throws -> String = {
+            try await GitWorktreeAdd.resolveStartPoint($0, at: $1)
+        }
+    ) {
         self.terminalRetention = terminalRetention
+        self.baseResolver = baseResolver
+    }
+
+    /// Capture explicit refs before acknowledging creation. Concurrent socket
+    /// retries must share the same snapshot while Git resolves the ref.
+    func captureBase(_ base: String?, at path: String, operationID: String) async throws -> String? {
+        guard let base else { return nil }
+        let task: Task<String, Error>
+        if let existing = baseCaptures[operationID] {
+            task = existing
+        } else {
+            task = Task { try await baseResolver(base, path) }
+            baseCaptures[operationID] = task
+        }
+        return try await task.value
+    }
+
+    func discardBaseCapture(operationID: String) {
+        baseCaptures.removeValue(forKey: operationID)
     }
 
     /// The app owns this task independently of the requesting socket or CLI.

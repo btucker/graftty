@@ -59,6 +59,9 @@ public enum WorktreeAgentLaunchCommand {
     ) throws {
         guard let prompt,
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let obsolete = try inbox.worktreePendingMessages(
+            teamID: repo.path, recipientWorktree: worktreePath
+        ).filter { $0.kind == "agent_initial_prompt" && $0.to.runtime == runtime.rawValue }
         try inbox.appendMessage(
             teamID: repo.path,
             teamName: repo.displayName,
@@ -74,6 +77,11 @@ public enum WorktreeAgentLaunchCommand {
 
             \(prompt)
             """
+        )
+        // Commit the replacement before superseding recovery tasks left by a
+        // failed creation. Preserve history and unrelated pending messages.
+        try inbox.acknowledgeMessages(
+            teamID: repo.path, worktree: worktreePath, messageIDs: obsolete.map(\.id)
         )
     }
 

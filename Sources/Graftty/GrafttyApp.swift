@@ -1577,7 +1577,7 @@ struct GrafttyApp: App {
                             guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = message else {
                                 return .error("Expected local worktree creation")
                             }
-                            return Self.beginCLIWorktreeCreation(
+                            return await Self.beginCLIWorktreeCreation(
                                 callerPath: caller, worktreeName: name, branchName: branch,
                                 existing: existing, base: base, command: command,
                                 agentRuntime: runtime, agentPrompt: prompt, operationID: id,
@@ -4084,7 +4084,7 @@ struct GrafttyApp: App {
             let agentPrompt,
             let operationID
         ):
-            return beginCLIWorktreeCreation(
+            return await beginCLIWorktreeCreation(
                 callerPath: callerPath,
                 worktreeName: worktreeName,
                 branchName: branchName,
@@ -4218,11 +4218,12 @@ struct GrafttyApp: App {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         worktreeCreations: CLIWorktreeCreationStore
-    ) -> ResponseMessage {
-        if let operationID,
-           let existing = worktreeCreations.status(operationID: operationID) {
+    ) async -> ResponseMessage {
+        let operationID = operationID ?? UUID().uuidString.lowercased()
+        if let existing = worktreeCreations.status(operationID: operationID) {
             return .worktreeCreate(existing)
         }
+        defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
         if let error = CLIWorktreeCreationPolicy.validationError(
             agentRuntime: agentRuntime,
             teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
@@ -4233,6 +4234,25 @@ struct GrafttyApp: App {
             repo.worktrees.contains(where: { $0.path == callerPath })
         }) else {
             return .error("caller is not inside a tracked worktree")
+        }
+
+        if let error = WorktreeCreationInput.validationError(
+            worktreeName: worktreeName, branchName: branchName, existing: existing, base: base
+        ) {
+            return .error(error)
+        }
+        let resolvedBase: String?
+        do {
+            resolvedBase = try await worktreeCreations.captureBase(
+                base, at: callerPath, operationID: operationID
+            )
+        } catch {
+            return .error("could not resolve worktree base: \(error)")
+        }
+        // Ref resolution suspends this handler. A retry may have completed
+        // the same preparation and started the operation in the meantime.
+        if let retained = worktreeCreations.status(operationID: operationID) {
+            return .worktreeCreate(retained)
         }
 
         if agentPrompt != nil, agentRuntime == nil {
@@ -4311,8 +4331,7 @@ struct GrafttyApp: App {
                 repoPath: repo.path,
                 worktreePath: worktreePath,
                 branch: branch,
-                base: base,
-                baseResolutionPath: callerPath,
+                base: resolvedBase,
                 appState: appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
