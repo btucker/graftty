@@ -89,16 +89,21 @@ public final class SessionClient {
     }
 
     /// Legacy server grid fallback. Ownership snapshots are authoritative
-    /// once received; `.grid` remains a soft fallback while connecting to
-    /// older servers or before the first ownership frame arrives.
+    /// after a display has claimed the session; `.grid` remains the source
+    /// for older servers and sessions whose first ownerless hello only
+    /// echoes the attaching client's dimensions.
     private var legacyServerGrid: GridSize?
 
     public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
 
     public var authoritativeGrid: GridSize? {
         if let installingCheckpointGrid { return installingCheckpointGrid }
-        if let grid = ownershipSnapshot?.grid {
-            return GridSize(cols: grid.cols, rows: grid.rows)
+        if let snapshot = ownershipSnapshot,
+           !snapshot.isOwnerless || snapshot.epoch > 0 {
+            // Before the first claim the store has no display grid. Its
+            // ownerless hello response only echoes this client's viewport.
+            // A preview must await the source's grid or checkpoint instead.
+            return GridSize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
         }
         return legacyServerGrid
     }
@@ -1194,7 +1199,8 @@ public final class SessionClient {
         case .imagePaste:
             break
         case let .grid(cols, rows):
-            if ownershipSnapshot == nil {
+            if ownershipSnapshot == nil
+                || (ownershipSnapshot?.isOwnerless == true && ownershipSnapshot?.epoch == 0) {
                 legacyServerGrid = GridSize(cols: cols, rows: rows)
             }
         case .resize:

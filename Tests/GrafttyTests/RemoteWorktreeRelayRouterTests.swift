@@ -8,6 +8,60 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.26: When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.")
+    func ownerlessRelayHelloDoesNotOverrideSourceGrid() async throws {
+        let client = RelayWebSocketClient()
+        let stream = RelayedTerminalByteStream(client: client)
+        let sizes = LockedRelaySizes()
+        stream.onPTYSize = { sizes.append(cols: $0, rows: $1) }
+        let snapshot = try DisplayOwnershipSnapshot(sessionName: "session", ownerClientID: nil,
+            ownerKind: nil, grid: DisplayGrid(cols: 80, rows: 24), epoch: 0, revision: 0)
+        let echoedHello = WebControlEnvelope.ownership(snapshot).encoded()
+        client.deliver(.text(echoedHello))
+        client.deliver(.text(WebControlEnvelope.grid(cols: 120, rows: 67).encoded()))
+        client.deliver(.text(echoedHello))
+        client.deliver(.binary(Data("replay".utf8)))
+        var output = stream.inboundBytes.makeAsyncIterator()
+        #expect(await output.next() == Data("replay".utf8))
+        #expect(sizes.values() == [RelaySize(cols: 120, rows: 67)])
+        await stream.close()
+    }
+
+    @Test("@spec REMOTE-13.25: While a mobile client follows a pane through one intermediary Mac, the application shall relay current-screen checkpoints with their source grid, live bytes, and history pages in order, and forward history and checkpoint requests to the source Mac.")
+    func pagedRelayPreservesSourceGridAndEventOrder() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 2, cols: 120, rows: 67,
+            ready: Data("ready".utf8), hasPrimaryHistory: true, hasAlternateHistory: false)
+        let page = PagedTerminalPage(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0,
+            screen: 0, data: Data("history".utf8), complete: true)
+        let expected: [PagedTerminalEvent] = [.checkpoint(checkpoint), .output(Data("live".utf8)),
+            .grid(cols: 121, rows: 68), .page(page)]
+        let collected = Task {
+            var values: [PagedTerminalEvent] = []
+            for await event in stream.events {
+                values.append(event)
+                if values.count == expected.count { break }
+            }
+            return values
+        }
+        for event in expected {
+            if case .output(let data) = event { client.deliver(.binary(data)) }
+            else { client.deliver(.text(try PagedTerminalEnvelope(event: event).encoded())) }
+        }
+        #expect(await collected.value == expected)
+        let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
+        try await stream.requestHistory(request)
+        try await stream.requestCheckpoint()
+        let requests = try client.sentFrames().map { frame -> PagedTerminalRequest? in
+            guard case .text(let text) = frame else { return nil }
+            return try PagedTerminalEnvelope.parse(text).request
+        }
+        #expect(requests == [.history(request), .checkpoint])
+        await stream.close()
+    }
+
     @Test("@spec REMOTE-14.5: When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.")
     func legacySidebarIdentitySurvivesRelay() throws {
         let remote = try makeRemoteMac()
@@ -477,6 +531,7 @@ private final class RelayWebSocketClient:
     WebSocketClient,
     @unchecked Sendable {
     let supportsWebControlTextFrames = true
+    var supportsPagedHistory = false
     private let lock = NSLock()
     private var frames: [WebSocketFrame] = []
     private var receiveWaiters:
@@ -484,8 +539,10 @@ private final class RelayWebSocketClient:
     private var helloID: DisplayClientID?
     private var recordedTakeControls: [RelayTakeControl] = []
     private var recordedOwnerResizes: [RelayOwnerResize] = []
+    private var sent: [WebSocketFrame] = []
 
-    func send(_ frame: WebSocketFrame) async throws {}
+    func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
+    func sentFrames() -> [WebSocketFrame] { lock.withLock { sent } }
 
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in

@@ -3,6 +3,7 @@ import Foundation
 import GhosttyTerminal
 import Testing
 import UIKit
+import SwiftUI
 @testable import GrafttyMobileKit
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -10,6 +11,59 @@ import GrafttyRemoteClient
 @Suite
 @MainActor
 struct SessionClientTests {
+    @Test("@spec IOS-5.9: When a mobile preview receives an ownerless ownership snapshot before any display has claimed the session, the application shall wait for the source grid before parsing replay instead of using the preview's echoed hello dimensions.")
+    func ownerlessHelloGridDoesNotSizeReplay() async throws {
+        let snapshot = try ownershipSnapshot(ownerClientID: nil, ownerKind: nil, cols: 108, rows: 177, epoch: 0)
+        let ws = ImmediateReplayWS(frames: [
+            .text(WebControlEnvelope.ownership(snapshot).encoded()),
+            .binary(Data("\u{1b}[2J\u{1b}[H\u{1b}[1;120HR\u{1b}[2;1Hnext row".utf8)),
+            .text(WebControlEnvelope.grid(cols: 120, rows: 67).encoded())])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
+        let pane = RetainedMobilePane(client: client)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 187, height: 700))
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.terminalView.controller = MobileTerminalControllerFactory.makePreview(configText: "", fontSize: 3.7)
+        container.terminalView.configuration = .init(backend: .inMemory(client.session))
+        window.rootViewController!.view.addSubview(container)
+        container.layoutIfNeeded()
+        pane.container = container
+        pane.start()
+        defer { pane.stop(); window.isHidden = true }
+        try await waitUntil("source-sized replay") { client.session.readViewportText()?.contains("next row") == true }
+        #expect(client.authoritativeGrid == .init(cols: 120, rows: 67))
+        #expect(client.session.readViewportText()?.hasPrefix(String(repeating: " ", count: 119) + "R\nnext row") == true)
+    }
+
+    @Test("@spec IOS-5.8: While a mobile follower is displayed in a worktree preview tile, the application shall preserve full-width replay lines and soft wraps at the leader's grid throughout SwiftUI mounting and layout.", arguments: [80, 91, 120])
+    func previewReplayPreservesFullWidthRows(columns: Int) async throws {
+        let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: UInt16(columns), rows: 50)
+        let lines = (0..<30).map { String(format: "row %02d ", $0) + String(repeating: "abcdefghijklmnopqrstuvwxyz", count: 12).prefix(columns - 7) }
+        let wrappedLine = String(repeating: "abcdefghijklmnopqrstuvwxyz", count: 15).prefix(columns * 2 + 11)
+        let text = lines.joined(separator: "\r\n") + "\r\n" + wrappedLine + "\r\nEND"
+        let ws = ImmediateReplayWS(frames: [.text(WebControlEnvelope.ownership(snapshot).encoded()), .binary(Data("\u{1b}[2J\u{1b}[H\(text)".utf8))])
+        let client = SessionClient(sessionName: "left", webSocketFactory: { ws }, role: .preview)
+        let layout = PaneLayoutNode.split(direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "left", title: "Replay", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "right", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let host = UIHostingController(rootView: PaneLayoutView(layout: layout, baseConfig: "font-size = 11", previewClient: { $0 == "left" ? client : nil }, onSelect: { _ in }))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        client.start()
+        defer { client.stop(); window.isHidden = true }
+        try await waitUntil("preview replay", timeout: .seconds(8)) { client.session.readViewportText()?.contains("END") == true }
+        let actual = client.session.readViewportText() ?? "nil"
+        #expect(actual.hasPrefix(lines.joined(separator: "\n") + "\n" + wrappedLine + "\nEND"), "Preview replay: \(actual.debugDescription)")
+        func containers(_ view: UIView) -> [TerminalInputContainerView] {
+            (view as? TerminalInputContainerView).map { [$0] } ?? view.subviews.flatMap(containers)
+        }
+        let container = try #require(containers(host.view).first)
+        #expect(container.terminalGridMetrics?.columns == UInt16(columns))
+        #expect(container.terminalGridMetrics?.rows == 50)
+    }
+
     @Test("@spec IOS-5.7: When a non-paged mobile follower attaches or receives an authoritative grid change, the application shall apply the leader's columns and rows before parsing replay or live output.", arguments: [false, true], [390.0, 1024.0])
     func nonPagedReplayWaitsForAuthoritativeGrid(replayBeforeGrid: Bool, width: Double) async throws {
         let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: 120, rows: 50)

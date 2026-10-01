@@ -413,9 +413,12 @@ final class RelayedTerminalByteStream:
     GrafttyKit.TerminalSizeReporting,
     @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
+    fileprivate let pagedEvents: AsyncStream<PagedTerminalEvent>
 
     private let client: any WebSocketClient & Sendable
     private let continuation: AsyncStream<Data>.Continuation
+    private let pagedContinuation: AsyncStream<PagedTerminalEvent>.Continuation
+    private let paged: Bool
     private let lock = NSLock()
     private var receiveTask: Task<Void, Never>?
     private var closed = false
@@ -440,8 +443,12 @@ final class RelayedTerminalByteStream:
         }
     }
 
-    init(client: any WebSocketClient & Sendable) {
+    init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
+        self.paged = paged
+        let events = AsyncStream<PagedTerminalEvent>.makeStream()
+        self.pagedEvents = events.stream
+        self.pagedContinuation = events.continuation
         var continuation: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { continuation = $0 }
         self.continuation = continuation
@@ -459,14 +466,23 @@ final class RelayedTerminalByteStream:
                 do {
                     switch try await client.receive() {
                     case .binary(let data) where !data.isEmpty:
-                        self.continuation.yield(data)
+                        if paged { self.pagedContinuation.yield(.output(data)) }
+                        else { self.continuation.yield(data) }
                     case .text(let text):
-                        self.handleTextFrame(text)
+                        if paged, let event = try? PagedTerminalEnvelope.parse(text).event {
+                            self.pagedContinuation.yield(event)
+                        } else {
+                            self.handleTextFrame(text)
+                        }
                     case .binary:
                         break
                     }
                 } catch {
+                    if paged, case TerminalSessionClient.ClientError.sessionEnded(let status) = error {
+                        self.pagedContinuation.yield(.ended(Int32(clamping: status)))
+                    }
                     self.continuation.finish()
+                    self.pagedContinuation.finish()
                     return
                 }
             }
@@ -560,6 +576,9 @@ final class RelayedTerminalByteStream:
             ownershipSnapshot = snapshot
             claimedControl = snapshot.ownerClientID == displayClientID
                 && snapshot.ownerKind == .mac
+            // An ownerless epoch-zero greeting echoes our hello dimensions;
+            // only the source's grid or a claimed display can size followers.
+            guard !snapshot.isOwnerless || snapshot.epoch > 0 else { return nil }
             let size = (snapshot.grid.cols, snapshot.grid.rows)
             let changed = latestPTYSize?.cols != size.0
                 || latestPTYSize?.rows != size.1
@@ -592,6 +611,12 @@ final class RelayedTerminalByteStream:
         task?.cancel()
         client.close()
         continuation.finish()
+        pagedContinuation.finish()
+    }
+
+    fileprivate func request(_ request: PagedTerminalRequest) async throws {
+        guard lock.withLock({ !closed }) else { throw CancellationError() }
+        try await client.send(.text(try PagedTerminalEnvelope(request: request).encoded()))
     }
 
     private func claimControlIfNeededLocked() -> Bool {
@@ -599,4 +624,27 @@ final class RelayedTerminalByteStream:
         claimedControl = true
         return true
     }
+}
+
+/// Keeps snapshot dimensions and history framing intact across the hop.
+/// A separate wrapper lets legacy attachments retain their byte-stream contract.
+final class RelayedPagedTerminalStream: GrafttyKit.PagedTerminalStream, GrafttyKit.TerminalSizeReporting, @unchecked Sendable {
+    var events: AsyncStream<PagedTerminalEvent> { stream.pagedEvents }
+    private let stream: RelayedTerminalByteStream
+    var onPTYSize: ((UInt16, UInt16) -> Void)? {
+        get { stream.onPTYSize }
+        set { stream.onPTYSize = newValue }
+    }
+    init(client: any WebSocketClient & Sendable) throws {
+        guard client.supportsPagedHistory else {
+            client.close()
+            throw PagedZmxAttachEngine.Error.unsupported
+        }
+        stream = RelayedTerminalByteStream(client: client, paged: true)
+    }
+    func send(_ bytes: Data) async throws { try await stream.send(bytes) }
+    func resize(cols: Int, rows: Int) async { await stream.resize(cols: cols, rows: rows) }
+    func close() async { await stream.close() }
+    func requestHistory(_ request: PagedTerminalHistoryRequest) async throws { try await stream.request(.history(request)) }
+    func requestCheckpoint() async throws { try await stream.request(.checkpoint) }
 }

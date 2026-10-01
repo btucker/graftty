@@ -1770,6 +1770,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-5.7** When a non-paged mobile follower attaches or receives an authoritative grid change, the application shall apply the leader's columns and rows before parsing replay or live output.
 
+**IOS-5.8** While a mobile follower is displayed in a worktree preview tile, the application shall preserve full-width replay lines and soft wraps at the leader's grid throughout SwiftUI mounting and layout.
+
+**IOS-5.9** When a mobile preview receives an ownerless ownership snapshot before any display has claimed the session, the application shall wait for the source grid before parsing replay instead of using the preview's echoed hello dimensions.
+
 ### IOS-6.x — Input
 
 **IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl state.
@@ -2548,6 +2552,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.9** When SSH terminal output accumulates before a receiver drains it, the application shall combine consecutive binary frames into batches of at most 256 KiB, preserve every byte and control-frame ordering, and deliver available output without waiting for more frames.
 
+**REMOTE-9.10** When an SSH attachment reports its source grid, the host shall not replace that grid with the attaching client's initial PTY request.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -2669,6 +2675,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.23** Remote resize requests shall carry the viewing window's axis extent so the owning Mac applies the same ratio change as a local worktree, while hosts shall still decode legacy requests that omit that optional extent.
 
 **REMOTE-13.24** While GrafttyMobile views a paired Mac, the application shall show each saved downstream Mac's connection state and allow an unavailable downstream Mac to reconnect from the mobile list.
+
+**REMOTE-13.25** While a mobile client follows a pane through one intermediary Mac, the application shall relay current-screen checkpoints with their source grid, live bytes, and history pages in order, and forward history and checkpoint requests to the source Mac.
+
+**REMOTE-13.26** When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.
 
 ### REMOTE-14.x — Shared project navigation
 
