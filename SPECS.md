@@ -208,7 +208,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.89** While the project worktree list scrolls, the application shall keep Add Worktree fixed above the list for the selected editable project.
 
-**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the search area, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
+**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
 
 **LAYOUT-2.91** When an Attention banner is clicked, the application shall select its worktree, switch to the Needs You queue, and retain the existing queue order.
 

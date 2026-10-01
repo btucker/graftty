@@ -264,33 +264,13 @@ struct SidebarView: View {
                 }
                 if navigation.showsAttention {
                     SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
-                                         selectionColor: theme.foreground.opacity(0.16),
+                                         selectionColor: theme.foreground.opacity(0.16), showsSearchField: false,
                                          isCurrentWorktree: isCurrentAttentionWorktree) { item in
                         let opened = await onOpenAttention(item)
                         if !opened { navigationError = "This target is unavailable or its request has changed." }
                         return opened
                     }
                 } else {
-                    TextField("Find any project or worktree", text: $navigation.query)
-                        .textFieldStyle(.roundedBorder).padding(10)
-                        .frame(minHeight: 62)
-                        .overlay(alignment: .top) {
-                            if let item = navigation.attentionBanner {
-                                SidebarAttentionBanner(item: item, onOpen: {
-                                    onNavigationIntent()
-                                    let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
-                                    Task {
-                                        let opened = await onOpenAttention(item)
-                                        navigation.finishOpening(visit, succeeded: opened)
-                                        if !opened { navigationError = "This target is unavailable or its request has changed." }
-                                    }
-                                }, onDismiss: { navigation.dismissAttentionBanner(item) })
-                                .padding(.horizontal, 6).padding(.top, 4)
-                                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                            }
-                        }
-                        .clipped()
-                        .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail {
@@ -309,6 +289,25 @@ struct SidebarView: View {
                             }
                         }
                     }
+                    // LAYOUT-2.90: the banner slides over the top of the list
+                    // (search lives in the toolbar, so there is no search row).
+                    .overlay(alignment: .top) {
+                        if let item = navigation.attentionBanner {
+                            SidebarAttentionBanner(item: item, onOpen: {
+                                onNavigationIntent()
+                                let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
+                                Task {
+                                    let opened = await onOpenAttention(item)
+                                    navigation.finishOpening(visit, succeeded: opened)
+                                    if !opened { navigationError = "This target is unavailable or its request has changed." }
+                                }
+                            }, onDismiss: { navigation.dismissAttentionBanner(item) })
+                            .padding(.horizontal, 6).padding(.top, 4)
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .clipped()
+                    .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                 }
                 if !showsProjectRail {
                     Divider()
@@ -326,6 +325,9 @@ struct SidebarView: View {
                 }
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
+        // The one search box for both the worktree list and Attention; it
+        // sits in the toolbar row beside the sidebar toggle.
+        .searchable(text: $navigation.query, placement: .sidebar, prompt: Text("Find any project or worktree"))
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
