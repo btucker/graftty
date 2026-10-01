@@ -770,6 +770,7 @@ struct SidebarView: View {
                 repoID: repo.id,
                 worktreeID: worktree.id,
                 appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
+                onSelect: { onSelect(worktree.path) },
                 onMovePane: onMovePane,
                 onPaneTargeted: { targeted in
                     if targeted { dropTargetWorktreeID = worktree.id }

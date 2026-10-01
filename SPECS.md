@@ -226,6 +226,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.99** When the native macOS emoji palette inserts text into the worktree identity capture, the application shall deliver only the first insertion and release the capture responder.
 
+**LAYOUT-2.100** When a user drags a worktree heading, the application shall begin an AppKit drag session whose pasteboard payload the worktree row drop destination decodes as that worktree move.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

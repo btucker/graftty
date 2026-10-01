@@ -141,14 +141,15 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Drag source + drop target for one worktree heading. The drag uses the
-/// system default preview (the heading itself): a custom preview closure
-/// kept the drag session from ever starting on the project column.
+/// Drag source + drop target for one worktree heading. The source is an
+/// AppKit overlay (`WorktreeDragSourceOverlay`) because SwiftUI's
+/// `.draggable` never began a session for these rows on the project column.
 struct WorktreeReorderTarget: ViewModifier {
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
     @Binding var appState: AppState
     var isEnabled: Bool = true
+    let onSelect: () -> Void
     let onMovePane: (PaneSlotID, String) -> Void
     let onPaneTargeted: (Bool) -> Void
     @State private var rowHeight: CGFloat = 28
@@ -164,7 +165,10 @@ struct WorktreeReorderTarget: ViewModifier {
     }
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
-        if canDrag { content.draggable(TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID)) }
+        if canDrag {
+            content.overlay(WorktreeDragSourceOverlay(
+                payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID), onClick: onSelect))
+        }
         else { content }
     }
 
@@ -193,12 +197,13 @@ extension View {
         worktreeID: WorktreeEntry.ID,
         appState: Binding<AppState>,
         isEnabled: Bool = true,
+        onSelect: @escaping () -> Void,
         onMovePane: @escaping (PaneSlotID, String) -> Void,
         onPaneTargeted: @escaping (Bool) -> Void
     ) -> some View {
         modifier(WorktreeReorderTarget(
             repoID: repoID, worktreeID: worktreeID,
-            appState: appState, isEnabled: isEnabled,
+            appState: appState, isEnabled: isEnabled, onSelect: onSelect,
             onMovePane: onMovePane, onPaneTargeted: onPaneTargeted
         ))
     }
