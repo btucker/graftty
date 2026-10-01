@@ -10,6 +10,46 @@ import GrafttyRemoteClient
 @Suite
 @MainActor
 struct SessionClientTests {
+    @Test("@spec IOS-5.7: When a non-paged mobile follower attaches or receives an authoritative grid change, the application shall apply the leader's columns and rows before parsing replay or live output.", arguments: [false, true], [390.0, 1024.0])
+    func nonPagedReplayWaitsForAuthoritativeGrid(replayBeforeGrid: Bool, width: Double) async throws {
+        let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: 120, rows: 50)
+        let line = String(repeating: " ", count: 119) + "R"
+        let grid = WebSocketFrame.text(WebControlEnvelope.ownership(snapshot).encoded())
+        let output = WebSocketFrame.binary(Data("\u{1b}[2J\u{1b}[H\u{1b}[1;120HR\u{1b}[2;1Hnext row".utf8))
+        let ws = ImmediateReplayWS(frames: replayBeforeGrid ? [output, grid] : [grid, output])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        let pane = RetainedMobilePane(client: client)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 11")
+        container.terminalView.configuration = .init(backend: .inMemory(client.session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        pane.container = container
+        defer { pane.stop(); container.removeFromSuperview(); window.isHidden = true }
+        pane.start()
+        try await waitUntil("replayed output") { client.session.readViewportText()?.contains("next row") == true }
+        try await waitUntil("authoritative layout") { container.terminalGridMetrics?.columns == 120 }
+        #expect(client.session.readViewportText()?.hasPrefix(line + "\nnext row") == true,
+                "Replay must position R in the leader's last column: \(client.session.readViewportText()?.debugDescription ?? "nil")")
+    }
+
+    final class ImmediateReplayWS: WebSocketClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var frames: [WebSocketFrame]
+        var supportsWebControlTextFrames: Bool { true }
+        init(frames: [WebSocketFrame]) { self.frames = frames }
+        func receive() async throws -> WebSocketFrame {
+            if let frame = lock.withLock({ frames.isEmpty ? nil : frames.removeFirst() }) { return frame }
+            try await Task.sleep(for: .seconds(10))
+            throw CancellationError()
+        }
+        func send(_ frame: WebSocketFrame) async throws {}
+        func close() {}
+    }
 
     @Test("Cached panes retain ownership and render output while detached")
     func retainedPaneKeepsRendererAndOwnership() async throws {
@@ -355,7 +395,9 @@ struct SessionClientTests {
         #expect(replay.prepare(payload) == payload)
     }
 
-    @Test("@spec IOS-7.8: When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.")
+    @Test("""
+@spec IOS-7.8: When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.
+""")
     func failedReplayClosesChannelBeforeReconnect() async throws {
         let first = DelayedReceiveWS(paged: true)
         let client = SessionClient(sessionName: "s", webSocketFactory: { first }, pagedRenderer: PagingRenderer())
@@ -389,6 +431,27 @@ struct SessionClientTests {
             return .applied
         }
         func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool { nearTop && screen == 0 }
+    }
+
+    @Test("Non-paged output waits for grid readiness and a suspended attachment cannot resume parsing")
+    func suspendedNonPagedGridWaitDoesNotReadMoreOutput() async throws {
+        let ws = DelayedReceiveWS()
+        let renderer = PagingRenderer()
+        renderer.holdResize = true
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, pagedRenderer: renderer)
+        client.start()
+        defer { client.stop(); ws.fail(CancellationError()) }
+        try await waitUntil("initial receive") { ws.receiveCalls == 1 }
+        let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac, cols: 120, rows: 50)
+        ws.deliver(.text(WebControlEnvelope.ownership(snapshot).encoded()))
+        try await waitUntil("receive after ownership announcement") { ws.receiveCalls == 2 }
+        ws.deliver(.binary(Data("replay".utf8)))
+        try await waitUntil("native grid wait") { renderer.resizeContinuation != nil }
+        #expect(ws.receiveCalls == 2)
+        client.suspend()
+        renderer.resizeContinuation?.resume()
+        try await waitUntil("resize completion") { !renderer.resized.isEmpty }
+        #expect(ws.receiveCalls == 2)
     }
 
     @Test("""

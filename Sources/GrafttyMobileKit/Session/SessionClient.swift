@@ -77,6 +77,8 @@ public final class SessionClient {
     private var snapshotGrid: GridSize?
     private var usesPagedHistory = false
     private var hasPagedCheckpoint = false
+    private var terminalRenderer: (any PagedTerminalRenderer)?
+    private var nativeGrid: GridSize?
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -350,12 +352,16 @@ public final class SessionClient {
                 self?.handleViewport(viewport)
             }
         }
+        let renderer = pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
+            self?.additionalHistoryRowCapacity?() ?? 0
+        }, gridMatches: { [weak self] cols, rows in
+            self?.nativeGrid == GridSize(cols: cols, rows: rows)
+        }) { [weak self] cols, rows in
+            self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
+        }
+        terminalRenderer = renderer
         paging = PagedTerminalCoordinator(
-            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
-                self?.additionalHistoryRowCapacity?() ?? 0
-            }) { [weak self] cols, rows in
-                self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
-            },
+            renderer: renderer,
             send: { [weak self] request in
                 guard let self, self.usesPagedHistory, let ws = self.currentWS() else {
                     throw URLError(.notConnectedToInternet)
@@ -379,6 +385,7 @@ public final class SessionClient {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
+        nativeGrid = GridSize(cols: cols, rows: rows)
         guard snapshotCanvasGrid == nil,
               !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)
@@ -448,6 +455,7 @@ public final class SessionClient {
                     guard let ws = self.currentWS() else {
                         throw URLError(.cannotConnectToHost)
                     }
+                    var initialReplay = Data()
                     while self.isCurrentTransport(generation) {
                         let frame = try await ws.receive()
                         // A transport implementation may park in a checked
@@ -465,8 +473,21 @@ public final class SessionClient {
                             guard !self.usesPagedHistory || self.hasPagedCheckpoint else {
                                 throw URLError(.badServerResponse)
                             }
-                            if !self.usesPagedHistory { self.snapshotGrid = nil }
-                            self.session.receive(self.usesPagedHistory ? data : self.terminalReplay.prepare(data))
+                            if !self.usesPagedHistory {
+                                // SSH can deliver attach output before the hello
+                                // response announces its grid. Keep reading control
+                                // frames without parsing that replay at phone width.
+                                if self.ownershipTransportMode == .webControl, self.authoritativeGrid == nil {
+                                    guard data.count <= 16 * 1024 * 1024 - initialReplay.count else {
+                                        throw URLError(.dataLengthExceedsMaximum)
+                                    }
+                                    initialReplay.append(data)
+                                    continue
+                                }
+                                guard try await self.receiveNonPagedOutput(data, generation: generation) else { return }
+                            } else {
+                                self.session.receive(data)
+                            }
                         case .text(let text):
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
@@ -483,6 +504,10 @@ public final class SessionClient {
                                 self.installingCheckpointGrid = nil
                             } else {
                                 self.handleTextFrame(text)
+                                if !initialReplay.isEmpty, self.authoritativeGrid != nil {
+                                    guard try await self.receiveNonPagedOutput(initialReplay, generation: generation) else { return }
+                                    initialReplay.removeAll()
+                                }
                             }
                         }
                     }
@@ -537,6 +562,20 @@ public final class SessionClient {
         !stopped && transportGeneration == generation
     }
 
+    private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
+        snapshotGrid = nil
+        if let grid = snapshotCanvasGrid, nativeGrid != grid {
+            // Observation schedules layout for a later turn. Await the native
+            // grid before parsing cursor commands or wrapping incoming output.
+            try await terminalRenderer?.resize(cols: grid.cols, rows: grid.rows)
+            guard isCurrentTransport(generation) else { return false }
+            installingCheckpointGrid = nil
+        }
+        guard isCurrentTransport(generation) else { return false }
+        session.receive(terminalReplay.prepare(data))
+        return true
+    }
+
     private nonisolated static func isTerminalSessionEnded(_ error: any Error) -> Bool {
         guard let error = error as? TerminalSessionClient.ClientError else {
             return false
@@ -569,6 +608,7 @@ public final class SessionClient {
                 }
                 self.displayClientID = Self.makeDisplayClientID()
                 self.ownershipSnapshot = nil
+                self.legacyServerGrid = nil
                 self.legacyEngaged = false
                 self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
