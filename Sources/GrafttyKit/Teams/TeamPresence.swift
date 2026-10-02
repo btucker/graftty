@@ -357,6 +357,20 @@ public final class TeamPresenceIndex: @unchecked Sendable {
 /// where the trap never fires and a presence file would otherwise
 /// linger across the dead PID's lifetime.
 public enum TeamPresenceMonitor {
+    /// Complete the periodic disk-backed sweep on the I/O queue. The caller
+    /// applies the returned records to main-actor delivery state.
+    public static func sweep(
+        storage: TeamPresenceStorage,
+        isAlive: @escaping @Sendable (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
+    ) async -> [TeamPresenceRecord] {
+        await OffMainIO.run {
+            cleanupStale(storage: storage, isAlive: isAlive, eventLog: eventLog)
+            CodexAppServerSessionMonitor.cleanupOrphans(storage: .init(rootDirectory: storage.rootDirectory))
+            return (try? storage.listAll()) ?? []
+        }
+    }
+
     public static func cleanupStale(
         storage: TeamPresenceStorage,
         isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },

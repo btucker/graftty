@@ -2254,6 +2254,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.17** When a wrapped Codex TUI exits unsuccessfully, the application shall preserve its app-server log and report its path while preserving the TUI exit status; when it exits successfully, the application shall remove the log.
 
+**TEAM-10.18** When the periodic presence sweep runs, the application shall clean stale presence and orphaned app-server records and load the remaining presence records off the main thread before updating delivery liveness.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
@@ -3055,6 +3057,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
 
 **PORTS-4.5** When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
+
+**PORTS-4.6** When the port scanner resolves a pending pane's shell PID, the application shall read and parse zmx logs off the main thread.
+
+**PORTS-4.7** While a zmx log remains cached and unchanged, the application shall reuse its unsuccessful PID lookup; when the log is appended, replaced, truncated, or created, the application shall retry resolution, including the rotated log fallback.
+
+**PORTS-4.8** When a pane is unregistered or registered again while its shell PID lookup is in flight, the application shall discard the earlier lookup result.
+
+**PORTS-4.9** When a background port-scan PID lookup finishes after its pane is evicted or remapped to another session, the application shall discard the earlier result.
 
 ## PROJECT — PROJECT
 

@@ -1243,7 +1243,7 @@ struct GrafttyApp: App {
             // spawned` log line need their PID resolved later.
             // `[weak]` breaks the cycle through TerminalManager.portScanner.
             await portScanner.setPIDResolver { [weak tmRef = tmRef] id in
-                await tmRef?.lookupShellPID(for: id)
+                await tmRef?.lookupShellPIDForPortScan(for: id)
             }
         }
 
@@ -1927,11 +1927,8 @@ struct GrafttyApp: App {
             replyBridge: claudeReplyBridge
         )
         presenceTicker.start {
-            TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
-            CodexAppServerSessionMonitor.cleanupOrphans(storage: CodexAppServerSessionStorage(
-                rootDirectory: TeamPresenceStorage.defaultRoot()
-            ))
-            let records = refreshPresenceIndex()
+            let records = await TeamPresenceMonitor.sweep(storage: presenceStorage)
+            presenceIndex.replace(with: records)
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             await Self.retryNativeDeliveryForPresenceWorktrees(

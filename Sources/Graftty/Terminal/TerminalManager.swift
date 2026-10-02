@@ -182,6 +182,8 @@ final class TerminalManager: ObservableObject {
     // Daemon logs outlive their shells. Do not reload a known-dead PID while
     // an asynchronous replacement is starting and has not written its log yet.
     private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
+    var portScanPIDResolver = ZmxPIDResolver()
+    private var portScanPIDLookupGenerations: [PaneSlotID: UUID] = [:]
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -467,6 +469,30 @@ final class TerminalManager: ObservableObject {
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
         ) else { return nil }
+        return cacheShellPID(pid, for: id)
+    }
+
+    /// Snapshot pane identity on the main actor, then resolve logs in the
+    /// background. A closed or remapped pane cannot accept an earlier result.
+    func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
+        if let cached = cachedShellPIDs[id] { return cached }
+        guard let launcher = zmxLauncher, let sessionName = zmxSessionName(for: id) else { return nil }
+        let generation = portScanPIDLookupGenerations[id] ?? UUID()
+        portScanPIDLookupGenerations[id] = generation
+        let logFile = await OffMainIO.run {
+            launcher.isAvailable ? launcher.logFile(forSession: sessionName) : nil
+        }
+        guard let logFile,
+              let pid = await portScanPIDResolver.shellPID(
+                logFile: logFile, sessionName: sessionName
+              ),
+              portScanPIDLookupGenerations[id] == generation,
+              zmxLauncher === launcher, zmxSessionName(for: id) == sessionName else { return nil }
+        if let cached = cachedShellPIDs[id] { return cached }
+        return cacheShellPID(pid, for: id)
+    }
+
+    private func cacheShellPID(_ pid: Int32, for id: PaneSlotID) -> pid_t? {
         guard obsoleteShellPIDs[id] != pid else { return nil }
         obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
@@ -694,9 +720,11 @@ final class TerminalManager: ObservableObject {
     /// can transiently return nil. Register as pending in that case so
     /// the scanner re-attempts resolution on each tick — otherwise the
     /// pane silently never gets scanned and chips never appear.
+    /// Surface creation uses only cached PIDs; pending lookups read logs in
+    /// the background on the next scan tick.
     func registerForPortScan(_ terminalID: PaneSlotID) {
         guard let scanner = portScanner else { return }
-        if let pid = lookupShellPID(for: terminalID) {
+        if let pid = cachedShellPIDs[terminalID] {
             Task { await scanner.registerPane(terminalID, shellPID: pid) }
         } else {
             Task { await scanner.registerPanePending(terminalID) }
@@ -735,6 +763,7 @@ final class TerminalManager: ObservableObject {
             missing = launcher.isSessionMissing(name)
         }
         if missing {
+            portScanPIDLookupGenerations[terminalID] = nil
             // Prefer the newest spawn in the log over a possibly older cache.
             if let previousPID = ZmxPIDLookup.shellPID(
                 logFile: launcher.logFile(forSession: name), sessionName: name
@@ -757,6 +786,7 @@ final class TerminalManager: ObservableObject {
     /// lifecycle labels (firstPaneMarkers, rehydratedSurfaces) outlive
     /// this and are cleaned up separately in `forgetTrackingState`.
     private func forgetSurfaceRuntimeState(for terminalID: PaneSlotID) {
+        portScanPIDLookupGenerations[terminalID] = nil
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
@@ -935,6 +965,7 @@ final class TerminalManager: ObservableObject {
         guard shellReadyFired.insert(terminalID).inserted else { return }
         // Readiness proves a new shell exists, even if its PID was reused.
         if obsoleteShellPIDs.removeValue(forKey: terminalID) != nil {
+            portScanPIDLookupGenerations[terminalID] = nil
             cachedShellPIDs[terminalID] = nil
         }
         if let input = pendingShellReadyInitialInput[terminalID] {
@@ -1125,6 +1156,7 @@ final class TerminalManager: ObservableObject {
     /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
     func evictSurface(terminalID: PaneSlotID, forRetry: Bool = false) {
+        portScanPIDLookupGenerations[terminalID] = nil
         if let handle = surfaces.removeValue(forKey: terminalID) {
             let size = GridSize(handle.queryGridSize())
             if size.cols > 0 && size.rows > 0 {
@@ -1245,6 +1277,11 @@ final class TerminalManager: ObservableObject {
         for terminalID: PaneSlotID,
         worktreePath: String? = nil
     ) {
+        portScanPIDLookupGenerations[terminalID] = nil
+        if paneSessionIDs[terminalID] != paneSessionID {
+            cachedShellPIDs[terminalID] = nil
+            obsoleteShellPIDs[terminalID] = nil
+        }
         forgetPaneSession(for: terminalID)
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID

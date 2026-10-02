@@ -21,6 +21,30 @@ struct StubProcessTreeWalker: ProcessTreeWalking {
 
 @Suite("PortScanner")
 struct PortScannerTests {
+    @Test("@spec PORTS-4.8: When a pane is unregistered or registered again while its shell PID lookup is in flight, the application shall discard the earlier lookup result.", arguments: [false, true])
+    func ignoresLookupAfterUnregister(registerAgain: Bool) async {
+        actor Calls {
+            var count = 0
+            func next() -> Int { count += 1; return count }
+        }
+        let calls = Calls()
+        let runner = StubLsofRunner(output: "")
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        let id = PaneSlotID()
+        await scanner.setPIDResolver { [weak scanner] id in
+            if await calls.next() == 1 {
+                await scanner?.unregisterPane(id)
+                if registerAgain { await scanner?.registerPanePending(id) }
+            }
+            return 1234
+        }
+        await scanner.registerPanePending(id)
+        await scanner.tick()
+        #expect(await runner.calls.isEmpty)
+        await scanner.tick()
+        #expect(await runner.calls.count == (registerAgain ? 1 : 0))
+    }
+
     @Test("""
 @spec PORTS-4.1: Registered pane with no listeners produces empty bindings
 """)

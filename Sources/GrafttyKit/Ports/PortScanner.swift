@@ -11,7 +11,7 @@ public actor PortScanner {
     private let runner: LsofRunner
     private let walker: any ProcessTreeWalking
     private var registrations: [PaneSlotID: pid_t] = [:]
-    private var pending: Set<PaneSlotID> = []
+    private var pending: [PaneSlotID: UUID] = [:]
     private var snapshots: [PaneSlotID: [PortBinding]] = [:]
     private var inFlight = false
     private let log = Logger(subsystem: "com.btucker.graftty", category: "PortScanner")
@@ -39,7 +39,7 @@ public actor PortScanner {
     }
 
     public func registerPane(_ id: PaneSlotID, shellPID: pid_t) {
-        pending.remove(id)
+        pending.removeValue(forKey: id)
         registrations[id] = shellPID
     }
 
@@ -48,12 +48,12 @@ public actor PortScanner {
     /// The scanner re-attempts resolution via `pidResolver` on each tick
     /// and promotes the pane to a normal registration once it succeeds.
     public func registerPanePending(_ id: PaneSlotID) {
-        guard registrations[id] == nil else { return }
-        pending.insert(id)
+        guard registrations[id] == nil, pending[id] == nil else { return }
+        pending[id] = UUID()
     }
 
     public func unregisterPane(_ id: PaneSlotID) {
-        pending.remove(id)
+        pending.removeValue(forKey: id)
         registrations.removeValue(forKey: id)
         if snapshots.removeValue(forKey: id) != nil {
             let onChange = self.onChange
@@ -71,9 +71,9 @@ public actor PortScanner {
         defer { inFlight = false }
 
         if let resolver = pidResolver, !pending.isEmpty {
-            for id in pending {
-                if let pid = await resolver(id) {
-                    pending.remove(id)
+            for (id, generation) in pending {
+                if let pid = await resolver(id), pending[id] == generation {
+                    pending.removeValue(forKey: id)
                     registrations[id] = pid
                 }
             }
