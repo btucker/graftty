@@ -1580,7 +1580,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-3.2** While a worktree has a resolved PR/MR, the application shall display a forge-specific reference badge between its leading project icon, emoji, or fallback icon and its worktree label: `#<number>` for GitHub and `!<number>` for GitLab, with ungrouped decimal digits regardless of locale.
 
-**PR-3.3** The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
+**PR-3.3** When the user clicks a forge-specific PR/MR reference sidebar badge, the application shall open its URL in the system browser without triggering the row's worktree-selection action.
 
 **PR-3.4** The forge-specific PR/MR reference sidebar badge shall have an accessibility label of the form "Pull request `<number>`, open|merged|closed[, CI failing|CI running|merge conflict]. Click to open in browser." and a tooltip showing "Open `<reference>` on `<host>`". The optional suffix shall match the badge's `ciFailure`, `ciPending`, or `conflicting` tone per `PR-3.5` and `PR-8.20`.
 

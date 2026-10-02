@@ -160,13 +160,13 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Bounds of a worktree block's heading row, so the block-level drag
-/// source can accept presses on the heading only while dragging the
-/// whole block.
+/// Bounds of a worktree heading and its independently clickable PR/MR badge.
+/// The block-level drag source covers the heading but lets badge clicks through.
 struct WorktreeHeadingAnchor: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
+    enum Region: Hashable { case heading, prBadge }
+    static let defaultValue: [Region: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
@@ -207,14 +207,17 @@ struct WorktreeReorderTarget: ViewModifier {
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
         if canDrag {
-            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchor in
+            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchors in
                 GeometryReader { proxy in
-                    if let anchor {
+                    if let anchor = anchors[.heading] {
                         let heading = proxy[anchor]
                         WorktreeDragSourceOverlay(
                             payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
                             blockRect: CGRect(x: -heading.minX, y: -heading.minY,
                                               width: proxy.size.width, height: proxy.size.height),
+                            excludedRects: anchors[.prBadge].map {
+                                [proxy[$0].offsetBy(dx: -heading.minX, dy: -heading.minY)]
+                            } ?? [],
                             onClick: onSelect)
                         .frame(width: heading.width, height: heading.height)
                         .offset(x: heading.minX, y: heading.minY)
