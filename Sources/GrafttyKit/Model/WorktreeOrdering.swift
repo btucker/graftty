@@ -1,6 +1,6 @@
 import Foundation
 
-/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its worktrees by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale worktrees last, and decode older state without the setting as manual order.
+/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.
 public enum WorktreeOrderMode: String, Codable, Sendable, Equatable {
     case manual
     case recentActivity
@@ -49,6 +49,7 @@ public enum WorktreeOrdering {
         return staleLast(reordered)
     }
 
+    /// Moves stale Tasks last without changing the relative order of pinned worktrees.
     public static func staleLast(_ worktrees: [WorktreeEntry]) -> [WorktreeEntry] {
         var nonStale: [WorktreeEntry] = []
         var stale: [WorktreeEntry] = []
@@ -58,7 +59,7 @@ public enum WorktreeOrdering {
         var sawStale = false
         var needsReorder = false
         for worktree in worktrees {
-            if worktree.state == .stale {
+            if worktree.state == .stale && !worktree.isPinned {
                 sawStale = true
                 stale.append(worktree)
             } else {

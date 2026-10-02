@@ -5,8 +5,8 @@ import GrafttyProtocol
 
 struct Worktree: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Create and remove worktrees",
-        subcommands: [WorktreeAdd.self, WorktreeRemove.self]
+        abstract: "Create, remove, pin, and unpin worktrees",
+        subcommands: [WorktreeAdd.self, WorktreeRemove.self, WorktreePin.self, WorktreeUnpin.self]
     )
 }
 

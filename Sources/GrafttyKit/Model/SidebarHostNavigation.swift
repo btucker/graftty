@@ -86,20 +86,86 @@ public enum SidebarHostNavigation {
         }
     }
 
-    /// The persisted order: main checkout first, stale entries last. The
-    /// manual arrangement lives here regardless of the display mode.
-    public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
-        repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path })
+    /// The repository's home checkout is always pinned; linked worktrees opt in.
+    public static func isPinned(_ worktree: WorktreeEntry, in repo: RepoEntry) -> Bool {
+        worktree.path == repo.path || worktree.isPinned
     }
 
-    /// The displayed order (LAYOUT-2.95): canonical, re-ranked by recent
-    /// activity when the repository asks for it. Never written back, so the
-    /// manual order survives a round trip through recent activity.
+    /// Temporary worktrees precede pinned agents. The default-branch row leads
+    /// the pinned section, followed by linked worktrees in saved manual order.
+    public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
+        WorktreeOrdering.staleLast(repo.worktrees.filter { !isPinned($0, in: repo) })
+            + pinnedWorktrees(in: repo)
+    }
+
+    private static func pinnedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
+        repo.worktrees.filter { $0.path == repo.path }
+            + repo.worktrees.filter { $0.path != repo.path && $0.isPinned }
+    }
+
+    /// Recent activity re-ranks only temporary worktrees. Never written back,
+    /// so pinned order stays stable and manual order survives mode changes.
     public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
-        return repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { $0.path != repo.path })
+        return WorktreeOrdering.byRecentActivity(repo.worktrees.filter { !isPinned($0, in: repo) })
+            + pinnedWorktrees(in: repo)
+    }
+
+    /// Published folder ancestry matches the separately rendered sections.
+    public static func folderAncestry(in repo: RepoEntry) -> [UUID: [SidebarWorktreeHierarchy.Folder]] {
+        var result: [UUID: [SidebarWorktreeHierarchy.Folder]] = [:]
+        for pinned in [false, true] {
+            let nodes = SidebarWorktreeHierarchy.nodes(
+                for: repo.worktrees.filter { isPinned($0, in: repo) == pinned },
+                inRepoAtPath: repo.path, defaultBranch: nil)
+            result.merge(SidebarWorktreeHierarchy.folderAncestry(in: nodes), uniquingKeysWith: { first, _ in first })
+        }
+        return result
+    }
+
+    @discardableResult
+    public static func setPinned(_ pinned: Bool, worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
+        for repoIndex in repos.indices {
+            guard let index = repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktreeID }) else { continue }
+            let worktree = repos[repoIndex].worktrees[index]
+            guard worktree.path != repos[repoIndex].path, !worktree.state.isInFlight,
+                  !pinned || worktree.state.hasOnDiskWorktree,
+                  worktree.isPinned != pinned else { return false }
+            repos[repoIndex].worktrees[index].isPinned = pinned
+            return true
+        }
+        return false
+    }
+
+    /// A pin drop crosses section membership rather than reordering temporary
+    /// rows. Existing peers keep their order; a matching folder may also place
+    /// the new role beside the row where it was dropped.
+    @discardableResult
+    public static func pinWorktree(in state: inout AppState, repositoryID: String,
+                                   worktreeID: String, relativeTo: String? = nil, after: Bool = true) -> Bool {
+        guard let ri = state.repos.firstIndex(where: { $0.path == repositoryID }),
+              let si = state.repos[ri].worktrees.firstIndex(where: { $0.path == worktreeID }) else { return false }
+        let repo = state.repos[ri]
+        let source = repo.worktrees[si]
+        guard source.path != repo.path, !source.isPinned,
+              !source.state.isInFlight, source.state.hasOnDiskWorktree else { return false }
+        if let relativeTo {
+            guard let target = repo.worktrees.first(where: { $0.path == relativeTo }),
+                  isPinned(target, in: repo), !target.state.isInFlight else { return false }
+        }
+        var candidate = state
+        guard setPinned(true, worktreeID: source.id, in: &candidate.repos) else { return false }
+        let pinned = candidate.repos[ri].worktrees.remove(at: si)
+        candidate.repos[ri].worktrees.append(pinned)
+        if let relativeTo {
+            // If folder ancestry or a pending neighbor prevents placement,
+            // retain the appended role without moving any existing peers.
+            moveWorktree(in: &candidate, repositoryID: repositoryID, worktreeID: worktreeID,
+                relativeTo: relativeTo, after: relativeTo == repo.path || after)
+        }
+        candidate.repos[ri].isPinnedCollapsed = false
+        state = candidate
+        return true
     }
 
     /// Applies a user-picked emoji as a manual identity. Rejects anything
@@ -134,7 +200,7 @@ public enum SidebarHostNavigation {
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop,
-                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji)
+                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isPinned: worktree.isPinned)
     }
 
     @discardableResult
@@ -143,21 +209,26 @@ public enum SidebarHostNavigation {
         guard worktreeID != relativeTo,
               let ri = state.repos.firstIndex(where: { $0.path == repositoryID }) else { return false }
         let repo = state.repos[ri]
-        // Recent-activity order is a display projection; accepting a move
-        // would only have the next refresh sort it away again.
-        guard repo.worktreeOrderMode == .manual else { return false }
         let rows = repo.worktrees
         guard let source = rows.firstIndex(where: { $0.path == worktreeID }),
               let target = rows.firstIndex(where: { $0.path == relativeTo }),
               rows[source].path != repo.path,
               !rows[source].state.isInFlight, !rows[target].state.isInFlight,
+              isPinned(rows[source], in: repo) == isPinned(rows[target], in: repo),
+              repo.worktreeOrderMode == .manual || isPinned(rows[source], in: repo),
               rows[target].path != repo.path || after else { return false }
-        let nodes = SidebarWorktreeHierarchy.nodes(for: rows, inRepoAtPath: repo.path, defaultBranch: nil)
+        let sectionRows = rows.filter { isPinned($0, in: repo) == isPinned(rows[source], in: repo) }
+        let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)
         let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
         guard parents[rows[source].id] == parents[rows[target].id] else { return false }
-        let indices = rows.indices.filter { parents[rows[$0].id] == parents[rows[source].id] }
-        let siblings = indices.map { rows[$0] }
-        guard let ti = indices.firstIndex(of: target) else { return false }
+        let indices = rows.indices.filter {
+            isPinned(rows[$0], in: repo) == isPinned(rows[source], in: repo) && parents[rows[$0].id] == parents[rows[source].id]
+        }
+        // A newly pinned row can precede the home checkout in saved state.
+        // Interpret the drop against the section's displayed canonical order.
+        let siblingIDs = Set(indices.map { rows[$0].id })
+        let siblings = canonicalWorktrees(in: repo).filter { siblingIDs.contains($0.id) }
+        guard let ti = siblings.firstIndex(where: { $0.id == rows[target].id }) else { return false }
         let destination = ti + (after ? 1 : 0)
         let neighbors = [destination - 1, destination].filter {
             siblings.indices.contains($0) && siblings[$0].id != rows[source].id

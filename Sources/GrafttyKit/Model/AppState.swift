@@ -57,7 +57,7 @@ public struct AppState: Codable, Sendable, Equatable {
         return true
     }
 
-    /// Permanently moves stale/yellow worktrees to the bottom of a repo's
+    /// Permanently moves stale Task worktrees to the bottom of a repo's
     /// saved order, preserving relative order within the non-stale and
     /// stale groups.
     ///

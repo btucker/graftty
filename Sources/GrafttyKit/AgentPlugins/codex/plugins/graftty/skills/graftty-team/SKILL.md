@@ -1,6 +1,6 @@
 ---
 name: graftty-team
-description: Use when coordinating agents through Graftty team commands, rosters, worktree messages, peer forwarding, or durable GRAFTTY.md instructions.
+description: Use when coordinating agents through Graftty team commands, rosters, worktree messages, peer forwarding, pinning durable agent roles, or GRAFTTY.md instructions.
 ---
 
 # Graftty team
@@ -136,9 +136,54 @@ Replies arrive automatically through hooks; do not poll for completion. For deli
 - `--worktree '<path-or-name>'`, `--repo '<repo-path>'`, or `--member '<name>'` selects diagnostic scope and peeks unless `--history` is supplied.
 - Never edit Graftty state files to change delivery positions; if advancement fails, rerun the supported inbox command.
 
+## Keep a durable agent role
+
+Use **Pinned Agents** for an ongoing responsibility that should outlive one task.
+The repository's default-branch checkout is always pinned. Other tracked local
+worktrees can be pinned without changing their branch, panes, or instructions.
+
+```sh
+graftty worktree pin
+graftty worktree pin release-manager
+graftty worktree unpin release-manager
+```
+
+No target, or `.`, means your current worktree. To make another agent durable,
+use its worktree name or the absolute `worktree_path` from the roster. Use an
+absolute path when a name is ambiguous; agent-address suffixes are not worktree
+paths. Pinning and unpinning are idempotent. The default-branch checkout cannot
+be unpinned. These commands run on the owning Mac; a remote agent can pin itself
+there.
+
+Pinning does not create `GRAFTTY.md`. Define the role with the instruction files
+below as part of the requested durable-role setup. If the responsibilities are
+known before launching a new agent, write its role file where its first session
+can read it, then use the delegation command with `--wait` and pin the returned
+worktree path once creation finishes. If creating asynchronously, confirm the
+worktree is ready before pinning it.
+
+Pinned worktrees remain after their branch's PR or MR merges or closes. Graftty
+does not offer to delete them on resolution and does not automatically dismiss
+stale pinned entries. Unpinning returns the worktree to the temporary list;
+it preserves its workspace and instruction files. Explicit removal is still
+available through `graftty worktree remove` when requested.
+
 ## Durable agent instructions
 
 Use these files for durable role or workflow guidance:
+
+For a role that peers need to understand, prefer the main checkout's
+`.graftty/<worktree-key>/GRAFTTY.md` so every agent can read its shared context.
+Find the main checkout in the first entry of `git worktree list --porcelain`. For `release-manager`, use `.graftty/release-manager/GRAFTTY.md`;
+for the default-branch checkout, use its resolved default branch as the key.
+Check existing overlays before editing; a higher-precedence file can override
+the main-checkout copy.
+
+Above `## Private`, describe the role's responsibilities and how peers should
+coordinate with it. Below that heading, put instructions for worktrees matching
+that key, including descendants.
+Keep an existing file's useful guidance when updating it. A role file does not
+pin a worktree; use the pin command separately.
 
 - `.graftty/GRAFTTY.md` applies to every worktree in the repository.
 - A linked worktree's key is its path relative to the main checkout's `.worktrees/`; the main checkout's key is the repository's default branch. Until Graftty can resolve that branch, the main checkout receives only `.graftty/GRAFTTY.md`.

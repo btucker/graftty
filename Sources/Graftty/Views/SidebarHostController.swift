@@ -90,8 +90,7 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:]) -> [WorktreePanes] {
     state.repos.flatMap { repo in
         let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
-        let nodes = SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil)
-        let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: nodes)
+        let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
         return repo.worktrees.map { wt in
             WorktreePanes(path: wt.path, displayName: wt.branch, repoDisplayName: repo.displayName,
                           repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),

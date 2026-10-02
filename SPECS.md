@@ -114,7 +114,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
 
-**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.
+**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the default-branch checkout first among pinned agents, stale temporary worktrees last within their list, and virtual-folder and pinned-section boundaries while moving only eligible siblings.
 
 **LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
 
@@ -216,7 +216,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.94** While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its worktrees by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale worktrees last, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -229,6 +229,30 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.100** When a user drags a worktree heading, the application shall begin an AppKit drag session that lifts the whole worktree block and whose pasteboard payload the worktree row drop destination decodes as that worktree move.
 
 **LAYOUT-2.101** When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.
+
+**LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit pin state and decode older linked worktrees as temporary worktrees.
+
+**LAYOUT-2.103** While the sidebar displays a repository, the application shall show temporary worktrees without a heading above a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.
+
+**LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same temporary or pinned section, allowing manual pinned moves while temporary worktrees use recent activity order.
+
+**LAYOUT-2.105** If a pinned worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its pin.
+
+**LAYOUT-2.106** When the user collapses a repository's Pinned Agents section, the application shall preserve that disclosure state across relaunches and initially expand Pinned Agents for older state.
+
+**LAYOUT-2.107** When a context menu or CLI changes an eligible worktree's pin state, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
+
+**LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit pin state for remote clients while accepting older metadata without it.
+
+**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group temporary worktrees before Pinned Agents, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.
+
+**LAYOUT-2.110** When a repository moves, the application shall preserve saved pinned order and pin state for both relocated and stale members while appending newly discovered worktrees as Tasks.
+
+**LAYOUT-2.111** When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.
+
+**LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and reserve more space above the section title than below it.
+
+**LAYOUT-2.113** When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -618,7 +642,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.20** If a linked worktree's `.git` entry is not a materialized regular file (an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then `WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only stat, which never triggers materialization — and fall back to the `<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the calling thread on network materialization. `startup()` resolves reflog paths on the main thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at launch (Application Not Responding).
 
-**GIT-3.21** When a worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
+**GIT-3.21** When a Task worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
 
 ### GIT-4.x — Deleting a Worktree
 
@@ -634,7 +658,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.6** When `git worktree remove` succeeds, the application shall remove the worktree entry from the sidebar, and if that worktree was the selected worktree the application shall clear the selected-worktree state so the terminal content area shows the "no worktree selected" placeholder.
 
-**GIT-4.7** When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
+**GIT-4.7** When the application first observes a Task worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 
 **GIT-4.8** If the user confirms the offer dialog from GIT-4.7 by clicking "Delete Worktree", the application shall proceed directly to `git worktree remove` without re-prompting — the offer dialog IS the confirmation. The resulting success and failure paths shall be identical to GIT-4.5 and GIT-4.4 (teardown on success, stderr surfaced on failure).
 
@@ -661,6 +685,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
 **GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
+
+**GIT-4.21** When a pinned worktree's pull request or merge request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -2194,6 +2220,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
+**TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree and unpinning, and explain role instruction files and retention after PR or MR resolution.
+
 ### TEAM-5.x — `team_*` Inbox Events
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
@@ -2409,6 +2437,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **INSTR-7.1** The application shall bound one instruction load to at most 64 files, truncate any single file to 32768 bytes and the whole set to 131072 bytes, and mark every truncated file with a visible truncation marker.
 
 **INSTR-7.2** When an instruction load exceeds the one-second response budget, the application shall produce no instruction set without awaiting late filesystem work.
+
+### INSTR-8.x
+
+**INSTR-8.1** When the user edits a keyed pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
+
+**INSTR-8.2** When the user chooses Edit Role Instructions on a pinned local worktree, the application shall use the same configured editor routing as terminal file links, opening a CLI editor in a new pane in that worktree, and shall offer the action for the default checkout and externally located pinned worktrees.
+
+**INSTR-8.3** If a pinned worktree has no instruction role key, then the application shall edit its local base GRAFTTY.md or create it when absent, reject Application Support overrides, and leave wider instruction scopes unchanged.
+
+**INSTR-8.4** When role-file preparation finishes, the application shall revalidate the pinned worktree's identity, paths, and eligibility before selecting an editor destination, rejecting removed, relocated, or in-flight worktrees and using the default checkout for stale pinned roles.
 
 ## EDITOR — Editor Integration
 
@@ -2900,6 +2938,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.20** When worktree creation specifies an explicit base, the application shall capture its immutable commit in the caller's worktree before accepting asynchronous creation and shall share that capture across retries of the same operation.
 
+**AGENT-5.21** When graftty worktree pin or unpin is invoked, the application shall resolve the caller's worktree by default or a supplied tracked name or absolute path, reject ambiguous or unavailable targets and in-flight changes, persist idempotent pin state through the sidebar model without changing panes or instructions, and keep the default-branch checkout always pinned.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.
@@ -2962,7 +3002,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination and durable roles, and require a task-specific emoji independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 

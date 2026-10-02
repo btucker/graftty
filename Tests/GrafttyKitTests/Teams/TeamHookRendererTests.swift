@@ -4,13 +4,14 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
-    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.")
+    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination and durable roles, and require a task-specific emoji independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(runtime: runtime)
             let context = try additionalContext(from: json)
             #expect(context.contains("Load the `graftty` skill for Attention recaps"))
             #expect(context.contains("`graftty-team` skill for agent coordination"))
+            #expect(context.contains("durable roles"))
             #expect(context.contains("task-specific `emoji`"))
             #expect(context.contains("`emojiAlternatives`"))
         }
