@@ -11,8 +11,8 @@ import WebRTC
 /// error to a retryable response. The agent itself must reject that second
 /// offer before touching the active connection.
 @Suite("""
-@spec REMOTE-11.1: If the host receives a signaling offer while another \
-remote connection is active and the offer is not a signed explicit reconnect \
+@spec REMOTE-11.1: If the host receives a signaling offer while a connection \
+from the same device is active and the offer is not a signed explicit reconnect \
 from that same client, then the application shall respond with a retryable \
 unavailable status and shall not tear down the active connection.
 """)
@@ -41,13 +41,15 @@ struct SignalingHandlerOutcomeTests {
     @Test(arguments: [WebRTCHostAgent.State.answering, .connected])
     func busyOfferDoesNotTearDownActiveConnection(activeState: WebRTCHostAgent.State) async throws {
         let agent = makeHostAgent()
+        let deviceID = RemoteDeviceID(value: "same-viewer")
+        await agent.beginConnectionLifecycle(clientDeviceID: deviceID)
         await agent.setStateForTesting(activeState)
 
         // Admission rejects this before SDP parsing, so an empty offer is
         // enough to exercise the ordinary non-replacement path.
         let offer = RTCSessionDescription(type: .offer, sdp: "")
         do {
-            _ = try await agent.acceptOffer(offer)
+            _ = try await agent.acceptOffer(offer, clientDeviceID: deviceID)
             Issue.record("expected HostError.busy while state is \(activeState)")
         } catch WebRTCHostAgent.HostError.busy {
             // expected
