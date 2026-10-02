@@ -91,19 +91,9 @@ public actor WebRTCHostAgent {
     /// instead of wiping the newer connection's live entry.
     private var authenticatedRegistration: (deviceID: RemoteDeviceID, token: SSHConnectionRegistry.RegistrationToken)?
 
-    /// W5 generation-guard fix: `WebRTCHostAgent` is a SINGLE process-wide
-    /// instance (`AppServices.hostAgent`) reused for every device
-    /// sequentially, not one instance per connection. `authenticatedRegistration`'s
-    /// `RegistrationToken` scopes the registry's MAP ENTRY to a connection,
-    /// but it does nothing to protect `self` from a stale connection's close
-    /// SIDE EFFECT: `SSHConnectionRegistry.register`'s replace-path runs
-    /// `await previous.close()`, where `previous.close` is the closure
-    /// captured by the OLD connection's `registerAuthenticatedConnection`
-    /// call. Because `self` is the SAME shared actor now serving a NEW,
-    /// live connection (a same-device reconnect racing the old connection's
-    /// fire-and-forget deregister Task — see `close()`'s registry-deregister
-    /// comment), that unguarded closure tears down the new connection's
-    /// live state mid-lifetime.
+    /// A pooled agent owns one device's connection and may be reused for
+    /// its signed reconnect. Registry callbacks from a superseded lifecycle
+    /// capture its generation so they cannot close that device's replacement.
     ///
     /// Bumped exactly once per accepted connection by
     /// `prepareToAcceptOffer`. That admission step also reserves the
@@ -162,10 +152,10 @@ public actor WebRTCHostAgent {
     private var iceGatheringTimeoutTask: Task<Void, Never>?
     /// A signaling offer is unauthenticated until SSH userauth succeeds.
     /// Bound that pre-auth lifetime so an abandoned LAN offer cannot reserve
-    /// this single-connection host forever.
+    /// this device's connection forever.
     private var authenticationDeadlineTask: Task<Void, Never>?
     /// ICE can report `.disconnected` during a brief interface handoff. Give
-    /// it a short recovery window, then release the singleton host slot if it
+    /// it a short recovery window, then release this device's connection if it
     /// never returns to a connected state.
     private var iceDisconnectedDeadline: (
         token: UInt64,
@@ -224,13 +214,8 @@ public actor WebRTCHostAgent {
         self.delegate = PeerConnectionDelegate()
     }
 
-    /// Replace the `panes-state` subscription callback. The R5 wiring path
-    /// constructs the host agent in `GrafttyApp.init()` (before SwiftUI
-    /// `@State` is accessible) with a stub, then swaps in the production
-    /// closure from `startup()`. Safe to call multiple times — the snapshotted
-    /// value is re-read on every `installSSHHandler` call. Must be invoked
-    /// before the signaling handler is wired so no data channel can open
-    /// with the stub still in place.
+    /// Replace the panes-state subscription before this agent accepts an
+    /// offer. Each new SSH handler reads the latest configured callback.
     public func setPanesStateSubscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {
         self.panesStateSubscribe = subscribe
     }
@@ -604,7 +589,7 @@ public actor WebRTCHostAgent {
     /// `sshConnectionRegistry` (see `registerAuthenticatedConnection`). If
     /// `generation` doesn't match `connectionGeneration`, this connection's
     /// registration is stale — a NEWER connection has since begun on this
-    /// SAME shared actor — so the call no-ops instead of tearing down the
+    /// same per-device actor — so the call no-ops instead of tearing down the
     /// live connection. `close()` itself (direct teardown callers:
     /// `channelInactive`, explicit close) is unaffected and still
     /// unconditional.
@@ -1153,8 +1138,8 @@ public actor WebRTCHostAgent {
         /// negotiation was suspended.
         case superseded
         /// `acceptOffer` was called while a prior offer was still in flight
-        /// or the agent was already connected. Only one peer connection at
-        /// a time — the second offer is rejected rather than clobbering
+        /// or the agent was already connected. Only one peer connection
+        /// per device at a time — the second offer is rejected rather than clobbering
         /// the live one.
         case busy
     }
