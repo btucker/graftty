@@ -32,7 +32,9 @@ public struct SidebarWorktreeRows<Row: View>: View {
         let sections = SidebarWorktreeSections(worktrees)
         if showsSections && sections.hasPinMetadata {
             rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
-            SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed)
+            SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed,
+                separatesPrecedingRows: !sections.tasks.isEmpty)
+                .listRowInsets(rowInsets)
             if !isPinnedCollapsed {
                 rows(SidebarWorktreeTree.nodes(sections.pinned), section: "pinned:")
             }

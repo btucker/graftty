@@ -6,6 +6,9 @@ import GrafttyKit
 /// Delete-Worktree context-menu item. Keeps the rules unit-testable
 /// and lets the views stay focused on layout. PROJECT-1.1.
 enum SidebarMenuVisibility {
+    static func showsEditRoleInstructions(worktree: WorktreeEntry, repo: RepoEntry) -> Bool {
+        !worktree.state.isInFlight && SidebarHostNavigation.isPinned(worktree, in: repo)
+    }
     static func showsAddWorktree(repo: RepoEntry) -> Bool {
         repo.isGitTracked
     }

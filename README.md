@@ -139,9 +139,11 @@ or closes. The bundled team skill explains the pinning and role-file workflow.
 To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
 from its context menu. Graftty opens its effective worktree-specific instruction
 file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main
-checkout so peer agents can read its shared role context. This action is
-available for the default-branch checkout and worktrees under the repository's
-`.worktrees` directory. Pinning does not create or change instructions.
+checkout so peer agents can read its shared role context. It uses the same
+configured editor as Cmd-clicking a file in the terminal, opening CLI editors
+in a new pane in the selected worktree. The action is available on pinned local
+worktrees, including the default-branch checkout. Worktrees without a role key
+use their local `.graftty/GRAFTTY.md`. Pinning does not create or change instructions.
 Instruction files can also apply to temporary worktrees without pinning them.
 
 Graftty can give the agents running in your worktrees durable, per-worktree

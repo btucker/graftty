@@ -103,14 +103,22 @@ public enum InstructionStore {
 
     /// Opens the effective exact-role file, or creates an empty role file in
     /// the main checkout so peers can read its shared role context. Pinning an
-    /// agent never writes instructions.
+    /// agent never writes instructions. Worktrees without a role key use their
+    /// own local base file, leaving wider instruction scopes untouched.
     public static func prepareRoleFile(
-        key: String,
+        key: String?,
         repoPath: String,
         worktreePath: String,
         applicationSupportDirectory: URL = defaultApplicationSupportDirectory
     ) async throws -> URL {
         try await Task.detached(priority: .userInitiated) {
+            guard let key else {
+                let set = loadSynchronously(roots: [URL(fileURLWithPath: worktreePath, isDirectory: true)],
+                    preferredPaths: ["GRAFTTY.md"])
+                try Task.checkCancellation()
+                if let path = set?.sourcePaths["GRAFTTY.md"] { return URL(fileURLWithPath: path) }
+                return try createRoleFile(components: [], rootPath: worktreePath)
+            }
             let components = key.split(separator: "/").map(String.init)
             guard !components.isEmpty, components.joined(separator: "/") == key,
                   !components.contains(where: { $0 == "." || $0 == ".." }) else {
@@ -161,7 +169,7 @@ public enum InstructionStore {
             }
         }
         return URL(fileURLWithPath: rootPath, isDirectory: true)
-            .appendingPathComponent(directoryName + "/" + components.joined(separator: "/") + "/GRAFTTY.md")
+            .appendingPathComponent(([directoryName] + components + ["GRAFTTY.md"]).joined(separator: "/"))
     }
 
     /// @spec INSTR-7.2
@@ -216,7 +224,11 @@ public enum InstructionStore {
             URL(fileURLWithPath: worktreePath, isDirectory: true),
             URL(fileURLWithPath: repoPath, isDirectory: true),
         ])
+        return loadSynchronously(roots: roots, preferredPaths: preferredPaths)
+    }
 
+    private static func loadSynchronously(roots: [URL], preferredPaths: [String]) -> InstructionSet? {
+        guard !Task.isCancelled else { return nil }
         var inventories: [RootInventory] = []
         var discovered: Set<String> = []
         var diagnostics: [InstructionDiagnostic] = []

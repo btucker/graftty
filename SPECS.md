@@ -250,6 +250,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.111** When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.
 
+**LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and reserve more space above the section title than below it.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2423,6 +2425,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### INSTR-8.x
 
 **INSTR-8.1** When the user edits a pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
+
+**INSTR-8.2** When the user chooses Edit Role Instructions on a pinned local worktree, the application shall use the same configured editor routing as terminal file links, opening a CLI editor in a new pane in that worktree, and shall offer the action for the default checkout and externally located pinned worktrees.
+
+**INSTR-8.3** If a pinned worktree has no instruction role key, then the application shall edit its local base GRAFTTY.md, creating the local base file when absent without changing repository-wide or Application Support instructions.
 
 ## EDITOR — Editor Integration
 

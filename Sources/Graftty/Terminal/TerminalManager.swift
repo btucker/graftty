@@ -363,6 +363,45 @@ final class TerminalManager: ObservableObject {
     /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((PaneSlotID, String) -> Void)?
 
+    /// Routes sidebar files through the terminal's configured editor.
+    @discardableResult
+    func openURL(_ urlString: String, from sourceID: PaneSlotID?) -> Bool {
+        let cwd = sourceID.flatMap { pwds[$0] }
+
+        let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
+
+        let editorAction = EditorOpenRouter.resolve(
+            target: classified,
+            editor: editorPreference?.resolve()
+        )
+
+        switch editorAction {
+        case .openInBrowser(let url):
+            NSWorkspace.shared.open(url)
+
+        case .openWithDefaultApp(let file):
+            NSWorkspace.shared.open(file)
+
+        case .openWithApp(let file, let app):
+            let config = NSWorkspace.OpenConfiguration()
+            config.promptsUserIfNeeded = false
+            NSWorkspace.shared.open([file], withApplicationAt: app, configuration: config)
+                { _, _ in }
+
+        case .openInPane(let initialInput):
+            guard let sourceID, let onOpenInEditorPane else {
+                NSSound.beep()
+                return false
+            }
+            onOpenInEditorPane(sourceID, initialInput)
+
+        case .noOp:
+            NSSound.beep()
+            return false
+        }
+        return true
+    }
+
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
     /// GhosttyKit just to pattern-match on progress state.
@@ -1410,36 +1449,7 @@ final class TerminalManager: ObservableObject {
                 encoding: .utf8
             ) else { return }
 
-            let sourceID = terminalID(from: target)
-            let cwd = sourceID.flatMap { pwds[$0] }
-
-            let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
-
-            let editorAction = EditorOpenRouter.resolve(
-                target: classified,
-                editor: editorPreference?.resolve()
-            )
-
-            switch editorAction {
-            case .openInBrowser(let url):
-                NSWorkspace.shared.open(url)
-
-            case .openWithDefaultApp(let file):
-                NSWorkspace.shared.open(file)
-
-            case .openWithApp(let file, let app):
-                let config = NSWorkspace.OpenConfiguration()
-                config.promptsUserIfNeeded = false
-                NSWorkspace.shared.open([file], withApplicationAt: app, configuration: config)
-                    { _, _ in }
-
-            case .openInPane(let initialInput):
-                guard let sourceID else { NSSound.beep(); break }
-                onOpenInEditorPane?(sourceID, initialInput)
-
-            case .noOp:
-                NSSound.beep()
-            }
+            openURL(urlString, from: terminalID(from: target))
 
         case GHOSTTY_ACTION_MOUSE_SHAPE:
             guard let view = surfaceView(from: target) else { return }

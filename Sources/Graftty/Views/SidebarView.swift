@@ -534,8 +534,9 @@ struct SidebarView: View {
             hint: repo.defaultBranchHint
         )
         let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
+        let temporaryWorktrees = worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) }
         let rows = Group {
-            worktreeNodeRows(worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) },
+            worktreeNodeRows(temporaryWorktrees,
                              repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
             SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
                 get: { repo.isPinnedCollapsed },
@@ -544,7 +545,8 @@ struct SidebarView: View {
                         appState.repos[index].isPinnedCollapsed = collapsed
                     }
                 }
-            ))
+            ), separatesPrecedingRows: !temporaryWorktrees.isEmpty)
+            .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
             if !repo.isPinnedCollapsed {
                 let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
                 worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
@@ -834,15 +836,13 @@ struct SidebarView: View {
             })
             hasPinnedActions = true
         }
-        if SidebarHostNavigation.isPinned(worktree, in: repo) && worktree.state.hasOnDiskWorktree {
+        if SidebarMenuVisibility.showsEditRoleInstructions(worktree: worktree, repo: repo) {
             let key = InstructionKey.key(worktreePath: worktree.path, repoPath: repo.path,
                 defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
-            if let key {
-                menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
-                    editRoleInstructions(key: key, worktree: worktree, repo: repo)
-                })
-                hasPinnedActions = true
-            }
+            menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
+                editRoleInstructions(key: key, worktree: worktree, repo: repo)
+            })
+            hasPinnedActions = true
         }
         if hasPinnedActions { menu.addItem(.separator()) }
         if worktree.state != .stale {
@@ -888,12 +888,18 @@ struct SidebarView: View {
         return menu
     }
 
-    private func editRoleInstructions(key: String, worktree: WorktreeEntry, repo: RepoEntry) {
+    private func editRoleInstructions(key: String?, worktree: WorktreeEntry, repo: RepoEntry) {
         Task { @MainActor in
             do {
                 let url = try await InstructionStore.prepareRoleFile(key: key, repoPath: repo.path, worktreePath: worktree.path)
-                if !NSWorkspace.shared.open(url) {
+                let path = worktree.state.hasOnDiskWorktree ? worktree.path : repo.path
+                onSelect(path)
+                guard let current = appState.worktree(forPath: path), current.state == .running,
+                      let source = current.focusedPaneSlotID.flatMap({ current.splitTree.containsLeaf($0) ? $0 : nil })
+                        ?? current.splitTree.allLeaves.first,
+                      terminalManager.openURL(url.absoluteString, from: source) else {
                     navigationError = "Could not open role instructions at \(url.path)."
+                    return
                 }
             } catch {
                 navigationError = "Could not open role instructions: \(error.localizedDescription)"
