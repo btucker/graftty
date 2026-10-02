@@ -39,8 +39,8 @@ struct PRResolutionOfferAlertTests {
         #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "anything", state: .open) == nil)
     }
 
-    @Test("@spec GIT-4.21: When a pinned worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.")
-    func teamMembersDoNotOfferDeletion() {
+    @Test("@spec GIT-4.21: When a pinned worktree's pull request or merge request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.")
+    func pinnedAgentsDoNotOfferDeletion() {
         for state in [PRInfo.State.merged, .closed] {
             #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "Release", state: state, isPinned: true) == nil)
             #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "Fix", state: state) != nil)

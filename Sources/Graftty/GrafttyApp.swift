@@ -3821,6 +3821,7 @@ struct GrafttyApp: App {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
+             .worktreePinCapability, .setWorktreePinned,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
              .attentionReport:
             // Request-style messages are handled by handlePaneRequest via
@@ -4037,8 +4038,14 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
             return .ok
-        case .worktreeRemoveCapability:
+        case .worktreeRemoveCapability, .worktreePinCapability:
             return .ok
+        case .setWorktreePinned(let path, let isPinned):
+            let response = WorktreePinRequestHandler.handle(
+                worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue
+            )
+            if response == .ok { Self.persistAppState(appState.wrappedValue) }
+            return response
         case .createWorktree(
             let callerPath,
             let worktreeName,

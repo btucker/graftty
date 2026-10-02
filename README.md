@@ -129,6 +129,13 @@ worktree, right-click it and choose **Pin Agent**. Choose **Unpin Agent** to
 return it to the temporary list. Pin state, disclosure state, and manual pinned
 order persist across sessions. Remote clients show the owning Mac's pin state.
 
+Agents can use `graftty worktree pin` to pin their own worktree, or
+`graftty worktree pin <name-or-path>` to pin another local worktree.
+`graftty worktree unpin [name-or-path]` returns it to the temporary list without
+changing its workspace or instructions. The default-branch checkout stays
+pinned. Pinned agents do not receive deletion offers when their PR or MR merges
+or closes. The bundled team skill explains the pinning and role-file workflow.
+
 To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
 from its context menu. Graftty opens its effective worktree-specific instruction
 file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main

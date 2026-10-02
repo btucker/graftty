@@ -682,7 +682,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
 
-**GIT-4.21** When a pinned worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
+**GIT-4.21** When a pinned worktree's pull request or merge request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -2202,6 +2202,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
+**TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree and unpinning, and explain role instruction files and retention after PR or MR resolution.
+
 ### TEAM-5.x — `team_*` Inbox Events
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
@@ -2900,6 +2902,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.20** When worktree creation specifies an explicit base, the application shall capture its immutable commit in the caller's worktree before accepting asynchronous creation and shall share that capture across retries of the same operation.
 
+**AGENT-5.21** When graftty worktree pin or unpin is invoked, the application shall resolve the caller's worktree by default or a supplied tracked name or absolute path, reject ambiguous or unavailable targets and in-flight changes, persist idempotent pin state through the sidebar model without changing panes or instructions, and keep the default-branch checkout always pinned.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.
@@ -2962,7 +2966,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination and durable roles, and require a task-specific emoji independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 

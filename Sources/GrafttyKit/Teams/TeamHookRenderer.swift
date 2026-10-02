@@ -23,7 +23,7 @@ public enum TeamHookRenderer {
         return try hookJSON(eventName: "SessionStart", additionalContext: context)
     }
 
-    static let skillGuidance = "Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination when you need to message or delegate to other agents. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes."
+    static let skillGuidance = "Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination and durable roles when you need to message, delegate, or pin an agent. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes."
 
     public static func postToolUse(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
         switch runtime {
