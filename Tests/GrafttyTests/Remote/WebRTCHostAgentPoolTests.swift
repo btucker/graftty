@@ -260,7 +260,7 @@ struct WebRTCHostAgentPoolTests {
         #expect(await pool.connectedDeviceIDs.isEmpty)
     }
 
-    private static func negotiate(_ agent: WebRTCHostAgent, _ offer: RTCSessionDescription, _ device: RemoteDeviceID, _ replacement: Bool) async throws -> RTCSessionDescription {
+    private static let negotiate: WebRTCHostAgentPool.Negotiate = { agent, _, device, replacement in
         _ = try await agent.prepareToAcceptOffer(clientDeviceID: device, replacingExistingConnection: replacement)
         await agent.setStateForTesting(.connected)
         return RTCSessionDescription(type: .answer, sdp: "fixture")
