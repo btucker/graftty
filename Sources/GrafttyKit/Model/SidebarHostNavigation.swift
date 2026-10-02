@@ -193,8 +193,11 @@ public enum SidebarHostNavigation {
         let indices = rows.indices.filter {
             isPinned(rows[$0], in: repo) == isPinned(rows[source], in: repo) && parents[rows[$0].id] == parents[rows[source].id]
         }
-        let siblings = indices.map { rows[$0] }
-        guard let ti = indices.firstIndex(of: target) else { return false }
+        // A newly pinned row can precede the home checkout in saved state.
+        // Interpret the drop against the section's displayed canonical order.
+        let siblingIDs = Set(indices.map { rows[$0].id })
+        let siblings = canonicalWorktrees(in: repo).filter { siblingIDs.contains($0.id) }
+        guard let ti = siblings.firstIndex(where: { $0.id == rows[target].id }) else { return false }
         let destination = ti + (after ? 1 : 0)
         let neighbors = [destination - 1, destination].filter {
             siblings.indices.contains($0) && siblings[$0].id != rows[source].id
