@@ -78,8 +78,8 @@ struct ShellStartupCommandTests {
         #expect(try String(contentsOf: marker, encoding: .utf8) == "yes")
     }
 
-    @Test("@spec AGENT-5.22: When a fresh zsh or bash session has an initial command, the application shall run it once after shell initialization and first-prompt environment hooks without waiting for a terminal renderer's PWD callback, preserve a user's custom ZDOTDIR, and remove the startup command from the environment before user initialization can spawn another shell.", arguments: [false, true])
-    func startsAfterInitializationWithoutRenderer(customZDOTDIR: Bool) async throws {
+    @Test("@spec AGENT-5.22: When a fresh zsh or bash session has an initial command, the application shall run it once after shell initialization and first-prompt environment hooks without waiting for a terminal renderer's PWD callback, preserve a user's custom ZDOTDIR, support zsh with line editing disabled, and remove the startup command from the environment before user initialization can spawn another shell.", arguments: [false, true], [false, true])
+    func startsAfterInitializationWithoutRenderer(customZDOTDIR: Bool, disablesZLE: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -100,7 +100,7 @@ struct ShellStartupCommandTests {
             try ("trap 'exit' TERM\n[ -z \"${GRAFTTY_INITIAL_COMMAND-}\" ] || exit 91\nexport GRAFTTY_INIT_COMPLETE=yes\n" + redirect)
                 .write(to: home.appendingPathComponent(shell == "zsh" ? ".zshenv" : ".bashrc"), atomically: true, encoding: .utf8)
             if shell == "zsh" {
-                try "_project_env() { export GRAFTTY_PROMPT_COMPLETE=yes; }\nprecmd_functions+=(_project_env)\n"
+                try ((disablesZLE ? "unsetopt zle\n" : "") + "_project_env() { export GRAFTTY_PROMPT_COMPLETE=yes; }\nprecmd_functions+=(_project_env)\n")
                     .write(to: (customZDOTDIR ? custom : home).appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
             } else {
                 try "trap 'exit' TERM\n[ -z \"${GRAFTTY_INITIAL_COMMAND-}\" ] || exit 91\nexport GRAFTTY_INIT_COMPLETE=yes\nPROMPT_COMMAND='export GRAFTTY_PROMPT_COMPLETE=yes; # user hook'\n"

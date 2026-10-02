@@ -291,7 +291,11 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     private func reportExit(status: Int32) {
-        completeStartup(false)
+        // A short command may exit before the receipt poll gets scheduled.
+        // Establish acceptance before pane teardown removes the receipt.
+        completeStartup(configuration.startupReceipt.map {
+            FileManager.default.fileExists(atPath: $0.path)
+        } ?? false)
         let elapsed = lock.withLock { ProcessInfo.processInfo.systemUptime - startedAt }
         let milliseconds = UInt64(max(0, elapsed) * 1_000)
         surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), milliseconds) }

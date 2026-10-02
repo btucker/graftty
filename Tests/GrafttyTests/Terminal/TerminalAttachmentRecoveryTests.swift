@@ -25,6 +25,34 @@ struct TerminalAttachmentRecoveryTests {
         #expect(!(await session.waitForStartup()), "Failed startup remains observable to a late waiter")
     }
 
+    @Test("A command accepted by the shell remains accepted when it exits before startup polling resumes")
+    func immediatelyExitedCommandWasAccepted() async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        let id = PaneSlotID()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"), zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let executable = try makeFakeZmx(attachCommand: ": > started; /bin/sleep 0.03; : > \"$GRAFTTY_STARTUP_RECEIPT\"; exit 0")
+        let root = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let config = ZmxSpawnConfiguration(sessionName: "startup", argv: [executable.path, "attach"],
+            env: ["ZMX_DIR": root.path, "GRAFTTY_STARTUP_RECEIPT": root.appendingPathComponent("accepted").path],
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil)
+        defer { session.close() }
+        try session.start()
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("started").path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(FileManager.default.fileExists(atPath: root.appendingPathComponent("started").path))
+        // Exit callbacks run off-main while the receipt poll is suspended.
+        usleep(150_000)
+        #expect(await session.waitForStartup())
+    }
+
     @Test("Typing k after an attachment failure does not close the native surface", arguments: [FailureMode.start, .queryUnavailable, .missingDaemon])
     func typingAfterFailureKeepsPane(mode: FailureMode) async throws {
         _ = NSApplication.shared

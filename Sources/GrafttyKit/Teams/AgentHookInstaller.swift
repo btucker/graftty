@@ -323,19 +323,28 @@ public struct AgentHookInstaller: Sendable {
         """
     }
 
+    private static func initialCommandFunction() -> String {
+        """
+        _graftty_run_initial_command() {
+            [ -n "${_graftty_initial_command-}" ] || return 0
+            local _graftty_command="$_graftty_initial_command"
+            unset _graftty_initial_command
+            if [ -n "${GRAFTTY_AGENT_HOOKS_BIN-}" ]; then
+                export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
+            fi
+            if [ -n "${_graftty_startup_receipt-}" ]; then
+                (umask 077; : > "$_graftty_startup_receipt")
+                unset _graftty_startup_receipt
+            fi
+            eval "$_graftty_command"
+        }
+        """
+    }
+
     private static func runInitialCommandSnippet() -> String {
         """
         if [ -n "${_graftty_initial_command-}" ]; then
-            _graftty_run_initial_command() {
-                [ -n "${_graftty_initial_command-}" ] || return 0
-                local _graftty_command="$_graftty_initial_command"
-                unset _graftty_initial_command
-                if [ -n "${_graftty_startup_receipt-}" ]; then
-                    (umask 077; : > "$_graftty_startup_receipt")
-                    unset _graftty_startup_receipt
-                fi
-                eval "$_graftty_command"
-            }
+            \(initialCommandFunction())
             if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
                 PROMPT_COMMAND+=(_graftty_run_initial_command)
             else
@@ -346,28 +355,16 @@ public struct AgentHookInstaller: Sendable {
     }
 
     /// Install from .zshenv so a user's custom ZDOTDIR cannot bypass startup.
-    /// Queue through ZLE after all first-prompt environment hooks have run.
+    /// zsh runs scheduled commands after all first-prompt environment hooks,
+    /// including when the user disables line editing.
     private static func zshInitialCommandSnippet() -> String {
         """
         if [[ -o interactive && -n ${_graftty_initial_command-} ]]; then
-            _graftty_type_initial_command() {
-                [ -n "${_graftty_initial_command-}" ] || return 0
-                local _graftty_command="$_graftty_initial_command"
-                unset _graftty_initial_command
-                add-zle-hook-widget -d line-init _graftty_type_initial_command
-                if [ -n "$GRAFTTY_AGENT_HOOKS_BIN" ]; then
-                    export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
-                fi
-                if [ -n "${_graftty_startup_receipt-}" ]; then
-                    _graftty_command="(umask 077; : > ${(q)_graftty_startup_receipt}); $_graftty_command"
-                    unset _graftty_startup_receipt
-                fi
-                builtin zle -U "$_graftty_command"$'\\n'
-            }
+            \(initialCommandFunction())
             _graftty_prepare_initial_command() {
                 precmd_functions=(${precmd_functions:#_graftty_prepare_initial_command})
-                autoload -Uz add-zle-hook-widget
-                add-zle-hook-widget line-init _graftty_type_initial_command
+                zmodload zsh/sched
+                sched +0 _graftty_run_initial_command
             }
             typeset -ga precmd_functions
             precmd_functions+=(_graftty_prepare_initial_command)
