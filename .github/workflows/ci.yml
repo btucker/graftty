@@ -200,6 +200,8 @@ jobs:
           swift --version
           xcodebuild -version
 
+      - uses: ./.github/actions/paging-renderer
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -213,7 +215,7 @@ jobs:
       # then let four fresh runners restore those products and test without
       # rebuilding. Both dirs are pinned to fixed workspace paths because the
       # default DerivedData path carries a random suffix that would never
-      # cache-hit. Bump `v2` to bust.
+      # cache-hit. Bump `v3` to bust.
       #
       # Restore + save are split (not the combined `actions/cache`) so the
       # build products are available to downstream jobs before they start.
@@ -224,9 +226,9 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v2-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v2-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-
+            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
@@ -306,7 +308,7 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v2-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Create isolated iOS simulator

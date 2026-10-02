@@ -350,6 +350,11 @@ swift build
 
 Open `Package.swift` in Xcode to run the app.
 
+Before building `Apps/GrafttyMobile/GrafttyMobile.xcodeproj`, follow the
+[paging renderer build instructions](scripts/ghostty-paging/BUILD.md).
+The local renderer provides the parser-grid readiness and output-drain APIs
+needed to preserve follower wrapping during grid changes.
+
 ## Developing the web client
 
 Graftty's browser-facing web access client lives in `web-client/` (React +

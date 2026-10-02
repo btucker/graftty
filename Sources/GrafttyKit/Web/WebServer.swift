@@ -1215,8 +1215,11 @@ public final class WebServer {
                     channel.close(promise: nil)
                 }
             }
-            sess.onPTYSize = { [weak self] cols, rows in
-                self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
+            sess.onPTYSize = { [weak self, loop = context.eventLoop] cols, rows in
+                // Serialize source updates with hello's cached-grid replay.
+                loop.execute { [weak self] in
+                    self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
+                }
             }
             sess.attachmentRegistry = remoteAttachmentRegistry
             do {

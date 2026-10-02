@@ -44,8 +44,8 @@ final class RemoteMacConnectionRegistry {
         let connection: any RemoteMacHostConnection
         let paneEnvironment: RemoteMacPaneEnvironment
 
-        func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
-            try await connection.openTerminalSession(sessionName: sessionName)
+        func openTerminalSession(sessionName: String, preferPaged: Bool = MacPagedTerminalRenderer.isSupported) async throws -> any WebSocketClient & Sendable {
+            try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
         }
 
         func sendPaneControl(
@@ -351,12 +351,13 @@ final class RemoteMacConnectionRegistry {
 
     func openTerminalSession(
         identity: RemoteMacIdentity,
-        sessionName: String
+        sessionName: String,
+        preferPaged: Bool = MacPagedTerminalRenderer.isSupported
     ) async throws -> any WebSocketClient & Sendable {
         guard let entry = entries[identity] else {
             throw ConnectionError.notConnected(identity)
         }
-        return try await entry.openTerminalSession(sessionName: sessionName)
+        return try await entry.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
     }
 
     func sendPaneControl(
@@ -676,6 +677,7 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
     func createOfferSDP() async throws -> String
     func applyAnswerSDP(_ sdp: String) async throws
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
+    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable
     func makeWorktreeManagementDriver() async throws
         -> any WorktreeManagementChannelDriver
     func makeTeamClient(
@@ -686,6 +688,9 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
 }
 
 extension RemoteMacHostConnection {
+    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+        try await openTerminalSession(sessionName: sessionName)
+    }
     func makeTeamClient(
         handler: @escaping @Sendable (Data) async -> Data,
         onClose: @escaping @Sendable () async -> Void
@@ -751,7 +756,11 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     }
 
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
-        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
+        try await openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
+    }
+
+    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
     }
 
     func makeWorktreeManagementDriver() async throws
