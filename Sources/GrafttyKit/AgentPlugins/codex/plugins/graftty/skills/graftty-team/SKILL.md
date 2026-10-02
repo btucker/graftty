@@ -180,7 +180,8 @@ Check existing overlays before editing; a higher-precedence file can override
 the main-checkout copy.
 
 Above `## Private`, describe the role's responsibilities and how peers should
-coordinate with it. Below that heading, put instructions for that role alone.
+coordinate with it. Below that heading, put instructions for worktrees matching
+that key, including descendants.
 Keep an existing file's useful guidance when updating it. A role file does not
 pin a worktree; use the pin command separately.
 
