@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec INSTR-8.1: When the user edits a pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.")
+@Suite("@spec INSTR-8.1: When the user edits a keyed pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.")
 struct InstructionRoleFileTests {
     @Test func unkeyedFileRejectsShadowingAndUnresolvedDefaultBranch() async throws {
         let fixture = try InstructionFilesystemFixture()

@@ -2424,7 +2424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-8.x
 
-**INSTR-8.1** When the user edits a pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
+**INSTR-8.1** When the user edits a keyed pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
 
 **INSTR-8.2** When the user chooses Edit Role Instructions on a pinned local worktree, the application shall use the same configured editor routing as terminal file links, opening a CLI editor in a new pane in that worktree, and shall offer the action for the default checkout and externally located pinned worktrees.
 
