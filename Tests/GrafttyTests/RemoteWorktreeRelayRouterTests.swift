@@ -8,6 +8,88 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.28: When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.")
+    func pagedRelayRetainsExitWhenQueueIsFull() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        for _ in 0..<256 { client.deliver(.binary(Data("output".utf8))) }
+        client.deliverEnd(status: 7)
+        try await waitUntil { client.didReceiveEnd }
+        // Keep the consumer stalled while the relay handles the received EOF.
+        try await Task.sleep(for: .milliseconds(30))
+        var events: [PagedTerminalEvent] = []
+        for await event in stream.events { events.append(event) }
+        #expect(events.count == 257)
+        #expect(events.last == .ended(7))
+        await stream.close()
+    }
+
+    @Test("@spec REMOTE-13.27: If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.")
+    func pagedRelayClosesWhenReceiverStalls() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        for _ in 0..<300 { client.deliver(.binary(Data("output".utf8))) }
+        try await waitUntil { client.didClose }
+        #expect(client.didClose)
+        await stream.close()
+    }
+
+    @Test("@spec REMOTE-13.26: When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.")
+    func ownerlessRelayHelloDoesNotOverrideSourceGrid() async throws {
+        let client = RelayWebSocketClient()
+        let stream = RelayedTerminalByteStream(client: client)
+        let sizes = LockedRelaySizes()
+        stream.onPTYSize = { sizes.append(cols: $0, rows: $1) }
+        let snapshot = try DisplayOwnershipSnapshot(sessionName: "session", ownerClientID: nil,
+            ownerKind: nil, grid: DisplayGrid(cols: 80, rows: 24), epoch: 0, revision: 0)
+        let echoedHello = WebControlEnvelope.ownership(snapshot).encoded()
+        client.deliver(.text(echoedHello))
+        client.deliver(.text(WebControlEnvelope.grid(cols: 120, rows: 67).encoded()))
+        client.deliver(.text(echoedHello))
+        client.deliver(.binary(Data("replay".utf8)))
+        var output = stream.inboundBytes.makeAsyncIterator()
+        #expect(await output.next() == Data("replay".utf8))
+        #expect(sizes.values() == [RelaySize(cols: 120, rows: 67)])
+        await stream.close()
+    }
+
+    @Test("@spec REMOTE-13.25: While a mobile client follows a pane through one intermediary Mac, the application shall relay current-screen checkpoints with their source grid, live bytes, and history pages in order, and forward history and checkpoint requests to the source Mac.")
+    func pagedRelayPreservesSourceGridAndEventOrder() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        let checkpoint = PagedTerminalCheckpoint(incarnation: 1, id: 2, cols: 120, rows: 67,
+            ready: Data("ready".utf8), hasPrimaryHistory: true, hasAlternateHistory: false)
+        let page = PagedTerminalPage(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0,
+            screen: 0, data: Data("history".utf8), complete: true)
+        let expected: [PagedTerminalEvent] = [.checkpoint(checkpoint), .output(Data("live".utf8)),
+            .grid(cols: 121, rows: 68), .page(page)]
+        let collected = Task {
+            var values: [PagedTerminalEvent] = []
+            for await event in stream.events {
+                values.append(event)
+                if values.count == expected.count { break }
+            }
+            return values
+        }
+        for event in expected {
+            if case .output(let data) = event { client.deliver(.binary(data)) }
+            else { client.deliver(.text(try PagedTerminalEnvelope(event: event).encoded())) }
+        }
+        #expect(await collected.value == expected)
+        let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
+        try await stream.requestHistory(request)
+        try await stream.requestCheckpoint()
+        let requests = try client.sentFrames().map { frame -> PagedTerminalRequest? in
+            guard case .text(let text) = frame else { return nil }
+            return try PagedTerminalEnvelope.parse(text).request
+        }
+        #expect(requests == [.history(request), .checkpoint])
+        await stream.close()
+    }
+
     @Test("@spec REMOTE-14.5: When a directly connected Mac omits sidebar metadata, the application shall namespace fallback project identities by the owning Mac and preserve them across one-hop routing.")
     func legacySidebarIdentitySurvivesRelay() throws {
         let remote = try makeRemoteMac()
@@ -477,31 +559,40 @@ private final class RelayWebSocketClient:
     WebSocketClient,
     @unchecked Sendable {
     let supportsWebControlTextFrames = true
+    var supportsPagedHistory = false
     private let lock = NSLock()
-    private var frames: [WebSocketFrame] = []
+    private var frames: [Result<WebSocketFrame, Error>] = []
     private var receiveWaiters:
         [CheckedContinuation<WebSocketFrame, Error>] = []
     private var helloID: DisplayClientID?
     private var recordedTakeControls: [RelayTakeControl] = []
     private var recordedOwnerResizes: [RelayOwnerResize] = []
+    private var sent: [WebSocketFrame] = []
+    private var receivedEnd = false
+    var didReceiveEnd: Bool { lock.withLock { receivedEnd } }
+    private var closed = false
+    var didClose: Bool { lock.withLock { closed } }
 
-    func send(_ frame: WebSocketFrame) async throws {}
+    func send(_ frame: WebSocketFrame) async throws { lock.withLock { sent.append(frame) } }
+    func sentFrames() -> [WebSocketFrame] { lock.withLock { sent } }
 
     func receive() async throws -> WebSocketFrame {
         try await withCheckedThrowingContinuation { continuation in
-            let frame = lock.withLock { () -> WebSocketFrame? in
+            let frame = lock.withLock { () -> Result<WebSocketFrame, Error>? in
                 guard frames.isEmpty else { return frames.removeFirst() }
                 receiveWaiters.append(continuation)
                 return nil
             }
             if let frame {
-                continuation.resume(returning: frame)
+                if case .failure = frame { lock.withLock { receivedEnd = true } }
+                continuation.resume(with: frame)
             }
         }
     }
 
     func close() {
         let waiters = lock.withLock {
+            closed = true
             let waiters = receiveWaiters
             receiveWaiters.removeAll()
             return waiters
@@ -544,7 +635,10 @@ private final class RelayWebSocketClient:
         }
     }
 
-    func deliver(_ frame: WebSocketFrame) {
+    func deliver(_ frame: WebSocketFrame) { deliverResult(.success(frame)) }
+    func deliverEnd(status: Int) { deliverResult(.failure(TerminalSessionClient.ClientError.sessionEnded(exitStatus: status))) }
+
+    private func deliverResult(_ frame: Result<WebSocketFrame, Error>) {
         let waiter = lock.withLock {
             guard !receiveWaiters.isEmpty else {
                 frames.append(frame)
@@ -554,7 +648,10 @@ private final class RelayWebSocketClient:
             }
             return receiveWaiters.removeFirst()
         }
-        waiter?.resume(returning: frame)
+        if let waiter {
+            if case .failure = frame { lock.withLock { receivedEnd = true } }
+            waiter.resume(with: frame)
+        }
     }
 
     func helloClientID() -> DisplayClientID? {

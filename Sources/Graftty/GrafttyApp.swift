@@ -2982,10 +2982,9 @@ struct GrafttyApp: App {
                         try engine.start()
                         return engine
                     },
-                    pagedFactory: { [registry, terminalManager, zmxExe, zmxDir] sessionName in
-                        // Relayed panes use the intermediary's existing byte transport.
-                        guard !sessionName.hasPrefix("relay-pane-") else {
-                            throw PagedZmxAttachEngine.Error.unsupported
+                    pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                        if sessionName.hasPrefix("relay-pane-") {
+                            return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
                         }
                         let path = await MainActor.run {
                             terminalManager.worktreePath(forSessionName: sessionName)
