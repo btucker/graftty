@@ -297,10 +297,10 @@ final class AppServices {
 
     // MARK: - WebRTC (R4)
 
-    /// Mac-side WebRTC host agent. Accepts authenticated offers from paired
-    /// clients and opens SSH sessions over the resulting DataChannel.
+    /// Mac-side connection pool. Each paired device gets an independent
+    /// WebRTC agent and SSH transport.
     /// Retained here so it outlives the SwiftUI init cycle.
-    var hostAgent: WebRTCHostAgent?
+    var hostAgentPool: WebRTCHostAgentPool?
     /// Deletes only the prompt files found at startup after their grace
     /// period. Capturing that snapshot avoids pruning prompts owned by
     /// worktree operations created during this app process.
@@ -468,12 +468,12 @@ final class AppServices {
         )
     }
 
-    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) async throws {
+    func startRemoteMacAccessServices(hostAgentPool: WebRTCHostAgentPool?) async throws {
         guard remoteMacAccessEnabled else {
             throw RemoteMacAccessServiceError.disabled
         }
         guard lanRemoteAccessServer == nil else { return }
-        guard let hostAgent else {
+        guard let hostAgentPool else {
             throw RemoteMacAccessServiceError.hostAgentUnavailable
         }
 
@@ -523,7 +523,7 @@ final class AppServices {
                 }
                 let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
                 do {
-                    let answer = try await hostAgent.acceptOffer(
+                    let answer = try await hostAgentPool.acceptOffer(
                         rtcOffer,
                         clientDeviceID: verified.offer.clientDeviceID,
                         replacingExistingConnection:
@@ -540,7 +540,7 @@ final class AppServices {
                     }
                 } catch WebRTCHostAgent.HostError.busy {
                     await signalingServer.releaseOffer(verified)
-                    return .hostBusy("host is already handling an offer")
+                    return .hostBusy("device connection is busy or host connection limit reached")
                 } catch {
                     await signalingServer.releaseOffer(verified)
                     NSLog("[Graftty] LAN WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
@@ -740,6 +740,7 @@ struct GrafttyApp: App {
     /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
     /// (list/remove) since the coordinator doesn't expose it publicly.
     private let trustedPeerStore: TrustedPeerStore
+    private let hostKey: Curve25519.Signing.PrivateKey?
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
     /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
@@ -841,9 +842,9 @@ struct GrafttyApp: App {
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
-        // R4: Construct the Mac-side WebRTC host agent. The dedicated
+        // Load identity before startup creates the inbound host pool. The dedicated
         // paired-access listener authenticates v2 offers with the device keys
-        // before passing them to this agent, which opens SSH sessions over the
+        // before passing them to the pool, whose agents open SSH sessions over the
         // resulting DataChannel → zmx attach.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
@@ -852,73 +853,10 @@ struct GrafttyApp: App {
         self.sshConnectionRegistry = sshConnectionRegistry
 
         do {
-            let remoteMacsModel = appServices.remoteMacsModel
-            appServices.hostAgent = WebRTCHostAgent(
-                hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
-                trustedPeerStore: trustedPeerStore,
-                streamFactory: {
-                    [registry = appServices.remoteAttachmentRegistry,
-                     terminalManager] sessionName in
-                    if sessionName.hasPrefix("relay-pane-") {
-                        return try await remoteMacsModel.openRelayedTerminal(
-                            alias: sessionName
-                        )
-                    }
-                    let workingDirectoryPath = await MainActor.run {
-                        terminalManager.worktreePath(
-                            forSessionName: sessionName
-                        )
-                    }
-                    let workingDirectory = workingDirectoryPath.map {
-                        URL(fileURLWithPath: $0, isDirectory: true)
-                    }
-                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
-                        zmxExecutable: zmxExe,
-                        zmxDir: zmxDir,
-                        sessionName: sessionName,
-                        workingDirectory: workingDirectory
-                    ))
-                    engine.attachmentRegistry = registry
-                    try engine.start()
-                    return engine
-                },
-                pagedFactory: { [registry = appServices.remoteAttachmentRegistry, terminalManager, remoteMacsModel] sessionName in
-                    if sessionName.hasPrefix("relay-pane-") {
-                        return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
-                    }
-                    let path = await MainActor.run {
-                        terminalManager.worktreePath(forSessionName: sessionName)
-                    }
-                    let engine = PagedZmxAttachEngine(config: .init(
-                        zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                        workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
-                    ))
-                    engine.attachmentRegistry = registry
-                    try await engine.start()
-                    return engine
-                },
-                // R5 Task 11: init-time placeholder closures. The host
-                // agent is constructed in `init()` (before SwiftUI `@State`
-                // is accessible), then `startup()` calls
-                // `setPanesStateSubscribe(_:)` and `setPaneControlMutator(_:)`
-                // with the production wiring that actually reads from
-                // `AppState`. The actor's FIFO ordering guarantees the
-                // setter hops run before any `acceptOffer` hop, so no
-                // incoming WebRTC offer ever sees these placeholders.
-                panesStateSubscribe: { _ in
-                    PanesStateChannelHandler.Cancellable(cancel: {})
-                },
-                paneControlMutator: { _ in
-                    .error(code: "starting", message: "host not yet wired (startup did not run)")
-                },
-                displayOwnershipStore: appServices.displayOwnershipStore,
-                sshConnectionRegistry: sshConnectionRegistry
-            )
+            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
         } catch {
-            // Identity-store I/O failure leaves hostAgent nil; the signaling
-            // endpoint will serve 503. Log so a TestFlight crash dump or
-            // console transcript surfaces the cause.
-            NSLog("[Graftty] failed to construct WebRTCHostAgent: \(error)")
+            self.hostKey = nil
+            NSLog("[Graftty] failed to load remote host identity: \(error)")
         }
     }
 
@@ -2349,11 +2287,8 @@ struct GrafttyApp: App {
             }
         }
 
-        // R5 Task 11: wire production panes-state + pane-control closures into
-        // the host agent before the paired-access listener starts, so no
-        // incoming WebRTC offer can complete its data-channel handshake with
-        // the Task 9 stubs still in place — `installSSHHandler` reads the
-        // actor's stored closures synchronously when the DC opens.
+        // Prepare production channel callbacks before creating the pool and
+        // starting the paired-access listener.
         //
         // `panesStateSubscribe`: emits initial snapshot, then polls
         // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
@@ -2373,7 +2308,7 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostAgent = services.hostAgent {
+        if let hostKey {
             let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
                 // Initial snapshot fires synchronously so the first frame
                 // hits the wire before the polling loop's first sleep.
@@ -3005,23 +2940,77 @@ struct GrafttyApp: App {
                 }
             }
 
-            // Configure SSH channel handlers before starting the dedicated
-            // paired-access listener. Browser Web Access deliberately has no
-            // native signaling route.
-            Task { @MainActor in
-                await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
-                await hostAgent.setPanesStateV2Subscribe(panesStateV2Subscribe)
-                await hostAgent.setPaneControlMutator(paneControlMutator)
-                await hostAgent.setWorktreeManagementMutator(
-                    worktreeManagementMutator
+            // Every device gets a fully configured connection agent. Shared
+            // registries keep revocation and routing consistent across devices.
+            let activeRemotePeers = ActiveRemotePeerRegistry()
+            let hostAgentPool = WebRTCHostAgentPool(makeAgent: {
+                [hostKey, trustedPeerStore, sshConnectionRegistry,
+                 terminalManager = terminalManager,
+                 registry = services.remoteAttachmentRegistry,
+                 remoteMacsModel = services.remoteMacsModel,
+                 remoteTeamRouter = services.remoteTeamRouter,
+                 displayOwnershipStore = services.displayOwnershipStore,
+                 activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
+                 paneControlMutator, worktreeManagementMutator,
+                 zmxExe = zmxBinary, zmxDir] in
+                let hostAgent = WebRTCHostAgent(
+                    hostKey: hostKey,
+                    trustedPeerStore: trustedPeerStore,
+                    activeRemotePeers: activeRemotePeers,
+                    streamFactory: {
+                        [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                        if sessionName.hasPrefix("relay-pane-") {
+                            return try await remoteMacsModel.openRelayedTerminal(
+                                alias: sessionName
+                            )
+                        }
+                        let workingDirectoryPath = await MainActor.run {
+                            terminalManager.worktreePath(
+                                forSessionName: sessionName
+                            )
+                        }
+                        let workingDirectory = workingDirectoryPath.map {
+                            URL(fileURLWithPath: $0, isDirectory: true)
+                        }
+                        let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
+                            zmxExecutable: zmxExe,
+                            zmxDir: zmxDir,
+                            sessionName: sessionName,
+                            workingDirectory: workingDirectory
+                        ))
+                        engine.attachmentRegistry = registry
+                        try engine.start()
+                        return engine
+                    },
+                    pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                        if sessionName.hasPrefix("relay-pane-") {
+                            return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
+                        }
+                        let path = await MainActor.run {
+                            terminalManager.worktreePath(forSessionName: sessionName)
+                        }
+                        let engine = PagedZmxAttachEngine(config: .init(
+                            zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                            workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                        ))
+                        engine.attachmentRegistry = registry
+                        try await engine.start()
+                        return engine
+                    },
+                    panesStateSubscribe: panesStateSubscribe,
+                    panesStateV2Subscribe: panesStateV2Subscribe,
+                    paneControlMutator: paneControlMutator,
+                    worktreeManagementMutator: worktreeManagementMutator,
+                    displayOwnershipStore: displayOwnershipStore,
+                    sshConnectionRegistry: sshConnectionRegistry
                 )
                 await hostAgent.setTeamMessaging(
                     handler: { deviceID, data in
-                        await services.remoteTeamRouter.receive(from: deviceID, data: data)
+                        await remoteTeamRouter.receive(from: deviceID, data: data)
                     },
                     onConnect: { deviceID, session in
                         let label = (try? trustedPeerStore.get(id: deviceID))?.displayName ?? deviceID.value
-                        await services.remoteTeamRouter.register(
+                        await remoteTeamRouter.register(
                             deviceID: deviceID,
                             connectionID: session.id,
                             label: label,
@@ -3029,12 +3018,16 @@ struct GrafttyApp: App {
                         ) { data in try await session.send(data) }
                     },
                     onDisconnect: { deviceID, connectionID in
-                        await services.remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
+                        await remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
                     }
                 )
+                return hostAgent
+            })
+            services.hostAgentPool = hostAgentPool
+            Task { @MainActor in
                 do {
                     try await services.startRemoteMacAccessServices(
-                        hostAgent: hostAgent
+                        hostAgentPool: hostAgentPool
                     )
                     services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
@@ -3051,7 +3044,7 @@ struct GrafttyApp: App {
             Task { @MainActor in
                 do {
                     try await services.startRemoteMacAccessServices(
-                        hostAgent: nil
+                        hostAgentPool: nil
                     )
                     services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
