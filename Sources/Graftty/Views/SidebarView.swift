@@ -783,7 +783,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .id(worktree.path)
-            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0 }
+            .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
             .rightClickMenu {
                 buildWorktreeMenu(worktree, repo: repo)
             }
