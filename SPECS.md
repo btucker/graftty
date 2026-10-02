@@ -114,7 +114,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
 
-**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale Tasks last within their section, and virtual-folder and Team boundaries while moving only eligible siblings.
+**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the default-branch checkout first among pinned agents, stale temporary worktrees last within their list, and virtual-folder and pinned-section boundaries while moving only eligible siblings.
 
 **LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
 
@@ -216,7 +216,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.94** While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its Tasks by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale Tasks last within that section, preserve manual Team order below Tasks, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -230,25 +230,25 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.101** When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.
 
-**LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit Team membership and decode older worktrees as Tasks.
+**LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit pin state and decode older linked worktrees as temporary worktrees.
 
-**LAYOUT-2.103** While the sidebar displays a repository, the application shall place its Tasks before its Team members, preserving manual Team order even when Tasks use recent activity order.
+**LAYOUT-2.103** While the sidebar displays a repository, the application shall show temporary worktrees without a heading above a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.
 
-**LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same Tasks or Team section, allowing manual Team moves while Tasks use recent activity order.
+**LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same temporary or pinned section, allowing manual pinned moves while temporary worktrees use recent activity order.
 
-**LAYOUT-2.105** If a Team worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its Team membership.
+**LAYOUT-2.105** If a pinned worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its pin.
 
-**LAYOUT-2.106** When the user collapses a repository's Team section, the application shall preserve that disclosure state across relaunches and initially expand Team for older state.
+**LAYOUT-2.106** When the user collapses a repository's Pinned Agents section, the application shall preserve that disclosure state across relaunches and initially expand Pinned Agents for older state.
 
-**LAYOUT-2.107** When the user adds or removes an eligible worktree from Team, the application shall change only its explicit membership, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
+**LAYOUT-2.107** When the user adds or removes an eligible worktree from Pinned Agents, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
 
-**LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit Team membership for remote clients while accepting older metadata without it.
+**LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit pin state for remote clients while accepting older metadata without it.
 
-**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group Tasks before Team, preserve each section's supplied order and main-checkout placement, and retain the existing layout for hosts without membership metadata.
+**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group temporary worktrees before Pinned Agents, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.
 
-**LAYOUT-2.110** When a repository moves, the application shall preserve saved Team order and membership for both relocated and stale members while appending newly discovered worktrees as Tasks.
+**LAYOUT-2.110** When a repository moves, the application shall preserve saved pinned order and pin state for both relocated and stale members while appending newly discovered worktrees as Tasks.
 
-**LAYOUT-2.111** When a remote worktree is dragged across Tasks and Team, the application shall reject the destination before sending a reorder request to the owning Mac.
+**LAYOUT-2.111** When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -682,7 +682,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
 
-**GIT-4.21** When a Team worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
+**GIT-4.21** When a pinned worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -2420,7 +2420,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-8.x
 
-**INSTR-8.1** When the user edits a Team member's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
+**INSTR-8.1** When the user edits a pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
 
 ## EDITOR — Editor Integration
 

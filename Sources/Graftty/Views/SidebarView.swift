@@ -535,23 +535,22 @@ struct SidebarView: View {
         )
         let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
         let rows = Group {
-            SidebarWorktreeSectionHeader("Tasks", color: theme.sidebarDimIcon)
-            worktreeNodeRows(worktrees.filter { !$0.isTeamMember || $0.path == repo.path },
+            worktreeNodeRows(worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) },
                              repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
-            SidebarWorktreeSectionHeader("Team", color: theme.sidebarDimIcon, isCollapsed: Binding(
-                get: { repo.isTeamCollapsed },
+            SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
+                get: { repo.isPinnedCollapsed },
                 set: { collapsed in
                     if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
-                        appState.repos[index].isTeamCollapsed = collapsed
+                        appState.repos[index].isPinnedCollapsed = collapsed
                     }
                 }
             ))
-            if !repo.isTeamCollapsed {
-                let members = worktrees.filter { $0.isTeamMember && $0.path != repo.path }
+            if !repo.isPinnedCollapsed {
+                let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
                 worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
-                                 attentionCounts: attentionCounts, isTeamSection: true)
+                                 attentionCounts: attentionCounts, isPinnedSection: true)
                 if members.isEmpty {
-                    Text("Right-click a worktree to add it to Team.")
+                    Text("Right-click a worktree to pin it here.")
                         .font(.caption)
                         .foregroundColor(theme.sidebarDimIcon)
                         .padding(.horizontal, 8)
@@ -592,13 +591,13 @@ struct SidebarView: View {
     }
 
     private func worktreeNodeRows(_ worktrees: [WorktreeEntry], repo: RepoEntry, defaultBranch: String?,
-                                  attentionCounts: SidebarActivityCounts, isTeamSection: Bool = false) -> some View {
+                                  attentionCounts: SidebarActivityCounts, isPinnedSection: Bool = false) -> some View {
         let nodes = SidebarWorktreeHierarchy.nodes(for: worktrees, inRepoAtPath: repo.path, defaultBranch: defaultBranch)
         return ForEach(nodes) { node in
             SidebarWorktreeNodeRow(
                 node: node, depth: 0, repositoryID: repo.id, expansion: $worktreeFolderExpansion,
                 statsByWorktreePath: statsStore.stats, theme: theme,
-                projectColumn: showsProjectRail, isTeamSection: isTeamSection
+                projectColumn: showsProjectRail, isPinnedSection: isPinnedSection
             ) { worktree, displayName in
                 worktreeBlock(worktree, repo: repo, displayName: displayName, activityCounts: attentionCounts)
             }
@@ -805,7 +804,7 @@ struct SidebarView: View {
         .worktreeReorderTarget(
             repoID: repo.id,
             worktreeID: worktree.id,
-            appState: $appState, isEnabled: navigation.query.isEmpty && (repo.worktreeOrderMode == .manual || worktree.isTeamMember),
+            appState: $appState, isEnabled: navigation.query.isEmpty && (repo.worktreeOrderMode == .manual || SidebarHostNavigation.isPinned(worktree, in: repo)),
             onSelect: { onSelect(worktree.path) },
             onMovePane: onMovePane,
             onPaneTargeted: { targeted in
@@ -828,21 +827,24 @@ struct SidebarView: View {
         if worktree.state.isInFlight {
             return menu
         }
-        if worktree.path != repo.path && (worktree.isTeamMember || worktree.state.hasOnDiskWorktree) {
-            menu.addItem(ClosureMenuItem(title: worktree.isTeamMember ? "Remove from Team" : "Add to Team") {
-                SidebarHostNavigation.setTeamMembership(!worktree.isTeamMember, worktreeID: worktree.id, in: &appState.repos)
+        var hasPinnedActions = false
+        if worktree.path != repo.path && (worktree.isPinned || worktree.state.hasOnDiskWorktree) {
+            menu.addItem(ClosureMenuItem(title: worktree.isPinned ? "Unpin Agent" : "Pin Agent") {
+                SidebarHostNavigation.setPinned(!worktree.isPinned, worktreeID: worktree.id, in: &appState.repos)
             })
-            if worktree.isTeamMember && worktree.state.hasOnDiskWorktree {
-                let key = InstructionKey.key(worktreePath: worktree.path, repoPath: repo.path,
-                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
-                if let key {
-                    menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
-                        editRoleInstructions(key: key, worktree: worktree, repo: repo)
-                    })
-                }
-            }
-            menu.addItem(.separator())
+            hasPinnedActions = true
         }
+        if SidebarHostNavigation.isPinned(worktree, in: repo) && worktree.state.hasOnDiskWorktree {
+            let key = InstructionKey.key(worktreePath: worktree.path, repoPath: repo.path,
+                defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+            if let key {
+                menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
+                    editRoleInstructions(key: key, worktree: worktree, repo: repo)
+                })
+                hasPinnedActions = true
+            }
+        }
+        if hasPinnedActions { menu.addItem(.separator()) }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: worktree.path))
@@ -1070,7 +1072,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let statsByWorktreePath: [String: WorktreeStats]
     let theme: GhosttyTheme
     var projectColumn: Bool = false
-    var isTeamSection: Bool = false
+    var isPinnedSection: Bool = false
     let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
 
     @ViewBuilder
@@ -1082,7 +1084,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
         case .folder(let path, let name, let children):
             let folderID = SidebarWorktreeFolderID(
                 repositoryID: repositoryID,
-                path: (isTeamSection ? "team:" : "tasks:") + path
+                path: (isPinnedSection ? "pinned:" : "tasks:") + path
             )
             let isExpanded = expansion.isExpanded(folderID)
             let aggregate = SidebarWorktreeHierarchy.aggregateStats(
@@ -1104,7 +1106,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         statsByWorktreePath: statsByWorktreePath,
                         theme: theme,
                         projectColumn: projectColumn,
-                        isTeamSection: isTeamSection,
+                        isPinnedSection: isPinnedSection,
                         worktreeContent: worktreeContent
                     )
                     .modifier(SidebarWorktreeRowInsets(

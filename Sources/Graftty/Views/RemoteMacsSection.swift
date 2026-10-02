@@ -36,8 +36,13 @@ enum RemoteWorktreeReorderPolicy {
 
     static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
         source.repositoryID == target.repositoryID
-            && (source.sidebar?.isTeamMember == true) == (target.sidebar?.isTeamMember == true)
+            && isPinned(source) == isPinned(target)
             && (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (target.sidebar?.folderIDs ?? target.sidebar?.folders)
+    }
+
+    private static func isPinned(_ worktree: WorktreePanes) -> Bool {
+        worktree.sidebar?.isPinned == true
+            || (worktree.isMainCheckout && worktree.sidebar?.isPinned != nil)
     }
 }
 

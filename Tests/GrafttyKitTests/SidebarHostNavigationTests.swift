@@ -212,7 +212,7 @@ struct SidebarHostNavigationTests {
         #expect(ProjectIconDiscovery.discover(at: directory) == nil)
     }
 
-    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the main checkout first, stale Tasks last within their section, and virtual-folder and Team boundaries while moving only eligible siblings.")
+    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the default-branch checkout first among pinned agents, stale temporary worktrees last within their list, and virtual-folder and pinned-section boundaries while moving only eligible siblings.")
     func worktreeMove() {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main", state: .closed)
@@ -226,10 +226,10 @@ struct SidebarHostNavigationTests {
         #expect(!beforeMain)
         let stale = WorktreeEntry(path: root + "/gone", branch: "gone", state: .stale)
         let oldOrder = RepoEntry(path: root, displayName: "Project", worktrees: [stale, b, main, a])
-        #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["main", "b", "a", "gone"])
+        #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["b", "a", "gone", "main"])
     }
 
-    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its Tasks by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale Tasks last within that section, preserve manual Team order below Tasks, and decode older state without the setting as manual order.")
+    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.")
     func recentActivityOrdering() throws {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main")
@@ -247,17 +247,17 @@ struct SidebarHostNavigationTests {
         #expect(pinged.lastActivity == Date(timeIntervalSince1970: 100))
         var repo = RepoEntry(path: root, displayName: "project", worktrees: [stale, quiet, pinged, main, progressing, stopped])
         #expect(repo.worktreeOrderMode == .manual)
-        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["main", "quiet", "pinged", "progressing", "stopped", "gone"])
+        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["quiet", "pinged", "progressing", "stopped", "gone", "main"])
         repo.worktreeOrderMode = .recentActivity
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "stopped", "progressing", "pinged", "quiet", "gone"])
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["stopped", "progressing", "pinged", "quiet", "gone", "main"])
         // The persisted order is untouched by the display mode, so switching back to manual restores it.
-        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["main", "quiet", "pinged", "progressing", "stopped", "gone"])
+        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["quiet", "pinged", "progressing", "stopped", "gone", "main"])
         // Reordering is manual-only, so a remote move must be refused rather than accepted and re-sorted away.
         var state = AppState(repos: [repo])
         #expect(!SidebarHostNavigation.moveWorktree(in: &state, repositoryID: root, worktreeID: progressing.path, relativeTo: stopped.path, after: false))
         quiet.paneAttention[PaneSlotID()] = Attention(text: "Finished", timestamp: Date(timeIntervalSince1970: 400))
         repo.worktrees = [stale, quiet, pinged, main, progressing, stopped]
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "quiet", "stopped", "progressing", "pinged", "gone"])
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["quiet", "stopped", "progressing", "pinged", "gone", "main"])
         let encoded = try JSONEncoder().encode(repo)
         #expect(try JSONDecoder().decode(RepoEntry.self, from: encoded).worktreeOrderMode == .recentActivity)
         let legacy = """

@@ -102,8 +102,8 @@ public enum InstructionStore {
     }
 
     /// Opens the effective exact-role file, or creates an empty role file in
-    /// the main checkout so peers can read its shared role context. Adding Team
-    /// membership never writes instructions.
+    /// the main checkout so peers can read its shared role context. Pinning an
+    /// agent never writes instructions.
     public static func prepareRoleFile(
         key: String,
         repoPath: String,

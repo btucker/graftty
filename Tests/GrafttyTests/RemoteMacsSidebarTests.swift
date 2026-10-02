@@ -165,12 +165,12 @@ struct RemoteMacsSidebarTests {
         #expect(!RemoteWorktreeReorderPolicy.allows(main, editableProjectIDs: ["project"], query: ""))
     }
 
-    @Test("@spec LAYOUT-2.111: When a remote worktree is dragged across Tasks and Team, the application shall reject the destination before sending a reorder request to the owning Mac.")
+    @Test("@spec LAYOUT-2.111: When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.")
     func remoteReordersRequireMatchingSections() {
-        func row(_ id: String, membership: Bool?) -> WorktreePanes {
+        func row(_ id: String, membership: Bool?, isMain: Bool = false) -> WorktreePanes {
             WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", repositoryID: "repo",
-                displayBranch: id, state: .closed, isMainCheckout: false, prBadge: nil, stats: nil,
-                attentionText: nil, layout: nil, sidebar: .init(id: id, projectID: "project", isTeamMember: membership))
+                displayBranch: id, state: .closed, isMainCheckout: isMain, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil, sidebar: .init(id: id, projectID: "project", isPinned: membership))
         }
         let task = row("fix", membership: false)
         let legacyTask = row("legacy", membership: nil)
@@ -180,6 +180,10 @@ struct RemoteMacsSidebarTests {
         #expect(!RemoteWorktreeReorderPolicy.areSiblings(legacyTask, team))
         #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, task))
         #expect(RemoteWorktreeReorderPolicy.areSiblings(team, row("qa", membership: true)))
+        let home = row("trunk", membership: false, isMain: true)
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(team, home))
+        #expect(!RemoteWorktreeReorderPolicy.areSiblings(task, home))
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, row("legacy-home", membership: nil, isMain: true)))
     }
 
     @Test("empty sidebar projection still exposes Add Remote Mac")

@@ -11,7 +11,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
     public var folderIndent: CGFloat
     public var showsSections: Bool
     @State private var collapsed: Set<String> = []
-    @AppStorage private var isTeamCollapsed: Bool
+    @AppStorage private var isPinnedCollapsed: Bool
 
     public init(worktrees: [WorktreePanes], allowsReordering: Bool = false,
                 onMove: @escaping (WorktreePanes, WorktreePanes, Bool) -> Void = { _, _, _ in },
@@ -25,17 +25,16 @@ public struct SidebarWorktreeRows<Row: View>: View {
         self.folderIndent = folderIndent
         self.showsSections = showsSections
         let projectID = worktrees.first.map(SidebarProjection.projectID) ?? "empty"
-        self._isTeamCollapsed = AppStorage(wrappedValue: false, "sidebar.team.collapsed.\(projectID)")
+        self._isPinnedCollapsed = AppStorage(wrappedValue: false, "sidebar.pinned.collapsed.\(projectID)")
     }
 
     @ViewBuilder public var body: some View {
         let sections = SidebarWorktreeSections(worktrees)
-        if showsSections && sections.hasMembershipMetadata {
-            SidebarWorktreeSectionHeader("Tasks")
+        if showsSections && sections.hasPinMetadata {
             rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
-            SidebarWorktreeSectionHeader("Team", isCollapsed: $isTeamCollapsed)
-            if !isTeamCollapsed {
-                rows(SidebarWorktreeTree.nodes(sections.team), section: "team:")
+            SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed)
+            if !isPinnedCollapsed {
+                rows(SidebarWorktreeTree.nodes(sections.pinned), section: "pinned:")
             }
         } else {
             rows(SidebarWorktreeTree.nodes(worktrees))

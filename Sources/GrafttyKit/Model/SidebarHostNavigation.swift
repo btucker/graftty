@@ -86,30 +86,37 @@ public enum SidebarHostNavigation {
         }
     }
 
-    /// Tasks keep the main checkout first and stale entries last. Team
-    /// members follow in their saved manual order.
-    public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
-        repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path && !$0.isTeamMember })
-            + repo.worktrees.filter { $0.path != repo.path && $0.isTeamMember }
+    /// The repository's home checkout is always pinned; linked worktrees opt in.
+    public static func isPinned(_ worktree: WorktreeEntry, in repo: RepoEntry) -> Bool {
+        worktree.path == repo.path || worktree.isPinned
     }
 
-    /// The displayed order (LAYOUT-2.95): canonical, re-ranked by recent
-    /// activity when the repository asks for it. Never written back, so the
-    /// manual order survives a round trip through recent activity.
+    /// Temporary worktrees precede pinned agents. The default-branch row leads
+    /// the pinned section, followed by linked worktrees in saved manual order.
+    public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
+        WorktreeOrdering.staleLast(repo.worktrees.filter { !isPinned($0, in: repo) })
+            + pinnedWorktrees(in: repo)
+    }
+
+    private static func pinnedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
+        repo.worktrees.filter { $0.path == repo.path }
+            + repo.worktrees.filter { $0.path != repo.path && $0.isPinned }
+    }
+
+    /// Recent activity re-ranks only temporary worktrees. Never written back,
+    /// so pinned order stays stable and manual order survives mode changes.
     public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
-        return repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { $0.path != repo.path && !$0.isTeamMember })
-            + repo.worktrees.filter { $0.path != repo.path && $0.isTeamMember }
+        return WorktreeOrdering.byRecentActivity(repo.worktrees.filter { !isPinned($0, in: repo) })
+            + pinnedWorktrees(in: repo)
     }
 
     /// Published folder ancestry matches the separately rendered sections.
     public static func folderAncestry(in repo: RepoEntry) -> [UUID: [SidebarWorktreeHierarchy.Folder]] {
         var result: [UUID: [SidebarWorktreeHierarchy.Folder]] = [:]
-        for isTeam in [false, true] {
+        for pinned in [false, true] {
             let nodes = SidebarWorktreeHierarchy.nodes(
-                for: repo.worktrees.filter { $0.isTeamMember == isTeam },
+                for: repo.worktrees.filter { isPinned($0, in: repo) == pinned },
                 inRepoAtPath: repo.path, defaultBranch: nil)
             result.merge(SidebarWorktreeHierarchy.folderAncestry(in: nodes), uniquingKeysWith: { first, _ in first })
         }
@@ -117,14 +124,14 @@ public enum SidebarHostNavigation {
     }
 
     @discardableResult
-    public static func setTeamMembership(_ isMember: Bool, worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
+    public static func setPinned(_ pinned: Bool, worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
         for repoIndex in repos.indices {
             guard let index = repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktreeID }) else { continue }
             let worktree = repos[repoIndex].worktrees[index]
             guard worktree.path != repos[repoIndex].path, !worktree.state.isInFlight,
-                  !isMember || worktree.state.hasOnDiskWorktree,
-                  worktree.isTeamMember != isMember else { return false }
-            repos[repoIndex].worktrees[index].isTeamMember = isMember
+                  !pinned || worktree.state.hasOnDiskWorktree,
+                  worktree.isPinned != pinned else { return false }
+            repos[repoIndex].worktrees[index].isPinned = pinned
             return true
         }
         return false
@@ -162,7 +169,7 @@ public enum SidebarHostNavigation {
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop,
-                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isTeamMember: worktree.isTeamMember)
+                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isPinned: worktree.isPinned)
     }
 
     @discardableResult
@@ -176,15 +183,15 @@ public enum SidebarHostNavigation {
               let target = rows.firstIndex(where: { $0.path == relativeTo }),
               rows[source].path != repo.path,
               !rows[source].state.isInFlight, !rows[target].state.isInFlight,
-              rows[source].isTeamMember == rows[target].isTeamMember,
-              repo.worktreeOrderMode == .manual || rows[source].isTeamMember,
+              isPinned(rows[source], in: repo) == isPinned(rows[target], in: repo),
+              repo.worktreeOrderMode == .manual || isPinned(rows[source], in: repo),
               rows[target].path != repo.path || after else { return false }
-        let sectionRows = rows.filter { $0.isTeamMember == rows[source].isTeamMember }
+        let sectionRows = rows.filter { isPinned($0, in: repo) == isPinned(rows[source], in: repo) }
         let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)
         let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
         guard parents[rows[source].id] == parents[rows[target].id] else { return false }
         let indices = rows.indices.filter {
-            rows[$0].isTeamMember == rows[source].isTeamMember && parents[rows[$0].id] == parents[rows[source].id]
+            isPinned(rows[$0], in: repo) == isPinned(rows[source], in: repo) && parents[rows[$0].id] == parents[rows[source].id]
         }
         let siblings = indices.map { rows[$0] }
         guard let ti = indices.firstIndex(of: target) else { return false }

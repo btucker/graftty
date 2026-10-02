@@ -3,13 +3,19 @@ import Foundation
 /// Keeps hosts without membership metadata on their existing flat layout.
 public struct SidebarWorktreeSections: Sendable {
     public let tasks: [WorktreePanes]
-    public let team: [WorktreePanes]
-    public let hasMembershipMetadata: Bool
+    public let pinned: [WorktreePanes]
+    public let hasPinMetadata: Bool
 
     public init(_ worktrees: [WorktreePanes]) {
-        tasks = worktrees.filter { $0.isMainCheckout || $0.sidebar?.isTeamMember != true }
-        team = worktrees.filter { !$0.isMainCheckout && $0.sidebar?.isTeamMember == true }
-        hasMembershipMetadata = worktrees.contains { $0.sidebar?.isTeamMember != nil }
+        hasPinMetadata = worktrees.contains { $0.sidebar?.isPinned != nil }
+        if hasPinMetadata {
+            tasks = worktrees.filter { !$0.isMainCheckout && $0.sidebar?.isPinned != true }
+            pinned = worktrees.filter(\.isMainCheckout)
+                + worktrees.filter { !$0.isMainCheckout && $0.sidebar?.isPinned == true }
+        } else {
+            tasks = worktrees
+            pinned = []
+        }
     }
 }
 

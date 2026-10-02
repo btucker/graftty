@@ -84,8 +84,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emoji: String?
     /// Nil for pre-migration state. Current identities record their source.
     public var emojiSource: WorktreeEmojiSource?
-    /// Explicit ongoing-role membership; instruction files alone do not imply it.
-    public var isTeamMember: Bool = false
+    /// Explicit sidebar pin; instruction files alone do not imply it.
+    public var isPinned: Bool = false
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -175,7 +175,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isTeamMember, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
              offeredDeleteForResolvedPR
         case focusedPaneSlotID = "focusedTerminalID"
@@ -197,7 +197,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
-        self.isTeamMember = try container.decodeIfPresent(Bool.self, forKey: .isTeamMember) ?? false
+        self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)

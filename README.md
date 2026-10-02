@@ -122,19 +122,20 @@ online in the same tailnet and the host must still be reachable on port
 
 ## Agent instructions
 
-The sidebar separates temporary **Tasks** from ongoing **Team** roles. To move
-a local worktree into the collapsible Team section below Tasks, right-click it
-and choose **Add to Team**. Choose **Remove from Team** to return it to Tasks.
-Team membership and manual order persist across sessions. Remote clients show
-the membership supplied by the owning Mac.
+The sidebar lists temporary worktrees above a collapsible **Pinned Agents**
+section. The repository's default-branch row always appears first among pinned
+agents, followed by ongoing-role worktrees in saved manual order. To pin a local
+worktree, right-click it and choose **Pin Agent**. Choose **Unpin Agent** to
+return it to the temporary list. Pin state, disclosure state, and manual pinned
+order persist across sessions. Remote clients show the owning Mac's pin state.
 
-To configure a member's responsibilities, choose **Edit Role Instructions…**
+To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
 from its context menu. Graftty opens its effective worktree-specific instruction
 file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main
-checkout so peer agents can read its shared role context.
-This action is available for worktrees under the repository's `.worktrees`
-directory. Adding a worktree to Team does not create or change instructions.
-Instruction files can also apply to Tasks without making them Team members.
+checkout so peer agents can read its shared role context. This action is
+available for the default-branch checkout and worktrees under the repository's
+`.worktrees` directory. Pinning does not create or change instructions.
+Instruction files can also apply to temporary worktrees without pinning them.
 
 Graftty can give the agents running in your worktrees durable, per-worktree
 instructions. Files use the same relative layout in any instruction root:

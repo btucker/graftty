@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec INSTR-8.1: When the user edits a Team member's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.")
+@Suite("@spec INSTR-8.1: When the user edits a pinned agent's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.")
 struct InstructionRoleFileTests {
     private func prepare(_ fixture: InstructionFilesystemFixture, key: String = "feature-login") async throws -> URL {
         try await InstructionStore.prepareRoleFile(key: key, repoPath: fixture.repo.path,
@@ -29,6 +29,23 @@ struct InstructionRoleFileTests {
         let peerInstructions = await InstructionSessionText.render(team: team, viewer: peer, defaultBranch: "main",
             applicationSupportDirectory: fixture.applicationSupport, loadBudget: .seconds(10))
         #expect(peerInstructions.contains("Release manager responsibilities"))
+    }
+
+    @Test func defaultBranchRoleUsesResolvedBranchKey() async throws {
+        let fixture = try InstructionFilesystemFixture()
+        defer { fixture.remove() }
+        let key = try #require(InstructionKey.key(worktreePath: fixture.repo.path,
+            repoPath: fixture.repo.path, defaultBranch: "trunk"))
+        let file = try await InstructionStore.prepareRoleFile(key: key, repoPath: fixture.repo.path,
+            worktreePath: fixture.repo.path, applicationSupportDirectory: fixture.applicationSupport)
+        #expect(file == fixture.repo.appendingPathComponent(".graftty/trunk/GRAFTTY.md"))
+        try "Integration agent\n\n## Private\nDefault-branch checks".write(to: file, atomically: true, encoding: .utf8)
+        let team = try fixture.makeTeam()
+        let viewer = try #require(team.members.first { $0.worktreePath == fixture.repo.path })
+        let instructions = await InstructionSessionText.render(team: team, viewer: viewer, defaultBranch: "trunk",
+            applicationSupportDirectory: fixture.applicationSupport, loadBudget: .seconds(10))
+        #expect(instructions.contains("Integration agent"))
+        #expect(instructions.contains("Default-branch checks"))
     }
 
     @Test func opensEffectiveFileWithoutCreatingShadows() async throws {

@@ -205,11 +205,11 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     /// stopped cards after their agent resumes.
     public var agentProgressTimes: [String: Double]?
     public var emoji: String?
-    /// Nil for hosts that predate the Tasks / Team distinction.
-    public var isTeamMember: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isTeamMember: Bool? = nil) {
+    /// Nil for hosts that predate the temporary / pinned distinction.
+    public var isPinned: Bool?
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
         self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
-        self.isTeamMember = isTeamMember
+        self.isPinned = isPinned
     }
 
     public func folderID(at depth: Int) -> String? {
