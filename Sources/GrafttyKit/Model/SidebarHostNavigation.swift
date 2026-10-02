@@ -137,6 +137,37 @@ public enum SidebarHostNavigation {
         return false
     }
 
+    /// A pin drop crosses section membership rather than reordering temporary
+    /// rows. Existing peers keep their order; a matching folder may also place
+    /// the new role beside the row where it was dropped.
+    @discardableResult
+    public static func pinWorktree(in state: inout AppState, repositoryID: String,
+                                   worktreeID: String, relativeTo: String? = nil, after: Bool = true) -> Bool {
+        guard let ri = state.repos.firstIndex(where: { $0.path == repositoryID }),
+              let si = state.repos[ri].worktrees.firstIndex(where: { $0.path == worktreeID }) else { return false }
+        let repo = state.repos[ri]
+        let source = repo.worktrees[si]
+        guard source.path != repo.path, !source.isPinned,
+              !source.state.isInFlight, source.state.hasOnDiskWorktree else { return false }
+        if let relativeTo {
+            guard let target = repo.worktrees.first(where: { $0.path == relativeTo }),
+                  isPinned(target, in: repo), !target.state.isInFlight else { return false }
+        }
+        var candidate = state
+        guard setPinned(true, worktreeID: source.id, in: &candidate.repos) else { return false }
+        let pinned = candidate.repos[ri].worktrees.remove(at: si)
+        candidate.repos[ri].worktrees.append(pinned)
+        if let relativeTo {
+            // If folder ancestry or a pending neighbor prevents placement,
+            // retain the appended role without moving any existing peers.
+            moveWorktree(in: &candidate, repositoryID: repositoryID, worktreeID: worktreeID,
+                relativeTo: relativeTo, after: relativeTo == repo.path || after)
+        }
+        candidate.repos[ri].isPinnedCollapsed = false
+        state = candidate
+        return true
+    }
+
     /// Applies a user-picked emoji as a manual identity. Rejects anything
     /// that is not exactly one emoji or that another worktree already uses.
     @discardableResult

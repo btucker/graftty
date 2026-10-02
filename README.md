@@ -125,7 +125,9 @@ online in the same tailnet and the host must still be reachable on port
 The sidebar lists temporary worktrees above a collapsible **Pinned Agents**
 section. The repository's default-branch row always appears first among pinned
 agents, followed by ongoing-role worktrees in saved manual order. To pin a local
-worktree, right-click it and choose **Pin Agent**. Choose **Unpin Agent** to
+worktree, drag it onto the **Pinned Agents** header or a pinned worktree row,
+or right-click it and choose **Pin Agent**. Dropping on a collapsed header pins
+the worktree and expands the section. This works with recent activity sorting. Choose **Unpin Agent** to
 return it to the temporary list. Pin state, disclosure state, and manual pinned
 order persist across sessions. Remote clients show the owning Mac's pin state.
 

@@ -547,6 +547,7 @@ struct SidebarView: View {
                 }
             ), separatesPrecedingRows: !temporaryWorktrees.isEmpty)
             .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
+            .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
             if !repo.isPinnedCollapsed {
                 let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
                 worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
@@ -806,7 +807,7 @@ struct SidebarView: View {
         .worktreeReorderTarget(
             repoID: repo.id,
             worktreeID: worktree.id,
-            appState: $appState, isEnabled: navigation.query.isEmpty && (repo.worktreeOrderMode == .manual || SidebarHostNavigation.isPinned(worktree, in: repo)),
+            appState: $appState, isEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
             onMovePane: onMovePane,
             onPaneTargeted: { targeted in

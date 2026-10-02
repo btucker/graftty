@@ -240,7 +240,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.106** When the user collapses a repository's Pinned Agents section, the application shall preserve that disclosure state across relaunches and initially expand Pinned Agents for older state.
 
-**LAYOUT-2.107** When the user adds or removes an eligible worktree from Pinned Agents, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
+**LAYOUT-2.107** When a context menu or CLI changes an eligible worktree's pin state, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
 
 **LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit pin state for remote clients while accepting older metadata without it.
 
@@ -251,6 +251,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.111** When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.
 
 **LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and reserve more space above the section title than below it.
+
+**LAYOUT-2.113** When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
 
 ### LAYOUT-3.x — Adding Repositories
 

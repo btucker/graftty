@@ -117,7 +117,7 @@ struct SidebarPinnedTests {
         #expect(StaleWorktreeAutoDismissPolicy.expiredWorktreeIDs(in: state, now: now) == [task.id])
     }
 
-    @Test("@spec LAYOUT-2.107: When the user adds or removes an eligible worktree from Pinned Agents, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.")
+    @Test("@spec LAYOUT-2.107: When a context menu or CLI changes an eligible worktree's pin state, the application shall change only its explicit pin state, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.")
     func membershipChangesPreserveWorkspace() throws {
         let main = WorktreeEntry(path: "/repo", branch: "main")
         var task = WorktreeEntry(path: "/repo/.worktrees/fix", branch: "fix", state: .running,
