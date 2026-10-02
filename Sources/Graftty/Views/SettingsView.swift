@@ -37,6 +37,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Text("Full Disk Access")
+                .font(.headline)
+            Text(FullDiskAccessOffer.explanation)
+                .font(.caption).foregroundStyle(.secondary)
+            Text(FullDiskAccessOffer.instructions)
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Open Full Disk Access Settings") {
+                FullDiskAccessOffer.openSettings()
+            }
+            Divider().padding(.vertical, 4)
+
             Toggle("Keep Mac awake while Graftty is running", isOn: Binding(
                 get: { idleSleepController.isEnabled },
                 set: { idleSleepController.setEnabled($0) }

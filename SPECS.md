@@ -1062,6 +1062,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, and vendored ghostty runtime resources.
 
+### CONFIG-3.x — File Access Setup
+
+**CONFIG-3.1** When the Full Disk Access setup offer has not been acknowledged, the application shall offer optional access guidance at launch; either response shall dismiss future launch offers, and only Open System Settings shall open the permission settings without recording access as granted.
+
 ## DIVERGE — Worktree Divergence Indicator
 
 ### DIVERGE-1.x — Display
