@@ -87,12 +87,15 @@ final class SidebarHostController: ObservableObject {
 /// Uses the same pane conversion as the published snapshot, including liveness.
 @MainActor
 func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
-                          titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:]) -> [WorktreePanes] {
+                          titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:],
+                          defaultBranch: (RepoEntry) -> String? = { $0.defaultBranchHint }) -> [WorktreePanes] {
     state.repos.flatMap { repo in
         let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
         let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
+        let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                                               defaultBranch: defaultBranch(repo))
         return repo.worktrees.map { wt in
-            WorktreePanes(path: wt.path, displayName: wt.branch, repoDisplayName: repo.displayName,
+            WorktreePanes(path: wt.path, displayName: labels[wt.id] ?? "", repoDisplayName: repo.displayName,
                           repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
                           isMainCheckout: wt.path == repo.path, prBadge: prBadges[wt.path], stats: nil,
                           attentionText: wt.attention?.text, attentionSource: wt.attention?.source,

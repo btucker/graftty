@@ -99,9 +99,13 @@ struct SidebarView: View {
             return left == right ? $0.offset < $1.offset : left < right
         }.map(\.element)
     }
+    private var localWorktrees: [WorktreePanes] {
+        sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles,
+            liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
+            defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
+    }
     private var activity: [SidebarActivityItem] {
-        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) })
-            + remoteMacsModel.promotedWorktreesForRelay())
+        SidebarProjection.activity(localWorktrees + remoteMacsModel.promotedWorktreesForRelay())
     }
     private var projectIcons: [String: Data] {
         var result = remoteIcons
@@ -117,7 +121,7 @@ struct SidebarView: View {
             .union(remote.projects.filter {
                 $0.owner.map { remote.authoritativeOwnerIDs.contains($0.deviceID) } == true
             }.map(\.id))
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects,
+        navigation.reconcile(worktrees: localWorktrees + remote.worktrees, projects: projects,
             authoritativeProjectIDs: authoritativeProjects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id

@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyCommandUI
 
 struct SidebarAttentionCardContentTests {
-    @Test("@spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.")
+    @Test("@spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.")
     func stoppedCardUsesChosenHierarchy() {
         let recap = AttentionRecap(
             title: "Paired-device push notifications",
