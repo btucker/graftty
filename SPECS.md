@@ -172,7 +172,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
 
-**LAYOUT-2.73** When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.
+**LAYOUT-2.73** When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
 
 **LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
 
@@ -229,6 +229,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.100** When a user drags a worktree heading, the application shall begin an AppKit drag session that lifts the whole worktree block and whose pasteboard payload the worktree row drop destination decodes as that worktree move.
 
 **LAYOUT-2.101** When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.
+
+**LAYOUT-2.102** While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.
 
 ### LAYOUT-3.x — Adding Repositories
 

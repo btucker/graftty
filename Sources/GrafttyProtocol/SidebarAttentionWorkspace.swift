@@ -71,6 +71,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
                     item.runningSince = item.isBusy ? items[index].runningSince : nil
                     items[index] = item
                 } else {
+                    items[index].worktreeName = item.worktreeName
+                    items[index].branchName = item.branchName
                     items[index].runningSince = item.isBusy ? items[index].runningSince ?? item.runningSince ?? Date() : nil
                     items[index].isBusy = item.isBusy
                     items[index].prBadge = item.prBadge
@@ -106,7 +108,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             items[index].worktreeID = worktree.path
             items[index].projectID = SidebarProjection.projectID(worktree)
             items[index].projectName = worktree.repoDisplayName
-            items[index].worktreeName = worktree.displayBranch
+            items[index].worktreeName = worktree.displayName
+            items[index].branchName = worktree.displayBranch
             items[index].worktreeEmoji = worktree.sidebar?.emoji
             items[index].prBadge = worktree.prBadge
             let route = SidebarProjection.attentionPaneRoute(for: item, in: worktree)

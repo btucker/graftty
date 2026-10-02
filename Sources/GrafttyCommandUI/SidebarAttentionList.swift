@@ -197,6 +197,7 @@ public struct SidebarAttentionList: View {
                                 .accessibilityValue(item.runningDuration(at: context.date) ?? "Start time unavailable")
                         }
                     }
+                    branchLine(card)
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.caption).foregroundStyle(.green)
@@ -222,6 +223,7 @@ public struct SidebarAttentionList: View {
             identity(item.worktreeEmoji, accent: accent)
             VStack(alignment: .leading, spacing: 2) {
                 worktreeName(card.headerName, font: wide ? .callout : .subheadline)
+                branchLine(card)
                 if let paneTitle = card.paneTitle {
                     Text(paneTitle).font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(1).help(paneTitle)
@@ -230,6 +232,14 @@ public struct SidebarAttentionList: View {
             Spacer(minLength: 4)
             if offline { Text("Offline").font(.caption2) }
             elapsedTime(item)
+        }
+    }
+
+    @ViewBuilder
+    private func branchLine(_ card: SidebarAttentionCardContent) -> some View {
+        if let branch = card.branchName {
+            Text(branch).font(.caption2).foregroundStyle(.secondary)
+                .lineLimit(1).help(branch)
         }
     }
 

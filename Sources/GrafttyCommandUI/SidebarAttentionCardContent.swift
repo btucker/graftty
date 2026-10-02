@@ -1,7 +1,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// @spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree name, a gray pane title beneath it, and task context, any user question, and the next step in that order.
+/// @spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
 struct SidebarAttentionCardContent {
     struct Section: Identifiable {
         enum Kind: Hashable {
@@ -17,12 +17,16 @@ struct SidebarAttentionCardContent {
     }
 
     let headerName: String
+    let branchName: String?
     let paneTitle: String?
     let title: String
     let sections: [Section]
 
     init(item: SidebarActivityItem) {
         headerName = item.worktreeName
+        branchName = item.branchName.flatMap { branch in
+            branch.isEmpty || branch == item.worktreeName ? nil : branch
+        }
         let recap = item.agentStop?.recap
         title = recap?.title ?? (item.agentStop == nil ? item.worktreeName : item.title)
         if let paneTitle = item.agentStop?.paneTitle,

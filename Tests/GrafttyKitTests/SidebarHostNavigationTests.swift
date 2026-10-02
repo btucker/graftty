@@ -66,14 +66,14 @@ struct SidebarHostNavigationTests {
         let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: [])
         let item = SidebarActivityItem(id: metadata.id + ":" + slot.id.uuidString,
             projectID: "project", worktreeID: worktree.path, paneID: ZmxLauncher.sessionName(for: oldSession),
-            projectName: "Repo", worktreeName: "feature", title: "Review", occurrence: nil, isBusy: false)
+            projectName: "Repo", worktreeName: "w", title: "Review", occurrence: nil, isBusy: false, branchName: "feature")
         var history = SidebarRecentHistory()
         history.open(item)
 
         worktree.prepareForStop()
         #expect(worktree.paneSessions.isEmpty)
         func closedRow(_ worktree: WorktreeEntry) -> WorktreePanes {
-            WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+            WorktreePanes(path: worktree.path, displayName: "w", repoDisplayName: "Repo",
                 displayBranch: "feature", state: .closed, isMainCheckout: false, prBadge: nil,
                 stats: nil, attentionText: nil, layout: nil,
                 sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: []))
@@ -90,7 +90,7 @@ struct SidebarHostNavigationTests {
         let newSession = worktree.ensurePaneSession(for: slot)
         #expect(newSession != oldSession)
         let newRoute = ZmxLauncher.sessionName(for: newSession)
-        let reopened = WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+        let reopened = WorktreePanes(path: worktree.path, displayName: "w", repoDisplayName: "Repo",
             displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
             stats: nil, attentionText: nil,
             layout: .leaf(sessionName: newRoute, title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),

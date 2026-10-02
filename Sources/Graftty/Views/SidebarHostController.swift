@@ -92,8 +92,10 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
         let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
         let nodes = SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil)
         let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: nodes)
+        let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                                               defaultBranch: repo.defaultBranchHint)
         return repo.worktrees.map { wt in
-            WorktreePanes(path: wt.path, displayName: wt.branch, repoDisplayName: repo.displayName,
+            WorktreePanes(path: wt.path, displayName: labels[wt.id] ?? "", repoDisplayName: repo.displayName,
                           repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
                           isMainCheckout: wt.path == repo.path, prBadge: prBadges[wt.path], stats: nil,
                           attentionText: wt.attention?.text, attentionSource: wt.attention?.source,
