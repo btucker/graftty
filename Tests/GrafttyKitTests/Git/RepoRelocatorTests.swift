@@ -5,6 +5,32 @@ import Foundation
 @Suite("RepoRelocator Tests")
 struct RepoRelocatorTests {
 
+    @Test("@spec LAYOUT-2.110: When a repository moves, the application shall preserve saved Team order and membership for both relocated and stale members while appending newly discovered worktrees as Tasks.")
+    func relocationPreservesManualTeamOrder() {
+        var existing = repo(path: "/old/repo", worktrees: [
+            ("/old/repo/.worktrees/qa", "qa", .running),
+            ("/old/repo/.worktrees/absent", "absent", .closed),
+            ("/old/repo/.worktrees/architect", "architect", .closed)
+        ])
+        for index in existing.worktrees.indices { existing.worktrees[index].isTeamMember = true }
+        let discoveredList = [
+            discovered(path: "/new/repo/.worktrees/architect", branch: "architect"),
+            discovered(path: "/new/repo/.worktrees/qa", branch: "qa"),
+            discovered(path: "/new/repo/.worktrees/fix", branch: "fix")
+        ]
+        let decision = RepoRelocator.decidePostRepair(repo: existing, newRepoPath: "/new/repo",
+            discovered: discoveredList, selectedWorktreePath: existing.worktrees[0].path)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let relocated = RepoRelocator.relocatedWorktrees(repo: existing, decision: decision, discovered: discoveredList, now: now)
+        #expect(relocated.filter(\.isTeamMember).map(\.id) == existing.worktrees.map(\.id))
+        #expect(relocated.first { $0.branch == "absent" }?.state == .stale)
+        #expect(relocated.first { $0.branch == "absent" }?.staleSince == now)
+        #expect(relocated.first { $0.branch == "qa" }?.path == "/new/repo/.worktrees/qa")
+        #expect(relocated.first { $0.branch == "qa" }?.state == .running)
+        #expect(relocated.last?.branch == "fix")
+        #expect(relocated.last?.isTeamMember == false)
+    }
+
     private func repo(
         path: String,
         worktrees: [(path: String, branch: String, state: WorktreeState)]

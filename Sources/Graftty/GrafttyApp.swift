@@ -3518,38 +3518,11 @@ struct GrafttyApp: App {
             finalDecision = firstDecision
         }
 
-        // (h) Build the new worktrees array:
-        //  - Carried-forward: mutate path (and latest branch label)
-        //    in place on the `pre` copy, preserving id / splitTree /
-        //    state / attention / paneAttention / focusedPaneSlotID /
-        //    primaryPaneSlotID / offeredDeleteForResolvedPR.
-        //  - Gone-stale: preserve the full entry, flip state to `.stale`
-        //    so the sidebar can still offer a Dismiss action.
-        //  - Fresh: discovered branches that didn't match any existing
-        //    entry are brand-new worktrees (git added while we weren't
-        //    watching). Append as `.closed`.
-        var newWorktrees: [WorktreeEntry] = []
-        for cf in finalDecision.carriedForward {
-            if var existing = pre.worktrees.first(where: { $0.id == cf.existingID }) {
-                existing.path = cf.newPath
-                existing.branch = cf.branch
-                newWorktrees.append(existing)
-            }
-        }
-        for stale in finalDecision.goneStale {
-            if var existing = pre.worktrees.first(where: { $0.id == stale.existingID }) {
-                existing.markStale()
-                newWorktrees.append(existing)
-            }
-        }
-        // Fresh (unmatched) discovered entries — carried-forward already
-        // claimed the matched ones, so any discovered worktree whose
-        // `(branch, path)` pair isn't in `carriedForward` is new.
-        let carriedPaths = Set(finalDecision.carriedForward.map(\.newPath))
-        for d in discovered where !carriedPaths.contains(d.path) {
-            newWorktrees.append(WorktreeEntry(path: d.path, branch: d.branch))
-        }
-        appState.wrappedValue.repos[repoIdx].worktrees = WorktreeOrdering.staleLast(newWorktrees)
+        // (h) Preserve saved order and state across relocated and stale entries,
+        // then append newly discovered worktrees as Tasks.
+        appState.wrappedValue.repos[repoIdx].worktrees = RepoRelocator.relocatedWorktrees(
+            repo: pre, decision: finalDecision, discovered: discovered
+        )
 
         // (i) Update selection to the relocated path (decision already
         // mapped old→new or nil'd it when the selected worktree went

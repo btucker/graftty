@@ -246,6 +246,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group Tasks before Team, preserve each section's supplied order and main-checkout placement, and retain the existing layout for hosts without membership metadata.
 
+**LAYOUT-2.110** When a repository moves, the application shall preserve saved Team order and membership for both relocated and stale members while appending newly discovered worktrees as Tasks.
+
+**LAYOUT-2.111** When a remote worktree is dragged across Tasks and Team, the application shall reject the destination before sending a reorder request to the owning Mac.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -2416,7 +2420,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### INSTR-8.x
 
-**INSTR-8.1** When the user edits a Team member's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the current worktree when no such file exists.
+**INSTR-8.1** When the user edits a Team member's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the main checkout when no such file exists.
 
 ## EDITOR — Editor Integration
 

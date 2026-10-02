@@ -130,7 +130,8 @@ the membership supplied by the owning Mac.
 
 To configure a member's responsibilities, choose **Edit Role Instructions…**
 from its context menu. Graftty opens its effective worktree-specific instruction
-file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in that worktree.
+file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main
+checkout so peer agents can read its shared role context.
 This action is available for worktrees under the repository's `.worktrees`
 directory. Adding a worktree to Team does not create or change instructions.
 Instruction files can also apply to Tasks without making them Team members.

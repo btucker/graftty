@@ -33,6 +33,12 @@ enum RemoteWorktreeReorderPolicy {
         query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
             && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
     }
+
+    static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
+        source.repositoryID == target.repositoryID
+            && (source.sidebar?.isTeamMember == true) == (target.sidebar?.isTeamMember == true)
+            && (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (target.sidebar?.folderIDs ?? target.sidebar?.folders)
+    }
 }
 
 private struct RemoteWorktreeDragSource: ViewModifier {
@@ -539,8 +545,7 @@ struct RemoteMacsSection: View {
                       let value = values.first,
                       let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
                       canReorder(source, on: remoteMac), source.path != worktree.path,
-                      source.repositoryID == worktree.repositoryID,
-                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
+                      RemoteWorktreeReorderPolicy.areSiblings(source, worktree),
                       !worktree.isMainCheckout || location.y > 14 else { return false }
                 moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
                 return true

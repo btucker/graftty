@@ -102,7 +102,8 @@ public enum InstructionStore {
     }
 
     /// Opens the effective exact-role file, or creates an empty role file in
-    /// the current worktree. Adding Team membership never writes instructions.
+    /// the main checkout so peers can read its shared role context. Adding Team
+    /// membership never writes instructions.
     public static func prepareRoleFile(
         key: String,
         repoPath: String,
@@ -122,15 +123,15 @@ public enum InstructionStore {
             if let path = set?.sourcePaths[relativePath] {
                 return URL(fileURLWithPath: path)
             }
-            return try createRoleFile(components: components, worktreePath: worktreePath)
+            return try createRoleFile(components: components, rootPath: repoPath)
         }.value
     }
 
-    private static func createRoleFile(components: [String], worktreePath: String) throws -> URL {
-        // Walk from the existing worktree without following symlinks beneath
+    private static func createRoleFile(components: [String], rootPath: String) throws -> URL {
+        // Walk from the main checkout without following symlinks beneath
         // it. O_EXCL prevents overwriting any file the loader skipped or a
         // file created concurrently by another editor.
-        var directory = open(worktreePath, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        var directory = open(rootPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard directory >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { close(directory) }
         for component in [directoryName] + components {
@@ -159,7 +160,7 @@ public enum InstructionStore {
                 offset += count
             }
         }
-        return URL(fileURLWithPath: worktreePath, isDirectory: true)
+        return URL(fileURLWithPath: rootPath, isDirectory: true)
             .appendingPathComponent(directoryName + "/" + components.joined(separator: "/") + "/GRAFTTY.md")
     }
 
