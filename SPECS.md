@@ -2428,7 +2428,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **INSTR-8.2** When the user chooses Edit Role Instructions on a pinned local worktree, the application shall use the same configured editor routing as terminal file links, opening a CLI editor in a new pane in that worktree, and shall offer the action for the default checkout and externally located pinned worktrees.
 
-**INSTR-8.3** If a pinned worktree has no instruction role key, then the application shall edit its local base GRAFTTY.md, creating the local base file when absent without changing repository-wide or Application Support instructions.
+**INSTR-8.3** If a pinned worktree has no instruction role key, then the application shall edit its local base GRAFTTY.md or create it when absent, reject Application Support overrides, and leave wider instruction scopes unchanged.
+
+**INSTR-8.4** When role-file preparation finishes, the application shall revalidate the pinned worktree's identity, paths, and eligibility before selecting an editor destination, rejecting removed, relocated, or in-flight worktrees and using the default checkout for stale pinned roles.
 
 ## EDITOR — Editor Integration
 

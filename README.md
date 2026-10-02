@@ -143,7 +143,9 @@ checkout so peer agents can read its shared role context. It uses the same
 configured editor as Cmd-clicking a file in the terminal, opening CLI editors
 in a new pane in the selected worktree. The action is available on pinned local
 worktrees, including the default-branch checkout. Worktrees without a role key
-use their local `.graftty/GRAFTTY.md`. Pinning does not create or change instructions.
+use their local `.graftty/GRAFTTY.md`. If an Application Support base file would
+override it, Graftty reports the overriding path instead of creating an
+ineffective role file. Pinning does not create or change instructions.
 Instruction files can also apply to temporary worktrees without pinning them.
 
 Graftty can give the agents running in your worktrees durable, per-worktree

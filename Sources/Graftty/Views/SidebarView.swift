@@ -892,7 +892,10 @@ struct SidebarView: View {
         Task { @MainActor in
             do {
                 let url = try await InstructionStore.prepareRoleFile(key: key, repoPath: repo.path, worktreePath: worktree.path)
-                let path = worktree.state.hasOnDiskWorktree ? worktree.path : repo.path
+                guard let path = SidebarMenuVisibility.roleEditorDestination(worktree: worktree, repo: repo, state: appState) else {
+                    navigationError = "This pinned worktree changed while opening its role instructions. Try again."
+                    return
+                }
                 onSelect(path)
                 guard let current = appState.worktree(forPath: path), current.state == .running,
                       let source = current.focusedPaneSlotID.flatMap({ current.splitTree.containsLeaf($0) ? $0 : nil })

@@ -411,7 +411,8 @@ struct RemoteMacsSection: View {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
-            }, folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty) { worktree in
+            }, rowInsets: showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil,
+               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
                         showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil

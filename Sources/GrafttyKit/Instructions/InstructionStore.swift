@@ -2,6 +2,20 @@ import Darwin
 import Foundation
 import os
 
+public enum InstructionRoleFileError: LocalizedError {
+    case defaultBranchUnavailable
+    case overriddenByApplicationSupport(path: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .defaultBranchUnavailable:
+            return "The repository's default branch is not available yet. Try again after its branches refresh."
+        case .overriddenByApplicationSupport(let path):
+            return "Local role instructions would be overridden by \(path). Update that base instruction file or remove its override before editing this role."
+        }
+    }
+}
+
 /// A non-fatal problem found while resolving instruction files.
 public struct InstructionDiagnostic: Sendable, Equatable {
     public enum Kind: Sendable, Equatable {
@@ -113,10 +127,20 @@ public enum InstructionStore {
     ) async throws -> URL {
         try await Task.detached(priority: .userInitiated) {
             guard let key else {
-                let set = loadSynchronously(roots: [URL(fileURLWithPath: worktreePath, isDirectory: true)],
-                    preferredPaths: ["GRAFTTY.md"])
+                guard (worktreePath as NSString).standardizingPath != (repoPath as NSString).standardizingPath else {
+                    throw InstructionRoleFileError.defaultBranchUnavailable
+                }
+                let set = loadSynchronously(repoPath: repoPath, worktreePath: worktreePath,
+                    applicationSupportDirectory: applicationSupportDirectory, preferredPaths: ["GRAFTTY.md"])
                 try Task.checkCancellation()
-                if let path = set?.sourcePaths["GRAFTTY.md"] { return URL(fileURLWithPath: path) }
+                if let path = set?.sourcePaths["GRAFTTY.md"] {
+                    let file = URL(fileURLWithPath: path).standardizedFileURL
+                    let appFile = applicationSupportDirectory.appendingPathComponent(".graftty/GRAFTTY.md").standardizedFileURL
+                    if file == appFile { throw InstructionRoleFileError.overriddenByApplicationSupport(path: path) }
+                    let localFile = URL(fileURLWithPath: worktreePath, isDirectory: true)
+                        .appendingPathComponent(".graftty/GRAFTTY.md").standardizedFileURL
+                    if file == localFile { return file }
+                }
                 return try createRoleFile(components: [], rootPath: worktreePath)
             }
             let components = key.split(separator: "/").map(String.init)
@@ -224,11 +248,6 @@ public enum InstructionStore {
             URL(fileURLWithPath: worktreePath, isDirectory: true),
             URL(fileURLWithPath: repoPath, isDirectory: true),
         ])
-        return loadSynchronously(roots: roots, preferredPaths: preferredPaths)
-    }
-
-    private static func loadSynchronously(roots: [URL], preferredPaths: [String]) -> InstructionSet? {
-        guard !Task.isCancelled else { return nil }
         var inventories: [RootInventory] = []
         var discovered: Set<String> = []
         var diagnostics: [InstructionDiagnostic] = []
