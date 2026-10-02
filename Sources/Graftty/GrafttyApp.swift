@@ -2052,7 +2052,7 @@ struct GrafttyApp: App {
         // Web/iOS attaches spawn their own `zmx attach` process. If that
         // attach wins the race to create a new zmx daemon, its cwd becomes
         // the daemon's shell cwd, so resolve the pane back to its worktree.
-        webController.setSessionSpawnProvider { sessionName in
+        webController.setSessionSpawnProvider { [terminalManager = tm] sessionName in
             await MainActor.run {
                 terminalManager.remoteSpawnConfiguration(forSessionName: sessionName)
             }
