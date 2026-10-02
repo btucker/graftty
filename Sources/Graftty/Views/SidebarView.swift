@@ -533,30 +533,30 @@ struct SidebarView: View {
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
         )
-        let worktreeNodes = SidebarWorktreeHierarchy.nodes(
-            for: SidebarHostNavigation.displayedWorktrees(in: repo),
-            inRepoAtPath: repo.path,
-            defaultBranch: resolvedDefaultBranch
-        )
+        let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
         let rows = Group {
-            ForEach(worktreeNodes) { node in
-                SidebarWorktreeNodeRow(
-                    node: node,
-                    depth: 0,
-                    repositoryID: repo.id,
-                    expansion: $worktreeFolderExpansion,
-                    statsByWorktreePath: statsStore.stats,
-                    theme: theme,
-                    projectColumn: showsProjectRail
-                ) { worktree, displayName in
-                    worktreeBlock(
-                        worktree,
-                        repo: repo,
-                        displayName: displayName,
-                        activityCounts: attentionCounts
-                    )
+            SidebarWorktreeSectionHeader("Tasks", color: theme.sidebarDimIcon)
+            worktreeNodeRows(worktrees.filter { !$0.isTeamMember || $0.path == repo.path },
+                             repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
+            SidebarWorktreeSectionHeader("Team", color: theme.sidebarDimIcon, isCollapsed: Binding(
+                get: { repo.isTeamCollapsed },
+                set: { collapsed in
+                    if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                        appState.repos[index].isTeamCollapsed = collapsed
+                    }
                 }
-                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
+            ))
+            if !repo.isTeamCollapsed {
+                let members = worktrees.filter { $0.isTeamMember && $0.path != repo.path }
+                worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
+                                 attentionCounts: attentionCounts, isTeamSection: true)
+                if members.isEmpty {
+                    Text("Right-click a worktree to add it to Team.")
+                        .font(.caption)
+                        .foregroundColor(theme.sidebarDimIcon)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+                }
             }
         }
         if showsProjectRail {
@@ -588,6 +588,21 @@ struct SidebarView: View {
                     Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
+        }
+    }
+
+    private func worktreeNodeRows(_ worktrees: [WorktreeEntry], repo: RepoEntry, defaultBranch: String?,
+                                  attentionCounts: SidebarActivityCounts, isTeamSection: Bool = false) -> some View {
+        let nodes = SidebarWorktreeHierarchy.nodes(for: worktrees, inRepoAtPath: repo.path, defaultBranch: defaultBranch)
+        return ForEach(nodes) { node in
+            SidebarWorktreeNodeRow(
+                node: node, depth: 0, repositoryID: repo.id, expansion: $worktreeFolderExpansion,
+                statsByWorktreePath: statsStore.stats, theme: theme,
+                projectColumn: showsProjectRail, isTeamSection: isTeamSection
+            ) { worktree, displayName in
+                worktreeBlock(worktree, repo: repo, displayName: displayName, activityCounts: attentionCounts)
+            }
+            .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
         }
     }
 
@@ -790,7 +805,7 @@ struct SidebarView: View {
         .worktreeReorderTarget(
             repoID: repo.id,
             worktreeID: worktree.id,
-            appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
+            appState: $appState, isEnabled: navigation.query.isEmpty && (repo.worktreeOrderMode == .manual || worktree.isTeamMember),
             onSelect: { onSelect(worktree.path) },
             onMovePane: onMovePane,
             onPaneTargeted: { targeted in
@@ -812,6 +827,21 @@ struct SidebarView: View {
         // either error or race the flow that owns the placeholder.
         if worktree.state.isInFlight {
             return menu
+        }
+        if worktree.path != repo.path && (worktree.isTeamMember || worktree.state.hasOnDiskWorktree) {
+            menu.addItem(ClosureMenuItem(title: worktree.isTeamMember ? "Remove from Team" : "Add to Team") {
+                SidebarHostNavigation.setTeamMembership(!worktree.isTeamMember, worktreeID: worktree.id, in: &appState.repos)
+            })
+            if worktree.isTeamMember && worktree.state.hasOnDiskWorktree {
+                let key = InstructionKey.key(worktreePath: worktree.path, repoPath: repo.path,
+                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+                if let key {
+                    menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
+                        editRoleInstructions(key: key, worktree: worktree, repo: repo)
+                    })
+                }
+            }
+            menu.addItem(.separator())
         }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
@@ -854,6 +884,19 @@ struct SidebarView: View {
             })
         }
         return menu
+    }
+
+    private func editRoleInstructions(key: String, worktree: WorktreeEntry, repo: RepoEntry) {
+        Task { @MainActor in
+            do {
+                let url = try await InstructionStore.prepareRoleFile(key: key, repoPath: repo.path, worktreePath: worktree.path)
+                if !NSWorkspace.shared.open(url) {
+                    navigationError = "Could not open role instructions at \(url.path)."
+                }
+            } catch {
+                navigationError = "Could not open role instructions: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// LAYOUT-2.97: the native emoji palette, anchored at the identity slot.
@@ -1027,6 +1070,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let statsByWorktreePath: [String: WorktreeStats]
     let theme: GhosttyTheme
     var projectColumn: Bool = false
+    var isTeamSection: Bool = false
     let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
 
     @ViewBuilder
@@ -1038,7 +1082,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
         case .folder(let path, let name, let children):
             let folderID = SidebarWorktreeFolderID(
                 repositoryID: repositoryID,
-                path: path
+                path: (isTeamSection ? "team:" : "tasks:") + path
             )
             let isExpanded = expansion.isExpanded(folderID)
             let aggregate = SidebarWorktreeHierarchy.aggregateStats(
@@ -1060,6 +1104,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         statsByWorktreePath: statsByWorktreePath,
                         theme: theme,
                         projectColumn: projectColumn,
+                        isTeamSection: isTeamSection,
                         worktreeContent: worktreeContent
                     )
                     .modifier(SidebarWorktreeRowInsets(

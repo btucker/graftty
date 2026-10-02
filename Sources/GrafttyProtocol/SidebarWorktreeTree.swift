@@ -1,5 +1,18 @@
 import Foundation
 
+/// Keeps hosts without membership metadata on their existing flat layout.
+public struct SidebarWorktreeSections: Sendable {
+    public let tasks: [WorktreePanes]
+    public let team: [WorktreePanes]
+    public let hasMembershipMetadata: Bool
+
+    public init(_ worktrees: [WorktreePanes]) {
+        tasks = worktrees.filter { $0.isMainCheckout || $0.sidebar?.isTeamMember != true }
+        team = worktrees.filter { !$0.isMainCheckout && $0.sidebar?.isTeamMember == true }
+        hasMembershipMetadata = worktrees.contains { $0.sidebar?.isTeamMember != nil }
+    }
+}
+
 /// Folder ancestry is presentation metadata supplied by the owning host.
 /// Resource routes remain opaque even when they resemble filesystem paths.
 public struct SidebarWorktreeTree: Identifiable, Sendable {

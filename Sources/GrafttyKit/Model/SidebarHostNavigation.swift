@@ -86,11 +86,12 @@ public enum SidebarHostNavigation {
         }
     }
 
-    /// The persisted order: main checkout first, stale entries last. The
-    /// manual arrangement lives here regardless of the display mode.
+    /// Tasks keep the main checkout first and stale entries last. Team
+    /// members follow in their saved manual order.
     public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path })
+            + WorktreeOrdering.staleLast(repo.worktrees.filter { $0.path != repo.path && !$0.isTeamMember })
+            + repo.worktrees.filter { $0.path != repo.path && $0.isTeamMember }
     }
 
     /// The displayed order (LAYOUT-2.95): canonical, re-ranked by recent
@@ -99,7 +100,34 @@ public enum SidebarHostNavigation {
     public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
         return repo.worktrees.filter { $0.path == repo.path }
-            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { $0.path != repo.path })
+            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { $0.path != repo.path && !$0.isTeamMember })
+            + repo.worktrees.filter { $0.path != repo.path && $0.isTeamMember }
+    }
+
+    /// Published folder ancestry matches the separately rendered sections.
+    public static func folderAncestry(in repo: RepoEntry) -> [UUID: [SidebarWorktreeHierarchy.Folder]] {
+        var result: [UUID: [SidebarWorktreeHierarchy.Folder]] = [:]
+        for isTeam in [false, true] {
+            let nodes = SidebarWorktreeHierarchy.nodes(
+                for: repo.worktrees.filter { $0.isTeamMember == isTeam },
+                inRepoAtPath: repo.path, defaultBranch: nil)
+            result.merge(SidebarWorktreeHierarchy.folderAncestry(in: nodes), uniquingKeysWith: { first, _ in first })
+        }
+        return result
+    }
+
+    @discardableResult
+    public static func setTeamMembership(_ isMember: Bool, worktreeID: UUID, in repos: inout [RepoEntry]) -> Bool {
+        for repoIndex in repos.indices {
+            guard let index = repos[repoIndex].worktrees.firstIndex(where: { $0.id == worktreeID }) else { continue }
+            let worktree = repos[repoIndex].worktrees[index]
+            guard worktree.path != repos[repoIndex].path, !worktree.state.isInFlight,
+                  !isMember || worktree.state.hasOnDiskWorktree,
+                  worktree.isTeamMember != isMember else { return false }
+            repos[repoIndex].worktrees[index].isTeamMember = isMember
+            return true
+        }
+        return false
     }
 
     /// Applies a user-picked emoji as a manual identity. Rejects anything
@@ -134,7 +162,7 @@ public enum SidebarHostNavigation {
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop,
-                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji)
+                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isTeamMember: worktree.isTeamMember)
     }
 
     @discardableResult
@@ -143,19 +171,21 @@ public enum SidebarHostNavigation {
         guard worktreeID != relativeTo,
               let ri = state.repos.firstIndex(where: { $0.path == repositoryID }) else { return false }
         let repo = state.repos[ri]
-        // Recent-activity order is a display projection; accepting a move
-        // would only have the next refresh sort it away again.
-        guard repo.worktreeOrderMode == .manual else { return false }
         let rows = repo.worktrees
         guard let source = rows.firstIndex(where: { $0.path == worktreeID }),
               let target = rows.firstIndex(where: { $0.path == relativeTo }),
               rows[source].path != repo.path,
               !rows[source].state.isInFlight, !rows[target].state.isInFlight,
+              rows[source].isTeamMember == rows[target].isTeamMember,
+              repo.worktreeOrderMode == .manual || rows[source].isTeamMember,
               rows[target].path != repo.path || after else { return false }
-        let nodes = SidebarWorktreeHierarchy.nodes(for: rows, inRepoAtPath: repo.path, defaultBranch: nil)
+        let sectionRows = rows.filter { $0.isTeamMember == rows[source].isTeamMember }
+        let nodes = SidebarWorktreeHierarchy.nodes(for: sectionRows, inRepoAtPath: repo.path, defaultBranch: nil)
         let parents = SidebarWorktreeHierarchy.parentFolderPaths(in: nodes)
         guard parents[rows[source].id] == parents[rows[target].id] else { return false }
-        let indices = rows.indices.filter { parents[rows[$0].id] == parents[rows[source].id] }
+        let indices = rows.indices.filter {
+            rows[$0].isTeamMember == rows[source].isTeamMember && parents[rows[$0].id] == parents[rows[source].id]
+        }
         let siblings = indices.map { rows[$0] }
         guard let ti = indices.firstIndex(of: target) else { return false }
         let destination = ti + (after ? 1 : 0)

@@ -212,7 +212,7 @@ struct SidebarHostNavigationTests {
         #expect(ProjectIconDiscovery.discover(at: directory) == nil)
     }
 
-    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.")
+    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the main checkout first, stale Tasks last within their section, and virtual-folder and Team boundaries while moving only eligible siblings.")
     func worktreeMove() {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main", state: .closed)
@@ -229,7 +229,7 @@ struct SidebarHostNavigationTests {
         #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["main", "b", "a", "gone"])
     }
 
-    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its worktrees by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale worktrees last, and decode older state without the setting as manual order.")
+    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its Tasks by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale Tasks last within that section, preserve manual Team order below Tasks, and decode older state without the setting as manual order.")
     func recentActivityOrdering() throws {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main")

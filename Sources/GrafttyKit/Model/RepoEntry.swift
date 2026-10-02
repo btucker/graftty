@@ -26,6 +26,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     public var iconOverride: ProjectIconOverride? = nil
     /// How the sidebar orders this repository's linked worktrees.
     public var worktreeOrderMode: WorktreeOrderMode = .manual
+    public var isTeamCollapsed: Bool = false
 
     public init(
         path: String,
@@ -53,7 +54,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint, iconOverride,
-             worktreeOrderMode
+             worktreeOrderMode, isTeamCollapsed
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,6 +69,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
         self.iconOverride = try container.decodeIfPresent(ProjectIconOverride.self, forKey: .iconOverride)
         self.worktreeOrderMode = try container.decodeIfPresent(WorktreeOrderMode.self, forKey: .worktreeOrderMode) ?? .manual
+        self.isTeamCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isTeamCollapsed) ?? false
     }
 }
 

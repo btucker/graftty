@@ -114,7 +114,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.41** When an attention occurrence is acknowledged, the application shall clear only the matching occurrence and preserve a newer notification at the same target.
 
-**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.
+**LAYOUT-2.42** When a user reorders worktrees, the application shall preserve the main checkout first, stale Tasks last within their section, and virtual-folder and Team boundaries while moving only eligible siblings.
 
 **LAYOUT-2.43** When a recent target's live route changes, the application shall resolve its stable identity to the current worktree and pane routes without replacing its viewed occurrence.
 
@@ -216,7 +216,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.94** While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its worktrees by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale worktrees last, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its Tasks by their latest attention, agent progress, or stop time with the newest first, keep the main checkout first and stale Tasks last within that section, preserve manual Team order below Tasks, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -229,6 +229,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.100** When a user drags a worktree heading, the application shall begin an AppKit drag session that lifts the whole worktree block and whose pasteboard payload the worktree row drop destination decodes as that worktree move.
 
 **LAYOUT-2.101** When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.
+
+**LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit Team membership and decode older worktrees as Tasks.
+
+**LAYOUT-2.103** While the sidebar displays a repository, the application shall place its Tasks before its Team members, preserving manual Team order even when Tasks use recent activity order.
+
+**LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same Tasks or Team section, allowing manual Team moves while Tasks use recent activity order.
+
+**LAYOUT-2.105** If a Team worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its Team membership.
+
+**LAYOUT-2.106** When the user collapses a repository's Team section, the application shall preserve that disclosure state across relaunches and initially expand Team for older state.
+
+**LAYOUT-2.107** When the user adds or removes an eligible worktree from Team, the application shall change only its explicit membership, preserving its identity, panes, and instructions and excluding the main checkout and in-flight worktrees.
+
+**LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit Team membership for remote clients while accepting older metadata without it.
+
+**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group Tasks before Team, preserve each section's supplied order and main-checkout placement, and retain the existing layout for hosts without membership metadata.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -618,7 +634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.20** If a linked worktree's `.git` entry is not a materialized regular file (an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then `WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only stat, which never triggers materialization — and fall back to the `<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the calling thread on network materialization. `startup()` resolves reflog paths on the main thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at launch (Application Not Responding).
 
-**GIT-3.21** When a worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
+**GIT-3.21** When a Task worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
 
 ### GIT-4.x — Deleting a Worktree
 
@@ -634,7 +650,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.6** When `git worktree remove` succeeds, the application shall remove the worktree entry from the sidebar, and if that worktree was the selected worktree the application shall clear the selected-worktree state so the terminal content area shows the "no worktree selected" placeholder.
 
-**GIT-4.7** When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
+**GIT-4.7** When the application first observes a Task worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 
 **GIT-4.8** If the user confirms the offer dialog from GIT-4.7 by clicking "Delete Worktree", the application shall proceed directly to `git worktree remove` without re-prompting — the offer dialog IS the confirmation. The resulting success and failure paths shall be identical to GIT-4.5 and GIT-4.4 (teardown on success, stderr surfaced on failure).
 
@@ -661,6 +677,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
 **GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
+
+**GIT-4.21** When a Team worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -2395,6 +2413,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **INSTR-7.1** The application shall bound one instruction load to at most 64 files, truncate any single file to 32768 bytes and the whole set to 131072 bytes, and mark every truncated file with a visible truncation marker.
 
 **INSTR-7.2** When an instruction load exceeds the one-second response budget, the application shall produce no instruction set without awaiting late filesystem work.
+
+### INSTR-8.x
+
+**INSTR-8.1** When the user edits a Team member's role instructions, the application shall open its effective exact-worktree instruction file using normal precedence and legacy aliases, or create an empty GRAFTTY.md in the current worktree when no such file exists.
 
 ## EDITOR — Editor Integration
 

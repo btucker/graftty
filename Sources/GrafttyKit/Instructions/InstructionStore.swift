@@ -23,14 +23,18 @@ public struct InstructionDiagnostic: Sendable, Equatable {
 public struct InstructionSet: Sendable, Equatable {
     /// Parsed documents keyed by `.graftty/`-relative path.
     public let documents: [String: InstructionDocument]
+    /// Actual files selected by precedence, including legacy aliases.
+    public let sourcePaths: [String: String]
     /// Non-fatal conflicts encountered while choosing those documents.
     public let diagnostics: [InstructionDiagnostic]
 
     public init(
         documents: [String: InstructionDocument],
+        sourcePaths: [String: String] = [:],
         diagnostics: [InstructionDiagnostic] = []
     ) {
         self.documents = documents
+        self.sourcePaths = sourcePaths
         self.diagnostics = diagnostics
     }
 }
@@ -95,6 +99,68 @@ public enum InstructionStore {
                 preferredPaths: preferredPaths
             )
         }
+    }
+
+    /// Opens the effective exact-role file, or creates an empty role file in
+    /// the current worktree. Adding Team membership never writes instructions.
+    public static func prepareRoleFile(
+        key: String,
+        repoPath: String,
+        worktreePath: String,
+        applicationSupportDirectory: URL = defaultApplicationSupportDirectory
+    ) async throws -> URL {
+        try await Task.detached(priority: .userInitiated) {
+            let components = key.split(separator: "/").map(String.init)
+            guard !components.isEmpty, components.joined(separator: "/") == key,
+                  !components.contains(where: { $0 == "." || $0 == ".." }) else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+            let relativePath = key + "/GRAFTTY.md"
+            let set = loadSynchronously(repoPath: repoPath, worktreePath: worktreePath,
+                applicationSupportDirectory: applicationSupportDirectory, preferredPaths: [relativePath])
+            try Task.checkCancellation()
+            if let path = set?.sourcePaths[relativePath] {
+                return URL(fileURLWithPath: path)
+            }
+            return try createRoleFile(components: components, worktreePath: worktreePath)
+        }.value
+    }
+
+    private static func createRoleFile(components: [String], worktreePath: String) throws -> URL {
+        // Walk from the existing worktree without following symlinks beneath
+        // it. O_EXCL prevents overwriting any file the loader skipped or a
+        // file created concurrently by another editor.
+        var directory = open(worktreePath, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard directory >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(directory) }
+        for component in [directoryName] + components {
+            if mkdirat(directory, component, 0o755) != 0 && errno != EEXIST {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let child = openat(directory, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+            guard child >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            var st = stat()
+            guard fstat(child, &st) == 0, isMaterializedDirectory(st) else {
+                close(child)
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            close(directory)
+            directory = child
+        }
+        let descriptor = openat(directory, "GRAFTTY.md", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o644)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(descriptor) }
+        try Data("# Role\n\n".utf8).withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                offset += count
+            }
+        }
+        return URL(fileURLWithPath: worktreePath, isDirectory: true)
+            .appendingPathComponent(directoryName + "/" + components.joined(separator: "/") + "/GRAFTTY.md")
     }
 
     /// @spec INSTR-7.2
@@ -208,6 +274,7 @@ public enum InstructionStore {
         ordered = Array(ordered.prefix(maxFiles))
 
         var documents: [String: InstructionDocument] = [:]
+        var sourcePaths: [String: String] = [:]
         var byteBudget = totalByteCap
         for relativePath in ordered {
             guard !Task.isCancelled else { return nil }
@@ -218,13 +285,14 @@ public enum InstructionStore {
                 inventories: inventories,
                 limit: limit
             ) else { continue }
-            guard let capped = cap(body, to: limit) else { continue }
+            guard let capped = cap(body.text, to: limit) else { continue }
             byteBudget -= capped.utf8.count
             documents[relativePath] = InstructionDocument.parse(capped)
+            sourcePaths[relativePath] = body.path
         }
 
         guard !documents.isEmpty else { return nil }
-        return InstructionSet(documents: documents, diagnostics: diagnostics)
+        return InstructionSet(documents: documents, sourcePaths: sourcePaths, diagnostics: diagnostics)
     }
 
     private static func uniqueRoots(_ candidates: [URL]) -> [URL] {
@@ -323,7 +391,7 @@ public enum InstructionStore {
         relativePath: String,
         inventories: [RootInventory],
         limit: Int
-    ) -> String? {
+    ) -> (text: String, path: String)? {
         for inventory in inventories {
             guard !Task.isCancelled else { return nil }
             guard let actualPath = inventory.actualPathByCanonicalPath[relativePath] else {
@@ -334,7 +402,7 @@ public enum InstructionStore {
                 beneath: inventory.instructionDirectory,
                 limit: limit
             ) {
-                return body
+                return (body, inventory.instructionDirectory.appendingPathComponent(actualPath).path)
             }
         }
         return nil

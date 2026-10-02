@@ -13,6 +13,7 @@ public enum StaleWorktreeAutoDismissPolicy {
         appState.repos.flatMap { repo in
             repo.worktrees.compactMap { worktree in
                 guard worktree.state == .stale,
+                      !worktree.isTeamMember,
                       let staleSince = worktree.staleSince,
                       now.timeIntervalSince(staleSince) >= gracePeriod else {
                     return nil

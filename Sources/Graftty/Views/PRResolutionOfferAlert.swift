@@ -12,8 +12,8 @@ enum PRResolutionOfferAlert {
     /// Returns `nil` for non-terminal states (`.open`) so the factory
     /// owns the "PR isn't done, no offer" rule rather than asking
     /// every caller to pre-guard `state.resolutionWord`.
-    static func configuration(prNumber: Int, prTitle: String, state: PRInfo.State) -> SheetAlert.Configuration? {
-        guard let resolutionWord = state.resolutionWord else { return nil }
+    static func configuration(prNumber: Int, prTitle: String, state: PRInfo.State, isTeamMember: Bool = false) -> SheetAlert.Configuration? {
+        guard !isTeamMember, let resolutionWord = state.resolutionWord else { return nil }
         let titlePrefix = prTitle.isEmpty ? "" : "\(prTitle)\n\n"
         return SheetAlert.Configuration(
             messageText: "Pull request #\(prNumber) \(resolutionWord)",

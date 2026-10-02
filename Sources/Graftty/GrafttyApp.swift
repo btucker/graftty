@@ -2152,7 +2152,7 @@ struct GrafttyApp: App {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
                 let projectID = "\(localWorktreeOrigin.deviceID.value):\(repo.id.uuidString)"
-                let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
+                let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
                 let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
                     forRepoAt: repo.path,
                     hint: repo.defaultBranchHint

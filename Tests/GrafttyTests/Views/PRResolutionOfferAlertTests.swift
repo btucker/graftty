@@ -14,7 +14,7 @@ import GrafttyProtocol
 struct PRResolutionOfferAlertTests {
 
     @Test("""
-@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
+@spec GIT-4.7: When the application first observes a Task worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 """)
     func mergedConfigurationWithTitle() {
         let config = PRResolutionOfferAlert.configuration(prNumber: 142, prTitle: "Add OAuth flow", state: .merged)
@@ -37,5 +37,13 @@ struct PRResolutionOfferAlertTests {
 
     @Test func openStateReturnsNil() {
         #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "anything", state: .open) == nil)
+    }
+
+    @Test("@spec GIT-4.21: When a Team worktree's pull request merges or closes, the application shall keep its ongoing role without offering to delete the worktree.")
+    func teamMembersDoNotOfferDeletion() {
+        for state in [PRInfo.State.merged, .closed] {
+            #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "Release", state: state, isTeamMember: true) == nil)
+            #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "Fix", state: state) != nil)
+        }
     }
 }
