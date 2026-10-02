@@ -48,7 +48,7 @@ struct SessionReconnectTests {
     }
 
     /// Wait briefly so the spawned receive Task reaches the await point.
-    /// 50ms is plenty for an in-memory factory call + one async hop.
+    /// Use `waitUntil` when assertions depend on an async state transition.
     func quiesce() async {
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
@@ -143,24 +143,41 @@ struct SessionReconnectTests {
         factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // Exercise a dial that takes longer than the old 50ms wait.
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [1, 2, 4]
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 1.0)
+        }
         // After first failure, attempt 1 with 1s delay pending.
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(factory.creations == 1)
+        try #require(clock.hasPendingSleep(for: 1.0))
         clock.advance(by: 1.0)
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 2) &&
+                factory.creations == 2 && clock.hasPendingSleep(for: 2.0)
+        }
         // Second WS attempted, fails, attempt 2 with 2s delay pending.
         #expect(client.connectionState == .reconnecting(attempt: 2))
         #expect(factory.creations == 2)
+        try #require(clock.hasPendingSleep(for: 2.0))
         clock.advance(by: 2.0)
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 3) &&
+                factory.creations == 3 && clock.hasPendingSleep(for: 4.0)
+        }
         #expect(client.connectionState == .reconnecting(attempt: 3))
         #expect(factory.creations == 3)
+        #expect(clock.hasPendingSleep(for: 4.0))
     }
 
     @Test

@@ -88,6 +88,8 @@ final class TerminalManager: ObservableObject {
     /// reports the first prompt. Writing immediately after `zmx attach`
     /// starts can race shell startup and be consumed or discarded by init.
     private var pendingShellReadyInitialInput: [PaneSlotID: String] = [:]
+    private var shellStartupCommands: [PaneSlotID: String] = [:]
+    private var shellStartupReceipts: [PaneSlotID: URL] = [:]
     private var initialInputDeliveryResults: [PaneSlotID: Bool] = [:]
     private var initialInputDeliveryWaiters:
         [PaneSlotID: [CheckedContinuation<Bool, Never>]] = [:]
@@ -607,7 +609,8 @@ final class TerminalManager: ObservableObject {
             let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
-                worktreePath: worktreePath
+                worktreePath: worktreePath,
+                initialCommand: pendingInitialInput?.trimmingCharacters(in: .newlines)
             )
             let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
             let initialInput = pendingInitialInput
@@ -628,7 +631,7 @@ final class TerminalManager: ObservableObject {
                 worktreePath: worktreePath,
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
-                extraInitialInput: waitsForShellReady ? nil : initialInput,
+                extraInitialInput: waitsForShellReady || zmxSpawnConfiguration?.runsInitialCommand == true ? nil : initialInput,
                 terminalManager: self,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
@@ -638,7 +641,7 @@ final class TerminalManager: ObservableObject {
                 explicitInitialInputSurfaces.remove(terminalID)
                 continue
             }
-            if waitsForShellReady, let initialInput {
+            if waitsForShellReady, zmxSpawnConfiguration?.runsInitialCommand != true, let initialInput {
                 queueInitialInputUntilShellReady(initialInput, for: terminalID)
             }
             pendingInitialInput = nil
@@ -681,7 +684,8 @@ final class TerminalManager: ObservableObject {
             ? resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
-                worktreePath: worktreePath
+                worktreePath: worktreePath,
+                initialCommand: extraInitialInput?.trimmingCharacters(in: .newlines)
             )
             : nil
         let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
@@ -700,7 +704,7 @@ final class TerminalManager: ObservableObject {
             worktreePath: surfaceWorktreePath,
             socketPath: socketPath,
             zmxSpawnConfiguration: zmxSpawnConfiguration,
-            extraInitialInput: waitsForShellReady ? nil : extraInitialInput,
+            extraInitialInput: waitsForShellReady || zmxSpawnConfiguration?.runsInitialCommand == true ? nil : extraInitialInput,
             terminalManager: self,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
             displayOwnershipStore: displayOwnershipStore,
@@ -711,7 +715,7 @@ final class TerminalManager: ObservableObject {
             explicitInitialInputSurfaces.remove(terminalID)
             return nil
         }
-        if waitsForShellReady, let extraInitialInput {
+        if waitsForShellReady, zmxSpawnConfiguration?.runsInitialCommand != true, let extraInitialInput {
             queueInitialInputUntilShellReady(extraInitialInput, for: terminalID)
         }
         didCreateSurface(for: terminalID)
@@ -774,6 +778,13 @@ final class TerminalManager: ObservableObject {
             missing = launcher.isSessionMissing(name)
         }
         if missing {
+            if let receipt = shellStartupReceipts[terminalID],
+               FileManager.default.fileExists(atPath: receipt.path) {
+                shellStartupCommands.removeValue(forKey: terminalID)
+                shellStartupReceipts.removeValue(forKey: terminalID)
+                try? FileManager.default.removeItem(at: receipt)
+                explicitInitialInputSurfaces.remove(terminalID)
+            }
             // Prefer the newest spawn in the log over a possibly older cache.
             if let previousPID = ZmxPIDLookup.shellPID(
                 logFile: launcher.logFile(forSession: name), sessionName: name
@@ -1236,6 +1247,10 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         explicitInitialInputSurfaces.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
+        shellStartupCommands.removeValue(forKey: terminalID)
+        if let receipt = shellStartupReceipts.removeValue(forKey: terminalID) {
+            try? FileManager.default.removeItem(at: receipt)
+        }
         rehydratedSurfaces.remove(terminalID)
         evictedGridSizes.removeValue(forKey: terminalID)
         forgetPaneSession(for: terminalID)
@@ -1248,13 +1263,33 @@ final class TerminalManager: ObservableObject {
     func resolveZmxSpawnConfiguration(
         for terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
-        worktreePath: String
+        worktreePath: String,
+        initialCommand: String? = nil,
+        defaults: UserDefaults = .standard
     ) -> ZmxSpawnConfiguration? {
         guard let launcher = zmxLauncher, launcher.isAvailable else {
             return nil
         }
         let processEnv = ProcessInfo.processInfo.environment
-        return ZmxSpawnConfiguration.make(
+        // A receipt proves the old loader was consumed. Keep it until pane
+        // teardown for any concurrent startup waiter, but never replay that
+        // loader when a later remote attachment has to recreate the daemon.
+        if let receipt = shellStartupReceipts[terminalID],
+           FileManager.default.fileExists(atPath: receipt.path) {
+            shellStartupCommands.removeValue(forKey: terminalID)
+        }
+        var command = initialCommand ?? shellStartupCommands[terminalID]
+        if command == nil, !shellReadyFired.contains(terminalID) {
+            let decision = defaultCommandDecision(
+                defaultCommand: defaults.string(forKey: SettingsKeys.defaultCommand) ?? "",
+                firstPaneOnly: defaults.object(forKey: "defaultCommandFirstPaneOnly") as? Bool ?? true,
+                isFirstPane: isFirstPane(terminalID),
+                wasRehydrated: wasRehydrated(terminalID),
+                hasExplicitInitialInput: explicitInitialInputSurfaces.contains(terminalID)
+            )
+            if case .type(let value) = decision { command = value }
+        }
+        let configuration = ZmxSpawnConfiguration.make(
             launcher: launcher,
             paneSessionID: paneSessionID,
             worktreePath: worktreePath,
@@ -1263,7 +1298,35 @@ final class TerminalManager: ObservableObject {
             bundleURL: Bundle.main.bundleURL,
             ghosttyResourcesDir: processEnv["GHOSTTY_RESOURCES_DIR"],
             agentHooksDisabled: processEnv["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1",
-            agentHooksRoot: AgentHookInstaller.rootDirectory()
+            agentHooksRoot: AgentHookInstaller.rootDirectory(),
+            initialCommand: command,
+            startupReceipt: command.map { _ in
+                shellStartupReceipts[terminalID]
+                    ?? FileManager.default.temporaryDirectory.appendingPathComponent("graftty-startup-\(UUID().uuidString)")
+            }
+        )
+        if configuration.runsInitialCommand {
+            shellStartupCommands[terminalID] = configuration.env["GRAFTTY_INITIAL_COMMAND"]
+            shellStartupReceipts[terminalID] = configuration.startupReceipt
+            explicitInitialInputSurfaces.insert(terminalID)
+        }
+        return configuration
+    }
+
+    /// The first remote attach may create the daemon before any Mac renderer.
+    /// Keep the command on the session's spawn configuration so reattachment
+    /// can retry a failed spawn, while zmx runs it only when creating a shell.
+    func remoteSpawnConfiguration(
+        forSessionName sessionName: String,
+        defaults: UserDefaults = .standard
+    ) -> ZmxSpawnConfiguration? {
+        guard let paneUUID = paneID(forSessionName: sessionName) else { return nil }
+        let id = PaneSlotID(id: paneUUID)
+        guard
+              let sessionID = paneSessionIDs[id],
+              let path = paneWorktreePaths[id] else { return nil }
+        return resolveZmxSpawnConfiguration(
+            for: id, paneSessionID: sessionID, worktreePath: path, defaults: defaults
         )
     }
 

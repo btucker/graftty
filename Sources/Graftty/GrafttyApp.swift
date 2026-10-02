@@ -2052,6 +2052,11 @@ struct GrafttyApp: App {
         // Web/iOS attaches spawn their own `zmx attach` process. If that
         // attach wins the race to create a new zmx daemon, its cwd becomes
         // the daemon's shell cwd, so resolve the pane back to its worktree.
+        webController.setSessionSpawnProvider { [terminalManager = tm] sessionName in
+            await MainActor.run {
+                terminalManager.remoteSpawnConfiguration(forSessionName: sessionName)
+            }
+        }
         webController.setSessionWorktreeProvider { sessionName in
             await MainActor.run { () -> String? in
                 for repo in appStateBinding.wrappedValue.repos {
@@ -2964,10 +2969,9 @@ struct GrafttyApp: App {
                                 alias: sessionName
                             )
                         }
-                        let workingDirectoryPath = await MainActor.run {
-                            terminalManager.worktreePath(
-                                forSessionName: sessionName
-                            )
+                        let (workingDirectoryPath, spawnConfiguration) = await MainActor.run {
+                            (terminalManager.worktreePath(forSessionName: sessionName),
+                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
                         }
                         let workingDirectory = workingDirectoryPath.map {
                             URL(fileURLWithPath: $0, isDirectory: true)
@@ -2976,7 +2980,8 @@ struct GrafttyApp: App {
                             zmxExecutable: zmxExe,
                             zmxDir: zmxDir,
                             sessionName: sessionName,
-                            workingDirectory: workingDirectory
+                            workingDirectory: workingDirectory,
+                            spawnConfiguration: spawnConfiguration
                         ))
                         engine.attachmentRegistry = registry
                         try engine.start()
@@ -2986,8 +2991,30 @@ struct GrafttyApp: App {
                         if sessionName.hasPrefix("relay-pane-") {
                             return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
                         }
-                        let path = await MainActor.run {
-                            terminalManager.worktreePath(forSessionName: sessionName)
+                        let (path, spawnConfiguration) = await MainActor.run {
+                            (terminalManager.worktreePath(forSessionName: sessionName),
+                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
+                        }
+                        // Paging attaches only to existing daemons. A newly
+                        // created mobile pane must first spawn its shell.
+                        var bootstrap: ZmxAttachEngine?
+                        defer { bootstrap?.close() }
+                        let socket = zmxDir.appendingPathComponent(sessionName).path
+                        if !FileManager.default.fileExists(atPath: socket) {
+                            let session = ZmxAttachEngine(config: .init(
+                                zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                                workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                                spawnConfiguration: spawnConfiguration
+                            ))
+                            // Discard bootstrap output. The paged channel will
+                            // obtain its own checkpoint once the daemon exists.
+                            session.onPTYData = { _ in }
+                            bootstrap = session
+                            try session.start()
+                            let deadline = ContinuousClock.now + .seconds(5)
+                            while !FileManager.default.fileExists(atPath: socket), ContinuousClock.now < deadline {
+                                try await Task.sleep(for: .milliseconds(20))
+                            }
                         }
                         let engine = PagedZmxAttachEngine(config: .init(
                             zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,

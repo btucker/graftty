@@ -39,6 +39,7 @@ final class WebServerController: ObservableObject {
     /// injection (default-empty provider is baked into `WebServer.Config`).
     private var sessionsProvider: (@Sendable () async -> [SessionInfo])?
     private var sessionWorktreeProvider: (@Sendable (String) async -> String?)?
+    private var sessionSpawnProvider: (@Sendable (String) async -> ZmxSpawnConfiguration?)?
     private var worktreePanesProvider: (@Sendable () async -> [WorktreePanes])?
     private var relayedWorktreePanesProvider:
         (@Sendable () async -> [WorktreePanes])?
@@ -128,6 +129,13 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable (String) async -> String?
     ) {
         sessionWorktreeProvider = provider
+        rebuildIfRunning()
+    }
+
+    func setSessionSpawnProvider(
+        _ provider: @escaping @Sendable (String) async -> ZmxSpawnConfiguration?
+    ) {
+        sessionSpawnProvider = provider
         rebuildIfRunning()
     }
 
@@ -448,6 +456,7 @@ final class WebServerController: ObservableObject {
                 zmxDir: zmxDir,
                 sessionsProvider: sessionsProvider,
                 sessionWorktreeProvider: sessionWorktreeProvider,
+                sessionSpawnProvider: self.sessionSpawnProvider ?? { _ in nil },
                 reposProvider: repos,
                 relayedReposProvider: relayedRepos,
                 worktreeCreator: creator,

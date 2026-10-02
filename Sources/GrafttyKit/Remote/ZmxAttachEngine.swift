@@ -52,16 +52,19 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         public let zmxDir: URL
         public let sessionName: String
         public let workingDirectory: URL?
+        public let spawnConfiguration: ZmxSpawnConfiguration?
         public init(
             zmxExecutable: URL,
             zmxDir: URL,
             sessionName: String,
-            workingDirectory: URL? = nil
+            workingDirectory: URL? = nil,
+            spawnConfiguration: ZmxSpawnConfiguration? = nil
         ) {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionName = sessionName
             self.workingDirectory = workingDirectory
+            self.spawnConfiguration = spawnConfiguration
         }
     }
 
@@ -221,9 +224,12 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             userShellPath: processEnv["SHELL"] ?? "/bin/sh",
             ghosttyResourcesDir: ghosttyResourcesDir
         )
+        if let spawnConfiguration = config.spawnConfiguration {
+            env = spawnConfiguration.env
+        }
         do {
             spawned = try PtyProcess.spawn(
-                argv: launcher.attachArgv(sessionName: config.sessionName),
+                argv: config.spawnConfiguration?.argv ?? launcher.attachArgv(sessionName: config.sessionName),
                 env: env,
                 currentDirectory: config.workingDirectory
             )

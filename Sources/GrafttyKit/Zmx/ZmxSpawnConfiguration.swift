@@ -11,6 +11,12 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
     /// first-PWD readiness signal consumed by `TerminalManager`.
     public let shellReadySignalAvailable: Bool
 
+    /// The shell init shim owns startup instead of renderer-driven typing.
+    public var runsInitialCommand: Bool { env["GRAFTTY_INITIAL_COMMAND"] != nil }
+    public var startupReceipt: URL? {
+        env["GRAFTTY_STARTUP_RECEIPT"].map { URL(fileURLWithPath: $0) }
+    }
+
     public static func make(
         launcher: ZmxLauncher,
         paneSessionID: PaneSessionID,
@@ -20,7 +26,9 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         bundleURL: URL,
         ghosttyResourcesDir: String?,
         agentHooksDisabled: Bool,
-        agentHooksRoot: URL
+        agentHooksRoot: URL,
+        initialCommand: String? = nil,
+        startupReceipt: URL? = nil
     ) -> ZmxSpawnConfiguration {
         let sessionName = launcher.sessionName(for: paneSessionID)
         let rawUserShell = processEnv["SHELL"] ?? "/bin/sh"
@@ -31,6 +39,13 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         env.removeValue(forKey: "GRAFTTY_AGENT_HOOKS_BIN")
         env.removeValue(forKey: "ZDOTDIR")
         env.removeValue(forKey: "GHOSTTY_ZSH_ZDOTDIR")
+        env.removeValue(forKey: "GRAFTTY_INITIAL_COMMAND")
+        env.removeValue(forKey: "GRAFTTY_STARTUP_RECEIPT")
+        let shellRunsCommand = initialCommand != nil && ["zsh", "bash"].contains(shellBasename)
+        if shellRunsCommand {
+            env["GRAFTTY_INITIAL_COMMAND"] = initialCommand
+            env["GRAFTTY_STARTUP_RECEIPT"] = startupReceipt?.path
+        }
         env["GRAFTTY_SOCK"] = socketPath
         // ZMX-6.6: zmx's no-command default-login-spawn reads $SHELL from
         // its env to decide what binary to exec. Set it explicitly so the
@@ -59,7 +74,7 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             userShellPath: rawUserShell,
             ghosttyResourcesDir: ghosttyResourcesDir
         )
-        if hooksEnabled, shellBasename == "zsh" {
+        if hooksEnabled || shellRunsCommand, shellBasename == "zsh" {
             let zshInitDir = AgentHookInstaller
                 .zshInitDirectory(rootDirectory: agentHooksRoot)
                 .path
@@ -87,7 +102,7 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         let argv: [String]
         if let wrappedShell = AgentHookInstaller.loginSpawnPositionalShell(
             rawUserShell: rawUserShell,
-            hooksEnabled: hooksEnabled,
+            hooksEnabled: hooksEnabled || shellRunsCommand,
             rootDirectory: agentHooksRoot
         ) {
             argv = launcher.attachArgv(sessionName: sessionName, userShell: wrappedShell)
