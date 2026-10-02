@@ -317,27 +317,45 @@ enum AddWorktreeFlow {
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                 return .failure(.discoveryFailed("failed to start terminal backend"))
             }
+            if terminalStartTiming == .immediately {
+                let started = await firstHandle.waitForBackendStartup()
+                guard started else {
+                    terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+                    if let (currentRepo, currentWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
+                        appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state = .closed
+                    }
+                    return .failure(.discoveryFailed("failed to start terminal backend"))
+                }
+            }
             if initialCommand != nil {
                 let accepted = await terminalManager.waitForExplicitInitialInputDelivery(
                     for: firstLeaf
                 )
                 guard accepted else {
                     terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    if let (currentRepo, currentWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
+                        appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state = .closed
+                    }
                     return .failure(.discoveryFailed(
                         "terminal shell did not become ready to accept the launch command"
                     ))
                 }
             }
         }
-        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
+        // Readiness may suspend while another worktree is removed or the
+        // reconciler reorders rows. Resolve ownership again before mutation.
+        guard let (completedRepo, completedWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
+            terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+            return .failure(.discoveryFailed("worktree vanished while starting terminal"))
+        }
+        appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree].state = .running
         if terminalStartTiming != .onClientAttach {
             terminalManager.surfaceBudget.noteCreated(
                 worktreePath: worktreePath,
                 splitTreesByPath: appState.wrappedValue.runningSplitTreesByPath()
             )
         }
-        let firstSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+        let firstSessionID = appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree]
             .ensurePaneSession(for: firstLeaf)
         let sessionName = ZmxLauncher.sessionName(for: firstSessionID)
         return .success(Result(sessionName: sessionName, worktreePath: worktreePath))

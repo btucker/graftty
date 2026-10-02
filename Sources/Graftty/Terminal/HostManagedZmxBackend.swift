@@ -5,6 +5,7 @@ import GrafttyProtocol
 import os
 
 protocol HostManagedZmxSession: AnyObject {
+    func waitForStartup() async -> Bool
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
     func start() throws
@@ -15,6 +16,7 @@ protocol HostManagedZmxSession: AnyObject {
 }
 
 extension HostManagedZmxSession {
+    func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func resize(windowSize: PtyProcess.WindowSize) throws {
@@ -505,6 +507,11 @@ final class HostManagedZmxBackend {
                 throw Error.alreadyStarted
             }
         }
+    }
+
+    func waitForStartup() async -> Bool {
+        guard let current = lock.withLock({ session }) else { return false }
+        return await current.waitForStartup()
     }
 
     /// Forward bytes to the zmx PTY.

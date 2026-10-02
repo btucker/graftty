@@ -35,6 +35,7 @@ final class SurfaceUserdataBox {
 }
 
 protocol SurfaceHandleZmxBackend: AnyObject {
+    func waitForStartup() async -> Bool
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     /// Main-thread presentation updates during snapshot import or remote following.
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
@@ -79,6 +80,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
     func synchronizeFollowerGrid() {}
@@ -473,6 +475,11 @@ final class SurfaceHandle {
     func startForBackgroundLaunch() -> Bool {
         guard zmxBackend != nil else { return true }
         return startZmxBackendIfNeeded()
+    }
+
+    func waitForBackendStartup() async -> Bool {
+        guard let zmxBackend else { return true }
+        return await zmxBackend.waitForStartup()
     }
 
     @discardableResult

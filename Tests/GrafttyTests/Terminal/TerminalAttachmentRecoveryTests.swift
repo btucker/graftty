@@ -7,6 +7,24 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct TerminalAttachmentRecoveryTests {
+    @Test("@spec AGENT-5.23: When CLI creation starts an asynchronous terminal backend, the application shall wait for backend startup acceptance before reporting the worktree ready, and shall report a failed startup instead of releasing ownership of the staged agent prompt.")
+    func asynchronousStartupFailureIsAcknowledged() async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        let id = PaneSlotID()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"), zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let config = ZmxSpawnConfiguration(sessionName: "startup", argv: ["/nonexistent/graftty-zmx"],
+            env: [:], workingDirectory: URL(fileURLWithPath: "/tmp"), shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil)
+        defer { session.close() }
+        try session.start()
+        #expect(!(await session.waitForStartup()))
+        #expect(!(await session.waitForStartup()), "Failed startup remains observable to a late waiter")
+    }
+
     @Test("Typing k after an attachment failure does not close the native surface", arguments: [FailureMode.start, .queryUnavailable, .missingDaemon])
     func typingAfterFailureKeepsPane(mode: FailureMode) async throws {
         _ = NSApplication.shared

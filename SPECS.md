@@ -738,6 +738,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.23** When a paired client creates a worktree, the application shall register its first pane for terminal attachment and listening-port discovery without requiring a Mac terminal renderer or changing the Mac's selected worktree.
 
+**GIT-5.24** When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.
+
 ## ATTN — Attention Notification System
 
 ### ATTN-1.x — CLI Tool
@@ -1210,11 +1212,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.3** If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the host-managed `zmx attach` environment shall set `ZDOTDIR=<ghostty-resources>/shell-integration/zsh` so the inner shell zmx spawns sources Ghostty's zsh integration directly. Without this env construction, precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges go silent.
 
-**ZMX-6.4** When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. When hooks are disabled, `GHOSTTY_ZSH_ZDOTDIR` shall be omitted.
+**ZMX-6.4** When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. If hooks are disabled and no initial command is supplied, then `GHOSTTY_ZSH_ZDOTDIR` shall be omitted; a shell-owned initial command shall still load the init shim without enabling agent hooks.
 
 **ZMX-6.5** Host-managed native panes shall synthesize terminal capability environment for the `zmx attach` child when launched from a macOS GUI process that lacks terminal env vars. If Ghostty terminfo is available next to `GHOSTTY_RESOURCES_DIR`, the env shall match Ghostty's local-shell defaults closely enough for color-aware tools such as Claude Code to enable color output.
 
-**ZMX-6.6** When the host-managed `zmx attach` spawn invokes the user's shell, the spawn shall recover login-shell behavior. For non-bash shells (and bash with agent hooks disabled), the argv shall omit the positional shell argument so zmx applies its documented default of spawning `$SHELL` as a login shell, with `env["SHELL"]` set to the resolved user-shell path. For bash with agent hooks enabled (per ZMX-6.7), the spawn shall keep the positional pointing at the bash launcher script because login bash discards `--rcfile`. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
+**ZMX-6.6** When the host-managed `zmx attach` spawn invokes the user's shell, the spawn shall recover login-shell behavior. For non-bash shells (and bash with agent hooks disabled and no initial command), the argv shall omit the positional shell argument so zmx applies its documented default of spawning `$SHELL` as a login shell, with `env["SHELL"]` set to the resolved user-shell path. For bash with agent hooks enabled (per ZMX-6.7) or an initial command supplied, the spawn shall keep the positional pointing at the bash launcher script because login bash discards `--rcfile`. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
 
 **ZMX-6.7** When the user's shell is bash and agent hooks are enabled, the launcher script continues to invoke `bash --rcfile <shim>` (non-login, so `--rcfile` is honored), and the shim shall source the system + user profile chain (`/etc/profile`; first existing of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) once per environment via an idempotency guard env variable (`__GRAFTTY_BASH_PROFILE_SOURCED`), before sourcing `~/.bashrc` and re-prepending the agent-hooks bin to PATH. This recovers login-time PATH setup (Homebrew shellenv, etc.) for bash users without losing the agent-hooks injection that depends on `--rcfile`.
 
@@ -2941,6 +2943,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.20** When worktree creation specifies an explicit base, the application shall capture its immutable commit in the caller's worktree before accepting asynchronous creation and shall share that capture across retries of the same operation.
 
 **AGENT-5.21** When graftty worktree pin or unpin is invoked, the application shall resolve the caller's worktree by default or a supplied tracked name or absolute path, reject ambiguous or unavailable targets and in-flight changes, persist idempotent pin state through the sidebar model without changing panes or instructions, and keep the default-branch checkout always pinned.
+
+**AGENT-5.22** When a fresh zsh or bash session has an initial command, the application shall run it once after shell initialization and first-prompt environment hooks without waiting for a terminal renderer's PWD callback, preserve a user's custom ZDOTDIR, and remove the startup command from the environment before user initialization can spawn another shell.
+
+**AGENT-5.23** When CLI creation starts an asynchronous terminal backend, the application shall wait for backend startup acceptance before reporting the worktree ready, and shall report a failed startup instead of releasing ownership of the staged agent prompt.
 
 ### AGENT-6.x
 

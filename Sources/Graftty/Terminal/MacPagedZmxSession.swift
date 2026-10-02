@@ -21,6 +21,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private var startedAt = ProcessInfo.processInfo.systemUptime
     private var restored = false
     private var failed = false
+    private var startupResult: Bool?
+    private var startupWaiters: [CheckedContinuation<Bool, Never>] = []
     private var attachmentFailure: (String) -> Void = { _ in }
     private var prepareGrid: (DisplayGrid?) -> Void = { _ in }
 
@@ -60,6 +62,28 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             startedAt = ProcessInfo.processInfo.systemUptime
             task = Task { @MainActor [weak self] in await self?.run() }
         }
+    }
+
+    func waitForStartup() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let result = lock.withLock { () -> Bool? in
+                if let startupResult { return startupResult }
+                startupWaiters.append(continuation)
+                return nil
+            }
+            if let result { continuation.resume(returning: result) }
+        }
+    }
+
+    private func completeStartup(_ result: Bool) {
+        let waiters = lock.withLock { () -> [CheckedContinuation<Bool, Never>] in
+            guard startupResult == nil else { return [] }
+            startupResult = result
+            let waiters = startupWaiters
+            startupWaiters.removeAll()
+            return waiters
+        }
+        for waiter in waiters { waiter.resume(returning: result) }
     }
 
     @MainActor
@@ -119,6 +143,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             await runLegacy()
             return
         }
+        if configuration.startupReceipt == nil { completeStartup(true) }
+        else { Task { @MainActor [weak self] in await self?.acknowledgeLegacyStartup() } }
         let sender = Task {
             var pendingSize: PtyProcess.WindowSize?
             for await command in commands {
@@ -191,6 +217,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
         do {
             lock.withLock { startedAt = ProcessInfo.processInfo.systemUptime }
             try fallback.start()
+            Task { @MainActor [weak self] in await self?.acknowledgeLegacyStartup() }
             for await command in commands {
                 guard !Task.isCancelled, !lock.withLock({ failed }) else { break }
                 switch command {
@@ -200,6 +227,38 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
                 }
             }
         } catch { reportFailure("Terminal connection failed: \(error)") }
+    }
+
+    @MainActor
+    private func acknowledgeLegacyStartup() async {
+        let socket = URL(fileURLWithPath: configuration.env["ZMX_DIR"] ?? "")
+            .appendingPathComponent(configuration.sessionName).path
+        let deadline = ContinuousClock.now + .seconds(configuration.startupReceipt == nil ? 5 : 300)
+        while !lock.withLock({ closed || failed || startupResult != nil }) {
+            let accepted: Bool
+            if let receipt = configuration.startupReceipt {
+                accepted = FileManager.default.fileExists(atPath: receipt.path)
+            } else if FileManager.default.fileExists(atPath: socket) {
+                let launcher = ZmxLauncher(executable: URL(fileURLWithPath: configuration.argv[0]),
+                    zmxDir: URL(fileURLWithPath: configuration.env["ZMX_DIR"] ?? ""))
+                let name = configuration.sessionName
+                accepted = (try? await OffMainIO.run {
+                    try launcher.listSessions().contains(name)
+                }) == true
+            } else {
+                accepted = false
+            }
+            if accepted {
+                completeStartup(true)
+                return
+            }
+            guard ContinuousClock.now < deadline else {
+                completeStartup(false)
+                return
+            }
+            do { try await Task.sleep(for: .milliseconds(20)) }
+            catch { completeStartup(false); return }
+        }
     }
 
     private func legacyAttachmentExited(status: Int32?) {
@@ -218,6 +277,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     private func reportFailure(_ message: String) {
+        completeStartup(false)
         let handler = lock.withLock { () -> ((String) -> Void)? in
             guard !closed, !failed else { return nil }
             failed = true
@@ -231,12 +291,14 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     }
 
     private func reportExit(status: Int32) {
+        completeStartup(false)
         let elapsed = lock.withLock { ProcessInfo.processInfo.systemUptime - startedAt }
         let milliseconds = UInt64(max(0, elapsed) * 1_000)
         surface.withSurface { ghostty_surface_process_exit($0, UInt32(clamping: status), milliseconds) }
     }
 
     func close() {
+        completeStartup(false)
         let current = lock.withLock { () -> (Task<Void, Never>?, PagedZmxAttachEngine?) in
             closed = true
             commandSink.finish()
