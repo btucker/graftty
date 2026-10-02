@@ -77,6 +77,8 @@ public final class SessionClient {
     private var snapshotGrid: GridSize?
     private var usesPagedHistory = false
     private var hasPagedCheckpoint = false
+    private var terminalRenderer: (any PagedTerminalRenderer)?
+    private var nativeGrid: GridSize?
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -87,16 +89,21 @@ public final class SessionClient {
     }
 
     /// Legacy server grid fallback. Ownership snapshots are authoritative
-    /// once received; `.grid` remains a soft fallback while connecting to
-    /// older servers or before the first ownership frame arrives.
+    /// after a display has claimed the session; `.grid` remains the source
+    /// for older servers and sessions whose first ownerless hello only
+    /// echoes the attaching client's dimensions.
     private var legacyServerGrid: GridSize?
 
     public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
 
     public var authoritativeGrid: GridSize? {
         if let installingCheckpointGrid { return installingCheckpointGrid }
-        if let grid = ownershipSnapshot?.grid {
-            return GridSize(cols: grid.cols, rows: grid.rows)
+        if let snapshot = ownershipSnapshot,
+           !snapshot.isOwnerless || snapshot.epoch > 0 {
+            // Before the first claim the store has no display grid. Its
+            // ownerless hello response only echoes this client's viewport.
+            // A preview must await the source's grid or checkpoint instead.
+            return GridSize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
         }
         return legacyServerGrid
     }
@@ -350,12 +357,16 @@ public final class SessionClient {
                 self?.handleViewport(viewport)
             }
         }
+        let renderer = pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
+            self?.additionalHistoryRowCapacity?() ?? 0
+        }, gridMatches: { [weak self] cols, rows in
+            self?.nativeGrid == GridSize(cols: cols, rows: rows)
+        }) { [weak self] cols, rows in
+            self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
+        }
+        terminalRenderer = renderer
         paging = PagedTerminalCoordinator(
-            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
-                self?.additionalHistoryRowCapacity?() ?? 0
-            }) { [weak self] cols, rows in
-                self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
-            },
+            renderer: renderer,
             send: { [weak self] request in
                 guard let self, self.usesPagedHistory, let ws = self.currentWS() else {
                     throw URLError(.notConnectedToInternet)
@@ -379,6 +390,7 @@ public final class SessionClient {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
+        nativeGrid = GridSize(cols: cols, rows: rows)
         guard snapshotCanvasGrid == nil,
               !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)
@@ -448,6 +460,7 @@ public final class SessionClient {
                     guard let ws = self.currentWS() else {
                         throw URLError(.cannotConnectToHost)
                     }
+                    var initialReplay = Data()
                     while self.isCurrentTransport(generation) {
                         let frame = try await ws.receive()
                         // A transport implementation may park in a checked
@@ -465,8 +478,21 @@ public final class SessionClient {
                             guard !self.usesPagedHistory || self.hasPagedCheckpoint else {
                                 throw URLError(.badServerResponse)
                             }
-                            if !self.usesPagedHistory { self.snapshotGrid = nil }
-                            self.session.receive(self.usesPagedHistory ? data : self.terminalReplay.prepare(data))
+                            if !self.usesPagedHistory {
+                                // SSH can deliver attach output before the hello
+                                // response announces its grid. Keep reading control
+                                // frames without parsing that replay at phone width.
+                                if self.ownershipTransportMode == .webControl, self.authoritativeGrid == nil {
+                                    guard data.count <= 16 * 1024 * 1024 - initialReplay.count else {
+                                        throw URLError(.dataLengthExceedsMaximum)
+                                    }
+                                    initialReplay.append(data)
+                                    continue
+                                }
+                                guard try await self.receiveNonPagedOutput(data, generation: generation) else { return }
+                            } else {
+                                self.session.receive(data)
+                            }
                         case .text(let text):
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
@@ -482,7 +508,11 @@ public final class SessionClient {
                                 }
                                 self.installingCheckpointGrid = nil
                             } else {
-                                self.handleTextFrame(text)
+                                guard try await self.receiveTextFrame(text, generation: generation) else { return }
+                                if !initialReplay.isEmpty, self.authoritativeGrid != nil {
+                                    guard try await self.receiveNonPagedOutput(initialReplay, generation: generation) else { return }
+                                    initialReplay.removeAll()
+                                }
                             }
                         }
                     }
@@ -537,6 +567,36 @@ public final class SessionClient {
         !stopped && transportGeneration == generation
     }
 
+    private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
+        snapshotGrid = nil
+        if let grid = snapshotCanvasGrid {
+            // Resize callbacks can precede the parser's resize. Let the renderer
+            // confirm native readiness even when the callback grid already matches.
+            try await terminalRenderer?.resize(cols: grid.cols, rows: grid.rows)
+            guard isCurrentTransport(generation) else { return false }
+            installingCheckpointGrid = nil
+        }
+        guard isCurrentTransport(generation) else { return false }
+        session.receive(terminalReplay.prepare(data))
+        return true
+    }
+
+    private func receiveTextFrame(_ text: String, generation: UInt64) async throws -> Bool {
+        guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return true }
+        switch envelope {
+        case .grid, .ownership:
+            // Publishing an observable grid schedules layout independently of
+            // the receive loop. Finish earlier VT parsing before that resize.
+            try await terminalRenderer?.flushOutput()
+            try Task.checkCancellation()
+            guard isCurrentTransport(generation) else { return false }
+        default:
+            break
+        }
+        handleControlEnvelope(envelope)
+        return true
+    }
+
     private nonisolated static func isTerminalSessionEnded(_ error: any Error) -> Bool {
         guard let error = error as? TerminalSessionClient.ClientError else {
             return false
@@ -569,6 +629,7 @@ public final class SessionClient {
                 }
                 self.displayClientID = Self.makeDisplayClientID()
                 self.ownershipSnapshot = nil
+                self.legacyServerGrid = nil
                 self.legacyEngaged = false
                 self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
@@ -1146,6 +1207,10 @@ public final class SessionClient {
 
     internal func handleTextFrame(_ text: String) {
         guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return }
+        handleControlEnvelope(envelope)
+    }
+
+    private func handleControlEnvelope(_ envelope: WebControlEnvelope) {
         switch envelope {
         case .imagePaste(.available):
             supportsImagePaste = true
@@ -1154,7 +1219,8 @@ public final class SessionClient {
         case .imagePaste:
             break
         case let .grid(cols, rows):
-            if ownershipSnapshot == nil {
+            if ownershipSnapshot == nil
+                || (ownershipSnapshot?.isOwnerless == true && ownershipSnapshot?.epoch == 0) {
                 legacyServerGrid = GridSize(cols: cols, rows: rows)
             }
         case .resize:

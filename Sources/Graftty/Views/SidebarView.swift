@@ -99,9 +99,13 @@ struct SidebarView: View {
             return left == right ? $0.offset < $1.offset : left < right
         }.map(\.element)
     }
+    private var localWorktrees: [WorktreePanes] {
+        sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles,
+            liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
+            defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
+    }
     private var activity: [SidebarActivityItem] {
-        SidebarProjection.activity(sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) })
-            + remoteMacsModel.promotedWorktreesForRelay())
+        SidebarProjection.activity(localWorktrees + remoteMacsModel.promotedWorktreesForRelay())
     }
     private var projectIcons: [String: Data] {
         var result = remoteIcons
@@ -117,7 +121,7 @@ struct SidebarView: View {
             .union(remote.projects.filter {
                 $0.owner.map { remote.authoritativeOwnerIDs.contains($0.deviceID) } == true
             }.map(\.id))
-        navigation.reconcile(worktrees: sidebarLocalWorktrees(state: appState, owner: owner, titles: terminalManager.displayTitles, liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) }) + remote.worktrees, projects: projects,
+        navigation.reconcile(worktrees: localWorktrees + remote.worktrees, projects: projects,
             authoritativeProjectIDs: authoritativeProjects)
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
@@ -533,30 +537,32 @@ struct SidebarView: View {
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
         )
-        let worktreeNodes = SidebarWorktreeHierarchy.nodes(
-            for: SidebarHostNavigation.displayedWorktrees(in: repo),
-            inRepoAtPath: repo.path,
-            defaultBranch: resolvedDefaultBranch
-        )
+        let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
+        let temporaryWorktrees = worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) }
         let rows = Group {
-            ForEach(worktreeNodes) { node in
-                SidebarWorktreeNodeRow(
-                    node: node,
-                    depth: 0,
-                    repositoryID: repo.id,
-                    expansion: $worktreeFolderExpansion,
-                    statsByWorktreePath: statsStore.stats,
-                    theme: theme,
-                    projectColumn: showsProjectRail
-                ) { worktree, displayName in
-                    worktreeBlock(
-                        worktree,
-                        repo: repo,
-                        displayName: displayName,
-                        activityCounts: attentionCounts
-                    )
+            worktreeNodeRows(temporaryWorktrees,
+                             repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
+            SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
+                get: { repo.isPinnedCollapsed },
+                set: { collapsed in
+                    if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                        appState.repos[index].isPinnedCollapsed = collapsed
+                    }
                 }
-                .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
+            ), separatesPrecedingRows: !temporaryWorktrees.isEmpty)
+            .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
+            .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
+            if !repo.isPinnedCollapsed {
+                let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
+                worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
+                                 attentionCounts: attentionCounts, isPinnedSection: true)
+                if members.isEmpty {
+                    Text("Right-click a worktree to pin it here.")
+                        .font(.caption)
+                        .foregroundColor(theme.sidebarDimIcon)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+                }
             }
         }
         if showsProjectRail {
@@ -588,6 +594,21 @@ struct SidebarView: View {
                     Button("Remove Repository") { onRemoveRepo(repo) }
                 }
             }
+        }
+    }
+
+    private func worktreeNodeRows(_ worktrees: [WorktreeEntry], repo: RepoEntry, defaultBranch: String?,
+                                  attentionCounts: SidebarActivityCounts, isPinnedSection: Bool = false) -> some View {
+        let nodes = SidebarWorktreeHierarchy.nodes(for: worktrees, inRepoAtPath: repo.path, defaultBranch: defaultBranch)
+        return ForEach(nodes) { node in
+            SidebarWorktreeNodeRow(
+                node: node, depth: 0, repositoryID: repo.id, expansion: $worktreeFolderExpansion,
+                statsByWorktreePath: statsStore.stats, theme: theme,
+                projectColumn: showsProjectRail, isPinnedSection: isPinnedSection
+            ) { worktree, displayName in
+                worktreeBlock(worktree, repo: repo, displayName: displayName, activityCounts: attentionCounts)
+            }
+            .modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: showsProjectRail))
         }
     }
 
@@ -766,7 +787,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .id(worktree.path)
-            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0 }
+            .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
             .rightClickMenu {
                 buildWorktreeMenu(worktree, repo: repo)
             }
@@ -790,7 +811,7 @@ struct SidebarView: View {
         .worktreeReorderTarget(
             repoID: repo.id,
             worktreeID: worktree.id,
-            appState: $appState, isEnabled: navigation.query.isEmpty && repo.worktreeOrderMode == .manual,
+            appState: $appState, isEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
             onMovePane: onMovePane,
             onPaneTargeted: { targeted in
@@ -813,6 +834,22 @@ struct SidebarView: View {
         if worktree.state.isInFlight {
             return menu
         }
+        var hasPinnedActions = false
+        if worktree.path != repo.path && (worktree.isPinned || worktree.state.hasOnDiskWorktree) {
+            menu.addItem(ClosureMenuItem(title: worktree.isPinned ? "Unpin Agent" : "Pin Agent") {
+                SidebarHostNavigation.setPinned(!worktree.isPinned, worktreeID: worktree.id, in: &appState.repos)
+            })
+            hasPinnedActions = true
+        }
+        if SidebarMenuVisibility.showsEditRoleInstructions(worktree: worktree, repo: repo) {
+            let key = InstructionKey.key(worktreePath: worktree.path, repoPath: repo.path,
+                defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))
+            menu.addItem(ClosureMenuItem(title: "Edit Role Instructions…") {
+                editRoleInstructions(key: key, worktree: worktree, repo: repo)
+            })
+            hasPinnedActions = true
+        }
+        if hasPinnedActions { menu.addItem(.separator()) }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: worktree.path))
@@ -854,6 +891,28 @@ struct SidebarView: View {
             })
         }
         return menu
+    }
+
+    private func editRoleInstructions(key: String?, worktree: WorktreeEntry, repo: RepoEntry) {
+        Task { @MainActor in
+            do {
+                let url = try await InstructionStore.prepareRoleFile(key: key, repoPath: repo.path, worktreePath: worktree.path)
+                guard let path = SidebarMenuVisibility.roleEditorDestination(worktree: worktree, repo: repo, state: appState) else {
+                    navigationError = "This pinned worktree changed while opening its role instructions. Try again."
+                    return
+                }
+                onSelect(path)
+                guard let current = appState.worktree(forPath: path), current.state == .running,
+                      let source = current.focusedPaneSlotID.flatMap({ current.splitTree.containsLeaf($0) ? $0 : nil })
+                        ?? current.splitTree.allLeaves.first,
+                      terminalManager.openURL(url.absoluteString, from: source) else {
+                    navigationError = "Could not open role instructions at \(url.path)."
+                    return
+                }
+            } catch {
+                navigationError = "Could not open role instructions: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// LAYOUT-2.97: the native emoji palette, anchored at the identity slot.
@@ -1027,6 +1086,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
     let statsByWorktreePath: [String: WorktreeStats]
     let theme: GhosttyTheme
     var projectColumn: Bool = false
+    var isPinnedSection: Bool = false
     let worktreeContent: (WorktreeEntry, String) -> WorktreeContent
 
     @ViewBuilder
@@ -1038,7 +1098,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
         case .folder(let path, let name, let children):
             let folderID = SidebarWorktreeFolderID(
                 repositoryID: repositoryID,
-                path: path
+                path: (isPinnedSection ? "pinned:" : "tasks:") + path
             )
             let isExpanded = expansion.isExpanded(folderID)
             let aggregate = SidebarWorktreeHierarchy.aggregateStats(
@@ -1060,6 +1120,7 @@ struct SidebarWorktreeNodeRow<WorktreeContent: View>: View {
                         statsByWorktreePath: statsByWorktreePath,
                         theme: theme,
                         projectColumn: projectColumn,
+                        isPinnedSection: isPinnedSection,
                         worktreeContent: worktreeContent
                     )
                     .modifier(SidebarWorktreeRowInsets(

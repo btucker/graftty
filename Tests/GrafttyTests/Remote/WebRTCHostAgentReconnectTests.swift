@@ -61,13 +61,7 @@ private actor ReconnectRegistrationGate {
 @Suite("WebRTCHostAgent re-arms the sshInstallStarted latch on close (W4 follow-up)")
 struct WebRTCHostAgentReconnectTests {
 
-    @Test("""
-    @spec REMOTE-11.10: When a signed signaling offer explicitly requests a \
-    reconnect for the paired device that owns the current host connection \
-    lifecycle, the application shall replace that negotiating or connected \
-    lifecycle immediately; offers from another device and ordinary offers \
-    shall remain busy without disturbing it.
-    """)
+    @Test("A connection agent accepts signed replacement only from its own device")
     func explicitReconnectOnlyReplacesTheSameViewingMac() async throws {
         let agent = Self.makeHostAgent()
         let originalViewer = RemoteDeviceID(value: "original-viewer")
@@ -128,8 +122,8 @@ struct WebRTCHostAgentReconnectTests {
 
     @Test("""
     @spec REMOTE-11.13: If peer-connection allocation fails after an offer \
-    reserves the host slot, then the application shall close that lifecycle \
-    so a later authenticated offer can connect immediately.
+    reserves that device's connection, then the application shall close that \
+    lifecycle so a later authenticated offer can connect immediately.
     """)
     func allocationFailureDoesNotWedgeTheHostBusy() async throws {
         let agent = Self.makeHostAgent()
@@ -175,7 +169,7 @@ struct WebRTCHostAgentReconnectTests {
     @Test("""
     @spec REMOTE-11.11: When the current host ICE connection does not return \
     to a connected state within five seconds after disconnecting, the \
-    application shall close it and release the single-client slot; if ICE \
+    application shall close it and release that device's connection; if ICE \
     recovers first, the application shall keep the connection.
     """)
     func staleDisconnectedTransportReleasesTheHostSlotAfterGrace() async throws {
@@ -308,17 +302,15 @@ struct WebRTCHostAgentReconnectTests {
         #expect(await agent.sshInstallStartedForTesting == false)
     }
 
-    /// Regression guard for the generation-guard fix — not a new spec ID.
-    /// `WebRTCHostAgent` is a single process-wide instance reused for every
-    /// device sequentially (`AppServices.hostAgent`); `installSSHHandler`'s
-    /// `sshInstallStarted` reset above is what makes this reachable — it was
-    /// impossible before that fix landed.
+    /// Regression guard for reconnecting a device through its pooled agent.
+    /// The SSH install latch resets on teardown so the next lifecycle can
+    /// install its own transport.
     ///
     /// `SSHConnectionRegistry.register`'s replace-path (see
     /// `SSHConnectionRegistry.register`'s doc comment) runs `await previous
     /// .close()`, where `previous.close` is the closure captured by the
     /// OLD connection's `registerAuthenticatedConnection` call. Because
-    /// `self` is the SAME shared actor now serving the NEW (live)
+    /// `self` is the same per-device actor now serving the new (live)
     /// connection, an unguarded `previous.close()` tears down the new
     /// connection's state mid-lifetime — this reproduces that exact
     /// mechanism using only actor-level seams (`bumpConnectionGenerationForTesting`,
@@ -427,7 +419,7 @@ struct WebRTCHostAgentReconnectTests {
 
         #expect(
             await agent.state == .closed,
-            "an offer that never reaches SSH authentication must not reserve the singleton host forever"
+            "an offer that never reaches SSH authentication must not reserve the device's connection forever"
         )
     }
 

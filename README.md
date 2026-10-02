@@ -122,6 +122,34 @@ online in the same tailnet and the host must still be reachable on port
 
 ## Agent instructions
 
+The sidebar lists temporary worktrees above a collapsible **Pinned Agents**
+section. The repository's default-branch row always appears first among pinned
+agents, followed by ongoing-role worktrees in saved manual order. To pin a local
+worktree, drag it onto the **Pinned Agents** header or a pinned worktree row,
+or right-click it and choose **Pin Agent**. Dropping on a collapsed header pins
+the worktree and expands the section. This works with recent activity sorting. Choose **Unpin Agent** to
+return it to the temporary list. Pin state, disclosure state, and manual pinned
+order persist across sessions. Remote clients show the owning Mac's pin state.
+
+Agents can use `graftty worktree pin` to pin their own worktree, or
+`graftty worktree pin <name-or-path>` to pin another local worktree.
+`graftty worktree unpin [name-or-path]` returns it to the temporary list without
+changing its workspace or instructions. The default-branch checkout stays
+pinned. Pinned agents do not receive deletion offers when their PR or MR merges
+or closes. The bundled team skill explains the pinning and role-file workflow.
+
+To configure a pinned agent's responsibilities, choose **Edit Role Instructions…**
+from its context menu. Graftty opens its effective worktree-specific instruction
+file, or creates an empty `.graftty/<worktree-key>/GRAFTTY.md` in the main
+checkout so peer agents can read its shared role context. It uses the same
+configured editor as Cmd-clicking a file in the terminal, opening CLI editors
+in a new pane in the selected worktree. The action is available on pinned local
+worktrees, including the default-branch checkout. Worktrees without a role key
+use their local `.graftty/GRAFTTY.md`. If an Application Support base file would
+override it, Graftty reports the overriding path instead of creating an
+ineffective role file. Pinning does not create or change instructions.
+Instruction files can also apply to temporary worktrees without pinning them.
+
 Graftty can give the agents running in your worktrees durable, per-worktree
 instructions. Files use the same relative layout in any instruction root:
 
@@ -349,6 +377,11 @@ swift build
 ```
 
 Open `Package.swift` in Xcode to run the app.
+
+Before building `Apps/GrafttyMobile/GrafttyMobile.xcodeproj`, follow the
+[paging renderer build instructions](scripts/ghostty-paging/BUILD.md).
+The local renderer provides the parser-grid readiness and output-drain APIs
+needed to preserve follower wrapping during grid changes.
 
 ## Developing the web client
 

@@ -297,6 +297,7 @@ struct WorktreeRow: View {
                     if let prBadge {
                         SidebarPRBadge(badge: prBadge)
                             .fixedSize(horizontal: true, vertical: false)
+                            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { [.prBadge: $0] }
                     }
                 case .label:
                     branchLabel

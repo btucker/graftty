@@ -34,6 +34,19 @@ enum WorktreeDropPlacement: Equatable {
 
 enum WorktreeDropReorder {
     @discardableResult
+    static func pin(_ payload: TransferableWorktreeMove, repoID: UUID,
+                    targetWorktreeID: UUID? = nil, placement: WorktreeDropPlacement = .after,
+                    to state: inout AppState) -> Bool {
+        guard payload.repoID == repoID,
+              let repo = state.repos.first(where: { $0.id == repoID }),
+              let source = repo.worktrees.first(where: { $0.id == payload.worktreeID }) else { return false }
+        let target = targetWorktreeID.flatMap { id in repo.worktrees.first { $0.id == id } }
+        guard targetWorktreeID == nil || target != nil else { return false }
+        return SidebarHostNavigation.pinWorktree(in: &state, repositoryID: repo.path,
+            worktreeID: source.path, relativeTo: target?.path, after: placement == .after)
+    }
+
+    @discardableResult
     static func apply(
         _ payload: TransferableWorktreeMove,
         targetWorktreeID: WorktreeEntry.ID,
@@ -64,6 +77,7 @@ enum WorktreeRowDrop: Transferable {
     enum Result: Equatable {
         case rejected
         case reordered
+        case pinned
         case movePane(PaneSlotID, String)
     }
 
@@ -76,6 +90,11 @@ enum WorktreeRowDrop: Transferable {
         switch self {
         case .worktree(let payload):
             guard allowsReordering, payload.repoID == repoID else { return .rejected }
+            if SidebarHostNavigation.isPinned(target, in: repo),
+               let source = repo.worktrees.first(where: { $0.id == payload.worktreeID }), !source.isPinned {
+                return WorktreeDropReorder.pin(payload, repoID: repoID, targetWorktreeID: targetWorktreeID,
+                    placement: placement, to: &state) ? .pinned : .rejected
+            }
             return WorktreeDropReorder.apply(payload, targetWorktreeID: targetWorktreeID,
                                              placement: placement, to: &state) ? .reordered : .rejected
         case .pane(let payload):
@@ -141,13 +160,13 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Bounds of a worktree block's heading row, so the block-level drag
-/// source can accept presses on the heading only while dragging the
-/// whole block.
+/// Bounds of a worktree heading and its independently clickable PR/MR badge.
+/// The block-level drag source covers the heading but lets badge clicks through.
 struct WorktreeHeadingAnchor: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
+    enum Region: Hashable { case heading, prBadge }
+    static let defaultValue: [Region: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
@@ -158,6 +177,10 @@ struct WorktreeHeadingAnchor: PreferenceKey {
 /// Drops resolve against the block's midpoint, so a worktree lands before
 /// or after another whole worktree, never between its panes.
 struct WorktreeReorderTarget: ViewModifier {
+    static func canDrag(_ worktree: WorktreeEntry, in repo: RepoEntry, isEnabled: Bool) -> Bool {
+        isEnabled && worktree.path != repo.path && !worktree.state.isInFlight
+    }
+
     let repoID: RepoEntry.ID
     let worktreeID: WorktreeEntry.ID
     @Binding var appState: AppState
@@ -174,19 +197,27 @@ struct WorktreeReorderTarget: ViewModifier {
     private var canDrag: Bool {
         guard isEnabled, let worktree,
               let repo = appState.repos.first(where: { $0.id == repoID }) else { return false }
-        return worktree.path != repo.path && !worktree.state.isInFlight
+        return Self.canDrag(worktree, in: repo, isEnabled: isEnabled)
+    }
+    private var allowsReordering: Bool {
+        guard isEnabled, let worktree,
+              let repo = appState.repos.first(where: { $0.id == repoID }) else { return false }
+        return repo.worktreeOrderMode == .manual || SidebarHostNavigation.isPinned(worktree, in: repo)
     }
 
     @ViewBuilder private func dragSource(_ content: Content) -> some View {
         if canDrag {
-            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchor in
+            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchors in
                 GeometryReader { proxy in
-                    if let anchor {
+                    if let anchor = anchors[.heading] {
                         let heading = proxy[anchor]
                         WorktreeDragSourceOverlay(
                             payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
                             blockRect: CGRect(x: -heading.minX, y: -heading.minY,
                                               width: proxy.size.width, height: proxy.size.height),
+                            excludedRects: anchors[.prBadge].map {
+                                [proxy[$0].offsetBy(dx: -heading.minX, dy: -heading.minY)]
+                            } ?? [],
                             onClick: onSelect)
                         .frame(width: heading.width, height: heading.height)
                         .offset(x: heading.minX, y: heading.minY)
@@ -201,18 +232,36 @@ struct WorktreeReorderTarget: ViewModifier {
         dragSource(content)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
             .onDrop(of: WorktreeRowDrop.contentTypes, delegate: WorktreeRowDropDelegate(
-                rowHeight: rowHeight, allowsReordering: isEnabled,
+                rowHeight: rowHeight, allowsReordering: allowsReordering,
                 isInFlight: worktree?.state.isInFlight ?? true,
                 placement: $placement, onPaneTargeted: onPaneTargeted,
                 onDrop: { payload, destination in
                     let result = payload.apply(repoID: repoID, targetWorktreeID: worktreeID, placement: destination,
-                                  allowsReordering: isEnabled, to: &appState)
+                                  allowsReordering: allowsReordering, to: &appState)
                     // Invoke pane moves after releasing the state binding's writeback.
                     if case .movePane(let slot, let path) = result { onMovePane(slot, path) }
                 }))
             .overlay(alignment: placement == .after ? .bottom : .top) {
                 if placement != nil { Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false) }
             }
+    }
+}
+
+/// The header remains a destination while the pinned section is collapsed.
+struct PinnedWorktreeDropTarget: ViewModifier {
+    let repoID: UUID
+    @Binding var appState: AppState
+    var isEnabled: Bool
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(isTargeted && isEnabled ? Color.accentColor.opacity(0.15) : .clear,
+                        in: RoundedRectangle(cornerRadius: 4))
+            .dropDestination(for: TransferableWorktreeMove.self) { payloads, _ in
+                guard isEnabled, payloads.count == 1, let payload = payloads.first else { return false }
+                return WorktreeDropReorder.pin(payload, repoID: repoID, to: &appState)
+            } isTargeted: { isTargeted = $0 }
     }
 }
 

@@ -3076,7 +3076,7 @@ struct MainWindow: View {
         // a stale entry has no live worktree to remove.
         guard wt.path != repo.path, wt.state != .stale else { return }
         guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state) else { return }
+        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state, isPinned: wt.isPinned) else { return }
         // `NSApp.mainWindow` only — falling through to "any visible
         // non-panel window" would attach the sheet to Settings or the
         // Team Activity Log when those are foregrounded. GIT-4.20: the

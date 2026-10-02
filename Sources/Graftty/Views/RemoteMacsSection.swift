@@ -33,6 +33,17 @@ enum RemoteWorktreeReorderPolicy {
         query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
             && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
     }
+
+    static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
+        source.repositoryID == target.repositoryID
+            && isPinned(source) == isPinned(target)
+            && (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (target.sidebar?.folderIDs ?? target.sidebar?.folders)
+    }
+
+    private static func isPinned(_ worktree: WorktreePanes) -> Bool {
+        worktree.sidebar?.isPinned == true
+            || (worktree.isMainCheckout && worktree.sidebar?.isPinned != nil)
+    }
 }
 
 private struct RemoteWorktreeDragSource: ViewModifier {
@@ -400,7 +411,8 @@ struct RemoteMacsSection: View {
             SidebarWorktreeRows(worktrees: worktrees.filter {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
-            }, folderIndent: showsMacHierarchy ? 0 : 16) { worktree in
+            }, rowInsets: showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil,
+               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
                         showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil
@@ -539,8 +551,7 @@ struct RemoteMacsSection: View {
                       let value = values.first,
                       let source = value.resolve(on: identity, in: worktreePanesByRemote[identity] ?? []),
                       canReorder(source, on: remoteMac), source.path != worktree.path,
-                      source.repositoryID == worktree.repositoryID,
-                      (source.sidebar?.folderIDs ?? source.sidebar?.folders) == (worktree.sidebar?.folderIDs ?? worktree.sidebar?.folders),
+                      RemoteWorktreeReorderPolicy.areSiblings(source, worktree),
                       !worktree.isMainCheckout || location.y > 14 else { return false }
                 moveRemoteWorktree(source, relativeTo: worktree, after: location.y > 14, remoteMac: remoteMac)
                 return true

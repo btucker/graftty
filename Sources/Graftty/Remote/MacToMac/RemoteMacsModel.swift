@@ -401,11 +401,13 @@ final class RemoteMacsModel: ObservableObject {
 
     func openTerminalSession(
         identity: RemoteMacIdentity,
-        sessionName: String
+        sessionName: String,
+        preferPaged: Bool = MacPagedTerminalRenderer.isSupported
     ) async throws -> any WebSocketClient & Sendable {
         try await connectionRegistry.openTerminalSession(
             identity: identity,
-            sessionName: sessionName
+            sessionName: sessionName,
+            preferPaged: preferPaged
         )
     }
 
@@ -930,7 +932,7 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
-    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
+    private func relayedTerminalClient(alias: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
         guard let target = relayRouter.resolvePane(alias),
               let remoteMac = savedRemoteMacs.first(where: {
                   RemoteMacIdentity($0) == target.identity
@@ -938,11 +940,19 @@ final class RemoteMacsModel: ObservableObject {
             throw RelayError.unknownPaneAlias(alias)
         }
         _ = try await connect(to: remoteMac)
-        let client = try await openTerminalSession(
+        return try await openTerminalSession(
             identity: target.identity,
-            sessionName: target.sessionName
+            sessionName: target.sessionName,
+            preferPaged: preferPaged
         )
-        return RelayedTerminalByteStream(client: client)
+    }
+
+    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
+        RelayedTerminalByteStream(client: try await relayedTerminalClient(alias: alias, preferPaged: false))
+    }
+
+    func openRelayedPagedTerminal(alias: String) async throws -> RelayedPagedTerminalStream {
+        try RelayedPagedTerminalStream(client: await relayedTerminalClient(alias: alias, preferPaged: true))
     }
 
     private func applyPaneSnapshot(

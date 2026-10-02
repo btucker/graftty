@@ -783,7 +783,8 @@ public struct WorktreeListContent: View {
                                     onMove: { source, target, after in
                                         guard let repositoryID = source.repositoryID else { return }
                                         performNavigationMutation(.moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
-                                    }, rowInsets: showsProjectRail && horizontalSizeClass == .regular ? SidebarWorktreeListStyle.projectRowInsets : nil) { wt in
+                                    }, rowInsets: showsProjectRail && horizontalSizeClass == .regular ? SidebarWorktreeListStyle.projectRowInsets : nil,
+                                    showsSections: navigation.query.isEmpty) { wt in
                                     WorktreeBlock(
                                         worktree: wt,
                                         theme: theme,

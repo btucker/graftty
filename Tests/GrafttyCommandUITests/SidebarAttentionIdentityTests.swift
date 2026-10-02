@@ -3,7 +3,7 @@ import Testing
 import GrafttyProtocol
 @testable import GrafttyCommandUI
 
-@Suite("@spec LAYOUT-2.102: While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.")
+@Suite("@spec LAYOUT-2.114: While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.")
 struct SidebarAttentionIdentityTests {
     private func worktree(name: String = "review-checkout", branch: String = "feature/review") -> WorktreePanes {
         WorktreePanes(path: "/repo/review-checkout", displayName: name, repoDisplayName: "Repo",
@@ -72,12 +72,14 @@ struct SidebarAttentionIdentityTests {
         let item = try #require(SidebarProjection.activity([worktree()]).first)
         var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as? [String: Any])
         json.removeValue(forKey: "branchName")
+        json["worktreeName"] = "feature/review"
         let old = try JSONDecoder().decode(SidebarActivityItem.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(old.branchName == nil)
         #expect(SidebarAttentionCardContent(item: old).branchName == nil)
         var workspace = SidebarAttentionWorkspace()
         workspace.merge([old])
         workspace.reconcile(worktrees: [worktree()])
+        #expect(workspace.items.first?.worktreeName == "review-checkout")
         #expect(workspace.items.first?.branchName == "feature/review")
     }
 

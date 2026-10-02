@@ -26,11 +26,13 @@ final class WorktreeDragPasteboardWriter: NSObject, NSPasteboardWriting {
 /// overlay owns the left mouse button: a press-and-release selects, and a
 /// drag past the threshold begins an `NSDraggingSession` with the move
 /// payload. Right-clicks and ctrl-clicks pass through to the menu overlay.
+/// Independently clickable controls pass through within `excludedRects`.
 /// `blockRect` is the whole worktree block in the overlay's (top-left)
 /// coordinates; it is what lifts under the cursor.
 struct WorktreeDragSourceOverlay: NSViewRepresentable {
     let payload: TransferableWorktreeMove
     var blockRect: CGRect? = nil
+    var excludedRects: [CGRect] = []
     let onClick: () -> Void
 
     func makeNSView(context: Context) -> WorktreeDragSourceView {
@@ -44,6 +46,7 @@ struct WorktreeDragSourceOverlay: NSViewRepresentable {
     private func update(_ view: WorktreeDragSourceView) {
         view.payload = payload
         view.blockRect = blockRect
+        view.excludedRects = excludedRects
         view.onClick = onClick
     }
 }
@@ -52,6 +55,8 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
     var payload: TransferableWorktreeMove?
     /// The block to lift, in this view's coordinates; nil lifts the view itself.
     var blockRect: CGRect?
+    /// Controls that must receive their own clicks, in this view's coordinates.
+    var excludedRects: [CGRect] = []
     var onClick: (() -> Void)?
     private var press: (event: NSEvent, origin: NSPoint)?
 
@@ -62,8 +67,14 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let event = NSApp.currentEvent, event.type == .leftMouseDown,
+        hitTest(point, event: NSApp.currentEvent)
+    }
+
+    func hitTest(_ point: NSPoint, event: NSEvent?) -> NSView? {
+        guard let event, event.type == .leftMouseDown,
               !event.modifierFlags.contains(.control) else { return nil }
+        let localPoint = convert(point, from: superview)
+        guard !excludedRects.contains(where: { $0.contains(localPoint) }) else { return nil }
         return super.hitTest(point)
     }
 

@@ -498,7 +498,9 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         // reaches the client.
         drainControlFrames(channel: channel)
 
-        if pagedFactory == nil, let ptyGrid {
+        // A size-reporting source may be a relayed terminal. The client's
+        // pty-req describes its own display, not the replay's source grid.
+        if pagedFactory == nil, !(stream is any TerminalSizeReporting), let ptyGrid {
             coordinator.handlePTYSize(cols: ptyGrid.cols, rows: ptyGrid.rows)
         }
     }

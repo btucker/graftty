@@ -151,6 +151,8 @@ public enum NotificationMessage: Sendable, Equatable {
     case worktreeCreateStatus(operationID: String)
     case removeWorktree(worktreePath: String, force: Bool)
     case worktreeRemoveCapability
+    case worktreePinCapability
+    case setWorktreePinned(worktreePath: String, isPinned: Bool)
     case worktreeRemoveStatus(operationID: String)
 }
 
@@ -185,6 +187,7 @@ extension NotificationMessage: Codable {
         case worktreePath = "worktree_path"
         case base
         case force
+        case isPinned = "is_pinned"
         case operationID = "operation_id"
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
@@ -362,6 +365,12 @@ extension NotificationMessage: Codable {
             try container.encode("remove_worktree", forKey: .type)
             try container.encode(worktreePath, forKey: .worktreePath)
             try container.encode(force, forKey: .force)
+        case .worktreePinCapability:
+            try container.encode("worktree_pin_capability", forKey: .type)
+        case .setWorktreePinned(let worktreePath, let isPinned):
+            try container.encode("set_worktree_pinned", forKey: .type)
+            try container.encode(worktreePath, forKey: .worktreePath)
+            try container.encode(isPinned, forKey: .isPinned)
         case .worktreeRemoveCapability:
             try container.encode("worktree_remove_capability", forKey: .type)
         case .worktreeRemoveStatus(let operationID):
@@ -551,6 +560,13 @@ extension NotificationMessage: Codable {
             self = .removeWorktree(
                 worktreePath: try container.decode(String.self, forKey: .worktreePath),
                 force: try container.decode(Bool.self, forKey: .force)
+            )
+        case "worktree_pin_capability":
+            self = .worktreePinCapability
+        case "set_worktree_pinned":
+            self = .setWorktreePinned(
+                worktreePath: try container.decode(String.self, forKey: .worktreePath),
+                isPinned: try container.decode(Bool.self, forKey: .isPinned)
             )
         case "worktree_remove_capability":
             self = .worktreeRemoveCapability
