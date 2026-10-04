@@ -1878,6 +1878,57 @@ struct SessionClientTests {
         #expect(resizes == [.ownerResize(clientID: clientID, epoch: 42, cols: 47, rows: 25)])
     }
 
+    @Test("@spec IOS-4.41: When owner promotion's confirmed physical viewport is followed within the quiet window by further viewport changes (the software keyboard sliding in), the application shall send one ownerResize carrying the latest grid and then the queued input, preserving the IOS-4.24 ordering without an intermediate resize.")
+    func promotionViewportAndKeyboardBurstCollapseIntoOneResizeAheadOfQueuedInput() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("the follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        ws.clearSent()
+
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        #expect(client.isOwner)
+        // Physical viewport confirmed before the keyboard appears, then the
+        // keyboard animation shrinks it over several ticks (observed on device).
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        for rows in [36, 31, 28, 26, 25] {
+            primeViewport(client, columns: 47, rows: UInt16(rows))
+        }
+        try await waitUntil("the queued input") { !binaryFrames(ws).isEmpty }
+        try await Task.sleep(for: .seconds(SessionClient.ownerResizeQuietWindow * 3))
+
+        let resizes = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
+            return false
+        }
+        #expect(resizes == [.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 25)])
+        let resizeIndex = ws.sent.firstIndex { frame in
+            if case let .text(text) = frame,
+               case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+            return false
+        }
+        let inputIndex = ws.sent.firstIndex { frame in
+            if case .binary = frame { return true }
+            return false
+        }
+        #expect(resizeIndex != nil && inputIndex != nil && resizeIndex! < inputIndex!)
+        #expect(binaryFrames(ws).contains(Data("a".utf8)))
+    }
+
     @Test
     func ownerResizeSendsOwnerResizeWithCurrentEpoch() async throws {
         let ws = FakeWS()

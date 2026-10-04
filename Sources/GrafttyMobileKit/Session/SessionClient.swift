@@ -183,6 +183,9 @@ public final class SessionClient {
     nonisolated public static let ownerResizeQuietWindow: TimeInterval = 0.15
     private var pendingOwnerResize: (cols: UInt16, rows: UInt16, epoch: UInt64)?
     private var ownerResizeCoalescer: Task<Void, Never>?
+    /// Input queued behind the owner-transition resize (IOS-4.24). It leaves
+    /// with the trailing resize so the PTY adopts the grid before the bytes.
+    private var pendingOwnerResizeFrames: [Data] = []
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -1170,8 +1173,14 @@ public final class SessionClient {
             guard !Task.isCancelled, let pending = self.pendingOwnerResize else { return }
             self.pendingOwnerResize = nil
             self.ownerResizeCoalescer = nil
+            let frames = self.pendingOwnerResizeFrames
+            self.pendingOwnerResizeFrames = []
             guard !self.stopped, self.isOwner, self.ownershipSnapshot?.epoch == pending.epoch else { return }
-            self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, epoch: pending.epoch)
+            if frames.isEmpty {
+                self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, epoch: pending.epoch)
+            } else {
+                self.sendOwnerResizeThenFrames(cols: pending.cols, rows: pending.rows, epoch: pending.epoch, frames: frames)
+            }
         }
     }
 
@@ -1179,6 +1188,7 @@ public final class SessionClient {
         ownerResizeCoalescer?.cancel()
         ownerResizeCoalescer = nil
         pendingOwnerResize = nil
+        pendingOwnerResizeFrames = []
     }
 
     private func flushPendingInput() {
@@ -1210,10 +1220,16 @@ public final class SessionClient {
     /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
     /// order on its single thread; this restores the same guarantee on iOS.
     private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
-        // This ordered send carries the confirmed viewport; a parked older
-        // grid must not land after it.
-        cancelCoalescedOwnerResize()
-        let frames = pendingInput.drain()
+        // IOS-4.41: the confirmed viewport is measured before the software
+        // keyboard slides in, so sending it at once produced a grow-then-
+        // shrink bounce on the PTY. Park it with the queued input behind the
+        // same quiet window; the trailing send keeps the resize ahead of the
+        // bytes (IOS-4.24) while carrying the settled grid.
+        pendingOwnerResizeFrames += pendingInput.drain()
+        scheduleCoalescedOwnerResize(cols: cols, rows: rows, epoch: epoch)
+    }
+
+    private func sendOwnerResizeThenFrames(cols: UInt16, rows: UInt16, epoch: UInt64, frames: [Data]) {
         let clientID = displayClientID
         let generation = transportGeneration
         Task { @MainActor [weak self] in
