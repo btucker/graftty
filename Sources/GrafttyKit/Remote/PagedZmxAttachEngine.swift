@@ -194,6 +194,12 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     private func resize(cols: UInt16, rows: UInt16, pixels: PtyProcess.WindowSize?) throws {
         guard cols > 0, rows > 0 else { return }
+        // TERM-12.29: a zero pixel dimension means "unspecified" (grid-only
+        // follower repairs, legacy callers), never a literal 0x0 window. The
+        // daemon stores whatever pixel size it is sent and XNU raises
+        // SIGWINCH on any winsize field change, so writing zeros would bounce
+        // the session PTY's pixel size on every repair.
+        let pixels = pixels.flatMap { $0.xpixel > 0 && $0.ypixel > 0 ? $0 : nil }
         try withWritableSocket { fd in
             let includesPixels = supportsPixels && (pixels != nil || requestedSize?.includesPixels == true)
             let size = RequestedSize(windowSize: .init(cols: cols, rows: rows,

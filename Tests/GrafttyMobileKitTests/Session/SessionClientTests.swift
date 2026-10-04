@@ -1662,7 +1662,9 @@ struct SessionClientTests {
             return false
         }
         #expect(takeovers.count == 1)
-        #expect(takeovers.first == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+        // IOS-4.40: a follower canvas is active (120x40), so the claim carries
+        // that authoritative grid, not the memoized pre-canvas viewport.
+        #expect(takeovers.first == .takeControl(clientID: clientID, kind: .ios, cols: 120, rows: 40))
 
         let owned = try ownershipSnapshot(
             ownerClientID: clientID,
@@ -1690,7 +1692,7 @@ struct SessionClientTests {
     }
 
     @Test
-    func explicitTakeControlSendsTakeoverWithLastViewport() async throws {
+    func explicitTakeControlSendsTakeoverWithCanvasGrid() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
@@ -1715,8 +1717,35 @@ struct SessionClientTests {
         }
         #expect(takeovers.count == 1)
         #expect(takeovers.first?.1 == .ios)
-        #expect(takeovers.first?.2 == 80)
-        #expect(takeovers.first?.3 == 24)
+        #expect(takeovers.first?.2 == 120)
+        #expect(takeovers.first?.3 == 40)
+    }
+
+    @Test("@spec IOS-4.40: When a follower presenting an authoritative canvas requests display control, the application shall claim at the canvas's authoritative grid rather than a memoized pre-canvas viewport, so the claim itself never resizes the PTY; the confirmed physical viewport that follows carries the owner's real grid.")
+    func followerCanvasClaimUsesAuthoritativeGridNotStalePlaceholderViewport() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        // A pre-layout placeholder tick (observed on device as 31x10) is the
+        // last memoized viewport before the follower canvas takes over.
+        primeViewport(client, columns: 31, rows: 10)
+        let clientID = try await waitForHelloClientID(ws)
+        try confirmFollower(client, cols: 94, rows: 44)
+        ws.clearSent()
+
+        client.takeControl()
+        try await waitUntil("the takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        let takeovers = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeovers == [.takeControl(clientID: clientID, kind: .ios, cols: 94, rows: 44)])
     }
 
     @Test
@@ -1750,11 +1779,13 @@ struct SessionClientTests {
             if case .takeControl = $0 { return true }
             return false
         }
+        // IOS-4.40: an ownerless session with history is presented on a canvas
+        // at the previous owner's 120x40 grid, so the claim carries that grid.
         #expect(takeover == .takeControl(
             clientID: clientID,
             kind: .ios,
-            cols: 90,
-            rows: 28
+            cols: 120,
+            rows: 40
         ))
     }
 
@@ -1814,6 +1845,128 @@ struct SessionClientTests {
         ))
         try await waitUntil("only the user's input is flushed") { binaryFrames(ws).contains(Data("a".utf8)) }
         #expect(!binaryFrames(ws).contains(Data("\u{1b}[1;1R".utf8)))
+    }
+
+    @Test("@spec IOS-4.39: While this iOS client owns the display and its viewport changes repeatedly within one quiet window (keyboard animation, rotation), the application shall coalesce those changes and send at most one trailing ownerResize carrying the latest grid, so the remote PTY is not resized once per layout tick.")
+    func rapidOwnerViewportChangesCoalesceIntoOneTrailingOwnerResize() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 42)
+        ws.clearSent()
+
+        // A software keyboard animating in shrinks the viewport over several
+        // layout ticks; observed on device as 40 → 36 → 31 → 28 → 26 → 25 rows
+        // within one second, each one a daemon PTY resize and TUI repaint.
+        for rows in [40, 36, 31, 28, 26, 25] {
+            primeViewport(client, columns: 47, rows: UInt16(rows))
+        }
+        try await waitUntil("the trailing owner resize") {
+            envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
+        // Give a further quiet window to prove nothing else trails it.
+        try await Task.sleep(for: .seconds(SessionClient.ownerResizeQuietWindow * 3))
+
+        let resizes = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
+            return false
+        }
+        #expect(resizes == [.ownerResize(clientID: clientID, epoch: 42, cols: 47, rows: 25)])
+    }
+
+    @Test("@spec IOS-4.41: When owner promotion's confirmed physical viewport is followed within the quiet window by further viewport changes (the software keyboard sliding in), the application shall send one ownerResize carrying the latest grid and then the queued input, preserving the IOS-4.24 ordering without an intermediate resize.")
+    func promotionViewportAndKeyboardBurstCollapseIntoOneResizeAheadOfQueuedInput() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("the follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        ws.clearSent()
+
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        #expect(client.isOwner)
+        // Physical viewport confirmed before the keyboard appears, then the
+        // keyboard animation shrinks it over several ticks (observed on device).
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        for rows in [36, 31, 28, 26, 25] {
+            primeViewport(client, columns: 47, rows: UInt16(rows))
+        }
+        try await waitUntil("the queued input") { !binaryFrames(ws).isEmpty }
+        try await Task.sleep(for: .seconds(SessionClient.ownerResizeQuietWindow * 3))
+
+        let resizes = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
+            return false
+        }
+        #expect(resizes == [.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 25)])
+        let resizeIndex = ws.sent.firstIndex { frame in
+            if case let .text(text) = frame,
+               case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+            return false
+        }
+        let inputIndex = ws.sent.firstIndex { frame in
+            if case .binary = frame { return true }
+            return false
+        }
+        #expect(resizeIndex != nil && inputIndex != nil && resizeIndex! < inputIndex!)
+        #expect(binaryFrames(ws).contains(Data("a".utf8)))
+    }
+
+    @Test("@spec IOS-4.42: While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.")
+    func inputTypedDuringParkedOwnerTransitionResizeStaysBehindItAndEarlierQueuedInput() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("the follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        ws.clearSent()
+
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        // The user keeps typing while the transition resize is parked.
+        client.sendSoftwareKeyboardText("b")
+        try await waitUntil("both input frames") { binaryFrames(ws).count == 2 }
+
+        let relevant = ws.sent.filter { frame in
+            if case .binary = frame { return true }
+            if case .text(let text) = frame,
+               case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+            return false
+        }
+        #expect(relevant == [
+            .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 45).encoded()),
+            .binary(Data("a".utf8)), .binary(Data("b".utf8)),
+        ])
     }
 
     @Test

@@ -468,6 +468,19 @@ final class AppServices {
         )
     }
 
+    /// Paired-device listener port. `GRAFTTY_PAIRED_ACCESS_PORT` lets a
+    /// development instance (isolated via `CFFIXED_USER_HOME` and its own
+    /// bundle identifier) listen beside a production Graftty that already
+    /// holds the default port; mobile pairing records the advertised port,
+    /// so clients follow whichever port the instance binds.
+    static let pairedAccessPort: Int = {
+        if let raw = ProcessInfo.processInfo.environment["GRAFTTY_PAIRED_ACCESS_PORT"],
+           let port = Int(raw), (1...65_535).contains(port) {
+            return port
+        }
+        return RemoteAccessProtocol.pairedAccessPort
+    }()
+
     func startRemoteMacAccessServices(hostAgentPool: WebRTCHostAgentPool?) async throws {
         guard remoteMacAccessEnabled else {
             throw RemoteMacAccessServiceError.disabled
@@ -479,7 +492,7 @@ final class AppServices {
 
         let endpoint = RemoteAccessEndpoint(
             host: Self.localLANHostName(),
-            port: RemoteAccessProtocol.pairedAccessPort
+            port: Self.pairedAccessPort
         )
         endpoint.setRoutes(
             await Self.remoteAccessRoutes(
@@ -550,7 +563,7 @@ final class AppServices {
         )
         let server = LANRemoteAccessServer(
             config: .init(
-                port: RemoteAccessProtocol.pairedAccessPort,
+                port: Self.pairedAccessPort,
                 bindHost: "::"
             ),
             routeHandler: routeHandler
@@ -3129,7 +3142,7 @@ struct GrafttyApp: App {
         }
         return """
         Paired-device access could not start on port \
-        \(RemoteAccessProtocol.pairedAccessPort). Quit the other process using \
+        \(AppServices.pairedAccessPort). Quit the other process using \
         that port, then restart Graftty. (\(error))
         """
     }

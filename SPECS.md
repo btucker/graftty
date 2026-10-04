@@ -506,6 +506,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.19** When libghostty posts a wakeup notification, the application shall defer its tick to the main queue without running it inline or waiting for the main queue on the posting thread.
 
+**TERM-11.20** When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -561,6 +563,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
 
 **TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
+
+**TERM-12.29** When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1806,6 +1810,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.38** When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
 
+**IOS-4.39** While this iOS client owns the display and its viewport changes repeatedly within one quiet window (keyboard animation, rotation), the application shall coalesce those changes and send at most one trailing ownerResize carrying the latest grid, so the remote PTY is not resized once per layout tick.
+
+**IOS-4.40** When a follower presenting an authoritative canvas requests display control, the application shall claim at the canvas's authoritative grid rather than a memoized pre-canvas viewport, so the claim itself never resizes the PTY; the confirmed physical viewport that follows carries the owner's real grid.
+
+**IOS-4.41** When owner promotion's confirmed physical viewport is followed within the quiet window by further viewport changes (the software keyboard sliding in), the application shall send one ownerResize carrying the latest grid and then the queued input, preserving the IOS-4.24 ordering without an intermediate resize.
+
+**IOS-4.42** While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2539,6 +2551,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.19** When the mobile client signals a paired Mac over Tailscale, the application shall permit HTTP signaling to Tailscale IPv4 and IPv6 ranges without disabling App Transport Security globally.
 
 **REMOTE-2.20** While the user has enabled Keep Mac awake while Graftty is running, the application shall prevent idle system sleep without preventing display sleep, restore the preference on launch, and release its assertion when disabled or the controller is destroyed; the preference shall default to off.
+
+**REMOTE-2.21** When the paired-access listener binds a port other than the protocol default, the application shall advertise Tailscale routes on that same port, so every advertised route reaches the listener that answered the exchange.
 
 ### REMOTE-3.x — Revocation
 
