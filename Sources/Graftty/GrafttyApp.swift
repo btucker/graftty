@@ -1212,7 +1212,9 @@ struct GrafttyApp: App {
         // installation still requires the launch offer's explicit consent.
         Task { @MainActor in
             await AgentPluginAutomaticUpdate.shared.runAtLaunch()
-            AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
+            FullDiskAccessOffer.presentWhenWindowIsReady {
+                AgentPluginInstallOfferPresenter.presentWhenWindowIsReady()
+            }
         }
 
         // One-shot cleanup of the retired graftty-channel MCP integration

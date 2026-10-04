@@ -102,6 +102,7 @@
     "NOTIF.2": "Attention Badge Auto-Population",
     "CONFIG.1": "Config Loading",
     "CONFIG.2": "Shell Integration Script Discovery",
+    "CONFIG.3": "File Access Setup",
     "DIVERGE.1": "Display",
     "DIVERGE.2": "Origin Default Branch Resolution",
     "DIVERGE.3": "Computation",
