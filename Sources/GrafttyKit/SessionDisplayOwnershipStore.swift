@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import os
 
 public struct SessionDisplayOwnershipResizeResult: Sendable, Equatable {
     public let accepted: Bool
@@ -51,6 +52,24 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         /// Accepted owner-resize no-ops validate authority without advancing it.
         var revision: UInt64 = 0
         var attachedClients: [DisplayClientID: AttachedClient] = [:]
+    }
+
+    /// Diagnostic trail of every ownership transition (claims, owner
+    /// resizes, detaches, releases, restores). Stream it with
+    /// `log stream --predicate 'subsystem == "com.graftty.app" AND category == "ownership-trace"'`.
+    private static let trace = Logger(subsystem: "com.graftty.app", category: "ownership-trace")
+
+    private static func trace(
+        _ event: StaticString,
+        _ sessionName: String,
+        _ record: Record,
+        client: DisplayClientID? = nil,
+        accepted: Bool? = nil
+    ) {
+        let owner = record.ownerClientID.map { "\(record.ownerKind?.rawValue ?? "?"):\($0.rawValue)" } ?? "none"
+        let grid = record.grid.map { "\($0.cols)x\($0.rows)" } ?? "nil"
+        let outcome = accepted.map { $0 ? " accepted" : " REJECTED" } ?? ""
+        trace.notice("\(event, privacy: .public) \(sessionName, privacy: .public)\(outcome, privacy: .public) client=\(client?.rawValue ?? "-", privacy: .public) owner=\(owner, privacy: .public) grid=\(grid, privacy: .public) epoch=\(record.epoch) rev=\(record.revision) clients=\(record.attachedClients.count)")
     }
 
     /// Cancels an observer registration. Cancels automatically on
@@ -142,6 +161,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         record.revision += 1
 
         records[sessionName] = record
+        Self.trace("attach", sessionName, record, client: clientID)
         return snapshot(for: sessionName, record: record, fallbackGrid: grid)
     }
 
@@ -160,6 +180,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var record = records[sessionName] ?? Record()
         guard let attachedClient = record.attachedClients[clientID],
               attachedClient.isOwnerEligible(claimingAs: kind) else {
+            Self.trace("claim", sessionName, record, client: clientID, accepted: false)
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
                 snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -178,6 +199,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         records[sessionName] = record
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         changedSnapshot = result
+        Self.trace("claim", sessionName, record, client: clientID, accepted: true)
         return SessionDisplayOwnershipClaimResult(accepted: true, snapshot: result)
     }
 
@@ -196,6 +218,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var record = records[sessionName] ?? Record()
         guard let attachedClient = record.attachedClients[clientID],
               attachedClient.isOwnerEligible(claimingAs: kind) else {
+            Self.trace("claim", sessionName, record, client: clientID, accepted: false)
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
                 snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -204,6 +227,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         let alreadyCurrentOwner = record.ownerClientID == clientID && record.ownerKind == kind
         guard record.ownerClientID == nil || alreadyCurrentOwner else {
+            Self.trace("claim", sessionName, record, client: clientID, accepted: false)
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
                 snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -222,6 +246,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         records[sessionName] = record
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         changedSnapshot = result
+        Self.trace("claim", sessionName, record, client: clientID, accepted: true)
         return SessionDisplayOwnershipClaimResult(accepted: true, snapshot: result)
     }
 
@@ -247,6 +272,9 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: DisplayGrid.daemonFallback)
         if changed { changedSnapshot = result }
+        if !accepted || changed {
+            Self.trace("ownerResize", sessionName, record, client: clientID, accepted: accepted)
+        }
         return SessionDisplayOwnershipResizeResult(accepted: accepted, snapshot: result)
     }
 
@@ -274,6 +302,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         storeOrRemove(record, for: sessionName)
+        Self.trace(ownerCleared ? "detach-cleared-owner" : "detach", sessionName, record, client: clientID)
         if ownerCleared { changedSnapshot = result }
         return result
     }
@@ -300,6 +329,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         storeOrRemove(record, for: sessionName)
+        if ownerCleared { Self.trace("release", sessionName, record, client: clientID) }
         if ownerCleared { changedSnapshot = result }
         return result
     }
@@ -338,6 +368,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             record.epoch += 1
             record.revision += 1
             restored = true
+            Self.trace("restoreAfterFailedClaim", sessionName, record, client: failedClientID)
         }
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)

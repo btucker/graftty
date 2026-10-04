@@ -506,6 +506,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.19** When libghostty posts a wakeup notification, the application shall defer its tick to the main queue without running it inline or waiting for the main queue on the posting thread.
 
+**TERM-11.20** When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -561,6 +563,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
 
 **TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
+
+**TERM-12.29** When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.
 
 ## GIT — Worktree Discovery & Monitoring
 

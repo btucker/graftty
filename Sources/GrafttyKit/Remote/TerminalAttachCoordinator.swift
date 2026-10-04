@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import os
 
 public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
     internal final class Registration: @unchecked Sendable {
@@ -102,6 +103,10 @@ public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
 /// Made `public` (REMOTE-9) so `TerminalSessionHandler` can construct and
 /// drive it directly.
 public final class TerminalAttachCoordinator: @unchecked Sendable {
+    /// Diagnostic trail of remote-client ownership traffic; same category as
+    /// the ownership store so one predicate shows the whole handshake.
+    private static let trace = Logger(subsystem: "com.graftty.app", category: "ownership-trace")
+
     private let sessionName: String
     private let clientID: DisplayClientID
     private let defaultKind: DisplayClientKind
@@ -174,6 +179,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             attached = true
             attachedKind = kind
             lock.unlock()
+            Self.trace.notice("coordinator hello \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) kind=\(kind.rawValue, privacy: .public) role=\(String(describing: role), privacy: .public) visible=\(visible) grid=\(cols)x\(rows)")
             let snapshot = ownershipStore.attachClient(
                 sessionName: sessionName,
                 clientID: clientID,
@@ -203,6 +209,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 grid: grid,
                 fallbackGrid: grid
             )
+            Self.trace.notice("coordinator takeControl \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) accepted=\(result.accepted) epoch=\(result.snapshot.epoch)")
             if result.accepted {
                 acceptOwnerGrid(grid)
                 resize(cols, rows)
@@ -218,6 +225,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 epoch: epoch,
                 grid: grid
             )
+            Self.trace.notice("coordinator ownerResize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) epoch=\(epoch) accepted=\(result.accepted)")
             if result.accepted {
                 acceptOwnerGrid(grid)
                 resize(cols, rows)
@@ -337,6 +345,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     public func handlePTYSize(cols: UInt16, rows: UInt16) {
         guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
         lock.withLock { latestSourceGrid = grid }
+        Self.trace.notice("coordinator ptySize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) currentOwner=\(self.isCurrentOwner())")
         sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
         if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
@@ -465,8 +474,9 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         }
         let shouldFollow = lock.withLock { attached && !detached }
             && !snapshot.isOwnerless && snapshot.ownerClientID != clientID
-        if shouldFollow,
-           ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid {
+        let follows = shouldFollow && ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid
+        Self.trace.notice("coordinator ownershipSnapshot \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) owner=\(snapshot.ownerClientID?.rawValue ?? "none", privacy: .public) grid=\(snapshot.grid.cols)x\(snapshot.grid.rows) epoch=\(snapshot.epoch) follow=\(follows)")
+        if follows {
             followDisplayGrid(snapshot)
         }
         sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())

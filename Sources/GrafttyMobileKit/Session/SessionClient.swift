@@ -5,6 +5,7 @@ import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Observation
+import os
 import UIKit
 
 /// @spec IOS-7.6
@@ -79,6 +80,9 @@ public final class SessionClient {
     private var hasPagedCheckpoint = false
     private var terminalRenderer: (any PagedTerminalRenderer)?
     private var nativeGrid: GridSize?
+    /// Diagnostic trail of grid, checkpoint, page, and ownership transitions.
+    /// Stream with `log stream --predicate 'subsystem == "com.quotably.graftty" AND category == "paged-trace"'`.
+    private static let trace = Logger(subsystem: "com.quotably.graftty", category: "paged-trace")
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -497,6 +501,7 @@ public final class SessionClient {
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
                                 try await self.paging?.handle(event)
+                                self.tracePagedEvent(event)
                                 guard self.isCurrentTransport(generation) else { return }
                                 if case .checkpoint(let checkpoint) = event {
                                     self.hasPagedCheckpoint = true
@@ -567,9 +572,33 @@ public final class SessionClient {
         !stopped && transportGeneration == generation
     }
 
+    private func tracePagedEvent(_ event: PagedTerminalEvent) {
+        let summary: String
+        switch event {
+        case .checkpoint(let checkpoint):
+            summary = "checkpoint \(checkpoint.cols)x\(checkpoint.rows) inc=\(checkpoint.incarnation) id=\(checkpoint.id) bytes=\(checkpoint.ready.count) history=\(checkpoint.hasPrimaryHistory)/\(checkpoint.hasAlternateHistory)"
+        case .grid(let cols, let rows):
+            summary = "pagedGrid \(cols)x\(rows)"
+        case .page(let page):
+            summary = "page ordinal=\(page.request.ordinal) screen=\(page.screen) bytes=\(page.data.count) complete=\(page.complete)"
+        case .unavailable(let failure):
+            summary = "unavailable \(String(describing: failure.reason)) ordinal=\(failure.request.ordinal)"
+        case .output:
+            return
+        case .ended:
+            summary = "ended"
+        }
+        Self.trace.notice("\(summary, privacy: .public) status=\(String(describing: self.paging?.status), privacy: .public) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public) isOwner=\(self.isOwner)")
+    }
+
+    private func gridTraceLabel(_ grid: GridSize?) -> String {
+        grid.map { "\($0.cols)x\($0.rows)" } ?? "nil"
+    }
+
     private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
         snapshotGrid = nil
         if let grid = snapshotCanvasGrid {
+            Self.trace.notice("legacyOutput bytes=\(data.count) canvas=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
             // Resize callbacks can precede the parser's resize. Let the renderer
             // confirm native readiness even when the callback grid already matches.
             try await terminalRenderer?.resize(cols: grid.cols, rows: grid.rows)
@@ -1219,8 +1248,10 @@ public final class SessionClient {
         case .imagePaste:
             break
         case let .grid(cols, rows):
-            if ownershipSnapshot == nil
-                || (ownershipSnapshot?.isOwnerless == true && ownershipSnapshot?.epoch == 0) {
+            let adoptsLegacyGrid = ownershipSnapshot == nil
+                || (ownershipSnapshot?.isOwnerless == true && ownershipSnapshot?.epoch == 0)
+            Self.trace.notice("grid \(cols)x\(rows) legacy=\(adoptsLegacyGrid) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public)")
+            if adoptsLegacyGrid {
                 legacyServerGrid = GridSize(cols: cols, rows: rows)
             }
         case .resize:
@@ -1242,6 +1273,7 @@ public final class SessionClient {
             let wasOwner = isOwner
             let wasUsingSnapshotCanvas = snapshotCanvasGrid != nil
             ownershipSnapshot = snapshot
+            Self.trace.notice("ownership owner=\(snapshot.ownerClientID?.rawValue ?? "none", privacy: .public) grid=\(snapshot.grid.cols)x\(snapshot.grid.rows) epoch=\(snapshot.epoch) rev=\(snapshot.revision) isOwner=\(self.isOwner) wasOwner=\(wasOwner) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
             if let id = imagePasteID, let epoch = imagePasteEpoch,
                !isOwner || snapshot.epoch != epoch {
                 finishImagePaste(id: id, error: "Image paste was interrupted because pane control changed.")

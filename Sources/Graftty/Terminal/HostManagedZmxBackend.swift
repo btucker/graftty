@@ -880,6 +880,16 @@ final class HostManagedZmxBackend {
 
         lock.lock()
         if attachmentGrid != nil { lock.unlock(); return }
+        // TERM-11.20: every flush path forwards the live window query's
+        // pixel convention (screen pixels, padding included), while this
+        // callback reports the bare cell-grid area. XNU compares the whole
+        // winsize, so forwarding one grid under alternating conventions
+        // raised a spurious SIGWINCH on every show reconcile. When the
+        // grids agree, the live query is the single source of truth.
+        var resize = resize
+        if let live = currentWindowSize(), live.cols == resize.cols, live.rows == resize.rows {
+            resize = live
+        }
         latestPixelSize = (xpixel: resize.xpixel, ypixel: resize.ypixel)
         // TERM-11.7: withhold while layout hasn't settled. These
         // callbacks are pre-layout placeholder noise and must never reach
