@@ -49,7 +49,7 @@ struct GrafttyCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
-        subcommands: [Open.self, Notify.self, Pane.self, Worktree.self, Remote.self, Team.self, Attention.self, InternalGroup.self]
+        subcommands: [Open.self, Image.self, Notify.self, Pane.self, Worktree.self, Remote.self, Team.self, Attention.self, InternalGroup.self]
     )
 }
 
@@ -543,6 +543,12 @@ struct SocketTransportClient: SocketTransport {
 /// Small shared helpers used by every subcommand. Keeps each subcommand's
 /// `run()` readable and avoids copy-pasting the error plumbing.
 enum CLIEnv {
+    /// Print `message` to stderr and return the failure exit code to throw.
+    static func fail(_ message: String) -> ExitCode {
+        printError(message)
+        return ExitCode(1)
+    }
+
     static func resolveWorktree() throws -> String {
         do {
             return try WorktreeResolver.resolve()
