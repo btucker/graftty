@@ -1810,6 +1810,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.38** When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.
 
+**IOS-4.39** While this iOS client owns the display and its viewport changes repeatedly within one quiet window (keyboard animation, rotation), the application shall coalesce those changes and send at most one trailing ownerResize carrying the latest grid, so the remote PTY is not resized once per layout tick.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

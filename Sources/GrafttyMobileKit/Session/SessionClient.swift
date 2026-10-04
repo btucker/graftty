@@ -178,6 +178,11 @@ public final class SessionClient {
     private var pendingInput = PendingInput()
     @ObservationIgnored
     private var awaitingOwnerViewport = false
+    /// IOS-4.39: quiet window during which successive owner viewport changes
+    /// collapse into one trailing `ownerResize` (keyboard animation, rotation).
+    nonisolated public static let ownerResizeQuietWindow: TimeInterval = 0.15
+    private var pendingOwnerResize: (cols: UInt16, rows: UInt16, epoch: UInt64)?
+    private var ownerResizeCoalescer: Task<Void, Never>?
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -405,7 +410,7 @@ public final class SessionClient {
                 awaitingOwnerViewport = false
                 flushPendingInputAfterOwnerResize(cols: cols, rows: rows, epoch: epoch)
             } else {
-                sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+                scheduleCoalescedOwnerResize(cols: cols, rows: rows, epoch: epoch)
             }
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
@@ -1034,6 +1039,7 @@ public final class SessionClient {
     public func suspend() {
         guard !stopped else { return }
         stopped = true
+        cancelCoalescedOwnerResize()
         stopHistoryPaging()
         resetImagePaste()
         transportGeneration &+= 1
@@ -1136,6 +1142,32 @@ public final class SessionClient {
     private func clearPendingInput() {
         pendingInput.clear()
         awaitingOwnerViewport = false
+        cancelCoalescedOwnerResize()
+    }
+
+    /// IOS-4.39: a software keyboard animating in, or a rotation, delivers a
+    /// burst of viewport ticks (observed: six grids inside 130 ms). Each one
+    /// forwarded verbatim is a daemon PTY resize, a SIGWINCH, and a TUI
+    /// repaint on every display. Park the latest grid and send it once the
+    /// burst goes quiet; a newer tick restarts the window.
+    private func scheduleCoalescedOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
+        pendingOwnerResize = (cols, rows, epoch)
+        ownerResizeCoalescer?.cancel()
+        ownerResizeCoalescer = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do { try await self.clock.sleep(for: Self.ownerResizeQuietWindow) } catch { return }
+            guard !Task.isCancelled, let pending = self.pendingOwnerResize else { return }
+            self.pendingOwnerResize = nil
+            self.ownerResizeCoalescer = nil
+            guard !self.stopped, self.isOwner, self.ownershipSnapshot?.epoch == pending.epoch else { return }
+            self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, epoch: pending.epoch)
+        }
+    }
+
+    private func cancelCoalescedOwnerResize() {
+        ownerResizeCoalescer?.cancel()
+        ownerResizeCoalescer = nil
+        pendingOwnerResize = nil
     }
 
     private func flushPendingInput() {
@@ -1167,6 +1199,9 @@ public final class SessionClient {
     /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
     /// order on its single thread; this restores the same guarantee on iOS.
     private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
+        // This ordered send carries the confirmed viewport; a parked older
+        // grid must not land after it.
+        cancelCoalescedOwnerResize()
         let frames = pendingInput.drain()
         let clientID = displayClientID
         let generation = transportGeneration

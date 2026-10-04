@@ -1816,6 +1816,37 @@ struct SessionClientTests {
         #expect(!binaryFrames(ws).contains(Data("\u{1b}[1;1R".utf8)))
     }
 
+    @Test("@spec IOS-4.39: While this iOS client owns the display and its viewport changes repeatedly within one quiet window (keyboard animation, rotation), the application shall coalesce those changes and send at most one trailing ownerResize carrying the latest grid, so the remote PTY is not resized once per layout tick.")
+    func rapidOwnerViewportChangesCoalesceIntoOneTrailingOwnerResize() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 42)
+        ws.clearSent()
+
+        // A software keyboard animating in shrinks the viewport over several
+        // layout ticks; observed on device as 40 → 36 → 31 → 28 → 26 → 25 rows
+        // within one second, each one a daemon PTY resize and TUI repaint.
+        for rows in [40, 36, 31, 28, 26, 25] {
+            primeViewport(client, columns: 47, rows: UInt16(rows))
+        }
+        try await waitUntil("the trailing owner resize") {
+            envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
+        // Give a further quiet window to prove nothing else trails it.
+        try await Task.sleep(for: .seconds(SessionClient.ownerResizeQuietWindow * 3))
+
+        let resizes = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
+            return false
+        }
+        #expect(resizes == [.ownerResize(clientID: clientID, epoch: 42, cols: 47, rows: 25)])
+    }
+
     @Test
     func ownerResizeSendsOwnerResizeWithCurrentEpoch() async throws {
         let ws = FakeWS()
