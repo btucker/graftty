@@ -473,13 +473,13 @@ final class AppServices {
     /// bundle identifier) listen beside a production Graftty that already
     /// holds the default port; mobile pairing records the advertised port,
     /// so clients follow whichever port the instance binds.
-    static var pairedAccessPort: Int {
+    static let pairedAccessPort: Int = {
         if let raw = ProcessInfo.processInfo.environment["GRAFTTY_PAIRED_ACCESS_PORT"],
            let port = Int(raw), (1...65_535).contains(port) {
             return port
         }
         return RemoteAccessProtocol.pairedAccessPort
-    }
+    }()
 
     func startRemoteMacAccessServices(hostAgentPool: WebRTCHostAgentPool?) async throws {
         guard remoteMacAccessEnabled else {

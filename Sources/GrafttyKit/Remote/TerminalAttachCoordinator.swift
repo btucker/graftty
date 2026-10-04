@@ -345,10 +345,11 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     public func handlePTYSize(cols: UInt16, rows: UInt16) {
         guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
         lock.withLock { latestSourceGrid = grid }
-        Self.trace.notice("coordinator ptySize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) currentOwner=\(self.isCurrentOwner())")
         sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
-        if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
+        let currentOwner = snapshot.ownerClientID == clientID
+        Self.trace.notice("coordinator ptySize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) currentOwner=\(currentOwner)")
+        if currentOwner, currentLastAcceptedOwnerGrid() == grid {
             broadcaster.broadcast(snapshot)
         } else {
             sendOwnershipSnapshot(snapshot)

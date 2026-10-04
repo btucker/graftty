@@ -1816,6 +1816,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.41** When owner promotion's confirmed physical viewport is followed within the quiet window by further viewport changes (the software keyboard sliding in), the application shall send one ownerResize carrying the latest grid and then the queued input, preserving the IOS-4.24 ordering without an intermediate resize.
 
+**IOS-4.42** While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

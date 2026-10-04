@@ -94,6 +94,25 @@ public enum PagedTerminalEvent: Codable, Equatable, Sendable {
     case page(PagedTerminalPage)
     case unavailable(PagedTerminalHistoryFailure)
     case ended(Int32)
+
+    /// One-line diagnostic summary shared by the Mac and mobile paged-trace
+    /// logs. `nil` for raw output, which is never traced per frame.
+    public var traceSummary: String? {
+        switch self {
+        case .checkpoint(let checkpoint):
+            return "checkpoint \(checkpoint.cols)x\(checkpoint.rows) inc=\(checkpoint.incarnation) id=\(checkpoint.id) bytes=\(checkpoint.ready.count) history=\(checkpoint.hasPrimaryHistory)/\(checkpoint.hasAlternateHistory)"
+        case .grid(let cols, let rows):
+            return "pagedGrid \(cols)x\(rows)"
+        case .page(let page):
+            return "page ordinal=\(page.request.ordinal) screen=\(page.screen) bytes=\(page.data.count) complete=\(page.complete)"
+        case .unavailable(let failure):
+            return "unavailable \(String(describing: failure.reason)) ordinal=\(failure.request.ordinal)"
+        case .output:
+            return nil
+        case .ended(let status):
+            return "ended status=\(status)"
+        }
+    }
 }
 
 public enum PagedTerminalRequest: Codable, Equatable, Sendable {

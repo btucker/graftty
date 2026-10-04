@@ -1929,6 +1929,46 @@ struct SessionClientTests {
         #expect(binaryFrames(ws).contains(Data("a".utf8)))
     }
 
+    @Test("@spec IOS-4.42: While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.")
+    func inputTypedDuringParkedOwnerTransitionResizeStaysBehindItAndEarlierQueuedInput() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.sendSoftwareKeyboardText("a")
+        try await waitUntil("the follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        ws.clearSent()
+
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        // The user keeps typing while the transition resize is parked.
+        client.sendSoftwareKeyboardText("b")
+        try await waitUntil("both input frames") { binaryFrames(ws).count == 2 }
+
+        let relevant = ws.sent.filter { frame in
+            if case .binary = frame { return true }
+            if case .text(let text) = frame,
+               case .ownerResize = try? WebControlEnvelope.parse(Data(text.utf8)) { return true }
+            return false
+        }
+        #expect(relevant == [
+            .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 45).encoded()),
+            .binary(Data("a".utf8)), .binary(Data("b".utf8)),
+        ])
+    }
+
     @Test
     func ownerResizeSendsOwnerResizeWithCurrentEpoch() async throws {
         let ws = FakeWS()

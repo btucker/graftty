@@ -83,6 +83,10 @@ public final class SessionClient {
     /// Diagnostic trail of grid, checkpoint, page, and ownership transitions.
     /// Stream with `log stream --predicate 'subsystem == "com.quotably.graftty" AND category == "paged-trace"'`.
     private static let trace = Logger(subsystem: "com.quotably.graftty", category: "paged-trace")
+    /// Last canvas grid the non-paged output path traced; throttles that
+    /// per-frame path to one line per grid change.
+    @ObservationIgnored
+    private var lastTracedLegacyCanvas: GridSize?
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -183,9 +187,11 @@ public final class SessionClient {
     nonisolated public static let ownerResizeQuietWindow: TimeInterval = 0.15
     private var pendingOwnerResize: (cols: UInt16, rows: UInt16, epoch: UInt64)?
     private var ownerResizeCoalescer: Task<Void, Never>?
-    /// Input queued behind the owner-transition resize (IOS-4.24). It leaves
-    /// with the trailing resize so the PTY adopts the grid before the bytes.
-    private var pendingOwnerResizeFrames: [Data] = []
+    /// IOS-4.24 / IOS-4.41 / IOS-4.42: the owner-transition resize is parked
+    /// behind the quiet window. While set, owner input stays in `pendingInput`
+    /// and leaves with the trailing resize, so the PTY adopts the grid before
+    /// any byte and nothing overtakes input queued before promotion.
+    private var ownerTransitionResizePending = false
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -581,21 +587,7 @@ public final class SessionClient {
     }
 
     private func tracePagedEvent(_ event: PagedTerminalEvent) {
-        let summary: String
-        switch event {
-        case .checkpoint(let checkpoint):
-            summary = "checkpoint \(checkpoint.cols)x\(checkpoint.rows) inc=\(checkpoint.incarnation) id=\(checkpoint.id) bytes=\(checkpoint.ready.count) history=\(checkpoint.hasPrimaryHistory)/\(checkpoint.hasAlternateHistory)"
-        case .grid(let cols, let rows):
-            summary = "pagedGrid \(cols)x\(rows)"
-        case .page(let page):
-            summary = "page ordinal=\(page.request.ordinal) screen=\(page.screen) bytes=\(page.data.count) complete=\(page.complete)"
-        case .unavailable(let failure):
-            summary = "unavailable \(String(describing: failure.reason)) ordinal=\(failure.request.ordinal)"
-        case .output:
-            return
-        case .ended:
-            summary = "ended"
-        }
+        guard let summary = event.traceSummary else { return }
         Self.trace.notice("\(summary, privacy: .public) status=\(String(describing: self.paging?.status), privacy: .public) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public) isOwner=\(self.isOwner)")
     }
 
@@ -606,7 +598,12 @@ public final class SessionClient {
     private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
         snapshotGrid = nil
         if let grid = snapshotCanvasGrid {
-            Self.trace.notice("legacyOutput bytes=\(data.count) canvas=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
+            // Once per canvas grid, not per output frame: a follower or preview
+            // tile streaming output would otherwise persist a log line per chunk.
+            if grid != lastTracedLegacyCanvas {
+                lastTracedLegacyCanvas = grid
+                Self.trace.notice("legacyOutput canvas=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
+            }
             // Resize callbacks can precede the parser's resize. Let the renderer
             // confirm native readiness even when the callback grid already matches.
             try await terminalRenderer?.resize(cols: grid.cols, rows: grid.rows)
@@ -764,7 +761,7 @@ public final class SessionClient {
         switch ownershipTransportMode {
         case .webControl where isOwner:
             recordActivity()
-            if awaitingOwnerViewport {
+            if awaitingOwnerViewport || ownerTransitionResizePending {
                 _ = pendingInput.queue(data)
             } else {
                 sendBinary(data)
@@ -1042,7 +1039,6 @@ public final class SessionClient {
     public func suspend() {
         guard !stopped else { return }
         stopped = true
-        cancelCoalescedOwnerResize()
         stopHistoryPaging()
         resetImagePaste()
         transportGeneration &+= 1
@@ -1173,9 +1169,10 @@ public final class SessionClient {
             guard !Task.isCancelled, let pending = self.pendingOwnerResize else { return }
             self.pendingOwnerResize = nil
             self.ownerResizeCoalescer = nil
-            let frames = self.pendingOwnerResizeFrames
-            self.pendingOwnerResizeFrames = []
+            let carriesInput = self.ownerTransitionResizePending
+            self.ownerTransitionResizePending = false
             guard !self.stopped, self.isOwner, self.ownershipSnapshot?.epoch == pending.epoch else { return }
+            let frames = carriesInput ? self.pendingInput.drain() : []
             if frames.isEmpty {
                 self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, epoch: pending.epoch)
             } else {
@@ -1188,10 +1185,13 @@ public final class SessionClient {
         ownerResizeCoalescer?.cancel()
         ownerResizeCoalescer = nil
         pendingOwnerResize = nil
-        pendingOwnerResizeFrames = []
+        ownerTransitionResizePending = false
     }
 
     private func flushPendingInput() {
+        // IOS-4.42: input parked behind the owner-transition resize leaves
+        // with it, not with a same-owner snapshot that lands meanwhile.
+        guard !ownerTransitionResizePending else { return }
         let frames = pendingInput.drain()
         guard !frames.isEmpty else { return }
         sendBinaryFrames(frames)
@@ -1222,10 +1222,11 @@ public final class SessionClient {
     private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
         // IOS-4.41: the confirmed viewport is measured before the software
         // keyboard slides in, so sending it at once produced a grow-then-
-        // shrink bounce on the PTY. Park it with the queued input behind the
+        // shrink bounce on the PTY. Park it, and the queued input, behind the
         // same quiet window; the trailing send keeps the resize ahead of the
-        // bytes (IOS-4.24) while carrying the settled grid.
-        pendingOwnerResizeFrames += pendingInput.drain()
+        // bytes (IOS-4.24) while carrying the settled grid. Input typed in
+        // the meantime queues behind it as well (IOS-4.42).
+        ownerTransitionResizePending = true
         scheduleCoalescedOwnerResize(cols: cols, rows: rows, epoch: epoch)
     }
 
