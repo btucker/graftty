@@ -1662,7 +1662,9 @@ struct SessionClientTests {
             return false
         }
         #expect(takeovers.count == 1)
-        #expect(takeovers.first == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+        // IOS-4.40: a follower canvas is active (120x40), so the claim carries
+        // that authoritative grid, not the memoized pre-canvas viewport.
+        #expect(takeovers.first == .takeControl(clientID: clientID, kind: .ios, cols: 120, rows: 40))
 
         let owned = try ownershipSnapshot(
             ownerClientID: clientID,
@@ -1690,7 +1692,7 @@ struct SessionClientTests {
     }
 
     @Test
-    func explicitTakeControlSendsTakeoverWithLastViewport() async throws {
+    func explicitTakeControlSendsTakeoverWithCanvasGrid() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
@@ -1715,8 +1717,35 @@ struct SessionClientTests {
         }
         #expect(takeovers.count == 1)
         #expect(takeovers.first?.1 == .ios)
-        #expect(takeovers.first?.2 == 80)
-        #expect(takeovers.first?.3 == 24)
+        #expect(takeovers.first?.2 == 120)
+        #expect(takeovers.first?.3 == 40)
+    }
+
+    @Test("@spec IOS-4.40: When a follower presenting an authoritative canvas requests display control, the application shall claim at the canvas's authoritative grid rather than a memoized pre-canvas viewport, so the claim itself never resizes the PTY; the confirmed physical viewport that follows carries the owner's real grid.")
+    func followerCanvasClaimUsesAuthoritativeGridNotStalePlaceholderViewport() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        // A pre-layout placeholder tick (observed on device as 31x10) is the
+        // last memoized viewport before the follower canvas takes over.
+        primeViewport(client, columns: 31, rows: 10)
+        let clientID = try await waitForHelloClientID(ws)
+        try confirmFollower(client, cols: 94, rows: 44)
+        ws.clearSent()
+
+        client.takeControl()
+        try await waitUntil("the takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        let takeovers = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeovers == [.takeControl(clientID: clientID, kind: .ios, cols: 94, rows: 44)])
     }
 
     @Test
@@ -1750,11 +1779,13 @@ struct SessionClientTests {
             if case .takeControl = $0 { return true }
             return false
         }
+        // IOS-4.40: an ownerless session with history is presented on a canvas
+        // at the previous owner's 120x40 grid, so the claim carries that grid.
         #expect(takeover == .takeControl(
             clientID: clientID,
             kind: .ios,
-            cols: 90,
-            rows: 28
+            cols: 120,
+            rows: 40
         ))
     }
 

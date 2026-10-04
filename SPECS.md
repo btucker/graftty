@@ -1812,6 +1812,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.39** While this iOS client owns the display and its viewport changes repeatedly within one quiet window (keyboard animation, rotation), the application shall coalesce those changes and send at most one trailing ownerResize carrying the latest grid, so the remote PTY is not resized once per layout tick.
 
+**IOS-4.40** When a follower presenting an authoritative canvas requests display control, the application shall claim at the canvas's authoritative grid rather than a memoized pre-canvas viewport, so the claim itself never resizes the PTY; the confirmed physical viewport that follows carries the owner's real grid.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2545,6 +2547,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.19** When the mobile client signals a paired Mac over Tailscale, the application shall permit HTTP signaling to Tailscale IPv4 and IPv6 ranges without disabling App Transport Security globally.
 
 **REMOTE-2.20** While the user has enabled Keep Mac awake while Graftty is running, the application shall prevent idle system sleep without preventing display sleep, restore the preference on launch, and release its assertion when disabled or the controller is destroyed; the preference shall default to off.
+
+**REMOTE-2.21** When the paired-access listener binds a port other than the protocol default, the application shall advertise Tailscale routes on that same port, so every advertised route reaches the listener that answered the exchange.
 
 ### REMOTE-3.x — Revocation
 

@@ -28,15 +28,22 @@ public enum RemoteAccessRouteDiscovery {
         lanBaseURL: URL,
         tailscaleIPs: [String]
     ) -> [RemoteConnectionRoute] {
-        [RemoteConnectionRoute(kind: .lan, baseURL: lanBaseURL)]
+        // Every advertised route must reach the listener that answered this
+        // exchange, so the Tailscale routes follow the LAN route's port
+        // rather than the protocol default.
+        let port = lanBaseURL.port ?? RemoteAccessProtocol.pairedAccessPort
+        return [RemoteConnectionRoute(kind: .lan, baseURL: lanBaseURL)]
             + tailscaleIPs.compactMap { host in
-                remoteAccessURL(host: host).map {
+                remoteAccessURL(host: host, port: port).map {
                     RemoteConnectionRoute(kind: .tailscaleIP, baseURL: $0)
                 }
             }
     }
 
-    public static func remoteAccessURL(host: String) -> URL? {
+    public static func remoteAccessURL(
+        host: String,
+        port: Int = RemoteAccessProtocol.pairedAccessPort
+    ) -> URL? {
         var components = URLComponents()
         components.scheme = "http"
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,7 +52,7 @@ public enum RemoteAccessRouteDiscovery {
             && !normalizedHost.hasPrefix("[")
             ? "[\(normalizedHost)]"
             : normalizedHost
-        components.port = RemoteAccessProtocol.pairedAccessPort
+        components.port = port
         return components.url
     }
 }

@@ -92,6 +92,18 @@ struct RemoteAccessRouteDiscoveryTests {
             "http://[fd7a:115c:a1e0::5]:8800",
         ])
     }
+
+    @Test("@spec REMOTE-2.21: When the paired-access listener binds a port other than the protocol default, the application shall advertise Tailscale routes on that same port, so every advertised route reaches the listener that answered the exchange.")
+    func tailscaleRoutesFollowTheLANListenerPort() {
+        let routes = RemoteAccessRouteDiscovery.nativeRoutes(
+            lanBaseURL: URL(string: "http://studio.local:8801")!,
+            tailscaleIPs: ["100.64.0.5"]
+        )
+        #expect(routes.map(\.baseURL.absoluteString) == [
+            "http://studio.local:8801",
+            "http://100.64.0.5:8801",
+        ])
+    }
 }
 
 @Suite("""

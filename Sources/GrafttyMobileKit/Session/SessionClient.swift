@@ -1116,7 +1116,18 @@ public final class SessionClient {
     private func requestTakeControl() {
         guard !pendingInput.takeoverRequested, !stopped else { return }
         let generation = transportGeneration
-        let grid = helloGrid()
+        // IOS-4.40: while a follower canvas is active the native grid is the
+        // leader's, and the last memoized viewport predates the canvas (on
+        // device it was a 31x10 pre-layout placeholder that briefly shrank
+        // the PTY to ten rows). Claim at the canvas grid so the claim itself
+        // never resizes; the confirmed physical viewport (IOS-4.32) carries
+        // the owner's real grid afterwards.
+        let grid: (cols: UInt16, rows: UInt16)
+        if let canvas = snapshotCanvasGrid {
+            grid = (canvas.cols, canvas.rows)
+        } else {
+            grid = helloGrid()
+        }
         pendingInput.takeoverBaseEpoch = ownershipSnapshot?.epoch
         pendingInput.takeoverRequested = true
         Task { @MainActor [weak self] in
