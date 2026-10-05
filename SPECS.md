@@ -3286,6 +3286,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SLEEP-15** When automatic sleep evicts a pane's renderer, the application shall preserve its zmx session mapping, title, shell readiness, and existing Stop behavior.
 
+### SLEEP-16.x
+
+**SLEEP-16** If wake admission fails before native team-message delivery, then the application shall leave the message pending without contacting the provider.
+
+### SLEEP-17.x
+
+**SLEEP-17** If a deep-linked worktree cannot be resumed, then the application shall preserve the current selection and defer surface attachment.
+
+### SLEEP-18.x
+
+**SLEEP-18** When a remote viewer pane shares a local worktree path, the application shall admit viewer input without waking or registering the local host's processes.
+
+### SLEEP-19.x
+
+**SLEEP-19** If heartbeat storage fails after suspension, then the independent recovery helper shall still resume its journaled processes when the application exits.
+
 ### SLEEP-20.x
 
 **SLEEP-20** When a Claude Stop or SubagentStop hook omits or malforms task or cron registries, the application shall report unknown provider sleep activity.
@@ -3325,6 +3341,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### SLEEP-29.x
 
 **SLEEP-29** If a Codex activity query encounters unsupported methods, malformed responses, mismatched identity, transport failure, or timeout, then the application shall fail closed without selecting or mutating another thread.
+
+### SLEEP-30.x
+
+**SLEEP-30** While a recovery helper owns a journal's lifetime lease, the application shall refuse concurrent orphan recovery even if heartbeat storage is unavailable.
+
+### SLEEP-31.x
+
+**SLEEP-31** While a shell is executing a command, has scheduled or callback work, or lacks an identity-matching prompt boundary, the application shall keep that shell awake even if it has no child processes or terminal output.
+
+### SLEEP-32.x
+
+**SLEEP-32** When a hardware key is released after a fresh prompt, the application shall forward its release without invalidating the prompt's acknowledged input boundary.
+
+### SLEEP-33.x
+
+**SLEEP-33** When an attached remote terminal sends more input, the host shall renew input admission before forwarding bytes, even after a newer shell prompt was observed.
+
+### SLEEP-34.x
+
+**SLEEP-34** If a terminal closes while wake admission is pending, then the host shall discard delayed input without using its released descriptor or recording new uncommitted bytes.
 
 ## SSH — SSH
 

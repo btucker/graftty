@@ -33,15 +33,15 @@ public struct SleepKeepAwakeRegistration: Codable {
         self.path = path; self.root = root; self.task = task
     }
 
-    public func blocksSleep(path: String, roots: [SleepProcessIdentity], startTime: (Int32) -> Int64?) -> Bool {
-        guard self.path == path, roots.contains(root) else { return false }
+    public func blocksSleep(path: String, startTime: (Int32) -> Int64?) -> Bool {
+        guard self.path == path else { return false }
         guard let start = startTime(task.pid) else { return true }
         return start == task.startTime
     }
 
     public static let directory = AppState.defaultDirectory.appendingPathComponent("sleep-keep-awake")
 
-    public static func hasLiveRegistration(path: String, roots: [SleepProcessIdentity]) -> Bool {
+    public static func hasLiveRegistration(path: String) -> Bool {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.path) else { return false }
         guard let files = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return true }
@@ -56,7 +56,7 @@ public struct SleepKeepAwakeRegistration: Codable {
                 try? fm.removeItem(at: file)
                 continue
             }
-            if record.blocksSleep(path: path, roots: roots, startTime: ProcessIdentityReader.startTimeMicroseconds) { return true }
+            if record.blocksSleep(path: path, startTime: ProcessIdentityReader.startTimeMicroseconds) { return true }
         }
         return false
     }

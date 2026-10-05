@@ -5,6 +5,21 @@ import Testing
 
 @Suite(.serialized)
 struct WorktreeSleepRecoveryTests {
+    @Test("@spec SLEEP-30: While a recovery helper owns a journal's lifetime lease, the application shall refuse concurrent orphan recovery even if heartbeat storage is unavailable.")
+    func recoveryLeaseIsExclusive() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sleep-lease-test-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = directory.appendingPathComponent("journal.json")
+        var owner = try #require(WorktreeSleepRecoveryLease(journal: journal))
+        #expect(WorktreeSleepRecoveryLease(journal: journal) == nil)
+        try Data("replacement".utf8).write(to: journal, options: .atomic)
+        #expect(WorktreeSleepRecoveryLease(journal: journal) == nil)
+        withExtendedLifetime(owner) {}
+        owner = try #require(WorktreeSleepRecoveryLease(journal: directory.appendingPathComponent("other.json")))
+        #expect(WorktreeSleepRecoveryLease(journal: journal) != nil)
+    }
+
     @Test("@spec SLEEP-12: If the recovery helper is unavailable or suspension ownership cannot be verified, then the application shall keep the worktree awake without sending SIGSTOP.")
     func missingHelper() {
         var signals = 0
@@ -14,8 +29,17 @@ struct WorktreeSleepRecoveryTests {
         #expect(signals == 0)
     }
 
+    @Test("@spec SLEEP-19: If heartbeat storage fails after suspension, then the independent recovery helper shall still resume its journaled processes when the application exits.")
+    func watchdogRecoversWithoutHeartbeatStorage() throws {
+        try exerciseWatchdog(blockHeartbeat: true)
+    }
+
     @Test("@spec SLEEP-13: When the owning application crashes, the independent recovery helper shall resume only its journaled process identities and remove completed recovery records.")
     func watchdogRecoversAfterOwnerDies() throws {
+        try exerciseWatchdog(blockHeartbeat: false)
+    }
+
+    private func exerciseWatchdog(blockHeartbeat: Bool) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sleep-guard-test-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -41,6 +65,10 @@ struct WorktreeSleepRecoveryTests {
         try guardProcess.run()
         defer { if guardProcess.isRunning { guardProcess.terminate() }; guardProcess.waitUntilExit() }
         try wait { FileManager.default.fileExists(atPath: readyURL.path) }
+        if blockHeartbeat {
+            try FileManager.default.removeItem(at: readyURL)
+            try FileManager.default.createDirectory(at: readyURL, withIntermediateDirectories: false)
+        }
         #expect(SleepProcessReader.signal(targetIdentity, stop: true))
         try wait { SleepProcessReader.sample(pid: targetIdentity.pid)?.isStopped == true }
         _ = kill(ownerIdentity.pid, SIGKILL)

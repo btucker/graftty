@@ -26,9 +26,9 @@ struct WorktreeSleepPreferencesTests {
         let root = SleepProcessIdentity(pid: 10, startTime: 20)
         let task = SleepProcessIdentity(pid: 11, startTime: 21)
         let record = SleepKeepAwakeRegistration(path: "/w", root: root, task: task)
-        #expect(record.blocksSleep(path: "/w", roots: [root], startTime: { _ in 21 }))
-        #expect(!record.blocksSleep(path: "/other", roots: [root], startTime: { _ in 21 }))
-        #expect(!record.blocksSleep(path: "/w", roots: [root], startTime: { _ in 22 }))
-        #expect(record.blocksSleep(path: "/w", roots: [root], startTime: { _ in nil }))
+        #expect(record.blocksSleep(path: "/w", startTime: { _ in 21 }))
+        #expect(!record.blocksSleep(path: "/other", startTime: { _ in 21 }))
+        #expect(!record.blocksSleep(path: "/w", startTime: { _ in 22 }))
+        #expect(record.blocksSleep(path: "/w", startTime: { _ in nil }))
     }
 }

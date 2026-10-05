@@ -1,6 +1,12 @@
 import AppKit
+import Combine
 import Darwin
 import GrafttyKit
+
+@MainActor
+final class WorktreeSleepState: ObservableObject {
+    @Published var paths: Set<String> = []
+}
 
 /// Host-owned automatic sleep. Remote viewer worktrees never enter this
 /// controller; remote attach invokes the thread-safe coordinator directly.
@@ -31,6 +37,7 @@ final class WorktreeAutoSleepController {
 
     func start(state: @escaping () -> AppState) {
         self.state = state
+        guardian.recoverPreviousInstances()
         guardian.start()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -42,6 +49,11 @@ final class WorktreeAutoSleepController {
 
     @discardableResult func wake(path: String) -> Bool {
         windows[path] = nil
+        if let worktree = state?().worktree(forPath: path) {
+            for session in worktree.paneSessions.values {
+                guard coordinator.wake(session: ZmxLauncher.sessionName(for: session)) else { publish(); return false }
+            }
+        }
         let success = coordinator.wake(path: path)
         publish()
         return success
@@ -83,6 +95,7 @@ final class WorktreeAutoSleepController {
     func shutdown() { timer?.invalidate(); _ = coordinator.wakeAll(); publish() }
 
     func tick() {
+        guardian.recoverPreviousInstances()
         guard let state = state?(), let tm = terminalManager else { return }
         let defaults = UserDefaults.standard
         let enabled = defaults.bool(forKey: SettingsKeys.worktreeAutoSleep)
@@ -97,6 +110,7 @@ final class WorktreeAutoSleepController {
         let now = ProcessInfo.processInfo.systemUptime
         let running = state.repos.flatMap(\.worktrees).filter { $0.state == .running }
         let paths = Set(running.map(\.path))
+        for oldPath in coordinator.suspendedPaths.subtracting(paths) { _ = coordinator.wake(path: oldPath) }
         for path in windows.keys where !paths.contains(path) { windows[path] = nil }
         for worktree in running {
             let path = worktree.path
@@ -154,33 +168,40 @@ final class WorktreeAutoSleepController {
         var result: [SleepProcessSample] = []
         var jobIdentities: [SleepProcessIdentity] = []
         var busy = false
+        var incomplete = false
         for pane in worktree.splitTree.allLeaves {
             guard let session = manager.zmxSessionName(for: pane),
                   let pid = ZmxPIDLookup.shellPID(logFile: launcher.logFile(forSession: session), sessionName: session),
                   let sample = SleepProcessReader.sample(pid: pid),
-                  SleepProcessReader.ownedShell(pid: pid, sessionSocket: launcher.zmxDir.appendingPathComponent(session), zmxExecutable: launcher.executable) else { return nil }
-            let descendants = ProcessTreeWalker().descendants(of: pid)
-            guard descendants.contains(pid) else { return nil }
+                  SleepProcessReader.ownedShell(pid: pid, sessionSocket: launcher.zmxDir.appendingPathComponent(session), zmxExecutable: launcher.executable) else { incomplete = true; continue }
+            result.append(sample)
+            if !ShellSleepActivity.isAtPrompt(file: ShellSleepActivity.file(directory: launcher.zmxDir, session: session), identity: sample.identity,
+                minimumBoundary: coordinator.lastInputBoundary(session: session)) { incomplete = true }
+        }
+        let subtrees = ProcessTreeWalker().descendants(rootedAt: result.map { $0.identity.pid })
+        for sample in result {
+            let pid = sample.identity.pid
+            let descendants = subtrees[pid] ?? []
+            if !descendants.contains(pid) { incomplete = true }
             // Any job is unverified for suspension, regardless of its name,
             // foreground status, output, or CPU usage. Retain escaped jobs
             // observed in earlier samples until their exact identity exits.
             for child in descendants where child != pid {
-                guard let childSample = SleepProcessReader.sample(pid: child) else { return nil }
+                guard let childSample = SleepProcessReader.sample(pid: child) else { incomplete = true; continue }
                 jobIdentities.append(childSample.identity)
                 busy = true
             }
             var children = [Int32](repeating: 0, count: 256)
             let childResult = proc_listchildpids(pid, &children, Int32(children.count * MemoryLayout<Int32>.size))
-            guard childResult >= 0 else { return nil }
+            if childResult < 0 { incomplete = true }
             if childResult > 0 { busy = true }
-            result.append(sample)
         }
         let noJobs = jobTracker.observe(path: worktree.path, descendants: jobIdentities) {
             if let start = ProcessIdentityReader.startTimeMicroseconds(ofPID: $0.pid) { return start == $0.startTime }
             if kill($0.pid, 0) == -1 && errno == ESRCH { return false }
             return nil
         }
-        guard !busy, noJobs, !SleepKeepAwakeRegistration.hasLiveRegistration(path: worktree.path, roots: result.map(\.identity)) else { return nil }
+        guard !incomplete, !busy, noJobs, !SleepKeepAwakeRegistration.hasLiveRegistration(path: worktree.path) else { return nil }
         return result
     }
 
@@ -198,8 +219,9 @@ private final class SleepRecoveryGuardian {
     private let readyURL: URL
     private let owner: SleepProcessIdentity?
     private var process: Process?
-    private var didRecover = false
     private var didStart = false
+    private var pendingRecovery: [URL: WorktreeSleepJournal] = [:]
+    private var recoveryLeases: [URL: WorktreeSleepRecoveryLease] = [:]
 
     init(directory: URL) {
         self.directory = directory
@@ -226,7 +248,6 @@ private final class SleepRecoveryGuardian {
     }
 
     func start() {
-        if !didRecover { recoverPreviousInstances(); didRecover = true }
         guard UserDefaults.standard.bool(forKey: SettingsKeys.worktreeAutoSleep), !didStart else { return }
         didStart = true
         guard save([]) else { return }
@@ -241,17 +262,38 @@ private final class SleepRecoveryGuardian {
         do { try helper.run(); process = helper } catch { process = nil }
     }
 
-    private func recoverPreviousInstances() {
+    func recoverPreviousInstances() {
         // Recover journals whose app and watchdog are both gone. A watchdog
         // still alive owns its journal and will finish recovery itself.
         for file in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "json" {
-            guard var journal = WorktreeSleepJournal.load(from: file), !journal.ownerIsAlive else { continue }
-            let ready = file.deletingPathExtension().appendingPathExtension("ready")
-            if let data = try? Data(contentsOf: ready), let helper = try? JSONDecoder().decode(SleepGuardReadiness.self, from: data),
-               ProcessIdentityReader.startTimeMicroseconds(ofPID: helper.identity.pid) == helper.identity.startTime { continue }
+            guard let stored = WorktreeSleepJournal.load(from: file), !stored.ownerIsAlive else { continue }
+            if recoveryLeases[file] == nil {
+                guard let lease = WorktreeSleepRecoveryLease(journal: file) else { continue }
+                recoveryLeases[file] = lease
+            }
+            var journal: WorktreeSleepJournal
+            if let pending = pendingRecovery[file] {
+                // Completed resumes remain authoritative while this lease
+                // is held, even if a later disk read is unavailable.
+                guard pending.owner == stored.owner else { continue }
+                journal = pending
+            } else {
+                // The helper could finish between the preliminary read and
+                // lease acquisition. Reload before sending any signals.
+                guard let current = WorktreeSleepJournal.load(from: file), !current.ownerIsAlive else {
+                    recoveryLeases[file] = nil
+                    continue
+                }
+                journal = current
+            }
             journal.recover()
-            if journal.processes.isEmpty { try? FileManager.default.removeItem(at: file) }
-            else { try? journal.save(to: file) }
+            pendingRecovery[file] = journal
+            do {
+                if journal.processes.isEmpty { try FileManager.default.removeItem(at: file) }
+                else { try journal.save(to: file) }
+                pendingRecovery[file] = nil
+                recoveryLeases[file] = nil
+            } catch { /* Retry persistence without signaling completed resumes again. */ }
         }
     }
 }

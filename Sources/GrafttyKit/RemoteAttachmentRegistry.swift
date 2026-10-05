@@ -29,6 +29,7 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
     private var counts: [String: Int] = [:]
     private var storedOnLastDetach: (@Sendable (String) -> Void)?
     private var storedWakeBeforeAttach: (@Sendable (String) -> Bool)?
+    private var storedWakeBeforeInput: (@Sendable (String) -> Bool)?
 
     /// Synchronous host admission, called before opening a terminal stream.
     /// The callback must not hold this registry's lock while resuming jobs.
@@ -39,6 +40,16 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
 
     public func prepareToAttach(sessionName: String) -> Bool {
         let callback = wakeBeforeAttach
+        return callback?(sessionName) ?? true
+    }
+
+    public var wakeBeforeInput: (@Sendable (String) -> Bool)? {
+        get { lock.lock(); defer { lock.unlock() }; return storedWakeBeforeInput }
+        set { lock.lock(); defer { lock.unlock() }; storedWakeBeforeInput = newValue }
+    }
+
+    public func prepareForInput(sessionName: String) -> Bool {
+        let callback = wakeBeforeInput
         return callback?(sessionName) ?? true
     }
 

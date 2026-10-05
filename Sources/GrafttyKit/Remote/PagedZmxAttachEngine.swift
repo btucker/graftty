@@ -147,6 +147,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     public func send(_ bytes: Data) async throws {
         guard !bytes.isEmpty else { return }
+        guard attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { throw Error.closed }
         try sendFrame(tag: 0, payload: bytes)
         inputState?.recordInput(bytes, forSession: config.sessionName)
     }

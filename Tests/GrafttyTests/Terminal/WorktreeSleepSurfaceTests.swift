@@ -4,6 +4,15 @@ import Testing
 
 @MainActor
 struct WorktreeSleepSurfaceTests {
+    @Test("@spec SLEEP-18: When a remote viewer pane shares a local worktree path, the application shall admit viewer input without waking or registering the local host's processes.")
+    func remotePaneDoesNotWakeLocalPath() {
+        let tm = TerminalManager(socketPath: "/tmp/graftty-sleep-remote-test.sock")
+        let pane = PaneSlotID()
+        tm.recordPaneSession(PaneSessionID(), for: pane, worktreePath: "/remote/shared-path", hostOwned: false)
+        #expect(tm.wakePane(pane))
+        #expect(tm.autoSleep.coordinator.lastInteractionUptime(path: "/remote/shared-path") == nil)
+    }
+
     @Test("@spec SLEEP-15: When automatic sleep evicts a pane's renderer, the application shall preserve its zmx session mapping, title, shell readiness, and existing Stop behavior.")
     func sleepingRendererKeepsSession() {
         let tm = TerminalManager(socketPath: "/tmp/graftty-sleep-surface-test.sock")

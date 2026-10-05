@@ -1,6 +1,20 @@
 import Darwin
 import Foundation
 
+/// Uses a stable sidecar inode because atomic journal writes replace theirs.
+/// A stopped helper retains ownership until it exits; no other recoverer may
+/// take over a journal while that helper could execute again.
+public final class WorktreeSleepRecoveryLease {
+    private let descriptor: Int32
+    public init?(journal: URL) {
+        let descriptor = open(journal.appendingPathExtension("lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { return nil }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { close(descriptor); return nil }
+        self.descriptor = descriptor
+    }
+    deinit { _ = flock(descriptor, LOCK_UN); close(descriptor) }
+}
+
 public struct SleepGuardReadiness: Codable {
     public let identity: SleepProcessIdentity
     public let uptime: TimeInterval

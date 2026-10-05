@@ -62,19 +62,22 @@ final class TerminalManager: ObservableObject {
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
     private var paneWorktreePaths: [PaneSlotID: String] = [:]
+    private var remoteViewerPaneSlots: Set<PaneSlotID> = []
     private var hostManagedPaneCommandHandlers:
         [PaneSlotID: (HostManagedPaneCommand) -> Void] = [:]
     private(set) var focusedTerminalID: PaneSlotID?
-    @Published private(set) var sleepingWorktreePaths: Set<String> = []
+    let worktreeSleepState = WorktreeSleepState()
+    var sleepingWorktreePaths: Set<String> { worktreeSleepState.paths }
     lazy var autoSleep = WorktreeAutoSleepController(terminalManager: self)
 
     func setSleepingWorktreePaths(_ paths: Set<String>) {
-        if paths != sleepingWorktreePaths { sleepingWorktreePaths = paths }
+        if paths != sleepingWorktreePaths { worktreeSleepState.paths = paths }
     }
 
     func wakeWorktree(_ path: String) -> Bool { autoSleep.wake(path: path) }
 
     func wakePane(_ pane: PaneSlotID) -> Bool {
+        if remoteViewerPaneSlots.contains(pane) { return true }
         guard let path = paneWorktreePaths[pane] else { return true }
         return wakeWorktree(path)
     }
@@ -677,11 +680,12 @@ final class TerminalManager: ObservableObject {
         extraInitialInput: String? = nil,
         hostManagedBackend: SurfaceHandleZmxBackend? = nil
     ) -> SurfaceHandle? {
-        guard wakeWorktree(worktreePath) else { return nil }
+        guard hostManagedBackend != nil || wakeWorktree(worktreePath) else { return nil }
         recordPaneSession(
             paneSessionID,
             for: terminalID,
-            worktreePath: worktreePath
+            worktreePath: worktreePath,
+            hostOwned: hostManagedBackend == nil
         )
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
@@ -1054,7 +1058,8 @@ final class TerminalManager: ObservableObject {
 
     @discardableResult
     func takeDisplayControl(for terminalID: PaneSlotID) -> Bool {
-        surfaces[terminalID]?.takeDisplayControl() ?? false
+        guard wakePane(terminalID) else { return false }
+        return surfaces[terminalID]?.takeDisplayControl() ?? false
     }
 
     /// Whether to show a "Take Control" affordance on a pane: true when its
@@ -1365,13 +1370,15 @@ final class TerminalManager: ObservableObject {
     func recordPaneSession(
         _ paneSessionID: PaneSessionID,
         for terminalID: PaneSlotID,
-        worktreePath: String? = nil
+        worktreePath: String? = nil,
+        hostOwned: Bool = true
     ) {
         forgetPaneSession(for: terminalID)
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
         paneWorktreePaths[terminalID] = worktreePath
-        if let worktreePath {
+        if !hostOwned { remoteViewerPaneSlots.insert(terminalID) }
+        if hostOwned, let worktreePath {
             autoSleep.register(session: ZmxLauncher.sessionName(for: paneSessionID), path: worktreePath)
         }
     }
@@ -1419,6 +1426,7 @@ final class TerminalManager: ObservableObject {
     }
 
     private func forgetPaneSession(for terminalID: PaneSlotID) {
+        remoteViewerPaneSlots.remove(terminalID)
         paneWorktreePaths.removeValue(forKey: terminalID)
         guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID)
         else { return }

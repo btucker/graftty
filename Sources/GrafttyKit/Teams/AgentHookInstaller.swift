@@ -301,6 +301,7 @@ public struct AgentHookInstaller: Sendable {
         fi
 
         \(precmdHookSnippet())
+        \(ShellSleepActivity.zshHooks)
 
         """
     }
@@ -309,7 +310,7 @@ public struct AgentHookInstaller: Sendable {
     /// re-registers `precmdHookSnippet` so our precmd hook is positioned
     /// behind any precmd / chpwd hooks the user's `.zlogin` added. ZMX-6.8.
     static func zloginShim() -> String {
-        zshSourceShim(homeBasename: ".zlogin") + "\n\n" + precmdHookSnippet()
+        zshSourceShim(homeBasename: ".zlogin") + "\n\n" + precmdHookSnippet() + "\n\n" + ShellSleepActivity.zshHooks
     }
 
     /// Capture before user init, so nested shells cannot inherit a launch.

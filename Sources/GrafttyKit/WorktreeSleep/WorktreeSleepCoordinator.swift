@@ -66,7 +66,7 @@ public struct WorktreeSleepActivityWindow {
     }
 }
 
-public struct SuspendedSleepProcess: Codable, Equatable, Sendable {
+public struct SuspendedSleepProcess: Codable, Hashable, Sendable {
     public let path: String
     public let identity: SleepProcessIdentity
     public init(path: String, identity: SleepProcessIdentity) { self.path = path; self.identity = identity }
@@ -81,10 +81,25 @@ public final class WorktreeSleepCoordinator: @unchecked Sendable {
     private let signal: (SleepProcessIdentity, Bool) -> Bool
     private let persist: ([SuspendedSleepProcess]) -> Bool
     private let recoveryReady: () -> Bool
+    private let identityExists: (SleepProcessIdentity) -> Bool?
     private var records: [SuspendedSleepProcess] = []
+    private var resumedPendingSave: Set<SuspendedSleepProcess> = []
     private var sessionPaths: [String: String] = [:]
     private var generation: UInt64 = 0
     private var lastInteraction: [String: TimeInterval] = [:]
+    private var lastInputBoundaries: [String: TimeInterval] = [:]
+
+    public func lastInputBoundary(session: String) -> TimeInterval {
+        lock.lock(); defer { lock.unlock() }
+        return lastInputBoundaries[session] ?? 0
+    }
+
+    @discardableResult public func wakeForInput(session: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let path = sessionPaths[session] else { return wake(session: session) }
+        lastInputBoundaries[session] = Date().timeIntervalSince1970
+        return wake(path: path)
+    }
 
     public func lastInteractionUptime(path: String) -> TimeInterval? {
         lock.lock(); defer { lock.unlock() }
@@ -94,13 +109,23 @@ public final class WorktreeSleepCoordinator: @unchecked Sendable {
     public init(read: @escaping (SleepProcessIdentity) -> SleepProcessSample?,
                 signal: @escaping (SleepProcessIdentity, Bool) -> Bool,
                 persist: @escaping ([SuspendedSleepProcess]) -> Bool,
-                recoveryReady: @escaping () -> Bool) {
+                recoveryReady: @escaping () -> Bool,
+                identityExists: @escaping (SleepProcessIdentity) -> Bool? = SleepProcessReader.identityExists) {
         self.read = read; self.signal = signal; self.persist = persist; self.recoveryReady = recoveryReady
+        self.identityExists = identityExists
     }
 
-    public func register(session: String, path: String) {
+    @discardableResult public func register(session: String, path: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        if let previous = sessionPaths[session], previous != path, !wake(path: previous) { return false }
+        if lastInputBoundaries[session] == nil { lastInputBoundaries[session] = Date().timeIntervalSince1970 }
         sessionPaths[session] = path
+        return true
+    }
+
+    public var suspendedPaths: Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(records.map(\.path))
     }
 
     public func isSleeping(path: String) -> Bool {
@@ -122,7 +147,7 @@ public final class WorktreeSleepCoordinator: @unchecked Sendable {
                       && current.diskBytes == sample.diskBytes
               }) else { return false }
         for sample in processes {
-            guard recoveryReady(), generation == startingGeneration, recheck(),
+            guard recoveryReady(), recheck(), generation == startingGeneration,
                   let current = read(sample.identity), current.identity == sample.identity, !current.isStopped else {
                 _ = wake(path: path)
                 return false
@@ -134,13 +159,21 @@ public final class WorktreeSleepCoordinator: @unchecked Sendable {
             guard signal(sample.identity, true) else {
                 // A failed kill cannot have stopped this process. Do not send
                 // SIGCONT to it in rollback, including externally stopped jobs.
-                records.removeAll { $0 == entry }
-                _ = persist(records)
+                resumedPendingSave.insert(entry)
+                _ = wake(path: path)
+                return false
+            }
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.1
+            while let current = read(sample.identity), current.identity == sample.identity,
+                  !current.isStopped, ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+            guard let stopped = read(sample.identity), stopped.identity == sample.identity, stopped.isStopped else {
                 _ = wake(path: path)
                 return false
             }
         }
-        guard generation == startingGeneration, recheck(), recoveryReady() else {
+        guard recheck(), generation == startingGeneration, recoveryReady() else {
             _ = wake(path: path)
             return false
         }
@@ -158,16 +191,23 @@ public final class WorktreeSleepCoordinator: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         generation &+= 1
         lastInteraction[path] = ProcessInfo.processInfo.systemUptime
+        guard records.contains(where: { $0.path == path }) else { return true }
         var retained: [SuspendedSleepProcess] = []
         for entry in records {
             guard entry.path == path else { retained.append(entry); continue }
-            guard let current = read(entry.identity) else { retained.append(entry); continue }
+            if resumedPendingSave.contains(entry) { continue }
+            guard let current = read(entry.identity) else {
+                if identityExists(entry.identity) != false { retained.append(entry) }
+                continue
+            }
             guard current.identity == entry.identity else { continue }
-            if !signal(entry.identity, false) { retained.append(entry) }
+            if signal(entry.identity, false) { resumedPendingSave.insert(entry) }
+            else { retained.append(entry) }
         }
+        guard persist(retained) else { return false }
         records = retained
-        let saved = persist(records)
-        return saved && !isSleeping(path: path)
+        resumedPendingSave.formIntersection(Set(retained))
+        return !isSleeping(path: path)
     }
 
     @discardableResult public func wakeAll() -> Bool {

@@ -176,6 +176,7 @@ final class SurfaceHandle {
     private let surfaceFactory: SurfaceHandleGhosttySurfaceFactory
     private let zmxBackend: SurfaceHandleZmxBackend?
     private var wakeBeforeInput: () -> Bool = { true }
+    private var wakeBeforeInteraction: () -> Bool = { true }
 
     /// Failable because `ghostty_surface_new` can return null — e.g. under
     /// resource exhaustion or internal libghostty state the app can't
@@ -252,9 +253,10 @@ final class SurfaceHandle {
             )
         }
         self.zmxBackend = backend
-        if let terminalManager {
+        if let spawn = zmxSpawnConfiguration, let terminalManager {
             let coordinator = MainActor.assumeIsolated { terminalManager.autoSleep.coordinator }
-            wakeBeforeInput = { coordinator.wake(path: worktreePath) }
+            wakeBeforeInput = { coordinator.wakeForInput(session: spawn.sessionName) }
+            wakeBeforeInteraction = { coordinator.wake(session: spawn.sessionName) }
         }
 
         let surfaceView = SurfaceNSView()
@@ -263,6 +265,7 @@ final class SurfaceHandle {
         surfaceView.terminalManager = terminalManager
         if let backend {
             let wake = wakeBeforeInput
+            let admitInteraction = wakeBeforeInteraction
             surfaceView.hostManagedInputWriter = { [weak backend] data in
                 guard wake() else { return }
                 try? backend?.write(data)
@@ -271,11 +274,16 @@ final class SurfaceHandle {
             // user-input scope so the bytes libghostty emits for them
             // remain distinguishable from auto-emitted bytes.
             surfaceView.hostManagedUserInputScope = { [weak backend] body in
+                guard wake() else { return }
                 if let backend {
                     backend.withUserInput(body)
                 } else {
                     body()
                 }
+            }
+            surfaceView.hostManagedReleaseInputScope = { [weak backend] body in
+                guard admitInteraction() else { return }
+                if let backend { backend.withUserInput(body) } else { body() }
             }
         }
         // NB: the original impl used a `defer` here to bind
@@ -642,6 +650,7 @@ final class SurfaceHandle {
 
     @discardableResult
     func takeDisplayControl() -> Bool {
+        guard wakeBeforeInteraction() else { return false }
         // Restore native Mac geometry before the backend reads its new grid.
         followerPresentation?.followerGrid = nil
         followerPresentation?.layout()
@@ -728,9 +737,10 @@ final class SurfaceHandle {
     /// reclaim — accepted, since that config is an explicit opt-in to
     /// program-initiated clipboard access (the default `ask` drops OSC 52
     /// before the callback).
-    func reclaimDisplayControlForPasteIfNeeded() {
-        guard canTakeDisplayControl() else { return }
-        _ = takeDisplayControl()
+    @discardableResult func reclaimDisplayControlForPasteIfNeeded() -> Bool {
+        guard wakeBeforeInput() else { return false }
+        guard canTakeDisplayControl() else { return true }
+        return takeDisplayControl()
     }
 
     var needsConfirmQuit: Bool {
@@ -792,6 +802,7 @@ final class SurfaceHandle {
     ///   and send-pane IPC pass `false`; display ownership still decides
     ///   whether zmx receives the bytes.
     func pressReturn(claimEngagement: Bool = true) {
+        guard wakeBeforeInput() else { return }
         guard let zmxBackend else {
             performPressReturn()
             return
@@ -945,6 +956,7 @@ final class SurfaceNSView: NSView {
     /// emitted bytes as engaging user input (TERM-11.8). Nil for
     /// non-zmx surfaces — the dispatch runs bare.
     var hostManagedUserInputScope: (((() -> Void)) -> Void)?
+    var hostManagedReleaseInputScope: (((() -> Void)) -> Void)?
     private var hostManagedDirectInputKeyCodes = Set<UInt16>()
 
     /// Fired on every accepted (nonzero, surface-bound) frame change; the
@@ -1534,7 +1546,9 @@ final class SurfaceNSView: NSView {
             keyEvent.text = nil
             dispatch = { handled = self.surfaceOperations.key(surface, keyEvent) }
         }
-        if claimEngagement, let hostManagedUserInputScope {
+        if claimEngagement, action == GHOSTTY_ACTION_RELEASE, let hostManagedReleaseInputScope {
+            hostManagedReleaseInputScope(dispatch)
+        } else if claimEngagement, let hostManagedUserInputScope {
             hostManagedUserInputScope(dispatch)
         } else {
             dispatch()

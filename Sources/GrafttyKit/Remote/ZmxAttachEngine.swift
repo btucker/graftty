@@ -248,18 +248,16 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     }
 
     public func write(_ data: Data) {
-        // `closeSync()` closes `spawned?.masterFD` outside `stateLock` and
-        // never nils `spawned` itself — checking `isClosed` under the lock
-        // first closes the TOCTOU window where a write racing an
-        // in-flight `close()` (SSH's write-FIFO consumer and
-        // `channelInactive`'s close run on unordered `Task`s) would use a
-        // stale fd number the OS may already have reused for something
-        // else.
+        guard !data.isEmpty,
+              attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { return }
+        // Admission may wait for recovery. Acquire only afterwards, and pin
+        // the open file description so concurrent close cannot redirect
+        // this write to a reused descriptor number.
         stateLock.lock()
-        let closed = isClosed
-        let fd = spawned?.masterFD
+        let fd = isClosed ? -1 : (spawned.map { fcntl($0.masterFD, F_DUPFD_CLOEXEC, 0) } ?? -1)
         stateLock.unlock()
-        guard !closed, let fd, !data.isEmpty else { return }
+        guard fd >= 0 else { return }
+        defer { Darwin.close(fd) }
         // Track the chunk before we hand it to the PTY so web-session
         // typing state reflects writes even if the PTY consumer reacts
         // immediately.

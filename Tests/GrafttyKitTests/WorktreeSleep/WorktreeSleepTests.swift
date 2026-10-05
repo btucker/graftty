@@ -116,6 +116,49 @@ struct WorktreeSleepTests {
         #expect(fake.signals == ["stop:100", "continue:100"])
         #expect(fake.journal.isEmpty)
     }
+
+    @Test("Awake worktrees never require journal writes, even when persistence fails")
+    func awakeDoesNotWriteJournal() {
+        let fake = SleepFake()
+        fake.canPersist = false
+        #expect(fake.coordinator().wake(path: "/w"))
+        #expect(fake.signals.isEmpty)
+    }
+
+    @Test("Exited sleeping processes are pruned without sending a continue signal")
+    func missingProcessOnWake() {
+        let fake = SleepFake()
+        let coordinator = fake.coordinator()
+        #expect(coordinator.suspend(path: "/w", processes: fake.samples, recheck: { true }))
+        fake.samples.removeAll()
+        #expect(coordinator.wake(path: "/w"))
+        #expect(fake.signals == ["stop:100", "stop:101"])
+    }
+
+    @Test("A failed journal clear retains ownership but does not repeat successful continues")
+    func journalClearRetry() {
+        let fake = SleepFake()
+        let coordinator = fake.coordinator()
+        #expect(coordinator.suspend(path: "/w", processes: fake.samples, recheck: { true }))
+        fake.canPersist = false
+        #expect(!coordinator.wake(path: "/w"))
+        #expect(coordinator.isSleeping(path: "/w"))
+        fake.canPersist = true
+        #expect(coordinator.wake(path: "/w"))
+        #expect(fake.signals == ["stop:100", "stop:101", "continue:100", "continue:101"])
+        #expect(fake.journal.isEmpty)
+    }
+
+    @Test("Rebinding a session to another worktree resumes its old suspension first")
+    func rebindSleepingSession() {
+        let fake = SleepFake()
+        let coordinator = fake.coordinator()
+        coordinator.register(session: "session", path: "/a")
+        #expect(coordinator.suspend(path: "/a", processes: fake.samples, recheck: { true }))
+        coordinator.register(session: "session", path: "/b")
+        #expect(!coordinator.isSleeping(path: "/a"))
+        #expect(fake.journal.isEmpty)
+    }
 }
 
 private final class SleepFake {
@@ -141,7 +184,8 @@ private final class SleepFake {
                 journal = records
                 return true
             },
-            recoveryReady: { true }
+            recoveryReady: { true },
+            identityExists: { [self] identity in samples.contains { $0.identity == identity } }
         )
     }
 }

@@ -4,6 +4,12 @@ import Foundation
 /// Reads kernel counters and stable identity. CPU values returned by
 /// proc_pid_rusage are nanoseconds; disk counters cover reads and writes.
 public enum SleepProcessReader {
+    public static func identityExists(_ identity: SleepProcessIdentity) -> Bool? {
+        if let start = ProcessIdentityReader.startTimeMicroseconds(ofPID: identity.pid) { return start == identity.startTime }
+        if kill(identity.pid, 0) == -1 && errno == ESRCH { return false }
+        return nil
+    }
+
     public static func sample(pid: Int32) -> SleepProcessSample? {
         guard pid > 1 else { return nil }
         var bsd = proc_bsdinfo()
@@ -43,7 +49,7 @@ public enum SleepProcessReader {
         guard let ancestry = ProcessAncestryReader.entry(forPID: pid),
               executable(pid: ancestry.parentPID) == zmxExecutable.resolvingSymlinksInPath().path,
               let shell = executable(pid: pid),
-              supportedShells.contains(shell),
+              shell == "/bin/zsh",
               let peer = peerPID(socketURL: sessionSocket), peer == ancestry.parentPID,
               let tty = ancestry.ttyPath else { return false }
         let ttyFD = open(tty, O_RDONLY | O_NOCTTY | O_NONBLOCK | O_CLOEXEC)
@@ -53,11 +59,6 @@ public enum SleepProcessReader {
         // with a quiet parent cannot become eligible merely by using no CPU.
         return tcgetpgrp(ttyFD) == getpgid(pid)
     }
-
-    private static let supportedShells: Set<String> = {
-        let configured = (try? String(contentsOfFile: "/etc/shells", encoding: .utf8)) ?? ""
-        return Set(configured.split(separator: "\n").map(String.init).filter { $0.hasPrefix("/") })
-    }()
 
     private static func peerPID(socketURL: URL) -> Int32? {
         var address = sockaddr_un()

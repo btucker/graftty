@@ -5,6 +5,21 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+private struct SleepingWorktreeIndicator: View {
+    @ObservedObject var state: WorktreeSleepState
+    let path: String
+
+    var body: some View {
+        if state.paths.contains(path) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.caption).foregroundStyle(.secondary)
+                .help("Sleeping. Open to resume existing sessions.")
+                .accessibilityLabel("Sleeping worktree")
+                .padding(.trailing, 6)
+        }
+    }
+}
+
 /// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
@@ -13,7 +28,7 @@ struct SidebarView: View {
     /// Used to read pane titles. Title change invalidation is deliberately
     /// scoped to `paneTitleInvalidations` below so MainWindow does not
     /// recompute on every shell title/PWD event.
-    @ObservedObject var terminalManager: TerminalManager
+    let terminalManager: TerminalManager
     @ObservedObject var paneTitleInvalidations: PaneTitleInvalidationSource
     @ObservedObject var voiceDictation: VoiceDictationController
     let selectedVoicePaneID: PaneSlotID?
@@ -741,13 +756,7 @@ struct SidebarView: View {
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .overlay(alignment: .trailing) {
-            if terminalManager.sleepingWorktreePaths.contains(worktree.path) {
-                Image(systemName: "moon.zzz.fill")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .help("Sleeping. Open to resume existing sessions.")
-                    .accessibilityLabel("Sleeping worktree")
-                    .padding(.trailing, 6)
-            }
+            SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
         }
         .contentShape(Rectangle())
         let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []

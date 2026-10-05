@@ -39,10 +39,10 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Automatically sleep idle shell worktrees", isOn: $worktreeAutoSleep)
+            Toggle("Automatically sleep idle system zsh worktrees", isOn: $worktreeAutoSleep)
             Stepper("Sleep after \(worktreeAutoSleepMinutes) minutes of inactivity", value: $worktreeAutoSleepMinutes, in: 1...1440)
                 .disabled(!worktreeAutoSleep)
-            Text("Pauses local shell prompts with no active jobs to reduce CPU use. Claude and Codex panes stay awake while their providers cannot verify all background work. Opening a sleeping worktree resumes its sessions. Right-click a worktree to choose Keep Awake.")
+            Text("Works with newly opened macOS system zsh sessions using Graftty shell hooks. Agents and shells with unverified jobs, plugins, callbacks, or scheduling stay awake. Opening a sleeping worktree resumes its sessions. Right-click a worktree to choose Keep Awake. Pausing reduces CPU use and preserves process memory.")
                 .font(.caption).foregroundStyle(.secondary)
             Divider().padding(.vertical, 4)
             Toggle("Keep Mac awake while Graftty is running", isOn: Binding(
