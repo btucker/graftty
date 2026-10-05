@@ -3,6 +3,8 @@ import GrafttyKit
 
 /// Centralized UserDefaults key strings used across Settings panes and observers.
 enum SettingsKeys {
+    static let worktreeAutoSleep = WorktreeSleepPreferences.enabledKey
+    static let worktreeAutoSleepMinutes = WorktreeSleepPreferences.minutesKey
     static let keepMacAwake              = "keepMacAwake"
     static let agentTeamsEnabled         = "agentTeamsEnabled"
     static let agentPluginInstallOfferRevision = "agentPluginInstallOfferRevision"

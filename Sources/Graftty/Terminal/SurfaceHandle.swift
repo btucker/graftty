@@ -175,6 +175,7 @@ final class SurfaceHandle {
     private let userdataPointer: UnsafeMutableRawPointer
     private let surfaceFactory: SurfaceHandleGhosttySurfaceFactory
     private let zmxBackend: SurfaceHandleZmxBackend?
+    private var wakeBeforeInput: () -> Bool = { true }
 
     /// Failable because `ghostty_surface_new` can return null — e.g. under
     /// resource exhaustion or internal libghostty state the app can't
@@ -251,13 +252,19 @@ final class SurfaceHandle {
             )
         }
         self.zmxBackend = backend
+        if let terminalManager {
+            let coordinator = MainActor.assumeIsolated { terminalManager.autoSleep.coordinator }
+            wakeBeforeInput = { coordinator.wake(path: worktreePath) }
+        }
 
         let surfaceView = SurfaceNSView()
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
         if let backend {
+            let wake = wakeBeforeInput
             surfaceView.hostManagedInputWriter = { [weak backend] data in
+                guard wake() else { return }
                 try? backend?.write(data)
             }
             // TERM-11.8: real key events run inside the backend's
@@ -752,6 +759,7 @@ final class SurfaceHandle {
     /// that must not report success until the backend accepted the bytes.
     @discardableResult
     func writeText(_ text: String, claimEngagement: Bool = true) -> Bool {
+        guard wakeBeforeInput() else { return false }
         guard let data = text.data(using: .utf8) else { return false }
         if let zmxBackend {
             do {

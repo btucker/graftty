@@ -1166,7 +1166,7 @@ struct InternalGroup: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "internal",
         abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
-        subcommands: [SyncCodexHome.self, ClaudePeerSend.self]
+        subcommands: [SyncCodexHome.self, ClaudePeerSend.self, SleepGuard.self]
     )
 }
 

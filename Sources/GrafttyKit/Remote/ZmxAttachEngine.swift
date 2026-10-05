@@ -72,6 +72,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         case notStarted
         case alreadyStarted
         case spawnFailed(Swift.Error)
+        case wakeFailed
     }
 
     /// Called on each chunk read from the PTY. Invoked off the caller's
@@ -190,6 +191,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     }
 
     public func start() throws {
+        guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.wakeFailed }
         stateLock.lock()
         defer { stateLock.unlock() }
         guard spawned == nil else { throw Error.alreadyStarted }

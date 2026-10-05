@@ -1513,6 +1513,11 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
+        tm.autoSleep.start { binding.wrappedValue }
+        let sleepCoordinator = tm.autoSleep.coordinator
+        services.remoteAttachmentRegistry.wakeBeforeAttach = { session in
+            sleepCoordinator.wake(session: session)
+        }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
@@ -1929,6 +1934,7 @@ struct GrafttyApp: App {
                         return
                     }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
+                    let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
                     var deliveries: [any CodexAppServerDeliveryTrigger] = []
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
@@ -1938,7 +1944,7 @@ struct GrafttyApp: App {
                     }
                     await Self.drainNativeDeliveryMessages(
                         teamID: teamID,
-                        recipientWorktrees: recipientWorktrees,
+                        recipientWorktrees: awakeRecipients,
                         inbox: services.teamInbox,
                         deliveries: deliveries
                     )
@@ -3119,6 +3125,7 @@ struct GrafttyApp: App {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
+                tm.autoSleep.shutdown()
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -3756,6 +3763,8 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
+        case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
+            terminalManager.autoSleep.providerActivity(path: path, session: paneSessionName, sessionID: sessionID, activity: activity, runtime: runtime)
         case .notify(let path, let text, let clearAfter, let paneSessionName):
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
@@ -3890,6 +3899,12 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
+        case .offerResource(let path, _, _), .addPane(let path, _, _), .closePane(let path, _),
+             .showPane(let path, _, _), .sendPane(let path, _, _, _), .removeWorktree(let path, _):
+            guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        default: break
+        }
+        switch message {
         case let .offerResource(path, target, paneSessionName):
             guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
                 return .error("Run graftty open from a tracked worktree.")
@@ -4013,8 +4028,10 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let stopHookActive
+            let stopHookActive,
+            let providerSleepActivity
         ):
+            terminalManager.autoSleep.providerActivity(path: callerPath, session: paneSessionName, sessionID: sessionID, activity: providerSleepActivity ?? .unknown, runtime: runtime)
             return await handleTeamHook(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
@@ -4135,7 +4152,7 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree removal operation")
             }
             return .worktreeRemove(status)
-        case .notify, .clear:
+        case .notify, .clear, .providerActivity:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }

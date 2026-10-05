@@ -54,6 +54,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     }
 
     private func startBlocking() throws {
+        guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.unsupported }
         try lock.withLock {
             guard !started else { throw Error.alreadyStarted }
             guard !closed else { throw Error.closed }

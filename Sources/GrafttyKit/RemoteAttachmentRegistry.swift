@@ -28,6 +28,19 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
     private var storedOnLastDetach: (@Sendable (String) -> Void)?
+    private var storedWakeBeforeAttach: (@Sendable (String) -> Bool)?
+
+    /// Synchronous host admission, called before opening a terminal stream.
+    /// The callback must not hold this registry's lock while resuming jobs.
+    public var wakeBeforeAttach: (@Sendable (String) -> Bool)? {
+        get { lock.lock(); defer { lock.unlock() }; return storedWakeBeforeAttach }
+        set { lock.lock(); defer { lock.unlock() }; storedWakeBeforeAttach = newValue }
+    }
+
+    public func prepareToAttach(sessionName: String) -> Bool {
+        let callback = wakeBeforeAttach
+        return callback?(sessionName) ?? true
+    }
 
     /// Fires when a session's attach count drops to zero. Single observer
     /// slot — assigning replaces any prior observer. Invoked outside the

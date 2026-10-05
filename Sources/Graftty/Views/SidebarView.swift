@@ -13,7 +13,7 @@ struct SidebarView: View {
     /// Used to read pane titles. Title change invalidation is deliberately
     /// scoped to `paneTitleInvalidations` below so MainWindow does not
     /// recompute on every shell title/PWD event.
-    let terminalManager: TerminalManager
+    @ObservedObject var terminalManager: TerminalManager
     @ObservedObject var paneTitleInvalidations: PaneTitleInvalidationSource
     @ObservedObject var voiceDictation: VoiceDictationController
     let selectedVoicePaneID: PaneSlotID?
@@ -740,6 +740,15 @@ struct SidebarView: View {
             }
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
+        .overlay(alignment: .trailing) {
+            if terminalManager.sleepingWorktreePaths.contains(worktree.path) {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help("Sleeping. Open to resume existing sessions.")
+                    .accessibilityLabel("Sleeping worktree")
+                    .padding(.trailing, 6)
+            }
+        }
         .contentShape(Rectangle())
         let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
         let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
@@ -857,6 +866,13 @@ struct SidebarView: View {
             menu.addItem(.separator())
         }
         if worktree.state == .running {
+            let keepsAwake = WorktreeSleepPreferences.keepsAwake(worktree.path)
+            let awakeItem = ClosureMenuItem(title: "Keep Awake") {
+                WorktreeSleepPreferences.setKeepsAwake(!keepsAwake, path: worktree.path)
+                _ = terminalManager.wakeWorktree(worktree.path)
+            }
+            awakeItem.state = keepsAwake ? .on : .off
+            menu.addItem(awakeItem)
             menu.addItem(ClosureMenuItem(title: "Stop") { [self] in
                 onStopWorktree(worktree.path)
             })

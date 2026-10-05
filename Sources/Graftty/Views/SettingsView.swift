@@ -16,6 +16,8 @@ struct SettingsView: View {
     }
 
     @AppStorage(SettingsKeys.defaultCommand) private var defaultCommand: String = ""
+    @AppStorage(SettingsKeys.worktreeAutoSleep) private var worktreeAutoSleep = false
+    @AppStorage(SettingsKeys.worktreeAutoSleepMinutes) private var worktreeAutoSleepMinutes = 15
     @AppStorage("defaultCommandFirstPaneOnly") private var firstPaneOnly: Bool = true
     @AppStorage(SettingsKeys.editorKind) private var editorKind: String = ""
     @AppStorage(SettingsKeys.editorAppBundleID) private var editorAppBundleID: String = ""
@@ -37,6 +39,12 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Toggle("Automatically sleep idle shell worktrees", isOn: $worktreeAutoSleep)
+            Stepper("Sleep after \(worktreeAutoSleepMinutes) minutes of inactivity", value: $worktreeAutoSleepMinutes, in: 1...1440)
+                .disabled(!worktreeAutoSleep)
+            Text("Pauses local shell prompts with no active jobs to reduce CPU use. Claude and Codex panes stay awake while their providers cannot verify all background work. Opening a sleeping worktree resumes its sessions. Right-click a worktree to choose Keep Awake.")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
             Toggle("Keep Mac awake while Graftty is running", isOn: Binding(
                 get: { idleSleepController.isEnabled },
                 set: { idleSleepController.setEnabled($0) }
