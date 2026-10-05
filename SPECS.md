@@ -2828,6 +2828,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **URL-3.1** When the iOS app opens a graftty://open URL that resolves against the connected host's worktree-panes snapshot, the application shall select that worktree and focus the resolved pane session.
 
+## IMAGE — Inline Image Display
+
+### IMAGE-1.x
+
+**IMAGE-1.1** When the user runs graftty image, the CLI shall locate the pane terminal through the caller's process ancestry and read its cell pixel geometry, and shall exit nonzero with a reason when no terminal or pixel geometry is available.
+
+**IMAGE-1.2** When graftty image fits an image, the CLI shall scale it to at most the pane width or the requested width while preserving aspect ratio, derive the occupied cell rows from the pane's cell pixel size, and keep the image rows plus the padding within the pane height so the padding block stays on screen, exiting nonzero when the pane has no room for one image row plus the padding.
+
+**IMAGE-1.3** When graftty image draws, the CLI shall reserve the image rows plus a padding block of blank rows below the image before placing it with a quiet Kitty graphics PNG transfer that leaves the cursor in place, so a TUI that repaints its live region does not overwrite the image.
+
+**IMAGE-1.4** If the terminal does not identify as ghostty, then graftty image shall exit nonzero with a message directing the agent to graftty open.
+
+**IMAGE-1.5** When graftty image receives any ImageIO-readable image, the CLI shall re-encode it as PNG at the fitted pixel width before transfer.
+
 ## AGENT — AGENT
 
 ### AGENT-1.x
@@ -3059,6 +3073,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.48** When an older Graftty session invokes `graftty team hook` without `--skill-managed`, the CLI shall handle it exactly as a provider-plugin hook, and shall keep accepting the `--skill-managed` flag as a hidden no-op.
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
+
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
 
 ## CLI — CLI
 

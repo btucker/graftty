@@ -174,6 +174,7 @@ struct AgentPluginInstallerTests {
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-team/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty/.codex-plugin/plugin.json",
             "skills/graftty-open/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-open/SKILL.md",
+            "skills/graftty-image/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-image/SKILL.md",
         ]
         for (path, target) in links {
             let link = claudeRoot.appendingPathComponent(path)
@@ -186,6 +187,8 @@ struct AgentPluginInstallerTests {
             .appendingPathComponent("skills/graftty-team/SKILL.md"))
         let expectedOpenSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-open/SKILL.md"))
+        let expectedImageSkill = try Data(contentsOf: claudeRoot
+            .appendingPathComponent("skills/graftty-image/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -206,6 +209,7 @@ struct AgentPluginInstallerTests {
                 "skills/graftty/SKILL.md": expectedRecapSkill,
                 "skills/graftty-team/SKILL.md": expectedTeamSkill,
                 "skills/graftty-open/SKILL.md": expectedOpenSkill,
+                "skills/graftty-image/SKILL.md": expectedImageSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -216,23 +220,28 @@ struct AgentPluginInstallerTests {
         }
     }
 
+    /// Prepare the bundled plugins into a scratch root and return the named
+    /// skill's text for each provider, checking each is a regular file
+    /// rather than a cross-provider link.
+    private func preparedSkillTexts(named skill: String) throws -> [String] {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-\(skill)-plugin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        return try ["codex", "claude"].map { provider in
+            let file = destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/\(skill)/SKILL.md")
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
+            return try String(contentsOf: file, encoding: .utf8)
+        }
+    }
+
     @Test("""
     @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
     """)
     func preparesOpenSkillForBothProviders() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-open-plugin-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let file = destination.appendingPathComponent(
-                "\(provider)/plugins/graftty/skills/graftty-open/SKILL.md"
-            )
-            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
-            let skill = try String(contentsOf: file, encoding: .utf8)
+        for skill in try preparedSkillTexts(named: "graftty-open") {
             #expect(skill.contains("name: graftty-open"))
             #expect(skill.contains("graftty open"))
             #expect(skill.contains("finished artifact"))
@@ -241,6 +250,22 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("20 MB"))
             #expect(skill.contains("15 minutes"))
             #expect(skill.contains("Open menu"))
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+    """)
+    func preparesImageSkillForBothProviders() throws {
+        for skill in try preparedSkillTexts(named: "graftty-image") {
+            #expect(skill.contains("name: graftty-image"))
+            #expect(skill.contains("graftty image"))
+            #expect(skill.contains("padding"))
+            #expect(skill.contains("imgcat"))
+            #expect(skill.contains("kitten icat"))
+            #expect(skill.contains("/dev/tty"))
+            #expect(skill.contains("terminal query"))
+            #expect(skill.contains("graftty open"))
         }
     }
 

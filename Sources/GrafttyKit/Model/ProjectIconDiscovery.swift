@@ -55,17 +55,9 @@ public enum ProjectIconDiscovery {
     public static func thumbnail(_ data: Data) -> Data? {
         guard data.count <= 2 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: 64,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: false
-              ] as CFDictionary) else { return nil }
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination), output.length <= 65536 else { return nil }
-        return output as Data
+              let output = PNGThumbnail.encode(source: source, maxPixelSize: 64),
+              output.count <= 65536 else { return nil }
+        return output
     }
     public static func discover(at root: URL) -> Data? {
         let fm = FileManager.default

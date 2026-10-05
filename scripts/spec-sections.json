@@ -28,7 +28,8 @@
     "INSTR",
     "EDITOR",
     "REMOTE",
-    "URL"
+    "URL",
+    "IMAGE"
   ],
   "sections": {
     "LAYOUT": "App Layout",
@@ -58,7 +59,8 @@
     "INSTR": "Agent Instruction Files",
     "EDITOR": "Editor Integration",
     "REMOTE": "Secure Remote Access",
-    "URL": "Worktree URL Handler"
+    "URL": "Worktree URL Handler",
+    "IMAGE": "Inline Image Display"
   },
   "subsections": {
     "LAYOUT.1": "Window Structure",
