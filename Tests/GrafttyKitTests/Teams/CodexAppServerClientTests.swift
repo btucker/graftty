@@ -4,6 +4,98 @@ import Testing
 
 @Suite("CodexAppServerClient", .serialized)
 struct CodexAppServerClientTests {
+    @Test("@spec SLEEP-26: When querying Codex sleep activity, the application shall enable experimental API access, validate the exact thread and cwd, and issue only read requests for that target.")
+    func sleepQueryPreservesExactTarget() async throws {
+        let fake = try makeFakeProxy(threads: ["other"], cwd: "/same", sleepResponses: sleepResponses())
+        #expect(await querySleep(fake) == .unknown)
+        let requests = try fake.recordedRequests()
+        #expect(try methods(in: requests) == ["initialize", "initialized", "thread/read", "thread/backgroundTerminals/list", "thread/goal/get", "thread/queue/list"])
+        let params = try #require(requests.first?["params"] as? [String: Any])
+        #expect((params["capabilities"] as? [String: Any])?["experimentalApi"] as? Bool == true)
+        for request in requests.dropFirst(2) {
+            #expect((request["params"] as? [String: Any])?["threadId"] as? String == "exact")
+        }
+    }
+
+    @Test("@spec SLEEP-27: When the exact Codex thread has an active turn, background terminal, active goal, queued prompt, or running subagent, the application shall report busy provider sleep activity.")
+    func sleepQueryReportsKnownWork() async throws {
+        for method in ["thread/read", "active-turn", "thread/backgroundTerminals/list", "thread/goal/get", "thread/queue/list", "subagent"] {
+            var responses = sleepResponses()
+            switch method {
+            case "thread/read":
+                responses[method] = ["result": ["thread": ["id": "exact", "cwd": "/same", "status": ["type": "active"], "turns": []]]]
+            case "active-turn":
+                responses["thread/read"] = ["result": ["thread": ["id": "exact", "cwd": "/same", "status": ["type": "idle"], "turns": [["id": "turn-active", "status": "inProgress"]]]]]
+            case "thread/goal/get":
+                responses[method] = ["result": ["goal": ["threadId": "exact", "status": "active"]]]
+            case "subagent":
+                responses["thread/read"] = ["result": ["thread": ["id": "exact", "cwd": "/same", "status": ["type": "idle"], "turns": [["items": [["type": "collabAgentToolCall", "agentsStates": ["child": ["status": "running"]]]]]]]]]
+            default:
+                responses[method] = ["result": ["data": [["id": "pending"]], "nextCursor": NSNull()]]
+            }
+            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            #expect(await querySleep(fake) == .busy)
+        }
+        // An unsupported terminal endpoint must not hide a goal we can observe.
+        var responses = sleepResponses()
+        responses["thread/backgroundTerminals/list"] = ["error": ["code": -32601, "message": "unsupported"]]
+        responses["thread/goal/get"] = ["result": ["goal": ["threadId": "exact", "status": "active"]]]
+        let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+        #expect(await querySleep(fake) == .busy)
+    }
+
+    @Test("@spec SLEEP-28: If Codex lacks complete visibility of scheduled wakeups and subagents, then the application shall report unknown even when thread, terminal, goal, and prompt observations appear idle.")
+    func sleepQueryNeverInfersIdleFromPartialVisibility() async throws {
+        for goal in [NSNull() as Any, ["threadId": "exact", "status": "complete"], ["status": "unexpected"]] {
+            var responses = sleepResponses()
+            responses["thread/goal/get"] = ["result": ["goal": goal]]
+            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            #expect(await querySleep(fake) == .unknown)
+        }
+    }
+
+    @Test("@spec SLEEP-29: If a Codex activity query encounters unsupported methods, malformed responses, mismatched identity, transport failure, or timeout, then the application shall fail closed without selecting or mutating another thread.")
+    func sleepQueryFailsClosed() async throws {
+        let invalidThreads: [[String: Any]] = [[:], ["id": "other", "cwd": "/same", "status": ["type": "active"]], ["id": "exact", "cwd": "/else", "status": ["type": "active"]]]
+        for thread in invalidThreads {
+            var responses = sleepResponses()
+            responses["thread/read"] = ["result": ["thread": thread]]
+            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            #expect(await querySleep(fake) == .unknown)
+            #expect(try methods(in: fake.recordedRequests()) == ["initialize", "initialized", "thread/read"])
+        }
+        let unsupported = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: ["thread/read": ["error": ["message": "unsupported"]]])
+        #expect(await querySleep(unsupported) == .unknown)
+        for method in ["thread/backgroundTerminals/list", "thread/goal/get", "thread/queue/list"] {
+            let invalidResponses: [[String: Any]] = [["error": ["message": "unsupported"]], ["result": NSNull()], ["result": [:]]]
+            for response in invalidResponses {
+                var responses = sleepResponses()
+                responses[method] = response
+                let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+                #expect(await querySleep(fake) == .unknown)
+            }
+        }
+        let timeout = try makeFakeProxy(threads: [], cwd: "/same", mode: .hangBeforeThreadRead)
+        #expect(await querySleep(timeout) == .unknown)
+        #expect(await CodexAppServerClient(timeout: 0.1).sleepActivity(binaryPath: "/missing-codex", socketPath: "/missing", expectedCWD: "/same", target: .init(threadID: "exact", activeTurnID: nil)) == .unknown)
+    }
+
+    private func sleepResponses() -> [String: [String: Any]] {
+        [
+            "thread/read": ["result": ["thread": ["id": "exact", "cwd": "/same", "status": ["type": "idle"], "turns": []]]],
+            "thread/backgroundTerminals/list": ["result": ["data": [], "nextCursor": NSNull()]],
+            "thread/goal/get": ["result": ["goal": NSNull()]],
+            "thread/queue/list": ["result": ["data": [], "nextCursor": NSNull()]],
+        ]
+    }
+
+    private func querySleep(_ fake: FakeProxy) async -> ProviderSleepActivity {
+        await CodexAppServerClient(timeout: 0.3).sleepActivity(
+            binaryPath: fake.binaryPath.path, socketPath: "/tmp/unused-test.sock", expectedCWD: "/same",
+            target: .init(threadID: "exact", activeTurnID: nil)
+        )
+    }
+
     @Test("""
     @spec AGENT-6.7: When Graftty has a hook-bound Codex thread ID, the application shall read only that exact thread immediately before delivery, inject a provenance-tagged peer message with `turn/start` while it is idle or `turn/steer` with its active turn ID while it is active, and never select another thread that shares the worktree cwd.
     """)
@@ -433,6 +525,7 @@ struct CodexAppServerClientTests {
 
     private enum FakeProxyMode {
         case normal
+        case hangBeforeThreadRead
         case stopReadingAfterThreadRead
         case closeStdinAfterThreadRead
         case hangAfterTurnIgnoringSIGTERM
@@ -479,7 +572,8 @@ struct CodexAppServerClientTests {
         threadPages: [[String]]? = nil,
         fragmentThreadReadResponse: Bool = false,
         activeTurnID: String? = nil,
-        mode: FakeProxyMode = .normal
+        mode: FakeProxyMode = .normal,
+        sleepResponses: [String: [String: Any]] = [:]
     ) throws -> FakeProxy {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-codex-client-\(UUID().uuidString)", isDirectory: true)
@@ -489,6 +583,7 @@ struct CodexAppServerClientTests {
         let args = dir.appendingPathComponent("args.txt")
         let stdin = dir.appendingPathComponent("stdin.jsonl")
         let handshake = dir.appendingPathComponent("handshake.txt")
+        let sleepResponsesJSON = try jsonLine(sleepResponses)
         let threadPagesJSON = try jsonLine(threadPages ?? [threads])
         let cwdByThreadJSON = try jsonLine(cwdByThread)
         let parentThreadIDByThreadJSON = try jsonLine(parentThreadIDByThread)
@@ -529,6 +624,7 @@ struct CodexAppServerClientTests {
             ? "  loop { sleep 1 }\n"
             : ""
 
+        let beforeThreadRead = mode == .hangBeforeThreadRead ? "  loop { sleep 1 }\n" : ""
         let body = """
         #!/usr/bin/ruby --disable-gems
         require 'json'
@@ -620,6 +716,11 @@ struct CodexAppServerClientTests {
           n += 1
           File.open('\(shellSingleQuoted(stdin.path))', 'a') { |file| file.puts(line) }
           request = JSON.parse(line)
+          sleep_responses = JSON.parse('\(shellSingleQuoted(sleepResponsesJSON))')
+          if sleep_responses.key?(request['method'])
+            write_text(JSON.generate(sleep_responses.fetch(request['method']).merge('id' => request['id'])))
+            next
+          end
           case request['method']
           when 'initialize'
             write_text(JSON.generate({ id: request['id'], result: {} }))
@@ -631,6 +732,7 @@ struct CodexAppServerClientTests {
             response_id = \(loadedListResponseID) == 2 ? request['id'] : \(loadedListResponseID)
             write_text(JSON.generate({ id: response_id, result: result }))
           when 'thread/read'
+        \(beforeThreadRead)
             thread_id = request.dig('params', 'threadId')
             thread = { cwd: cwd_by_thread.fetch(thread_id, default_cwd) }
             thread[:turns] = active_turns
