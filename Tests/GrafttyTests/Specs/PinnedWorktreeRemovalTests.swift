@@ -133,6 +133,46 @@ struct PinnedWorktreeRemovalTests {
     }
 
     @MainActor
+    @Test("@spec GIT-3.23: When a stale worktree with retained terminal panes is explicitly removed, the application shall release its terminal runtime registrations before removing its model entry, including vanished-directory recovery.")
+    func stalePinnedRemovalReleasesRetainedTerminalRuntime() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-stale-remove-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = try await GitRunner.run(args: ["init"], at: directory.path)
+        let home = WorktreeEntry(path: directory.path, branch: "main")
+        let pane = PaneSlotID()
+        var role = WorktreeEntry(path: directory.appendingPathComponent("vanished-role").path,
+                                 branch: "role", state: .running)
+        role.isPinned = true
+        role.splitTree = SplitTree(root: .leaf(pane))
+        role.markStale()
+        var state = AppState(repos: [RepoEntry(path: home.path, displayName: "Repo", worktrees: [home, role])])
+        let binding = Binding(get: { state }, set: { state = $0 })
+        let manager = TerminalManager(socketPath: directory.appendingPathComponent("control.sock").path)
+        manager.markRehydrated(pane)
+        manager.registerHostManagedPaneCommandHandler(for: pane) { _ in }
+        let store = CLIWorktreeRemovalStore()
+        let stats = WorktreeStatsStore()
+        let prs = PRStatusStore()
+        let dispatcher = TeamEventDispatcher(inbox: TeamInbox(rootDirectory: directory.appendingPathComponent("inbox")),
+            preferencesProvider: { .init() }, templateProvider: { "" })
+        let response = CLIWorktreeRemovalRequestHandler.begin(
+            worktreePath: role.path, force: false, pinned: true, appState: binding, worktreeRemovals: store,
+            wakeWorktree: { _ in true },
+            deleteWorktree: { path, force in
+                await DeleteWorktreeFlow.delete(worktreePath: path, force: force, appState: binding,
+                    terminalManager: manager, statsStore: stats, prStatusStore: prs, teamEventDispatcher: dispatcher)
+            }
+        )
+        guard case .worktreeRemove(let pending) = response else { Issue.record("expected pending removal"); return }
+        let terminal = try await finishedStatus(pending.operationID, in: store)
+        #expect(terminal.state == .removed)
+        #expect(state.worktree(forPath: role.path) == nil)
+        #expect(!manager.wasRehydrated(pane))
+        #expect(!manager.routeHostManagedPaneCommand(.close, for: pane))
+    }
+
+    @MainActor
     private func finishedStatus(_ operationID: String, in store: CLIWorktreeRemovalStore) async throws -> WorktreeRemoveStatus {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while store.status(operationID: operationID)?.state == .pending, ContinuousClock.now < deadline {

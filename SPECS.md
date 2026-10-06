@@ -654,6 +654,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.22** If a stale worktree becomes pinned while automatic dismissal discovery is suspended, then the application shall preserve the entry and its surfaces and caches.
 
+**GIT-3.23** When a stale worktree with retained terminal panes is explicitly removed, the application shall release its terminal runtime registrations before removing its model entry, including vanished-directory recovery.
+
 ### GIT-4.x — Deleting a Worktree
 
 **GIT-4.1** While a worktree entry is not in the stale state and is not the repository's main checkout, the context menu shall include a "Delete Worktree" action.
