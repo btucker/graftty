@@ -21,26 +21,26 @@ struct SidebarPRBadgeInteractionTests {
                                     state: groupsPanes ? .running : .closed)
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
         var state = AppState(repos: [repo])
-        let content = VStack(spacing: 0) {
-            Button { selections += 1 } label: {
-                WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
-                            theme: .fallback, stats: nil, baseRef: nil,
-                            prBadge: PRBadge(number: 5000, state: .open, checks: .success, url: url),
-                            attentionStyle: nil)
-                    .frame(height: groupsPanes ? 28 : 44)
-            }
-            .buttonStyle(.plain)
-            .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
+        let content = WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
+            groupsPanes: groupsPanes, theme: .fallback,
+            appState: Binding(get: { state }, set: { state = $0 }),
+            reorderingEnabled: true,
+            onSelect: { selections += 1 }, onMovePane: { _, _ in }, onPaneTargeted: { _ in },
+            menu: { NSMenu() }
+        ) {
+            WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
+                        theme: .fallback, stats: nil, baseRef: nil,
+                        prBadge: PRBadge(number: 5000, state: .open, checks: .success, url: url),
+                        attentionStyle: nil)
+                .frame(height: groupsPanes ? 28 : 44)
+        } panes: {
             if groupsPanes {
                 Button { paneSelections += 1 } label: {
                     Text("Pane").frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
         }
-        .padding(.vertical, groupsPanes ? 8 : 0)
-        .worktreeReorderTarget(repoID: repo.id, worktreeID: worktree.id,
-            appState: Binding(get: { state }, set: { state = $0 }),
-            onSelect: { selections += 1 }, onMovePane: { _, _ in }, onPaneTargeted: { _ in })
         .environment(\.openURL, OpenURLAction { openedURLs.append($0); return .handled })
         let hosting = NSHostingView(rootView: content)
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: groupsPanes ? 72 : 44),
@@ -82,9 +82,7 @@ struct SidebarPRBadgeInteractionTests {
     private func click(at location: NSPoint, in window: NSWindow, dragView: WorktreeDragSourceView) throws {
         var target: NSView?
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try #require(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            let event = try NSEvent.syntheticClick(type, at: location, in: window)
             if type == .leftMouseDown {
                 let point = try #require(dragView.superview).convert(location, from: nil)
                 // Supply the current press explicitly, as AppKit would during

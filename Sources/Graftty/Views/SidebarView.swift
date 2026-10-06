@@ -801,46 +801,22 @@ struct SidebarView: View {
                 buildPaneMenu(terminalID: terminalID)
             }
         }
-        VStack(spacing: 0) {
-            Button {
-                onSelect(worktree.path)
-            } label: {
-                heading
-            }
-            .buttonStyle(.plain)
-            .id(worktree.path)
-            .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
-            .rightClickMenu {
-                buildWorktreeMenu(worktree, repo: repo)
-            }
-
-            panes
-        }
-        .padding(.vertical, groupsPanes ? 8 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
-        )
-        // PWD-1.5: drop-target highlight. Stroked so it composes with
-        // the active-worktree background fill above when the dragged-
-        // onto row is also the active one.
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
-        )
-        // The whole block (heading + pane rows) is the drag image and the
-        // drop target, so a worktree never lands between another's panes.
-        .worktreeReorderTarget(
-            repoID: repo.id,
-            worktreeID: worktree.id,
-            appState: $appState, isEnabled: navigation.query.isEmpty,
+        WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: isActive, isDropTarget: isDropTarget,
+            groupsPanes: groupsPanes, theme: theme, appState: $appState,
+            reorderingEnabled: navigation.query.isEmpty,
             onSelect: { onSelect(worktree.path) },
             onMovePane: onMovePane,
             onPaneTargeted: { targeted in
                 if targeted { dropTargetWorktreeID = worktree.id }
                 else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
-            }
-        )
+            },
+            menu: { buildWorktreeMenu(worktree, repo: repo) }
+        ) {
+            heading
+        } panes: {
+            panes
+        }
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a
