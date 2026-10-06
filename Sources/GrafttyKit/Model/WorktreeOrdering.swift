@@ -1,6 +1,6 @@
 import Foundation
 
-/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.
+/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 public enum WorktreeOrderMode: String, Codable, Sendable, Equatable {
     case manual
     case recentActivity

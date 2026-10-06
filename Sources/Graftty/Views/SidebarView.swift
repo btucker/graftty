@@ -214,7 +214,7 @@ struct SidebarView: View {
             Button("Remove Repository") { onRemoveRepo(repo) }
         })
     }
-    private func remoteSection(projectFilter: String?, query: String = "") -> some View {
+    private func remoteSection(projectFilter: String?, query: String = "", beforeTasks: AnyView = AnyView(EmptyView())) -> some View {
         RemoteMacsSection(model: remoteMacsModel, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
@@ -225,7 +225,7 @@ struct SidebarView: View {
                           showsMacHierarchy: !showsProjectRail,
                           showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
-                          projects: projects, projectIcons: projectIcons)
+                          projects: projects, projectIcons: projectIcons, beforeTasks: beforeTasks)
     }
 
     private var addRepositoryIconButton: some View {
@@ -296,9 +296,7 @@ struct SidebarView: View {
                     ScrollViewReader { proxy in
                         Group {
                             if showsProjectRail {
-                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject, header: {
-                                    selectedProjectAddWorktreeHeader
-                                }) {
+                                ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
                                     worktreeRows
                                 }
                                 .emptySpaceMenu(selectedProjectEmptySpaceMenu)
@@ -312,7 +310,7 @@ struct SidebarView: View {
                         }
                     }
                     // LAYOUT-2.90: the banner slides over the top of the list
-                    // (search lives in the toolbar, so there is no search row).
+                    // below the persistent search row.
                     .overlay(alignment: .top) {
                         if let item = navigation.attentionBanner {
                             SidebarAttentionBanner(item: item, onOpen: {
@@ -477,7 +475,12 @@ struct SidebarView: View {
             ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
                 repoSection(repo, attentionCounts: counts)
             }
-            remoteSection(projectFilter: filter)
+            remoteSection(projectFilter: filter, beforeTasks: showsProjectRail ? AnyView(selectedProjectAddWorktreeHeader) : AnyView(EmptyView()))
+            if showsProjectRail, let filter,
+               !appState.repos.contains(where: { localProjectID($0) == filter }),
+               !remoteMacsModel.worktreePanesByRemote.values.joined().contains(where: { SidebarProjection.projectID($0) == filter }) {
+                selectedProjectAddWorktreeHeader
+            }
         } else {
             remoteSection(projectFilter: nil, query: navigation.query)
             ForEach(appState.repos) { repo in
@@ -555,8 +558,6 @@ struct SidebarView: View {
         let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
         let temporaryWorktrees = worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) }
         let rows = Group {
-            worktreeNodeRows(temporaryWorktrees,
-                             repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
             SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
                 get: { repo.isPinnedCollapsed },
                 set: { collapsed in
@@ -564,7 +565,7 @@ struct SidebarView: View {
                         appState.repos[index].isPinnedCollapsed = collapsed
                     }
                 }
-            ), separatesPrecedingRows: !temporaryWorktrees.isEmpty)
+            ), separatesPrecedingRows: false)
             .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
             .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
             if !repo.isPinnedCollapsed {
@@ -579,6 +580,9 @@ struct SidebarView: View {
                         .padding(.bottom, 6)
                 }
             }
+            if showsProjectRail { selectedProjectAddWorktreeHeader }
+            worktreeNodeRows(temporaryWorktrees,
+                             repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
         }
         if showsProjectRail {
             rows

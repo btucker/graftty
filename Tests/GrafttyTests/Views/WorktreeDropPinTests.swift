@@ -29,7 +29,7 @@ struct WorktreeDropPinTests {
                 == fixture.repo.worktrees.filter { $0.id != fixture.task.id })
             #expect(!state.repos[0].isPinnedCollapsed)
             #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).map(\.id)
-                == [fixture.other.id, fixture.home.id, fixture.role.id, fixture.task.id])
+                == [fixture.home.id, fixture.role.id, fixture.task.id, fixture.other.id])
             let restored = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(state))
             #expect(restored.worktree(forPath: fixture.task.path)?.isPinned == true)
             #expect(!WorktreeDropReorder.pin(payload, repoID: fixture.repo.id, to: &state))
@@ -47,7 +47,7 @@ struct WorktreeDropPinTests {
             #expect(result == .pinned)
             #expect(state.worktree(forPath: fixture.task.path)?.isPinned == true)
             #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).map(\.id)
-                == [fixture.other.id, fixture.home.id, fixture.task.id, fixture.role.id])
+                == [fixture.home.id, fixture.task.id, fixture.role.id, fixture.other.id])
         }
     }
 

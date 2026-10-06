@@ -5,6 +5,14 @@ description: Use in Graftty agent sessions to report a short Attention recap bef
 
 # Graftty
 
+## Recognize pinned agents
+
+Pinned agents hold an ongoing responsibility across tasks, such as releases or
+crash investigation. Their worktrees remain after a PR or MR merges or closes.
+The default-branch checkout is always pinned. A pin does not mean the agent is
+running or available. For delegation, role instructions, pinning, unpinning, or
+removal, load the bundled `graftty-team` skill.
+
 ## Report the stopped turn
 
 Before ending a top-level turn in a tracked worktree, report what the user will need to recognize it later. Run `graftty attention report --stdin` with one small JSON object. The CLI stages the report in a private file that the Stop hook hands to Graftty; this does not require control-socket permission. A SessionStart hook asks you to load this skill; if that was missed, the Stop hook may request this report once before allowing the turn to end.

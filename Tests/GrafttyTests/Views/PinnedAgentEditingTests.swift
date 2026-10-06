@@ -68,7 +68,7 @@ struct PinnedAgentEditingTests {
         #expect(!SidebarMenuVisibility.showsEditRoleInstructions(worktree: .init(path: "/repo/.worktrees/task", branch: "task"), repo: repo))
     }
 
-    @Test("@spec LAYOUT-2.112: While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and reserve more space above the section title than below it.")
+    @Test("@spec LAYOUT-2.112: While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and use compact spacing when the section begins the list.")
     func sectionHeaderHasDeliberateSpacing() throws {
         let header = SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: .constant(false))
         let host = NSHostingController(rootView: header)
@@ -78,12 +78,15 @@ struct PinnedAgentEditingTests {
         #expect(firstHeader.sizeThatFits(in: CGSize(width: 300, height: 1000)).height == 24)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
             let preview = ProjectWorktreeColumn {
-                previewWorktree(name: "Temporary task", pinned: false)
-                header
+                SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: .constant(false), separatesPrecedingRows: false)
                 previewWorktree(name: "trunk", pinned: true)
                 previewWorktree(name: "release-manager", pinned: true)
+                HStack { Label("Manual Order", systemImage: "arrow.up.arrow.down"); Spacer(); Label("Add worktree", systemImage: "plus") }
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).frame(height: 44)
+                previewWorktree(name: "Temporary task", pinned: false)
             }
-            .frame(width: 300, height: 290)
+            .frame(width: 300, height: 370)
             .background(Color(red: 0.16, green: 0.17, blue: 0.19))
             .environment(\.colorScheme, .dark)
             try capture(preview, name: "pinned-agents-spacing", directory: directory)
@@ -91,15 +94,15 @@ struct PinnedAgentEditingTests {
             let list = List {
                 DisclosureGroup(isExpanded: .constant(true)) {
                     DisclosureGroup(isExpanded: .constant(true)) {
-                        previewWorktree(name: "Temporary task", pinned: false).listRowInsets(insets)
-                        header.listRowInsets(insets)
+                        SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: .constant(false), separatesPrecedingRows: false).listRowInsets(insets)
                         previewWorktree(name: "trunk", pinned: true).listRowInsets(insets)
                         previewWorktree(name: "release-manager", pinned: true).listRowInsets(insets)
+                        previewWorktree(name: "Temporary task", pinned: false).listRowInsets(insets)
                     } label: { Text("Repository") }
                 } label: { Text("Remote Mac") }
             }
             .listStyle(.sidebar)
-            .frame(width: 300, height: 290)
+            .frame(width: 300, height: 370)
             .environment(\.colorScheme, .dark)
             try capture(list, name: "pinned-agents-list-spacing", directory: directory)
         }
@@ -107,7 +110,7 @@ struct PinnedAgentEditingTests {
 
     private func capture<V: View>(_ view: V, name: String, directory: String) throws {
         let hosting = NSHostingView(rootView: view)
-        hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 290)
+        hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 370)
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = hosting
         window.orderFront(nil)

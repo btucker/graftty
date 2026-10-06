@@ -157,8 +157,9 @@ public enum NotificationMessage: Sendable, Equatable {
     case worktreeCreateIdempotencyCapability
     case remoteWorktreeCapability
     case worktreeCreateStatus(operationID: String)
-    case removeWorktree(worktreePath: String, force: Bool)
+    case removeWorktree(worktreePath: String, force: Bool, pinned: Bool = false)
     case worktreeRemoveCapability
+    case worktreePinnedRemovalCapability
     case worktreePinCapability
     case setWorktreePinned(worktreePath: String, isPinned: Bool)
     case worktreeRemoveStatus(operationID: String)
@@ -202,7 +203,7 @@ extension NotificationMessage: Codable {
         case branchName = "branch_name"
         case worktreePath = "worktree_path"
         case base
-        case force
+        case force, pinned
         case isPinned = "is_pinned"
         case operationID = "operation_id"
         case agentRuntime = "agent_runtime"
@@ -387,10 +388,11 @@ extension NotificationMessage: Codable {
         case .worktreeCreateStatus(let operationID):
             try container.encode("worktree_create_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
-        case .removeWorktree(let worktreePath, let force):
+        case .removeWorktree(let worktreePath, let force, let pinned):
             try container.encode("remove_worktree", forKey: .type)
             try container.encode(worktreePath, forKey: .worktreePath)
             try container.encode(force, forKey: .force)
+            try container.encode(pinned, forKey: .pinned)
         case .worktreePinCapability:
             try container.encode("worktree_pin_capability", forKey: .type)
         case .setWorktreePinned(let worktreePath, let isPinned):
@@ -399,6 +401,8 @@ extension NotificationMessage: Codable {
             try container.encode(isPinned, forKey: .isPinned)
         case .worktreeRemoveCapability:
             try container.encode("worktree_remove_capability", forKey: .type)
+        case .worktreePinnedRemovalCapability:
+            try container.encode("worktree_pinned_removal_capability", forKey: .type)
         case .worktreeRemoveStatus(let operationID):
             try container.encode("worktree_remove_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
@@ -594,7 +598,8 @@ extension NotificationMessage: Codable {
         case "remove_worktree":
             self = .removeWorktree(
                 worktreePath: try container.decode(String.self, forKey: .worktreePath),
-                force: try container.decode(Bool.self, forKey: .force)
+                force: try container.decode(Bool.self, forKey: .force),
+                pinned: try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
             )
         case "worktree_pin_capability":
             self = .worktreePinCapability
@@ -605,6 +610,8 @@ extension NotificationMessage: Codable {
             )
         case "worktree_remove_capability":
             self = .worktreeRemoveCapability
+        case "worktree_pinned_removal_capability":
+            self = .worktreePinnedRemovalCapability
         case "worktree_remove_status":
             self = .worktreeRemoveStatus(
                 operationID: try container.decode(String.self, forKey: .operationID)

@@ -8,17 +8,17 @@ import GrafttyProtocol
 
 @Suite("@spec AGENT-5.21: When graftty worktree pin or unpin is invoked, the application shall resolve the caller's worktree by default or a supplied tracked name or absolute path, reject ambiguous or unavailable targets and in-flight changes, persist idempotent pin state through the sidebar model without changing panes or instructions, and keep the default-branch checkout always pinned.")
 struct CLIWorktreePinTests {
-    @Test("@spec TEAM-4.13: When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree and unpinning, and explain role instruction files and retention after PR or MR resolution.")
+    @Test("@spec TEAM-4.13: When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.")
     func skillPinningExamplesUseSupportedCLICommands() throws {
         let skill = try GrafttyTeamSkillText.load()
         let examples = skill.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter {
-            $0.hasPrefix("graftty worktree pin") || $0.hasPrefix("graftty worktree unpin")
+            $0.hasPrefix("graftty worktree pin") || $0.hasPrefix("graftty worktree unpin") || $0.hasPrefix("graftty worktree remove")
         }
         #expect(!examples.isEmpty)
         for example in examples {
             let arguments = example.split(separator: " ").dropFirst().map(String.init)
             let command = try GrafttyCLI.parseAsRoot(arguments)
-            #expect(["pin", "unpin"].contains(type(of: command).configuration.commandName ?? ""))
+            #expect(["pin", "unpin", "remove"].contains(type(of: command).configuration.commandName ?? ""))
         }
     }
 
