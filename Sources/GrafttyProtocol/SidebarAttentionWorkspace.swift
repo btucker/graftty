@@ -110,7 +110,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             items[index].projectName = worktree.repoDisplayName
             items[index].worktreeName = worktree.displayName
             items[index].branchName = worktree.displayBranch
-            items[index].worktreeEmoji = worktree.sidebar?.emoji
+            items[index].worktreeEmoji = worktree.effectiveEmoji
+            items[index].isMainCheckout = worktree.isMainCheckout ? true : nil
             items[index].prBadge = worktree.prBadge
             let route = SidebarProjection.attentionPaneRoute(for: item, in: worktree)
             if item.paneID != nil, let route { items[index].paneID = route }

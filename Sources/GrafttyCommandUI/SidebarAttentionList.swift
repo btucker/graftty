@@ -19,6 +19,7 @@ public struct SidebarAttentionList: View {
     @Bindable public var navigation: SidebarNavigationState
     public var items: [SidebarActivityItem]
     public var projects: [SidebarProject]
+    public var projectIcons: [String: Data]
     public var onOpen: (SidebarActivityItem) async -> Bool
     public var expandsAllCards: Bool
     public var compactHeader: Bool
@@ -26,7 +27,7 @@ public struct SidebarAttentionList: View {
     public var showsSearchField: Bool
     public var selectionColor: Color
     public var isCurrentWorktree: (SidebarActivityItem) -> Bool
-    public init(navigation: SidebarNavigationState, items: [SidebarActivityItem], projects: [SidebarProject],
+    public init(navigation: SidebarNavigationState, items: [SidebarActivityItem], projects: [SidebarProject], projectIcons: [String: Data] = [:],
                 selectionColor: Color = .primary.opacity(0.16), compactHeader: Bool = false, expandsAllCards: Bool = false,
                 showsSearchField: Bool = true,
                 isCurrentWorktree: @escaping (SidebarActivityItem) -> Bool = { _ in true },
@@ -35,6 +36,7 @@ public struct SidebarAttentionList: View {
         self.compactHeader = compactHeader
         self.showsSearchField = showsSearchField
         self.selectionColor = selectionColor; self.isCurrentWorktree = isCurrentWorktree
+        self.projectIcons = projectIcons
         self.navigation = navigation; self.items = items; self.projects = projects; self.onOpen = onOpen
     }
     public var body: some View {
@@ -183,7 +185,7 @@ public struct SidebarAttentionList: View {
             }
         case .running:
             HStack(alignment: .top, spacing: 9) {
-                identity(item.worktreeEmoji, accent: accent)
+                identity(item, accent: accent)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         worktreeName(card.headerName, font: .subheadline)
@@ -220,7 +222,7 @@ public struct SidebarAttentionList: View {
     private func cardHeader(_ item: SidebarActivityItem, card: SidebarAttentionCardContent,
                             accent: Color, offline: Bool, wide: Bool) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            identity(item.worktreeEmoji, accent: accent)
+            identity(item, accent: accent)
             VStack(alignment: .leading, spacing: 2) {
                 worktreeName(card.headerName, font: wide ? .callout : .subheadline)
                 branchLine(card)
@@ -248,10 +250,13 @@ public struct SidebarAttentionList: View {
             .anchorPreference(key: AttentionWorktreeNameAnchor.self, value: .bounds) { $0 }
     }
 
-    private func identity(_ emoji: String?, accent: Color) -> some View {
+    func identity(_ item: SidebarActivityItem, accent: Color) -> some View {
         Group {
-            if let emoji {
-                Text(emoji).font(.system(size: 23))
+            if item.iconIdentity != .none {
+                WorktreeIdentityView(identity: item.iconIdentity,
+                    project: projects.first { $0.id == item.projectID }
+                        ?? SidebarProject(id: item.projectID, repositoryID: item.projectID, name: item.projectName),
+                    imageData: projectIcons[item.projectID], size: 28)
             } else {
                 Image(systemName: "square.dashed")
                     .font(.system(size: 18)).foregroundStyle(.tertiary)

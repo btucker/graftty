@@ -44,8 +44,8 @@ public struct WorktreeListContent: View {
 
     @Bindable private var navigation: SidebarNavigationState
     @State private var sidebarSnapshot: SidebarSnapshot?
-    @State private var projectIcons: [String: Data] = [:]
-    @State private var iconRevisions: [String: String] = [:]
+    @State private var projectIconCache = ProjectIconCache()
+    private var projectIcons: [String: Data] { projectIconCache.icons }
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
@@ -514,7 +514,7 @@ public struct WorktreeListContent: View {
                     }
                 }.padding(12)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, projectIcons: projectIcons,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
@@ -551,7 +551,7 @@ public struct WorktreeListContent: View {
                     Text("Attention \(counts.values.reduce(0, +))").tag(true)
                 }.pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 6)
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: items, projects: projects,
+                    SidebarAttentionList(navigation: navigation, items: items, projects: projects, projectIcons: projectIcons,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
@@ -593,7 +593,7 @@ public struct WorktreeListContent: View {
     private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], items: [SidebarActivityItem], projectID: String? = nil) -> some View {
         let selectedProjectID = projectID ?? navigation.selectedProjectID
         if projectID == nil && navigation.showsAttention {
-            SidebarAttentionList(navigation: navigation, items: items, projects: projects,
+            SidebarAttentionList(navigation: navigation, items: items, projects: projects, projectIcons: projectIcons,
                                          selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                          compactHeader: horizontalSizeClass != .regular, expandsAllCards: true,
                                          isCurrentWorktree: { selectedWorktreePath == nil || selectedWorktreePath == $0.worktreeID }) { item in
@@ -749,26 +749,21 @@ public struct WorktreeListContent: View {
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = list.first(where: { $0.path == selectedWorktreePath }).map(SidebarProjection.projectID) ?? projects.first?.id
         }
+        projectIconCache.reconcile(projects)
         for project in projects where project.isAvailable {
-            guard let revision = project.iconRevision else {
-                projectIcons[project.id] = nil
-                iconRevisions[project.id] = nil
-                continue
+            guard let revision = project.iconRevision else { continue }
+            await projectIconCache.load(for: project) {
+                let response = try? await RelayedWorktreeManagementClient.send(
+                    .projectIcon(repositoryID: project.repositoryID, revision: revision), using: remoteConnectionProvider)
+                guard presentedHostID == requestHostID else { return nil }
+                if case .icon(let data) = response { return data }
+                return nil
             }
-            guard iconRevisions[project.id] != revision else { continue }
-            do {
-                let response = try await RelayedWorktreeManagementClient.send(.projectIcon(repositoryID: project.repositoryID, revision: revision), using: remoteConnectionProvider)
-                guard presentedHostID == requestHostID else { return }
-                if case .icon(let data) = response {
-                    if let data, data.count <= 65536 { projectIcons[project.id] = data }
-                    else { projectIcons[project.id] = nil }
-                    iconRevisions[project.id] = revision
-                }
-            } catch { break }
         }
     }
 
     private func worktreeList(_ worktrees: [WorktreePanes]) -> some View {
+        let projects = projects(for: worktrees)
         let scrollKey = navigation.query.isEmpty ? SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail) : nil
         return ScrollViewReader { proxy in
                     List {
@@ -776,7 +771,7 @@ public struct WorktreeListContent: View {
                         ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
                             Section {
                                 let projectID = group.worktrees.first.map(SidebarProjection.projectID)
-                                let ownerAllowsEditing = projects(for: worktrees)
+                                let ownerAllowsEditing = projects
                                     .first(where: { $0.id == projectID })?.supportsWorktreeEditing == true
                                 SidebarWorktreeRows(worktrees: group.worktrees,
                                     allowsReordering: navigation.query.isEmpty && ownerAllowsEditing && !orderMutationInFlight,
@@ -787,6 +782,8 @@ public struct WorktreeListContent: View {
                                     showsSections: navigation.query.isEmpty) { wt in
                                     WorktreeBlock(
                                         worktree: wt,
+                                        project: projects.first { $0.id == SidebarProjection.projectID(wt) },
+                                        projectIconData: projectIcons[SidebarProjection.projectID(wt)],
                                         theme: theme,
                                         isActive: wt.path == selectedWorktreePath,
                                         isOpening: openingWorktrees.contains(
@@ -1494,6 +1491,8 @@ extension RemoteMacConnectionSummary.State {
 
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
+    var project: SidebarProject? = nil
+    var projectIconData: Data? = nil
     let theme: GhosttyThemeColors?
     /// True when this worktree's path matches `selectedWorktreePath`
     /// (IPAD-1.16). Drives both the rounded-rectangle background
@@ -1558,6 +1557,7 @@ private struct WorktreeBlock: View {
             // (`.creating`) or is about to vanish (`.deleting`).
             WorktreeRowContent(
                 worktree: worktree,
+                project: project, projectIconData: projectIconData,
                 theme: theme,
                 isActive: isActive,
                 isOpening: isOpening
@@ -1567,6 +1567,7 @@ private struct WorktreeBlock: View {
             Button(action: onSelect) {
                 WorktreeRowContent(
                     worktree: worktree,
+                    project: project, projectIconData: projectIconData,
                     theme: theme,
                     isActive: isActive,
                     isOpening: isOpening
@@ -1649,6 +1650,8 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 /// and a trailing divergence gutter.
 private struct WorktreeRowContent: View {
     let worktree: WorktreePanes
+    var project: SidebarProject? = nil
+    var projectIconData: Data? = nil
     let theme: GhosttyThemeColors?
     /// True when this worktree is the active one — drives the primary
     /// label's brightness bucket via `theme.sidebarPrimaryText
@@ -1697,6 +1700,10 @@ private struct WorktreeRowContent: View {
             ProgressView()
                 .controlSize(.mini)
                 .frame(width: 14)
+        } else if worktree.iconIdentity != .none {
+            WorktreeIdentityView(identity: worktree.iconIdentity,
+                project: project ?? SidebarProjection.projects([worktree])[0],
+                imageData: projectIconData, size: 18)
         } else {
             Image(systemName: WorktreeRowIcon.symbolName(
                 isMainCheckout: worktree.isMainCheckout,

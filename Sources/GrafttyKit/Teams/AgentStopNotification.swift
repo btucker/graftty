@@ -7,13 +7,17 @@ public struct AgentStopNotificationContent: Sendable, Equatable {
     public let body: String
     public let userInfo: [String: String]
     public let identifier: String?
+    public var identityImage: Data?
+    public var identityProject: SidebarProject? = nil
+    public var identityProjectPath: String? = nil
 
-    public init(title: String, subtitle: String? = nil, body: String, userInfo: [String: String], identifier: String? = nil) {
+    public init(title: String, subtitle: String? = nil, body: String, userInfo: [String: String], identifier: String? = nil, identityImage: Data? = nil) {
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.userInfo = userInfo
         self.identifier = identifier
+        self.identityImage = identityImage
     }
 }
 

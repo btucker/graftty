@@ -41,6 +41,7 @@ struct MainWindow: View {
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    @ObservedObject private var iconStore = SidebarHostController.shared
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
@@ -181,7 +182,8 @@ struct MainWindow: View {
                     onGoBack: { navigateWorktreeHistory(forward: false) },
                     onGoForward: { navigateWorktreeHistory(forward: true) },
                     onSelectHistory: selectHistoryTarget,
-                    onRefreshPR: refreshPR
+                    onRefreshPR: refreshPR,
+                    project: selectedIdentityProject, projectIconData: selectedProjectIconData
                 )
 
                 if let selectedRemoteMac {
@@ -494,6 +496,22 @@ struct MainWindow: View {
         let originY = screen.minY + (screen.height - defaultFrame.height) / 2
         return CGRect(x: originX, y: originY,
                       width: defaultFrame.width, height: defaultFrame.height)
+    }
+
+    private var selectedIdentityProject: SidebarProject? {
+        if let remote = selectedRemoteWorktreeSnapshot {
+            let id = SidebarProjection.projectID(remote)
+            return appState.sidebarNavigation?.cachedProjects.first { $0.id == id }
+                ?? SidebarProjection.projects([remote]).first
+        }
+        return selectedRepo.map { iconStore.project(for: $0, owner: iconStore.owner) }
+    }
+
+    private var selectedProjectIconData: Data? {
+        if selectedRemoteWorktreeSnapshot != nil {
+            return selectedIdentityProject.flatMap { iconStore.remoteIcons[$0.id] }
+        }
+        return selectedRepo.flatMap { iconStore.iconData(for: $0) }
     }
 
     private var selectedRepo: RepoEntry? {

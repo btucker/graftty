@@ -738,6 +738,26 @@ final class RemoteMacsModel: ObservableObject {
         return result
     }
 
+    func notificationProjectIdentity(for event: RemoteNotificationEvent) async -> (SidebarProject, Data?)? {
+        guard let fallback = event.identityProject else { return nil }
+        guard let mac = savedRemoteMacs.first(where: { mac in
+            event.originFingerprint == RemoteMacIdentity(mac).fingerprint
+        }) else { return (fallback, nil) }
+        let snapshot = await sidebarSnapshot(for: mac)
+        var project = snapshot?.projects.first { $0.id == fallback.id } ?? fallback
+        for _ in 0..<2 {
+            guard let revision = project.iconRevision else { return (project, nil) }
+            let response = try? await sendWorktreeManagement(identity: RemoteMacIdentity(mac),
+                request: .projectIcon(repositoryID: project.repositoryID, revision: revision))
+            let current = await sidebarSnapshot(for: mac)?.projects.first { $0.id == fallback.id } ?? project
+            project = current
+            if current.iconRevision != revision { continue }
+            if case .icon(let data) = response { return (current, data) }
+            return (current, nil)
+        }
+        return (project, nil)
+    }
+
     func sidebarSnapshot(for mac: RemoteMac) async -> SidebarSnapshot? {
         await connectionRegistry.sidebarSnapshot(for: RemoteMacIdentity(mac))
     }
@@ -1106,7 +1126,7 @@ final class RemoteMacsModel: ObservableObject {
         let title = recap?.title ?? (kind == .agentStop ? text : "Notification from \(remoteMac.label)")
         let body: String
         if let recap {
-            let identity = [worktree.sidebar?.emoji, worktreeName].compactMap { $0 }.joined(separator: " ")
+            let identity = [worktree.effectiveEmoji, worktreeName].compactMap { $0 }.joined(separator: " ")
             body = "\(identity) on \(remoteMac.label)\n\(recap.need ?? recap.completed)"
         } else {
             body = kind == .agentStop
@@ -1122,7 +1142,8 @@ final class RemoteMacsModel: ObservableObject {
             paneID: paneID,
             title: title,
             body: body,
-            timestamp: attentionTimestamp ?? Date()
+            timestamp: attentionTimestamp ?? Date(),
+            identityProject: worktree.iconIdentity == .project ? SidebarProjection.projects([worktree]).first : nil
         ))
     }
 
@@ -1153,7 +1174,8 @@ final class RemoteMacsModel: ObservableObject {
             \(itemCount) \(itemNoun) across \(worktreeCount) remote \
             \(worktreeNoun) \(verb) attention.
             """,
-            timestamp: Date()
+            timestamp: Date(),
+            identityProject: first.identityProject
         )
     }
 

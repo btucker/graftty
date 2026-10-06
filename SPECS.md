@@ -18,7 +18,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.5** When the user drags to select text in a terminal pane beneath the titlebar, the application shall deliver the drag to the terminal instead of moving the window.
 
-**LAYOUT-1.6** When the breadcrumb displays a selected worktree with an assigned emoji, the application shall show that emoji before its worktree name, using the selected remote snapshot's emoji without falling back to a local worktree's emoji.
+**LAYOUT-1.6** When the breadcrumb displays a selected worktree, the application shall show its project icon for the home checkout or its assigned emoji for a linked worktree before its name, using the remote snapshot identity without falling back to a local worktree identity.
 
 **LAYOUT-1.7** When the user selects a different worktree, the application shall record the visit in window-local history; Back and Forward shall traverse those visits without adding visits, with unavailable directions disabled.
 
@@ -273,6 +273,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.122** While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
 
 **LAYOUT-2.123** While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
+
+**LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1057,6 +1059,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
 
 **NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+
+**NOTIF-1.9** When a native Attention notification represents the home checkout, the application shall use the current project icon and fallback instead of its stored worktree emoji while preserving linked worktree identities and notification activation routes.
+
+**NOTIF-1.10** When identity lookup or notification authorization overlaps a newer Attention notification for the same worktree, the application shall deliver only the latest pending notification while preserving independent worktree deliveries and cleaning its original attachment source file.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 

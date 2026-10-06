@@ -193,14 +193,14 @@ public enum SidebarHostNavigation {
         return false
     }
 
-    public static func metadata(for worktree: WorktreeEntry, projectID: String, folders: [String], folderIDs: [String]? = nil) -> SidebarWorktreeMetadata {
+    public static func metadata(for worktree: WorktreeEntry, projectID: String, folders: [String], repositoryPath: String? = nil, folderIDs: [String]? = nil) -> SidebarWorktreeMetadata {
         var times = Dictionary(worktree.paneAttention.map { ($0.key.id.uuidString, $0.value.timestamp.timeIntervalSinceReferenceDate) }, uniquingKeysWith: { first, _ in first })
         times["worktree"] = worktree.attention?.timestamp.timeIntervalSinceReferenceDate
         return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
                      attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop,
-                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isPinned: worktree.isPinned)
+                     agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned)
     }
 
     @discardableResult

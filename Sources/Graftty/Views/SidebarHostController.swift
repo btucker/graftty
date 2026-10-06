@@ -3,51 +3,82 @@ import Combine
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 @MainActor
 final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
     let owner = WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
     @Published private(set) var icons: [String: Data] = [:]
+    let remoteIconCache = ProjectIconCache()
+    var remoteIcons: [String: Data] { remoteIconCache.icons }
+    private var resolvedSignatures: [UUID: IconSignature] = [:]
     private var checked: [UUID: Date] = [:]
     private struct IconSignature: Equatable { var path: String; var iconOverride: ProjectIconOverride? }
     private var signatures: [UUID: IconSignature] = [:]
-    private var loading: Set<UUID> = []
+    private var loading: [UUID: (signature: IconSignature, token: UUID)] = [:]
 
     func refreshIcons(_ repos: [RepoEntry], force: Bool = false) {
         for repo in repos {
+            let signature = IconSignature(path: repo.path, iconOverride: repo.iconOverride)
             let previous = signatures[repo.id]
-            guard !loading.contains(repo.id), force || previous?.path != repo.path
-                || previous?.iconOverride != repo.iconOverride
+            guard force || previous != signature
                 || Date().timeIntervalSince(checked[repo.id] ?? .distantPast) > 30 else { continue }
-            loading.insert(repo.id)
-            signatures[repo.id] = .init(path: repo.path, iconOverride: repo.iconOverride)
-            Task {
-                let image = await Task.detached(priority: .utility) {
-                    switch repo.iconOverride {
-                    case .initials: return Optional<Data>.none
-                    case .image(let data): return ProjectIconDiscovery.thumbnail(data)
-                    case nil: return ProjectIconDiscovery.discover(at: URL(fileURLWithPath: repo.path))
-                    }
-                }.value
-                let key = repo.id.uuidString
+            signatures[repo.id] = signature
+            if previous != signature { loading[repo.id] = nil }
+            let key = repo.id.uuidString
+            switch repo.iconOverride {
+            case .initials:
+                icons[key] = nil
+                checked[repo.id] = Date()
+                resolvedSignatures[repo.id] = signature
+            case .image(let data):
+                let image = ProjectIconDiscovery.thumbnail(data)
                 if icons[key] != image { icons[key] = image }
                 checked[repo.id] = Date()
-                loading.remove(repo.id)
+                resolvedSignatures[repo.id] = signature
+            case nil:
+                if previous != signature { icons[key] = nil }
+                guard loading[repo.id]?.signature != signature else { continue }
+                let token = UUID()
+                loading[repo.id] = (signature, token)
+                Task {
+                    let image = await Task.detached(priority: .utility) {
+                        ProjectIconDiscovery.discover(at: URL(fileURLWithPath: repo.path))
+                    }.value
+                    guard loading[repo.id]?.token == token, signatures[repo.id] == signature else { return }
+                    loading[repo.id] = nil
+                    if icons[key] != image { icons[key] = image }
+                    checked[repo.id] = Date()
+                    resolvedSignatures[repo.id] = signature
+                }
             }
         }
     }
 
     func localProjects(_ repos: [RepoEntry], owner: WorktreeOrigin) -> [SidebarProject] {
         refreshIcons(repos)
-        return repos.map { repo in
-            let initials: String?
-            if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
-            return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
-                                  name: repo.displayName, owner: owner,
-                                  iconRevision: icons[repo.id.uuidString].map(ProjectIconDiscovery.revision), initials: initials,
-                                  accentHex: icons[repo.id.uuidString].flatMap(ProjectIconDiscovery.accentHex), supportsWorktreeEditing: true)
-        }
+        return repos.map { project(for: $0, owner: owner) }
+    }
+
+    func hasResolvedIcon(for repo: RepoEntry) -> Bool {
+        resolvedSignatures[repo.id] == IconSignature(path: repo.path, iconOverride: repo.iconOverride)
+    }
+
+    func iconData(for repo: RepoEntry) -> Data? {
+        let signature = IconSignature(path: repo.path, iconOverride: repo.iconOverride)
+        if signatures[repo.id] == signature { return icons[repo.id.uuidString] }
+        if case .image(let data) = repo.iconOverride { return ProjectIconDiscovery.thumbnail(data) }
+        return nil
+    }
+
+    func project(for repo: RepoEntry, owner: WorktreeOrigin) -> SidebarProject {
+        let data = iconData(for: repo)
+        let initials: String?
+        if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
+        return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
+            name: repo.displayName, owner: owner, iconRevision: data.map(ProjectIconDiscovery.revision),
+            initials: initials, accentHex: data.flatMap(ProjectIconDiscovery.accentHex), supportsWorktreeEditing: true)
     }
 
     func snapshot(state: inout AppState, owner: WorktreeOrigin, remote: [SidebarProject], authoritativeRemoteOwners: Set<RemoteDeviceID> = [], savedRemoteOwners: Set<RemoteDeviceID>? = nil) -> SidebarSnapshot {
@@ -102,7 +133,7 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           attentionTimestamp: wt.attention?.timestamp,
                           layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles, paneAttention: wt.paneAttention, liveness: liveness) },
                           origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id)))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)))
         }
     }
 }

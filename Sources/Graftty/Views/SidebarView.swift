@@ -99,8 +99,6 @@ struct SidebarView: View {
     @State private var attentionWidthState = SidebarAttentionWidthState()
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
-    @State private var remoteIcons: [String: Data] = [:]
-    @State private var fetchedIconRevisions: [String: String] = [:]
     @State private var navigationError: String?
     @State private var showsRemoteManagement = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -124,8 +122,8 @@ struct SidebarView: View {
         SidebarProjection.activity(localWorktrees + remoteMacsModel.promotedWorktreesForRelay())
     }
     private var projectIcons: [String: Data] {
-        var result = remoteIcons
-        for repo in appState.repos { result[localProjectID(repo)] = iconStore.icons[repo.id.uuidString] }
+        var result = iconStore.remoteIcons
+        for repo in appState.repos { result[localProjectID(repo)] = iconStore.iconData(for: repo) }
         return result
     }
     private func refreshNavigation() async {
@@ -142,15 +140,13 @@ struct SidebarView: View {
         if navigation.selectedProjectID == nil || !projects.contains(where: { $0.id == navigation.selectedProjectID }) {
             navigation.selectedProjectID = appState.repos.first(where: { repo in repo.worktrees.contains { $0.path == appState.selectedWorktreePath } }).map(localProjectID) ?? projects.first?.id
         }
+        iconStore.remoteIconCache.reconcile(remote.projects)
         for project in remote.projects where project.isAvailable {
-            if project.iconRevision == nil {
-                remoteIcons[project.id] = nil
-                fetchedIconRevisions[project.id] = nil
-            }
-            guard let revision = project.iconRevision, fetchedIconRevisions[project.id] != revision else { continue }
-            if case .icon(let data) = await remoteMacsModel.sendRelayedWorktreeManagement(.projectIcon(repositoryID: project.repositoryID, revision: revision)) {
-                remoteIcons[project.id] = data
-                fetchedIconRevisions[project.id] = revision
+            guard let revision = project.iconRevision else { continue }
+            await iconStore.remoteIconCache.load(for: project) {
+                if case .icon(let data) = await remoteMacsModel.sendRelayedWorktreeManagement(
+                    .projectIcon(repositoryID: project.repositoryID, revision: revision)) { return data }
+                return nil
             }
         }
     }
@@ -288,7 +284,7 @@ struct SidebarView: View {
                     Text(navigationError).font(.caption).foregroundStyle(.red).padding(8)
                 }
                 if navigation.showsAttention {
-                    SidebarAttentionList(navigation: navigation, items: activity, projects: projects,
+                    SidebarAttentionList(navigation: navigation, items: activity, projects: projects, projectIcons: projectIcons,
                                          selectionColor: theme.foreground.opacity(0.16), showsSearchField: false,
                                          isCurrentWorktree: isCurrentAttentionWorktree) { item in
                         let opened = await onOpenAttention(item)
@@ -330,7 +326,8 @@ struct SidebarView: View {
                     // below the persistent search row.
                     .overlay(alignment: .top) {
                         if let item = navigation.attentionBanner {
-                            SidebarAttentionBanner(item: item, onOpen: {
+                            SidebarAttentionBanner(item: item, project: projects.first { $0.id == item.projectID },
+                                projectIconData: projectIcons[item.projectID], onOpen: {
                                 onNavigationIntent()
                                 let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
                                 Task {
