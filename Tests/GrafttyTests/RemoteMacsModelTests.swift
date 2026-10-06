@@ -75,6 +75,35 @@ struct RemoteMacsModelTests {
         model.disconnect(identity: RemoteMacIdentity(remote))
     }
 
+    @Test func legacyHomeNotificationUsesPublishedProjectFallback() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+        func snapshot(attention: String?) -> [WorktreePanes] {
+            [WorktreePanes(path: "/repo", displayName: "root", repoDisplayName: "Repo",
+                displayBranch: "release", state: .closed, isMainCheckout: true, prBadge: nil,
+                stats: nil, attentionText: attention, attentionSource: .userNotify,
+                attentionTimestamp: attention == nil ? nil : Date(timeIntervalSince1970: 100), layout: nil)]
+        }
+        registry.onPaneSnapshot(identity, snapshot(attention: nil))
+        registry.onPaneSnapshot(identity, snapshot(attention: "Review"))
+        let event = try #require(events.first)
+        let rows = try #require(model.worktreePanesByRemote[identity])
+        let publishedProject = try #require(SidebarProjection.projects(rows).first)
+        #expect(event.identityProject?.id == publishedProject.id)
+        #expect(event.identityProject?.colorIndex == publishedProject.colorIndex)
+        #expect(event.identityProject?.displayInitials == publishedProject.displayInitials)
+    }
+
     private func tempStoreURL() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

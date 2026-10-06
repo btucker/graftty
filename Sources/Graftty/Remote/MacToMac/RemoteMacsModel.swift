@@ -980,10 +980,11 @@ final class RemoteMacsModel: ObservableObject {
         from identity: RemoteMacIdentity
     ) {
         let ownerLabel = savedRemoteMacs.first { RemoteMacIdentity($0) == identity }?.label ?? identity.id.value
-        worktreePanesByRemote[identity] = snapshot.map {
+        let normalized = snapshot.map {
             RemoteWorktreeRelayRouter.normalizingSidebarIdentity($0, ownerID: identity.id, ownerLabel: ownerLabel)
         }
-        processAttentionTransitions(snapshot, from: identity)
+        worktreePanesByRemote[identity] = normalized
+        processAttentionTransitions(normalized, from: identity)
         refreshRelayRoutes()
     }
 
