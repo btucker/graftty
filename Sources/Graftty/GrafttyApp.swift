@@ -1117,6 +1117,7 @@ struct GrafttyApp: App {
         guard Self.applyDeepLink(
             url,
             appState: $appState,
+            admitWorktree: { terminalManager.wakeWorktree($0.path) },
             prepareRunningWorktree: { worktree in
                 terminalManager.createSurfaces(
                     for: worktree.splitTree,
@@ -1132,13 +1133,15 @@ struct GrafttyApp: App {
     static func applyDeepLink(
         _ url: URL,
         appState: Binding<AppState>,
+        admitWorktree: (WorktreeEntry) -> Bool = { _ in true },
         prepareRunningWorktree: (WorktreeEntry) -> Void
     ) -> Bool {
         guard let target = GrafttyDeepLink.parse(url),
               case let .resolved(path, paneSlot) = DeepLinkResolver.resolve(
                   target,
                   inRepos: appState.wrappedValue.repos
-              ) else { return false }
+              ), let resolved = appState.wrappedValue.worktree(forPath: path),
+              admitWorktree(resolved) else { return false }
         appState.wrappedValue.selectedWorktreePath = path
         if let worktree = appState.wrappedValue.worktree(forPath: path),
            worktree.state == .running {
@@ -1513,6 +1516,14 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
+        tm.autoSleep.start { binding.wrappedValue }
+        let sleepCoordinator = tm.autoSleep.coordinator
+        services.remoteAttachmentRegistry.wakeBeforeAttach = { session in
+            sleepCoordinator.wake(session: session)
+        }
+        services.remoteAttachmentRegistry.wakeBeforeInput = { session in
+            sleepCoordinator.wakeForInput(session: session)
+        }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
@@ -1839,7 +1850,8 @@ struct GrafttyApp: App {
             presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
             sessionStorage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
             liveness: deliveryLiveness,
-            client: CodexAppServerClient()
+            client: CodexAppServerClient(),
+            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
             // The bridge binds a socket to the recipient that received the
@@ -1874,7 +1886,8 @@ struct GrafttyApp: App {
                     liveness: deliveryLiveness
                 )
             },
-            replyBridge: claudeReplyBridge
+            replyBridge: claudeReplyBridge,
+            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
@@ -1929,6 +1942,7 @@ struct GrafttyApp: App {
                         return
                     }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
+                    let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
                     var deliveries: [any CodexAppServerDeliveryTrigger] = []
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
@@ -1938,7 +1952,7 @@ struct GrafttyApp: App {
                     }
                     await Self.drainNativeDeliveryMessages(
                         teamID: teamID,
-                        recipientWorktrees: recipientWorktrees,
+                        recipientWorktrees: awakeRecipients,
                         inbox: services.teamInbox,
                         deliveries: deliveries
                     )
@@ -3119,6 +3133,7 @@ struct GrafttyApp: App {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
+                tm.autoSleep.shutdown()
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -3756,6 +3771,8 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
+        case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
+            terminalManager.autoSleep.providerActivity(path: path, session: paneSessionName, sessionID: sessionID, activity: activity, runtime: runtime)
         case .notify(let path, let text, let clearAfter, let paneSessionName):
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
@@ -3890,6 +3907,12 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
+        case .offerResource(let path, _, _), .addPane(let path, _, _), .closePane(let path, _),
+             .showPane(let path, _, _), .sendPane(let path, _, _, _), .removeWorktree(let path, _):
+            guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        default: break
+        }
+        switch message {
         case let .offerResource(path, target, paneSessionName):
             guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
                 return .error("Run graftty open from a tracked worktree.")
@@ -4013,8 +4036,10 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let stopHookActive
+            let stopHookActive,
+            let providerSleepActivity
         ):
+            terminalManager.autoSleep.providerActivity(path: callerPath, session: paneSessionName, sessionID: sessionID, activity: providerSleepActivity ?? .unknown, runtime: runtime)
             return await handleTeamHook(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
@@ -4135,7 +4160,7 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree removal operation")
             }
             return .worktreeRemove(status)
-        case .notify, .clear:
+        case .notify, .clear, .providerActivity:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
@@ -5181,6 +5206,9 @@ struct GrafttyApp: App {
             return .error("pane has no surface and zmx is unavailable")
         }
         let sessionName = ZmxLauncher.sessionName(for: sessionID)
+        guard terminalManager.autoSleep.coordinator.wakeForInput(session: sessionName) else {
+            return .error("pane could not be resumed")
+        }
         let writer = ZmxPaneInputSubprocessWriter(launcher: launcher)
         return await Task.detached(priority: .utility) {
             handleSendPaneWithoutSurface_forTesting(
@@ -5467,6 +5495,10 @@ struct GrafttyApp: App {
         guard let (targetRepoIdx, targetWorktreeIdx) =
                 appState.wrappedValue.worktreeIndicesMatching(path: newPWD),
               (targetRepoIdx, targetWorktreeIdx) != (currentRepoIdx, currentWorktreeIdx)
+        else { return }
+
+        guard terminalManager.wakeWorktree(appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].path),
+              terminalManager.wakeWorktree(appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path)
         else { return }
 
         // Remember where this pane was sitting in the source tree *before*

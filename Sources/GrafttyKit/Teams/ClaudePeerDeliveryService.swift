@@ -12,6 +12,7 @@ public actor ClaudePeerDeliveryService {
     private let client: any ClaudePeerClienting
     private let eventLog: TeamEventLog?
     private let replyBridge: ClaudePeerReplyBridge?
+    private let wakeBeforeDelivery: @Sendable (String) -> Bool
     private var inFlight: Set<DeliveryKey> = []
     private var dirty: Set<DeliveryKey> = []
 
@@ -21,7 +22,8 @@ public actor ClaudePeerDeliveryService {
         agentReachability: @escaping @Sendable (TeamPresenceRecord) -> Bool,
         client: ClaudePeerClienting = ClaudePeerClient(),
         eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
-        replyBridge: ClaudePeerReplyBridge? = nil
+        replyBridge: ClaudePeerReplyBridge? = nil,
+        wakeBeforeDelivery: @escaping @Sendable (String) -> Bool = { _ in true }
     ) {
         self.inbox = inbox
         self.presenceRecords = presenceRecords
@@ -29,6 +31,7 @@ public actor ClaudePeerDeliveryService {
         self.client = client
         self.eventLog = eventLog
         self.replyBridge = replyBridge
+        self.wakeBeforeDelivery = wakeBeforeDelivery
     }
 
     public func onMessageArrival(team: String, worktree: String) async {
@@ -74,6 +77,7 @@ public actor ClaudePeerDeliveryService {
             return false
         }
         guard !allUnread.isEmpty else { return false }
+        guard wakeBeforeDelivery(worktree) else { return false }
 
         let selected: TeamAgentDescriptor?
         selected = allUnread.lazy.compactMap { message -> TeamAgentDescriptor? in

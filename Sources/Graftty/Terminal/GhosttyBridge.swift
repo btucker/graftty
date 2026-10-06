@@ -301,9 +301,15 @@ final class GhosttyApp {
             let manager = box.terminalManager
             DispatchQueue.main.async {
                 guard let handle = manager?.handle(for: terminalID) else { return }
+                guard listOnly || handle.reclaimDisplayControlForPasteIfNeeded() else {
+                    var completion = ghostty_clipboard_complete_s(contents: nil, contents_len: 0,
+                        available: nil, available_len: 0, confirmed: false, remember: false)
+                    withUnsafePointer(to: &completion) { ghostty_surface_complete_clipboard_request(handle.surface, $0, state) }
+                    return
+                }
                 GhosttyClipboardRead.complete(
                     listOnly: listOnly, pasteboard: pasteboardForClipboard(clipboardEnum),
-                    reclaimControl: { handle.reclaimDisplayControlForPasteIfNeeded() }
+                    reclaimControl: { }
                 ) { completion in
                     ghostty_surface_complete_clipboard_request(handle.surface, completion, state)
                 }
@@ -330,7 +336,10 @@ final class GhosttyApp {
                 guard let handle = manager?.handle(for: terminalID) else { return }
                 // OWN-2.3: a paste into a follower/ownerless pane reclaims
                 // display ownership before the clipboard text is delivered.
-                handle.reclaimDisplayControlForPasteIfNeeded()
+                guard handle.reclaimDisplayControlForPasteIfNeeded() else {
+                    "".withCString { ghostty_surface_complete_clipboard_request(handle.surface, $0, state, false) }
+                    return
+                }
                 let pasteboard = pasteboardForClipboard(clipboardEnum)
                 let text = pasteboard.string(forType: .string) ?? ""
                 text.withCString { cstr in

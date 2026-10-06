@@ -41,6 +41,10 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         env.removeValue(forKey: "GHOSTTY_ZSH_ZDOTDIR")
         env.removeValue(forKey: "GRAFTTY_INITIAL_COMMAND")
         env.removeValue(forKey: "GRAFTTY_STARTUP_RECEIPT")
+        env.removeValue(forKey: "GRAFTTY_SLEEP_STATE_FILE")
+        if hooksEnabled, shellBasename == "zsh" {
+            env["GRAFTTY_SLEEP_STATE_FILE"] = ShellSleepActivity.file(directory: launcher.zmxDir, session: sessionName).path
+        }
         let shellRunsCommand = initialCommand != nil && ["zsh", "bash"].contains(shellBasename)
         if shellRunsCommand {
             env["GRAFTTY_INITIAL_COMMAND"] = initialCommand

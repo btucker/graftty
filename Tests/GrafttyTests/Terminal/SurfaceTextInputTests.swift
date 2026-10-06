@@ -20,6 +20,20 @@ struct SurfaceTextInputTests {
 struct NativeDictationDeliveryTests {
     private let noReplacement = NSRange(location: NSNotFound, length: 0)
 
+    @Test("@spec SLEEP-32: When a hardware key is released after a fresh prompt, the application shall forward its release without invalidating the prompt's acknowledged input boundary.")
+    func keyReleasePreservesPromptBoundary() throws {
+        let fixture = TextInputFixture()
+        var presses = 0
+        var releases = 0
+        fixture.view.hostManagedUserInputScope = { body in presses += 1; body() }
+        fixture.view.hostManagedReleaseInputScope = { body in releases += 1; body() }
+        fixture.view.keyDown(with: try fixture.keyEvent(36, text: "\r"))
+        fixture.view.keyUp(with: try fixture.keyEvent(36, text: "\r", type: .keyUp))
+        #expect(presses == 1)
+        #expect(releases == 1)
+        #expect(fixture.keyCodes == [36, 36])
+    }
+
     @Test("Provisional revisions stay out of the terminal and expose UTF-16 ranges")
     func provisionalText() {
         let fixture = TextInputFixture()

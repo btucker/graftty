@@ -5,6 +5,21 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+private struct SleepingWorktreeIndicator: View {
+    @ObservedObject var state: WorktreeSleepState
+    let path: String
+
+    var body: some View {
+        if state.paths.contains(path) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.caption).foregroundStyle(.secondary)
+                .help("Sleeping. Open to resume existing sessions.")
+                .accessibilityLabel("Sleeping worktree")
+                .padding(.trailing, 6)
+        }
+    }
+}
+
 /// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
@@ -740,6 +755,9 @@ struct SidebarView: View {
             }
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
+        .overlay(alignment: .trailing) {
+            SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
+        }
         .contentShape(Rectangle())
         let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
         let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
@@ -857,6 +875,13 @@ struct SidebarView: View {
             menu.addItem(.separator())
         }
         if worktree.state == .running {
+            let keepsAwake = WorktreeSleepPreferences.keepsAwake(worktree.path)
+            let awakeItem = ClosureMenuItem(title: "Keep Awake") {
+                WorktreeSleepPreferences.setKeepsAwake(!keepsAwake, path: worktree.path)
+                _ = terminalManager.wakeWorktree(worktree.path)
+            }
+            awakeItem.state = keepsAwake ? .on : .off
+            menu.addItem(awakeItem)
             menu.addItem(ClosureMenuItem(title: "Stop") { [self] in
                 onStopWorktree(worktree.path)
             })

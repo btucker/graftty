@@ -54,6 +54,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     }
 
     private func startBlocking() throws {
+        guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.unsupported }
         try lock.withLock {
             guard !started else { throw Error.alreadyStarted }
             guard !closed else { throw Error.closed }
@@ -146,6 +147,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     public func send(_ bytes: Data) async throws {
         guard !bytes.isEmpty else { return }
+        guard attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { throw Error.closed }
         try sendFrame(tag: 0, payload: bytes)
         inputState?.recordInput(bytes, forSession: config.sessionName)
     }

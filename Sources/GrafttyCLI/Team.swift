@@ -256,6 +256,18 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
+        let providerSleepActivity: ProviderSleepActivity = runtime == .claude
+            ? .claudeHook(payload: stdinPayload, event: event.camelCaseKey)
+            : .unknown
+        // Send before Attention's Stop handoff, which can return without a team hook.
+        // This one-way message only supplies provider evidence; it does not change liveness.
+        try? SocketClient.send(.providerActivity(
+            callerWorktree: worktreePath,
+            runtime: runtime,
+            sessionID: resolvedSessionID,
+            paneSessionName: paneSessionName,
+            activity: providerSleepActivity
+        ))
         if event == .stop,
            let action = try? AttentionFileHandoff().stop(
                 worktree: worktreePath,
@@ -280,7 +292,8 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    stopHookActive: stopHookActive
+                    stopHookActive: stopHookActive,
+                    providerSleepActivity: providerSleepActivity
                 )
             )
             switch response {
@@ -1153,7 +1166,7 @@ struct InternalGroup: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "internal",
         abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
-        subcommands: [SyncCodexHome.self, ClaudePeerSend.self]
+        subcommands: [SyncCodexHome.self, ClaudePeerSend.self, SleepGuard.self]
     )
 }
 

@@ -6,6 +6,17 @@ import GrafttyKit
 @MainActor
 @Suite("GrafttyApp deep links")
 struct GrafttyAppDeepLinkTests {
+    @Test("@spec SLEEP-17: If a deep-linked worktree cannot be resumed, then the application shall preserve the current selection and defer surface attachment.")
+    func failedWakePreservesSelection() throws {
+        let worktree = WorktreeEntry(path: "/repo/feature", branch: "feature", state: .running)
+        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])], selectedWorktreePath: "/repo/other")
+        let binding = Binding(get: { state }, set: { state = $0 })
+        let url = try #require(URL(string: "graftty://open?repo=repo&worktree=feature"))
+        #expect(!GrafttyApp.applyDeepLink(url, appState: binding, admitWorktree: { _ in false },
+            prepareRunningWorktree: { _ in Issue.record("Attached before wake succeeded") }))
+        #expect(state.selectedWorktreePath == "/repo/other")
+    }
+
     @Test("@spec URL-2.2: When a macOS deep link selects a running worktree, the application shall restore any missing terminal surfaces using the worktree's existing pane sessions before bringing the app to the foreground.")
     func runningTargetPreparesSurfacesAndPreservesSession() throws {
         let pane = PaneSlotID()

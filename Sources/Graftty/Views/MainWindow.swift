@@ -762,6 +762,7 @@ struct MainWindow: View {
     }
 
     private func selectWorktree(_ path: String, acknowledging: Bool) {
+        guard terminalManager.wakeWorktree(path) else { return }
         // In-flight rows have no surfaces to focus and no PR / stats
         // to refresh — let the user keep their current worktree until
         // the owning flow finalizes (`.creating → .running`, or

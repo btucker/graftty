@@ -3224,6 +3224,144 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PROJECT-3.5** When a project icon has colored pixels, the application shall derive a stable accent from the icon for tinted Attention cards and project initials.
 
+## SLEEP — SLEEP
+
+### SLEEP-1.x
+
+**SLEEP-1** If automatic sleep is disabled, a worktree is viewed, Keep Awake is enabled, or any activity evidence is unknown, then the application shall keep the worktree awake.
+
+### SLEEP-2.x
+
+**SLEEP-2** While a pane has unverified descendants, changed process identity, missing counters, or sustained CPU or disk activity, the application shall reset its automatic sleep inactivity window.
+
+### SLEEP-3.x
+
+**SLEEP-3** When automatic suspension fails or eligibility changes during suspension, the application shall resume only the processes it suspended and retain failed resumes for recovery.
+
+### SLEEP-4.x
+
+**SLEEP-4** When a sleeping worktree receives an interaction, the application shall serialize resume with suspension and verify process identity before sending SIGCONT.
+
+### SLEEP-5.x
+
+**SLEEP-5** If a process was already stopped, ownership changed, or recovery tracking cannot be persisted, then the application shall refuse automatic suspension.
+
+### SLEEP-6.x
+
+**SLEEP-6** When Graftty exits or recovery detects its recorded owner is gone, the application shall resume its identity-matching suspended processes without restarting terminal sessions.
+
+### SLEEP-7.x
+
+**SLEEP-7** When automatic sleep is configured, the application shall default to disabled with a fifteen-minute inactivity duration and persist each worktree's Keep Awake override.
+
+### SLEEP-8.x
+
+**SLEEP-8** While a verified task's process lifetime registration is live, the application shall keep its owning worktree awake even if the task detaches or produces no output.
+
+### SLEEP-9.x
+
+**SLEEP-9** If a wake or interaction arrives during eligibility rechecking, then the application shall cancel suspension before sending a stop signal.
+
+### SLEEP-10.x
+
+**SLEEP-10** When automatic sleep signals an isolated verified process, the application shall preserve its process identity and resume the same process on wake.
+
+### SLEEP-11.x
+
+**SLEEP-11** While a previously observed background process remains alive after reparenting, the application shall keep its original worktree awake until that process identity exits.
+
+### SLEEP-12.x
+
+**SLEEP-12** If the recovery helper is unavailable or suspension ownership cannot be verified, then the application shall keep the worktree awake without sending SIGSTOP.
+
+### SLEEP-13.x
+
+**SLEEP-13** When the owning application crashes, the independent recovery helper shall resume only its journaled process identities and remove completed recovery records.
+
+### SLEEP-14.x
+
+**SLEEP-14** When a remote terminal requests attachment, the host shall complete wake admission before starting either terminal transport and reject attachment if resume fails.
+
+### SLEEP-15.x
+
+**SLEEP-15** When automatic sleep evicts a pane's renderer, the application shall preserve its zmx session mapping, title, shell readiness, and existing Stop behavior.
+
+### SLEEP-16.x
+
+**SLEEP-16** If wake admission fails before native team-message delivery, then the application shall leave the message pending without contacting the provider.
+
+### SLEEP-17.x
+
+**SLEEP-17** If a deep-linked worktree cannot be resumed, then the application shall preserve the current selection and defer surface attachment.
+
+### SLEEP-18.x
+
+**SLEEP-18** When a remote viewer pane shares a local worktree path, the application shall admit viewer input without waking or registering the local host's processes.
+
+### SLEEP-19.x
+
+**SLEEP-19** If heartbeat storage fails after suspension, then the independent recovery helper shall still resume its journaled processes when the application exits.
+
+### SLEEP-20.x
+
+**SLEEP-20** When a Claude Stop or SubagentStop hook omits or malforms task or cron registries, the application shall report unknown provider sleep activity.
+
+### SLEEP-21.x
+
+**SLEEP-21** When a Claude hook reports any in-flight task or scheduled wakeup, the application shall report busy provider sleep activity.
+
+### SLEEP-22.x
+
+**SLEEP-22** When a Claude stop hook is already continuing from a stop hook, the application shall report unknown provider sleep activity.
+
+### SLEEP-23.x
+
+**SLEEP-23** When a Claude Stop or SubagentStop hook reports empty registries, the application shall retain unknown activity because stop hooks cannot confirm final top-level idle.
+
+### SLEEP-24.x
+
+**SLEEP-24** When a Claude prompt or tool hook runs, the application shall report busy provider sleep activity and shall treat unrecognized events as unknown.
+
+### SLEEP-25.x
+
+**SLEEP-25** When a team hook carries provider sleep activity, the application shall preserve the optional activity through notification encoding and decoding and decode older hooks without it.
+
+### SLEEP-26.x
+
+**SLEEP-26** When querying Codex sleep activity, the application shall enable experimental API access, validate the exact thread and cwd, and issue only read requests for that target.
+
+### SLEEP-27.x
+
+**SLEEP-27** When the exact Codex thread has an active turn, background terminal, active goal, queued prompt, or running subagent, the application shall report busy provider sleep activity.
+
+### SLEEP-28.x
+
+**SLEEP-28** If Codex lacks complete visibility of scheduled wakeups and subagents, then the application shall report unknown even when thread, terminal, goal, and prompt observations appear idle.
+
+### SLEEP-29.x
+
+**SLEEP-29** If a Codex activity query encounters unsupported methods, malformed responses, mismatched identity, transport failure, or timeout, then the application shall fail closed without selecting or mutating another thread.
+
+### SLEEP-30.x
+
+**SLEEP-30** While a recovery helper owns a journal's lifetime lease, the application shall refuse concurrent orphan recovery even if heartbeat storage is unavailable.
+
+### SLEEP-31.x
+
+**SLEEP-31** While a shell is executing a command, has scheduled or callback work, or lacks an identity-matching prompt boundary, the application shall keep that shell awake even if it has no child processes or terminal output.
+
+### SLEEP-32.x
+
+**SLEEP-32** When a hardware key is released after a fresh prompt, the application shall forward its release without invalidating the prompt's acknowledged input boundary.
+
+### SLEEP-33.x
+
+**SLEEP-33** When an attached remote terminal sends more input, the host shall renew input admission before forwarding bytes, even after a newer shell prompt was observed.
+
+### SLEEP-34.x
+
+**SLEEP-34** If a terminal closes while wake admission is pending, then the host shall discard delayed input without using its released descriptor or recording new uncommitted bytes.
+
 ## SSH — SSH
 
 ### SSH-1.x

@@ -4,6 +4,15 @@ import Testing
 
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
+    @Test("@spec SLEEP-16: If wake admission fails before native team-message delivery, then the application shall leave the message pending without contacting the provider.")
+    func failedWakeLeavesMessagePending() async throws {
+        let fixture = try Fixture(wakeBeforeDelivery: { _ in false })
+        _ = try fixture.append(body: "please review")
+        await fixture.service.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
+        #expect(await fixture.client.calls.isEmpty)
+        #expect(try fixture.inbox.worktreeWatermark(teamID: fixture.teamID, worktree: fixture.worktree) == nil)
+    }
+
     @Test("""
     @spec AGENT-6.6: When inbox rows are deliverable to a reachable protocol-v1 Claude agent, the application shall send the leading same-sender run of all rows deliverable to that agent through Claude's native peer socket, preserve skipped rows for other targets as pending gaps, and update shared delivery state only after the socket accepts the full frame, except that a lone row exceeding the frame cap shall be skipped; on discovery or transport failure, the row shall remain unread for wrapper fallback or retry.
     """)
@@ -383,7 +392,8 @@ struct ClaudePeerDeliveryServiceTests {
             error: Error? = nil,
             includeEarlierCodex: Bool = false,
             errorForBody: (@Sendable (String) -> Error?)? = nil,
-            replyBridge: ClaudePeerReplyBridge? = nil
+            replyBridge: ClaudePeerReplyBridge? = nil,
+            wakeBeforeDelivery: @escaping @Sendable (String) -> Bool = { _ in true }
         ) throws {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
@@ -425,7 +435,8 @@ struct ClaudePeerDeliveryServiceTests {
                 agentReachability: { _ in true },
                 client: client,
                 eventLog: TeamEventLog(rootDirectory: root),
-                replyBridge: replyBridge
+                replyBridge: replyBridge,
+                wakeBeforeDelivery: wakeBeforeDelivery
             )
         }
 
