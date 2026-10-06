@@ -1,9 +1,10 @@
 import SwiftUI
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 
 /// Worktree visit navigation, recent-worktree menu, and the current PR.
-/// The selected worktree's emoji appears before its name.
+/// The selected worktree's effective identity appears before its name.
 struct BreadcrumbBar: View {
     let repoName: String?
     let worktreeDisplayName: String?
@@ -22,6 +23,8 @@ struct BreadcrumbBar: View {
     let onGoForward: () -> Void
     let onSelectHistory: (WorktreeNavigationTarget) -> Void
     let onRefreshPR: () -> Void
+    var project: SidebarProject? = nil
+    var projectIconData: Data? = nil
     @State private var showsHistory = false
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -148,9 +151,7 @@ struct BreadcrumbBar: View {
                     .foregroundColor(theme.foreground.opacity(0.3))
             }
             if let worktreeDisplayName {
-                if let worktreeEmoji {
-                    Text(worktreeEmoji)
-                }
+                identityView
                 worktreeLabel(worktreeDisplayName)
             }
             if let branchName {
@@ -169,8 +170,18 @@ struct BreadcrumbBar: View {
         .truncationMode(.middle)
     }
 
+    var identityView: WorktreeIdentityView {
+        WorktreeIdentityView(identity: iconIdentity,
+            project: project ?? SidebarProject(id: worktreePath ?? "", repositoryID: worktreePath ?? "", name: repoName ?? ""),
+            imageData: projectIconData, size: 18)
+    }
+
+    var iconIdentity: WorktreeIconIdentity {
+        .resolve(isMainCheckout: isHomeCheckout, emoji: worktreeEmoji)
+    }
+
     static func selectedWorktreeEmoji(localEmoji: String?, remoteWorktree: WorktreePanes?) -> String? {
-        if let remoteWorktree { return remoteWorktree.sidebar?.emoji }
+        if let remoteWorktree { return remoteWorktree.effectiveEmoji }
         return localEmoji
     }
 

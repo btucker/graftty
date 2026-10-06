@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import Foundation
 import Testing
 import GrafttyProtocol
@@ -99,4 +101,43 @@ struct SidebarAttentionIdentityTests {
         #expect(retained.occurrence == item.occurrence)
         #expect(retained.isBusy)
     }
+    @MainActor
+    @Test func cardsAndBannerRenderProjectUpdatesForHomeCheckout() throws {
+        var item = try #require(SidebarProjection.activity([worktree()]).first)
+        item.isMainCheckout = true
+        item.worktreeEmoji = "🐸"
+        var project = SidebarProject(id: item.projectID, repositoryID: "/repo", name: "Project", initials: "PR")
+        func render<V: View>(_ view: V) throws -> Data {
+            let image = try #require(ImageRenderer(content: view.environment(\.colorScheme, .light)).cgImage)
+            var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try #require(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return Data(pixels)
+        }
+        func card(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
+            let list = SidebarAttentionList(navigation: SidebarNavigationState(prefix: UUID().uuidString), items: [item], projects: [project], onOpen: { _ in true })
+            return try render(list.identity(item, accent: .purple))
+        }
+        func banner(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
+            try render(SidebarAttentionBanner(item: item, project: project, onOpen: {}, onDismiss: {}).identityView)
+        }
+        let oldCard = try card(item, project: project)
+        let oldBanner = try banner(item, project: project)
+        item.worktreeEmoji = "🚀"
+        #expect(try card(item, project: project) == oldCard)
+        let unchangedBanner = SidebarAttentionBanner(item: item, project: project, onOpen: {}, onDismiss: {})
+        #expect(unchangedBanner.identityView.identity == .project)
+        #expect(unchangedBanner.identityView.project == project)
+        project.initials = "NEW"
+        #expect(try card(item, project: project) != oldCard)
+        #expect(try banner(item, project: project) != oldBanner)
+        item.isMainCheckout = false
+        #expect(try card(item, project: project) != oldCard)
+        #expect(try banner(item, project: project) != oldBanner)
+    }
+
 }

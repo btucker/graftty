@@ -160,24 +160,33 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().delegate = self
     }
 
-    func post(_ notification: AgentStopNotificationContent) {
+    @MainActor private lazy var delivery = AgentNotificationDelivery()
+
+    @MainActor
+    func post(_ notification: AgentStopNotificationContent,
+              resolving: @escaping @MainActor (AgentStopNotificationContent) async -> AgentStopNotificationContent = {
+                  await ProjectNotificationIdentity.resolved($0)
+              }) {
         let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            let post = { center.add(Self.request(for: notification)) }
-            switch settings.authorizationStatus {
-            case .authorized, .provisional, .ephemeral:
-                post()
-            case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                    if granted { post() }
+        let reservation = delivery.reserve(notification)
+        Task {
+            await delivery.post(notification, reservation: reservation, authorized: {
+                let settings = await center.notificationSettings()
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral: return true
+                case .notDetermined:
+                    return (try? await center.requestAuthorization(options: [.alert, .sound])) == true
+                default: return false
                 }
-            default:
-                break
-            }
+            }, resolving: resolving, deliver: { request in
+                try? await center.add(request.request)
+            })
         }
     }
 
-    func post(_ event: RemoteNotificationEvent) {
+    @MainActor
+    func post(_ event: RemoteNotificationEvent,
+              resolvingIdentity: @escaping @MainActor () async -> Data? = { nil }) {
         guard let data = try? JSONEncoder().encode(event) else { return }
         post(AgentStopNotificationContent(
             title: event.title,
@@ -188,18 +197,38 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
             ],
             identifier: event.kind == .agentStop
                 ? "remote-agent-attention:\(event.originFingerprint?.display ?? event.origin.deviceID.value):\(event.worktreeID)"
-                : nil
-        ))
+                : nil,
+            identityImage: nil
+        ), resolving: { notification in
+            var resolved = notification
+            resolved.identityImage = await resolvingIdentity()
+            return resolved
+        })
     }
 
     static func request(for notification: AgentStopNotificationContent) -> UNNotificationRequest {
+        prepareRequest(for: notification).request
+    }
+
+    static func prepareRequest(for notification: AgentStopNotificationContent) -> (request: UNNotificationRequest, sourceURL: URL?) {
+        var sourceURL: URL?
         let content = UNMutableNotificationContent()
         content.title = notification.title
         content.subtitle = notification.subtitle ?? ""
         content.body = notification.body
         content.sound = .default
         content.userInfo = notification.userInfo
-        return UNNotificationRequest(identifier: notification.identifier ?? UUID().uuidString, content: content, trigger: nil)
+        if let data = notification.identityImage, data.count <= 65536 {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-project-\(UUID().uuidString).png")
+            do {
+                try data.write(to: url, options: .atomic)
+                content.attachments = [try UNNotificationAttachment(identifier: "project-icon", url: url)]
+                sourceURL = url
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        return (UNNotificationRequest(identifier: notification.identifier ?? UUID().uuidString, content: content, trigger: nil), sourceURL)
     }
 
     static func foregroundPresentationOptions(kind: String?) -> UNNotificationPresentationOptions {
@@ -1253,8 +1282,11 @@ struct GrafttyApp: App {
                 terminalManager: tm
             )
         }
-        services.remoteMacsModel.onRemoteNotification = {
-            AgentNotificationRouter.shared.post($0)
+        services.remoteMacsModel.onRemoteNotification = { [remoteMacsModel = services.remoteMacsModel] event in
+            AgentNotificationRouter.shared.post(event, resolvingIdentity: {
+                let identity = await remoteMacsModel.notificationProjectIdentity(for: event)
+                return identity.flatMap { ProjectNotificationIdentity.image(project: $0.0, data: $0.1) }
+            })
         }
         AgentNotificationRouter.shared.onActivateRemote = {
             [remoteMacsModel = services.remoteMacsModel] event in
@@ -2164,7 +2196,7 @@ struct GrafttyApp: App {
                             },
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id))
                     ))
                 }
             }
@@ -4757,7 +4789,7 @@ struct GrafttyApp: App {
         stoppedAt: Date,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        postNotification: (AgentStopNotificationContent) -> Void = { AgentNotificationRouter.shared.post($0) }
+        postNotification: (@MainActor (AgentStopNotificationContent) -> Void)? = nil
     ) {
         let paneSlot = paneSessionName
             .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
@@ -4790,9 +4822,19 @@ struct GrafttyApp: App {
                 if let notification = AgentStopNotification.stoppedTurnContent(
                     runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(worktree.branch),
                     worktreePath: callerPath, sessionID: sessionID ?? callerAgentID ?? "",
-                    paneSessionName: paneSessionName, stop: stop, emoji: worktree.emoji
+                    paneSessionName: paneSessionName, stop: stop,
+                    emoji: worktree.effectiveEmoji(in: appState.wrappedValue.repos[ri])
                 ) {
-                    postNotification(notification)
+                    var notification = notification
+                    ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: appState.wrappedValue.repos[ri])
+                    if let postNotification { postNotification(notification) }
+                    else {
+                        AgentNotificationRouter.shared.post(notification, resolving: { notification in
+                            await ProjectNotificationIdentity.resolved(notification, currentRepo: {
+                                appState.wrappedValue.repo(forWorktreePath: callerPath)
+                            })
+                        })
+                    }
                 }
                 break
             }
@@ -4842,8 +4884,7 @@ struct GrafttyApp: App {
                     .setAgentStopAttentionIfAbsent(attention, pane: pane) else {
                     return
                 }
-                AgentNotificationRouter.shared.post(
-                    AgentStopNotification.content(
+                var notification = AgentStopNotification.content(
                         runtime: runtime,
                         worktreeName: worktreeName,
                         worktreePath: callerPath,
@@ -4852,7 +4893,12 @@ struct GrafttyApp: App {
                         reason: reason,
                         timestamp: timestamp
                     )
-                )
+                ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: appState.wrappedValue.repos[repoIndex])
+                AgentNotificationRouter.shared.post(notification, resolving: { notification in
+                    await ProjectNotificationIdentity.resolved(notification, currentRepo: {
+                        appState.wrappedValue.repo(forWorktreePath: callerPath)
+                    })
+                })
                 return
             }
         }

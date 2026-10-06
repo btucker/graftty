@@ -620,3 +620,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         BidiOverrides.stripping(branch)
     }
 }
+
+extension WorktreeEntry {
+    public func iconIdentity(in repo: RepoEntry) -> WorktreeIconIdentity {
+        .resolve(isMainCheckout: path == repo.path, emoji: emoji)
+    }
+
+    public func effectiveEmoji(in repo: RepoEntry) -> String? {
+        if case .emoji(let value) = iconIdentity(in: repo) { return value }
+        return nil
+    }
+}

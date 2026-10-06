@@ -268,6 +268,27 @@ public struct SidebarAttentionOccurrence: Codable, Sendable, Hashable {
     }
 }
 
+/// @spec LAYOUT-2.124: While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
+/// A home checkout inherits the current project icon; linked worktrees own their emoji.
+public enum WorktreeIconIdentity: Equatable, Sendable {
+    case project, emoji(String), none
+
+    public static func resolve(isMainCheckout: Bool, emoji: String?) -> Self {
+        if isMainCheckout { return .project }
+        return emoji.map(Self.emoji) ?? .none
+    }
+}
+
+extension WorktreePanes {
+    public var iconIdentity: WorktreeIconIdentity {
+        .resolve(isMainCheckout: isMainCheckout, emoji: sidebar?.emoji)
+    }
+    public var effectiveEmoji: String? {
+        if case .emoji(let value) = iconIdentity { return value }
+        return nil
+    }
+}
+
 public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var projectID: String
@@ -277,6 +298,7 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var worktreeName: String
     public var branchName: String?
     public var worktreeEmoji: String?
+    public var isMainCheckout: Bool?
     public var title: String
     public var occurrence: SidebarAttentionOccurrence?
     public var isBusy: Bool
@@ -285,11 +307,15 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var prBadge: PRBadge?
     public init(id: String, projectID: String, worktreeID: String, paneID: String?,
                 projectName: String, worktreeName: String, title: String,
-                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil, worktreeEmoji: String? = nil, branchName: String? = nil) {
+                occurrence: SidebarAttentionOccurrence?, isBusy: Bool, agentStop: SidebarAgentStop? = nil, prBadge: PRBadge? = nil, worktreeEmoji: String? = nil, branchName: String? = nil, isMainCheckout: Bool? = nil) {
         self.id = id; self.projectID = projectID; self.worktreeID = worktreeID; self.paneID = paneID
         self.projectName = projectName; self.worktreeName = worktreeName; self.title = title
         self.branchName = branchName
+        self.isMainCheckout = isMainCheckout
         self.occurrence = occurrence; self.isBusy = isBusy; self.agentStop = agentStop; self.prBadge = prBadge; self.worktreeEmoji = worktreeEmoji
+    }
+    public var iconIdentity: WorktreeIconIdentity {
+        .resolve(isMainCheckout: isMainCheckout == true, emoji: worktreeEmoji)
     }
     public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
 
@@ -405,7 +431,8 @@ public struct SidebarRecentHistory: Codable, Sendable, Equatable {
             updated.item.projectName = worktree.repoDisplayName
             updated.item.worktreeName = worktree.displayName
             updated.item.branchName = worktree.displayBranch
-            updated.item.worktreeEmoji = worktree.sidebar?.emoji
+            updated.item.worktreeEmoji = worktree.effectiveEmoji
+            updated.item.isMainCheckout = worktree.isMainCheckout ? true : nil
             updated.item.prBadge = worktree.prBadge
             return updated
         }
@@ -465,25 +492,26 @@ public enum SidebarProjection {
             if let stop = wt.sidebar?.unseenAgentStop {
                 items.append(.init(id: stable + ":stop", projectID: projectID, worktreeID: wt.path, paneID: nil,
                     projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: stop.title,
-                    occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.sidebar?.emoji))
+                    occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.effectiveEmoji))
             }
             if let text = wt.attentionText {
                 items.append(.init(id: stable, projectID: projectID, worktreeID: wt.path, paneID: nil,
                                    projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: text,
-                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.sidebar?.emoji))
+                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.effectiveEmoji))
             }
             for leaf in wt.layout?.leaves ?? [] where leaf.attentionText != nil || leaf.isBusy {
                 items.append(.init(id: "\(stable):\(wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName)", projectID: projectID, worktreeID: wt.path,
                                    paneID: leaf.sessionName, projectName: wt.repoDisplayName, worktreeName: wt.displayName,
                                    title: leaf.attentionText ?? leaf.displayTitle,
                                    occurrence: leaf.attentionText.map { .init(timestamp: wt.sidebar?.attentionTimestamps?[wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName].map(Date.init(timeIntervalSinceReferenceDate:)) ?? leaf.attentionTimestamp, text: $0, source: leaf.attentionSource) },
-                                   isBusy: leaf.isBusy, worktreeEmoji: wt.sidebar?.emoji))
+                                   isBusy: leaf.isBusy, worktreeEmoji: wt.effectiveEmoji))
                 if leaf.isBusy, let startedAt = wt.sidebar?.agentProgressTimes?.values.max() {
                     items[items.count - 1].runningSince = Date(timeIntervalSinceReferenceDate: startedAt)
                 }
             }
             return items.map { item in
                 var item = item
+                item.isMainCheckout = wt.isMainCheckout ? true : nil
                 item.prBadge = wt.prBadge
                 item.branchName = wt.displayBranch
                 return item

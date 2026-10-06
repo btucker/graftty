@@ -48,6 +48,62 @@ struct RemoteMacsModelTests {
         model.disconnect(identity: RemoteMacIdentity(remote))
     }
 
+    @Test func remoteNotificationResolvesCurrentProjectInitials() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let project = SidebarProject(id: "project", repositoryID: "/repo", name: "Project", initials: "NEW")
+        let driver = SidebarSnapshotSequenceDriver(next: .init(projects: [project]))
+        let paneStore = WorktreePanesStore(driver: driver)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .init(worktreePanesStore: paneStore, paneControlClient: nil))
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        await paneStore.applySnapshot([])
+        await paneStore.applySnapshot([])
+        let event = RemoteNotificationEvent(id: UUID(), kind: .agentStop,
+            origin: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0),
+            originFingerprint: RemoteMacIdentity(remote).fingerprint, worktreeID: "/repo", paneID: nil,
+            title: "Review", body: "Done", timestamp: Date(),
+            identityProject: SidebarProject(id: "project", repositoryID: "/repo", name: "Project", initials: "OLD"))
+        let identity = await model.notificationProjectIdentity(for: event)
+        #expect(identity?.0.displayInitials == "NEW")
+        #expect(identity?.1 == nil)
+        model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test func legacyHomeNotificationUsesPublishedProjectFallback() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+        func snapshot(attention: String?) -> [WorktreePanes] {
+            [WorktreePanes(path: "/repo", displayName: "root", repoDisplayName: "Repo",
+                displayBranch: "release", state: .closed, isMainCheckout: true, prBadge: nil,
+                stats: nil, attentionText: attention, attentionSource: .userNotify,
+                attentionTimestamp: attention == nil ? nil : Date(timeIntervalSince1970: 100), layout: nil)]
+        }
+        registry.onPaneSnapshot(identity, snapshot(attention: nil))
+        registry.onPaneSnapshot(identity, snapshot(attention: "Review"))
+        let event = try #require(events.first)
+        let rows = try #require(model.worktreePanesByRemote[identity])
+        let publishedProject = try #require(SidebarProjection.projects(rows).first)
+        #expect(event.identityProject?.id == publishedProject.id)
+        #expect(event.identityProject?.colorIndex == publishedProject.colorIndex)
+        #expect(event.identityProject?.displayInitials == publishedProject.displayInitials)
+    }
+
     private func tempStoreURL() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1402,7 +1458,7 @@ struct RemoteMacsModelTests {
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
         func snapshot(time: Double?, userNotification: Bool = false,
-                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false) -> [WorktreePanes] {
+                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false) -> [WorktreePanes] {
             let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
                                                   recap: recap, paneSlotID: "slot") }
             let prompt = PaneLayoutNode.leaf(sessionName: separatePane ? "other-pane" : "agent-pane", title: "Agent",
@@ -1413,7 +1469,7 @@ struct RemoteMacsModelTests {
                 left: .leaf(sessionName: "agent-pane", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
                 right: prompt) : prompt
             return [WorktreePanes(path: "/repo/sidebar", displayName: "sidebar", repoDisplayName: "Repo",
-                displayBranch: "sidebar", state: .running, isMainCheckout: false, prBadge: nil,
+                displayBranch: "sidebar", state: .running, isMainCheckout: home, prBadge: nil,
                 stats: nil, attentionText: worktreePrompt ? "Worktree requires permission" : nil,
                 attentionSource: .agentStop, attentionTimestamp: worktreePrompt ? promptTime.map(Date.init(timeIntervalSince1970:)) : nil,
                 layout: layout,
@@ -1446,6 +1502,15 @@ struct RemoteMacsModelTests {
         #expect(events.count == 7)
         #expect(events.last?.title == "Worktree requires permission")
         #expect(events.last?.paneID == nil)
+        registry.onPaneSnapshot(identity, snapshot(time: 500, home: true))
+        let homeEvent = try #require(events.last)
+        #expect(homeEvent.body.contains("📥") == false)
+        #expect(homeEvent.identityProject?.id == "project")
+        #expect(event.identityProject == nil)
+        let decoded = try JSONDecoder().decode(RemoteNotificationEvent.self, from: JSONEncoder().encode(homeEvent))
+        #expect(decoded.identityProject?.name == "Repo")
+        let fallback = await model.notificationProjectIdentity(for: decoded)
+        #expect(fallback?.0.id == "project")
     }
 
     @Test("""
