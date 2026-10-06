@@ -258,6 +258,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.115** While the sidebar displays Pinned Agents, the application shall place that section below search and above temporary worktrees, including remote projects.
 
+**LAYOUT-2.116** When the user clicks a visible worktree heading in the project column outside its embedded controls such as the PR/MR badge, the application shall select that worktree, including after another block changes height, after the column scrolls, and after the window resizes.
+
+**LAYOUT-2.117** When the user clicks the vertical padding inside a grouped worktree block's highlight, the application shall select that worktree.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

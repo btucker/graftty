@@ -66,8 +66,13 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
     /// Top-left origin, matching the SwiftUI geometry that supplies `blockRect`.
     override var isFlipped: Bool { true }
 
+    /// The event AppKit is dispatching. Tests point this at a synthesized
+    /// press for the duration of a root hit test, because `NSApp.currentEvent`
+    /// is only set by the application event loop.
+    var currentEvent: () -> NSEvent? = { NSApp.currentEvent }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        hitTest(point, event: NSApp.currentEvent)
+        hitTest(point, event: currentEvent())
     }
 
     func hitTest(_ point: NSPoint, event: NSEvent?) -> NSView? {
