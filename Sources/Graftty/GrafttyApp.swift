@@ -1715,34 +1715,6 @@ struct GrafttyApp: App {
         let autoDismissPRStatusStore = services.prStatusStore
         let autoDismissStatsStore = services.statsStore
         services.staleWorktreeAutoDismissTicker = staleWorktreeAutoDismissTicker
-        reconcileOnLaunch {
-            staleWorktreeAutoDismissTicker.start {
-                _ = await StaleWorktreeDismissal.dismissExpired(
-                    appState: binding,
-                    now: Date(),
-                    discoverWorktrees: { repo in
-                        if !repo.isGitTracked,
-                           !FileManager.default.fileExists(atPath: repo.path) {
-                            return []
-                        }
-                        return try await WorktreeDiscovery.discover(repo: repo)
-                    },
-                    destroySurfaces: {
-                        tm.destroySurfaces(terminalIDs: $0)
-                    },
-                    clearPRStatus: {
-                        autoDismissPRStatusStore.clear(worktreePath: $0)
-                    },
-                    clearStats: {
-                        autoDismissStatsStore.clear(worktreePath: $0)
-                    },
-                    onDismiss: {
-                        Self.persistAppState($0)
-                    }
-                )
-            }
-        }
-
         // Start the stats safety-net poller: HEAD and origin-ref events
         // provide the prompt path, while this 5s ticker catches
         // coalesced or missed filesystem events. Per-repo, it gates the
@@ -1759,7 +1731,7 @@ struct GrafttyApp: App {
         )
         services.statsStore.start(
             ticker: statsTicker,
-            getRepos: { [appState] in appState.repos }
+            getRepos: { binding.wrappedValue.repos }
         )
 
         // Local remote-ref scans seed PR polling's pushed-branch gate. Each
@@ -2013,18 +1985,50 @@ struct GrafttyApp: App {
         // those mappings exist, then retry unread rows from while the app was
         // down; otherwise a background owner can be skipped until the
         // 30-second presence ticker runs.
-        let restoredPresenceRecords = refreshPresenceIndex()
-        refreshDeliveryLiveness(records: restoredPresenceRecords)
-        Task {
-            await Self.retryNativeDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: restoredPresenceRecords,
-                deliveries: Self.nativeDeliveries(
-                    codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        func refreshAndRetryRestoredDelivery() {
+            let restoredPresenceRecords = refreshPresenceIndex()
+            refreshDeliveryLiveness(records: restoredPresenceRecords)
+            Task {
+                await Self.retryNativeDeliveryForPresenceWorktrees(
+                    inbox: services.teamInbox,
+                    records: restoredPresenceRecords,
+                    deliveries: Self.nativeDeliveries(
+                        codex: codexAppServerDeliveryService,
+                        claude: claudePeerDeliveryService,
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                    )
                 )
-            )
+            }
+        }
+        refreshAndRetryRestoredDelivery()
+
+        reconcileOnLaunch {
+            staleWorktreeAutoDismissTicker.start {
+                _ = await StaleWorktreeDismissal.dismissExpired(
+                    appState: binding,
+                    now: Date(),
+                    discoverWorktrees: { repo in
+                        if !repo.isGitTracked,
+                           !FileManager.default.fileExists(atPath: repo.path) {
+                            return []
+                        }
+                        return try await WorktreeDiscovery.discover(repo: repo)
+                    },
+                    destroySurfaces: {
+                        tm.destroySurfaces(terminalIDs: $0)
+                    },
+                    clearPRStatus: {
+                        autoDismissPRStatusStore.clear(worktreePath: $0)
+                    },
+                    clearStats: {
+                        autoDismissStatsStore.clear(worktreePath: $0)
+                    },
+                    onDismiss: {
+                        Self.persistAppState($0)
+                    }
+                )
+            }
+            refreshAndRetryRestoredDelivery()
         }
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
@@ -3595,6 +3599,7 @@ struct GrafttyApp: App {
         let prStatusStore = services.prStatusStore
         let remoteBranchStore = services.remoteBranchStore
         let worktreeMonitor = services.worktreeMonitor
+        let terminalManager = self.terminalManager
         Task { @MainActor in
             defer { onComplete() }
             // LAYOUT-4.6 / LAYOUT-4.9: resolve bookmarks and run any
@@ -3611,16 +3616,17 @@ struct GrafttyApp: App {
                 remoteBranchStore: remoteBranchStore
             )
 
-            for repoIdx in binding.wrappedValue.repos.indices {
-                let repoPath = binding.wrappedValue.repos[repoIdx].path
+            for repoPath in binding.wrappedValue.repos.map(\.path) {
+                guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { continue }
                 let discovered: [DiscoveredWorktree]
                 do {
-                    discovered = try await WorktreeDiscovery.discover(repo: binding.wrappedValue.repos[repoIdx])
+                    discovered = try await WorktreeDiscovery.discover(repo: repo)
                 } catch {
                     NSLog("[Graftty] reconcileOnLaunch: discover failed for %@: %@",
                           repoPath, String(describing: error))
                     continue
                 }
+                guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }) else { continue }
 
                 let result = WorktreeReconciler.reconcile(
                     existing: binding.wrappedValue.repos[repoIdx].worktrees,
@@ -3647,7 +3653,54 @@ struct GrafttyApp: App {
                     statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 }
             }
+            if let launcher = terminalManager.zmxLauncher {
+                let liveSessions = try? await OffMainIO.run { try launcher.listSessions() }
+                let recoveredPaths = Self.recoverRetainedWorktrees(appState: binding,
+                    terminalManager: terminalManager, liveSessions: liveSessions)
+                for path in recoveredPaths {
+                    guard let (repoIndex, worktreeIndex) = binding.wrappedValue.indices(forWorktreePath: path) else { continue }
+                    let repo = binding.wrappedValue.repos[repoIndex]
+                    statsStore.refresh(worktreePath: path, repoPath: repo.path, branch: repo.worktrees[worktreeIndex].branch)
+                }
+            }
         }
+    }
+
+    @MainActor
+    @discardableResult
+    internal static func recoverRetainedWorktrees(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        liveSessions: Set<String>?
+    ) -> [String] {
+        guard let liveSessions else { return [] }
+        var recoveredPaths: [String] = []
+        for repoIndex in appState.wrappedValue.repos.indices {
+            for worktreeIndex in appState.wrappedValue.repos[repoIndex].worktrees.indices {
+                let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                let leaves = worktree.splitTree.allLeaves
+                guard worktree.state == .closed,
+                      !leaves.isEmpty,
+                      leaves.allSatisfy({ pane in
+                          worktree.paneSessions[pane].map {
+                              liveSessions.contains(ZmxLauncher.sessionName(for: $0))
+                          } == true
+                      }) else { continue }
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].state = .running
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].focusedPaneSlotID = worktree.firstPane
+                Self.prepareRunningWorktreeForRestore(
+                    &appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex],
+                    terminalManager: terminalManager
+                )
+                recoveredPaths.append(worktree.path)
+                guard appState.wrappedValue.selectedWorktreePath == worktree.path else { continue }
+                terminalManager.createSurfaces(for: worktree.splitTree,
+                    paneSessions: worktree.paneSessions, worktreePath: worktree.path,
+                    confirmedLiveSessions: liveSessions)
+                if let pane = worktree.firstPane { terminalManager.setFocus(pane) }
+            }
+        }
+        return recoveredPaths
     }
 
     @MainActor
@@ -5269,6 +5322,13 @@ struct GrafttyApp: App {
                     .worktrees[wtIdx].splitTree
                 let leaves = splitTree.allLeaves
                 for leafID in leaves {
+                    // Stop clears mappings. A retained mapping belongs to a
+                    // previous launch and must not replay its default command.
+                    // createSurfaces clears this marker if zmx confirms it gone.
+                    if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .paneSessions[leafID] != nil {
+                        terminalManager.markRehydrated(leafID)
+                    }
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .ensurePaneSession(for: leafID)
                 }

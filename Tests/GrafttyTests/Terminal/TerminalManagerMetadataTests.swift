@@ -276,6 +276,29 @@ struct TerminalManagerMetadataTests {
         #expect(backend.writes.count == 1)
     }
 
+    @Test("Failed creation discards pending launch input and rehydration suppresses unconsumed cached loaders")
+    func abandonedLaunchIsNotReplayed() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "graftty-abandoned-\(UUID().uuidString)"))
+        defaults.set("", forKey: "defaultCommand")
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/zmx-test"))
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        let pending = try #require(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", initialCommand: "printf abandoned", defaults: defaults))
+        #expect(pending.runsInitialCommand)
+        manager.markRehydrated(pane)
+        #expect(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", defaults: defaults)?.runsInitialCommand == false)
+        manager.queueInitialInputUntilShellReadyForTesting("printf abandoned\r", for: pane)
+        manager.discardInitialInput(for: pane)
+        #expect(!(await manager.waitForExplicitInitialInputDelivery(for: pane)))
+        manager.clearRehydrated(pane)
+        #expect(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", defaults: defaults)?.runsInitialCommand == false)
+    }
+
     @Test("Initial input only waits when the configured shell can emit readiness")
     func initialInputReadinessGateMatchesSpawnConfiguration() {
         let unsupported = testSurfaceHandleSpawnConfiguration()

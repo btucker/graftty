@@ -2990,6 +2990,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.25** When graftty worktree remove targets a pinned linked worktree, the application shall require --pinned independently of --force, validate pin state in the running app before removal, reject the main checkout, and verify pinned-removal protocol support before sending a removal request.
 
+**AGENT-5.26** When a terminal reattaches to a confirmed existing zmx daemon, the application shall acknowledge retained attachment without requiring a new shell-startup receipt or replaying the initial command. If an existing daemon has a pending launch command without an acceptance receipt, then the application shall allow up to five seconds for a shared launch receipt, then report an actionable conflict and preserve the daemon if acceptance remains unconfirmed.
+
+**AGENT-5.27** If a terminal startup waiter is cancelled or backend acceptance times out, then the application shall return failed readiness within the startup bound without terminating the daemon or replaying the launch command.
+
+**AGENT-5.28** When launch reconciliation confirms a live zmx daemon for every leaf of a closed worktree's nonempty retained layout, the application shall restore that worktree to running with its layout and session identities intact, and suppress replay of its agent or default command. If the daemon query fails, any mapping or daemon is absent, or the worktree is stale or in flight, then the application shall preserve its state.
+
+**AGENT-5.29** When worktree rows or repositories move while terminal startup is pending, the application shall finalize only the requested worktree, preserve sibling states and pane mappings, and normalize focus on successful creation.
+
 ### AGENT-6.x
 
 **AGENT-6.1** When Graftty sends a prototype message to a Claude peer socket, the application shall write one newline-delimited protocol-v1 user envelope with a UUID message ID, next-turn priority, a native cross-session message frame, and any supplied local reply socket as the sender address.

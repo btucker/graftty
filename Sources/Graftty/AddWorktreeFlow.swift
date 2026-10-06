@@ -309,20 +309,21 @@ enum AddWorktreeFlow {
                 extraInitialInput: initialCommand.map { $0 + "\r" }
             )
             guard let firstHandle = createdSurfaces[firstLeaf] ?? terminalManager.handle(for: firstLeaf) else {
+                detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                 return .failure(.discoveryFailed("failed to create terminal surface"))
             }
             // CLI creation must start even if no Mac view ever mounts.
             if terminalStartTiming == .immediately,
                !firstHandle.startForBackgroundLaunch() {
-                terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+                detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                 return .failure(.discoveryFailed("failed to start terminal backend"))
             }
             if terminalStartTiming == .immediately {
                 let started = await firstHandle.waitForBackendStartup()
                 guard started else {
-                    terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+                    detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
                     if let (currentRepo, currentWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath),
                        appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state != .stale {
                         appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state = .closed
@@ -335,7 +336,7 @@ enum AddWorktreeFlow {
                     for: firstLeaf
                 )
                 guard accepted else {
-                    terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+                    detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
                     if let (currentRepo, currentWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath),
                        appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state != .stale {
                         appState.wrappedValue.repos[currentRepo].worktrees[currentWorktree].state = .closed
@@ -349,11 +350,11 @@ enum AddWorktreeFlow {
         // Readiness may suspend while another worktree is removed or the
         // reconciler reorders rows. Resolve ownership again before mutation.
         guard let (completedRepo, completedWorktree) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
-            terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+            detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
             return .failure(.discoveryFailed("worktree vanished while starting terminal"))
         }
         guard appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree].state != .stale else {
-            terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+            detachStartupSurfaces(in: splitTree, terminalManager: terminalManager)
             return .failure(.discoveryFailed("worktree became stale while starting terminal"))
         }
         // An accepted command can exit while startup is suspended. Preserve
@@ -361,6 +362,9 @@ enum AddWorktreeFlow {
         let paneStillExists = appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree]
             .splitTree.containsLeaf(firstLeaf)
         if paneStillExists {
+            appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree].focusedPaneSlotID =
+                appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree]
+                .normalizeFocusedPane()
             appState.wrappedValue.repos[completedRepo].worktrees[completedWorktree].state = .running
         }
         if paneStillExists, terminalStartTiming != .onClientAttach {
@@ -371,6 +375,15 @@ enum AddWorktreeFlow {
         }
         let sessionName = ZmxLauncher.sessionName(for: firstSessionID)
         return .success(Result(sessionName: sessionName, worktreePath: worktreePath))
+    }
+
+    /// Startup failure must not kill a shell that another attachment owns.
+    /// Retain the pane mappings for a supported reopen or launch recovery.
+    private static func detachStartupSurfaces(in splitTree: SplitTree, terminalManager: TerminalManager) {
+        for pane in splitTree.allLeaves {
+            terminalManager.discardInitialInput(for: pane)
+            terminalManager.evictSurface(terminalID: pane, forRetry: true)
+        }
     }
 
     /// Blocking convenience: run both phases inline. Used by the web
