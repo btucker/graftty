@@ -87,7 +87,7 @@ struct RemoteMacsSidebarTests {
                 onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
             Divider()
             ProjectWorktreeColumn {
-                RemoteMacsSection(model: model, worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
+                RemoteMacsSection(model: model, expansion: .constant(RemoteSidebarExpansion()), worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
                     selectedRemoteIdentity: RemoteMacIdentity(remote), selectedRemoteWorktreePath: row.path,
                     theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
                     showsMacHierarchy: false, showsRepositoryHeaders: false)

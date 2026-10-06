@@ -253,11 +253,21 @@ enum RemoteMacSidebarSelectionReducer {
     }
 }
 
+struct RemoteSidebarExpansion {
+    struct RepositoryKey: Hashable {
+        let identity: RemoteMacIdentity
+        let id: String
+    }
+    var collapsedMacs: Set<RemoteMacIdentity> = []
+    var collapsedRepositories: Set<RepositoryKey> = []
+}
+
 /// @spec REMOTE-13.8: While a Remote Mac is connected and the project column is disabled, the sidebar shall
 /// render Mac → repository → worktree → pane hierarchy using the same
 /// WorktreeRow and PaneTitleRow presentation components as local worktrees.
 struct RemoteMacsSection: View {
     @ObservedObject var model: RemoteMacsModel
+    @Binding var expansion: RemoteSidebarExpansion
     var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
     let selectedRemoteIdentity: RemoteMacIdentity?
     var selectedRemoteWorktreePath: String?
@@ -273,13 +283,6 @@ struct RemoteMacsSection: View {
         _, _ in
     }
     let onAddRemoteMac: () -> Void
-    @State private var collapsedRemoteMacs: Set<RemoteMacIdentity> = []
-    @State private var collapsedRepositories: Set<RemoteRepositoryKey> = []
-
-    private struct RemoteRepositoryKey: Hashable {
-        let identity: RemoteMacIdentity
-        let id: String
-    }
 
     private var projection: RemoteMacsSidebarProjection {
         RemoteMacsSidebarProjection.make(
@@ -300,34 +303,48 @@ struct RemoteMacsSection: View {
     var editableProjectIDs: Set<String> = []
     var projects: [SidebarProject] = []
     var projectIcons: [String: Data] = [:]
-    var beforeTasks: AnyView = AnyView(EmptyView())
+    var section: SidebarWorktreeSection = .all
 
     @ViewBuilder
     var body: some View {
-        if showsMacHierarchy {
-            Section {
+        if section != .pinned || !displayedRemoteMacs.isEmpty {
+            if showsMacHierarchy {
+                Section {
+                    remoteContents
+                } header: {
+                    Text(projection.title).font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
                 remoteContents
-            } header: {
-                Text(projection.title).font(.caption).foregroundStyle(.secondary)
             }
-        } else {
-            remoteContents
+        }
+    }
+
+    private func includes(_ worktree: WorktreePanes) -> Bool {
+        (projectFilter == nil || SidebarProjection.projectID(worktree) == projectFilter)
+            && SidebarInteractionPolicy.matches(worktree, query: query)
+    }
+
+    private func includesRepository(_ worktrees: [WorktreePanes]) -> Bool {
+        let matching = worktrees.filter(includes)
+        return !matching.isEmpty && (section != .pinned || SidebarWorktreeSections(matching).hasPinMetadata)
+    }
+
+    private var displayedRemoteMacs: [RemoteMac] {
+        model.savedRemoteMacs.filter { mac in
+            if section != .pinned && projectFilter == nil && query.isEmpty { return true }
+            return groupedRepositories(for: RemoteMacIdentity(mac)).contains { includesRepository($0.worktrees) }
         }
     }
 
     @ViewBuilder
     private var remoteContents: some View {
-        ForEach(model.savedRemoteMacs.filter { mac in
-            (projectFilter == nil && query.isEmpty) || (worktreePanesByRemote[RemoteMacIdentity(mac)] ?? []).contains {
-                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                    && SidebarInteractionPolicy.matches($0, query: query)
-            }
-        }) { remoteMac in
+        ForEach(displayedRemoteMacs) { remoteMac in
             if showsMacHierarchy { remoteMacGroup(remoteMac) }
             else { repositories(for: remoteMac) }
         }
 
-        if showsMacHierarchy {
+        if showsMacHierarchy && section != .pinned {
             Button(action: onAddRemoteMac) {
                 Label("Add Remote Mac...", systemImage: "plus")
                     .foregroundColor(theme.sidebarPrimaryText(isActive: false))
@@ -342,12 +359,12 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         DisclosureGroup(
             isExpanded: Binding(
-                get: { !collapsedRemoteMacs.contains(identity) },
+                get: { !expansion.collapsedMacs.contains(identity) },
                 set: { expanded in
                     if expanded {
-                        collapsedRemoteMacs.remove(identity)
+                        expansion.collapsedMacs.remove(identity)
                     } else {
-                        collapsedRemoteMacs.insert(identity)
+                        expansion.collapsedMacs.insert(identity)
                     }
                 }
             )
@@ -384,10 +401,7 @@ struct RemoteMacsSection: View {
 
     private func repositories(for remoteMac: RemoteMac) -> some View {
         ForEach(groupedRepositories(for: RemoteMacIdentity(remoteMac)).filter { repository in
-            repository.worktrees.contains {
-                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                    && SidebarInteractionPolicy.matches($0, query: query)
-            }
+            includesRepository(repository.worktrees)
         }, id: \.id) { repository in
             repositoryGroup(
                 repository,
@@ -404,16 +418,13 @@ struct RemoteMacsSection: View {
         remoteMac: RemoteMac
     ) -> some View {
         let identity = RemoteMacIdentity(remoteMac)
-        let key = RemoteRepositoryKey(
+        let key = RemoteSidebarExpansion.RepositoryKey(
             identity: identity,
             id: repositoryGroup.id
         )
         let rows = Group {
-            SidebarWorktreeRows(worktrees: worktrees.filter {
-                (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
-                    && SidebarInteractionPolicy.matches($0, query: query)
-            }, rowInsets: showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil,
-               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty, beforeTasks: beforeTasks) { worktree in
+            SidebarWorktreeRows(worktrees: worktrees.filter(includes), rowInsets: showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil,
+               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty, section: section) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
                         showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil
@@ -423,10 +434,10 @@ struct RemoteMacsSection: View {
         }
         if showsRepositoryHeaders {
             DisclosureGroup(isExpanded: Binding(
-                get: { !collapsedRepositories.contains(key) },
+                get: { !expansion.collapsedRepositories.contains(key) },
                 set: { expanded in
-                    if expanded { collapsedRepositories.remove(key) }
-                    else { collapsedRepositories.insert(key) }
+                    if expanded { expansion.collapsedRepositories.remove(key) }
+                    else { expansion.collapsedRepositories.insert(key) }
                 }
             )) {
                 rows

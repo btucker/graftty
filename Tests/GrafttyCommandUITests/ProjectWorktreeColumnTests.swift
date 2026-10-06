@@ -40,36 +40,6 @@ struct ProjectWorktreeColumnTests {
         #expect(blank.frame.height > 100)
     }
 
-    @Test("@spec LAYOUT-2.89: While the project worktree list scrolls, the application shall scroll Sort order and Add Worktree with the list between Pinned Agents and temporary worktrees for the selected editable project.")
-    func controlsScrollWithWorktrees() async throws {
-        let hosting = NSHostingView(rootView: ProjectWorktreeColumn {
-            SidebarWorktreeRows(worktrees: [], beforeTasks: AnyView(PinnedHeaderMarker().frame(height: 44))) { _ in
-                EmptyView()
-            }
-            ForEach(0..<50) { index in Text("Worktree \(index)").frame(height: 44) }
-        })
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: 200),
-                              styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = hosting
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        try await Task.sleep(for: .milliseconds(100))
-        hosting.layoutSubtreeIfNeeded()
-        let marker = try #require(findMarker(in: hosting))
-        var ancestor = marker.superview
-        var scrollView: NSScrollView?
-        while let view = ancestor {
-            if let scroll = view as? NSScrollView { scrollView = scroll; break }
-            ancestor = view.superview
-        }
-        let scroll = try #require(scrollView)
-        #expect(marker.bounds.height == 44)
-        let originalY = marker.convert(marker.bounds, to: hosting).midY
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
-        scroll.reflectScrolledClipView(scroll.contentView)
-        #expect(marker.convert(marker.bounds, to: hosting).midY != originalY)
-    }
-
     @Test("@spec LAYOUT-2.115: While the sidebar displays Pinned Agents, the application shall place that section below search and above temporary worktrees, including remote projects.", arguments: [false, true])
     func pinnedRowsPrecedeTemporaryRows(collapsed: Bool) async throws {
         let projectID = UUID().uuidString
@@ -118,11 +88,6 @@ struct ProjectWorktreeColumnTests {
     private func findMarkers(in view: NSView) -> [PinnedHeaderMarkerView] {
         if let marker = view as? PinnedHeaderMarkerView { return [marker] }
         return view.subviews.flatMap(findMarkers)
-    }
-
-    private func findMarker(in view: NSView) -> PinnedHeaderMarkerView? {
-        if let marker = view as? PinnedHeaderMarkerView { return marker }
-        return view.subviews.lazy.compactMap(findMarker).first
     }
 
     private func findEmptySpace(in view: NSView) -> ProjectWorktreeEmptySpaceView? {

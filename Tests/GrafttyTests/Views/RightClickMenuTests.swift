@@ -50,7 +50,7 @@ struct RightClickMenuTests {
         #expect(calls == 1)
     }
 
-    @Test("@spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost menu under the pointer.")
+    @Test("@spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost visible menu under the pointer, excluding hosts clipped out by a scroll viewport.")
     @MainActor func innermostNestedMenuWins() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
         let content = NSView(frame: root.bounds)

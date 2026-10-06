@@ -59,7 +59,7 @@ private struct RightClickMenuOverlay: NSViewRepresentable {
     }
 }
 
-/// @spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost menu under the pointer.
+/// @spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost visible menu under the pointer, excluding hosts clipped out by a scroll viewport.
 ///
 /// Overlays applied further out in the SwiftUI tree sit above inner
 /// ones in AppKit z-order, so without this check an outer row menu
@@ -82,7 +82,8 @@ final class RightClickMenuHostView: NSView {
             if let host = view as? RightClickMenuHostView {
                 let frame = host.convert(host.bounds, to: nil)
                 let area = frame.width * frame.height
-                if frame.contains(windowPoint), best.map({ area < $0.area }) ?? true { best = (host, area) }
+                if host.visibleRect.contains(host.convert(windowPoint, from: nil)),
+                   frame.contains(windowPoint), best.map({ area < $0.area }) ?? true { best = (host, area) }
             }
             view.subviews.forEach(visit)
         }
