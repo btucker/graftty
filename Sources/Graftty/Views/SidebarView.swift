@@ -305,7 +305,7 @@ struct SidebarView: View {
                         } controls: {
                             if navigation.query.isEmpty {
                                 VStack(spacing: 0) {
-                                    Divider()
+                                    SidebarWorktreeDivider().frame(height: 1).allowsHitTesting(false)
                                     selectedProjectAddWorktreeHeader
                                         .padding(.horizontal, showsProjectRail ? 6 : 10)
                                 }

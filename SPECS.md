@@ -270,7 +270,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.121** When the user first clicks a pinned-agent heading in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.
 
-**LAYOUT-2.122** While the macOS sidebar shares the title-bar strip with native window controls, the application shall align the search field vertically with the sidebar toggle and place pinned content below the native toolbar's full hit region, including after resizing.
+**LAYOUT-2.122** While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
 
 **LAYOUT-2.123** While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
 

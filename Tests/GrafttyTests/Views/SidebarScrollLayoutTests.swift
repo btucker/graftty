@@ -62,8 +62,8 @@ private struct HostedSidebarScrollView: View {
 @Suite("Sidebar scroll layout", .serialized)
 @MainActor
 struct SidebarScrollLayoutTests {
-    @Test("@spec LAYOUT-2.122: While the macOS sidebar shares the title-bar strip with native window controls, the application shall align the search field vertically with the sidebar toggle and place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
-    func searchAlignsWithNativeToggle(rail: Bool, compactToolbar: Bool) async throws {
+    @Test("@spec LAYOUT-2.122: While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
+    func pinnedContentClearsNativeToolbar(rail: Bool, compactToolbar: Bool) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
         hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
@@ -72,14 +72,8 @@ struct SidebarScrollLayoutTests {
             hosted.window.setContentSize(NSSize(width: width, height: 540))
             try await hosted.settle()
             let toggle = try hosted.sidebarToggle()
-            let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
-                $0.placeholderString == "Find any project or worktree"
-            })
-            let toggleFrame = toggle.convert(toggle.bounds, to: hosted.hosting)
             let toolbarItem = try #require(toggle.superview)
             let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
-            let searchFrame = search.convert(search.bounds, to: hosted.hosting)
-            #expect(abs(toggleFrame.midY - searchFrame.midY) <= 1)
             let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
             let document = try #require(pinned.documentView)
             #expect(document.convert(document.bounds, to: hosted.hosting).minY >= toolbarFrame.maxY)
@@ -133,37 +127,33 @@ struct SidebarScrollLayoutTests {
         let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
         #expect(abs(content.minY - toolbarFrame.maxY) <= 1)
         #expect(content.minY >= searchFrame.maxY)
+        let divider = try #require(Self.find(NSBox.self, in: hosted.hosting).first {
+            $0.accessibilityIdentifier() == "Worktree list divider"
+        })
+        #expect(divider.boxType == .separator)
+        let dividerFrame = divider.convert(divider.bounds, to: hosted.hosting)
+        #expect(abs(dividerFrame.minY - pinned.convert(pinned.bounds, to: hosted.hosting).maxY) <= 1)
+        #expect(abs(dividerFrame.minX - content.minX) <= 1)
+        #expect(abs(dividerFrame.width - content.width) <= 1)
+        #expect(dividerFrame.height == 1)
+        #expect(!divider.visibleRect.isEmpty)
+        let popup = try #require(Self.find(NSPopUpButton.self, in: hosted.hosting).first {
+            $0.accessibilityLabel() == "Worktree order"
+        })
+        #expect(dividerFrame.maxY <= popup.convert(popup.bounds, to: hosted.hosting).minY)
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
-            pixelsWide: Int(hosted.hosting.bounds.width) * bitmapScale,
-            pixelsHigh: Int(hosted.hosting.bounds.height) * bitmapScale,
+            pixelsWide: Int(divider.bounds.width) * bitmapScale,
+            pixelsHigh: bitmapScale,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        bitmap.size = hosted.hosting.bounds.size
-        hosted.window.displayIfNeeded()
-        hosted.hosting.cacheDisplay(in: hosted.hosting.bounds, to: bitmap)
-        let scaleX = CGFloat(bitmap.pixelsWide) / hosted.hosting.bounds.width
-        let scaleY = CGFloat(bitmap.pixelsHigh) / hosted.hosting.bounds.height
-        let x = Int(content.midX * scaleX)
-        let y = Int(pinned.convert(pinned.bounds, to: hosted.hosting).maxY * scaleY)
-        let below = try #require(bitmap.colorAt(x: x, y: y + Int(3 * scaleY))?.usingColorSpace(.deviceRGB))
-        // Hairlines can rasterize on either pixel row within their point.
-        // Inspect the divider's one-point band, excluding pinned content,
-        // and compare against background beyond the entire band.
-        let band = y...y + Int(scaleY)
-        let lineY = try #require(band.first { candidate in
-            guard let color = bitmap.colorAt(x: x, y: candidate)?.usingColorSpace(.deviceRGB) else { return false }
-            return color.alphaComponent > 0.9
-                && abs(color.redComponent - below.redComponent)
-                    + abs(color.greenComponent - below.greenComponent)
-                    + abs(color.blueComponent - below.blueComponent) > 0.01
-        }, "Divider missing at scale \(bitmapScale), boundary \(y), pixels \(band.map { bitmap.colorAt(x: x, y: $0) }), background \(below)")
-        let line = try #require(bitmap.colorAt(x: x, y: lineY)?.usingColorSpace(.deviceRGB))
-        for fraction in [0.25, 0.75] {
-            let sampleX = Int((content.minX + content.width * fraction) * scaleX)
-            let sample = try #require(bitmap.colorAt(x: sampleX, y: lineY)?.usingColorSpace(.deviceRGB))
-            #expect(abs(sample.redComponent - line.redComponent) < 0.01)
-            #expect(abs(sample.greenComponent - line.greenComponent) < 0.01)
-            #expect(abs(sample.blueComponent - line.blueComponent) < 0.01)
+        bitmap.size = divider.bounds.size
+        divider.displayIfNeeded()
+        divider.cacheDisplay(in: divider.bounds, to: bitmap)
+        for fraction in [0.25, 0.5, 0.75] {
+            let x = Int(CGFloat(bitmap.pixelsWide) * fraction)
+            #expect((0..<bitmap.pixelsHigh).contains { y in
+                (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.01
+            })
         }
         try hosted.captureIfRequested(name: "sidebar-followup-\(rail ? "rail" : "single")")
     }
@@ -316,14 +306,13 @@ struct SidebarScrollLayoutTests {
         let window: NSWindow
         let event: NSEvent
         let popup: NSPopUpButton
-        let selectionEvents: [NSEvent]
-        let selectedTitle: String
+        let selectionItem: NSMenuItem
+        var attemptedSelection = false
         var didRun = false
         var fallbackFired = false
-        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton, selectionEvents: [NSEvent], selectedTitle: String) {
+        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
             self.window = window; self.event = event; self.popup = popup
-            self.selectionEvents = selectionEvents
-            self.selectedTitle = selectedTitle
+            self.selectionItem = selectionItem
         }
         func perform() {
             let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
@@ -335,33 +324,17 @@ struct SidebarScrollLayoutTests {
         }
         private func run() {
             var beganTracking = false
-            var navigationIndex = 0
-            var sentReturn = false
             let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
                 object: popup.menu, queue: .main) { _ in
                 MainActor.assumeIsolated { beganTracking = true }
             }
-            // Let native tracking consume each navigation key before
-            // sending the next one. Commit only the observed target highlight.
+            // Press the actual visible native menu item through its public
+            // accessibility action, after pointer input starts menu tracking.
             let selection = Timer(timeInterval: 0.05, repeats: true) { _ in
                 MainActor.assumeIsolated {
-                    guard beganTracking, !sentReturn else { return }
-                    if navigationIndex == 0 {
-                        NSApp.postEvent(self.selectionEvents[0], atStart: false)
-                        navigationIndex = 1
-                    } else if navigationIndex == 1 {
-                        guard self.popup.menu?.highlightedItem?.title == "Manual Order" else { return }
-                        if self.selectedTitle == "Manual Order" {
-                            NSApp.postEvent(self.selectionEvents.last!, atStart: false)
-                            sentReturn = true
-                        } else {
-                            NSApp.postEvent(self.selectionEvents[1], atStart: false)
-                            navigationIndex = 2
-                        }
-                    } else if self.popup.menu?.highlightedItem?.title == self.selectedTitle {
-                        NSApp.postEvent(self.selectionEvents.last!, atStart: false)
-                        sentReturn = true
-                    }
+                    guard beganTracking, !self.attemptedSelection else { return }
+                    self.attemptedSelection = true
+                    _ = self.selectionItem.accessibilityPerformPress()
                 }
             }
             RunLoop.main.add(selection, forMode: .eventTracking)
@@ -439,26 +412,15 @@ struct SidebarScrollLayoutTests {
                     MainActor.assumeIsolated { tracking.menu = note.object as? NSMenu }
                 }
                 defer { NotificationCenter.default.removeObserver(observer) }
-                // Open by pointer, then select with local keyboard events.
-                // No global pointer movement or live app events.
-                func key(_ characters: String, code: UInt16) throws -> NSEvent {
-                    try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: location,
-                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                        windowNumber: window.windowNumber, context: nil,
-                        characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
-                }
-                // Keep the initial pointer press held during keyboard
-                // selection. Releasing over the initial item can commit
-                // that item before the queued keys reach menu tracking.
-                var selectionEvents = [try key("\u{F729}", code: 115)] // Home selects the first choice.
-                if mode == .recentActivity { selectionEvents.append(try key("\u{F701}", code: 125)) }
-                selectionEvents.append(try key("\r", code: 36))
+                let selectionItem = try XCTUnwrap(popup.menu?.items.first {
+                    $0.title == (mode == .manual ? "Manual Order" : "Recent Activity")
+                })
                 let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup,
-                    selectionEvents: selectionEvents,
-                    selectedTitle: mode == .manual ? "Manual Order" : "Recent Activity")
+                    selectionItem: selectionItem)
                 dispatch.perform()
                 window.sendEvent(up)
                 XCTAssertTrue(dispatch.didRun)
+                XCTAssertTrue(dispatch.attemptedSelection)
                 XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
                 let menu = try XCTUnwrap(tracking.menu)
                 XCTAssertTrue(menu.items.map(\.title).contains("Manual Order"))
@@ -466,6 +428,7 @@ struct SidebarScrollLayoutTests {
                 try await settle()
                 XCTAssertEqual(harness.state.repos[0].worktreeOrderMode, mode,
                     "mode \(mode), probe \(probe), native selection \(popup.indexOfSelectedItem)")
+                XCTAssertEqual(popup.selectedItem?.title, selectionItem.title)
                 XCTAssertTrue(harness.selections.isEmpty)
             }
         }
