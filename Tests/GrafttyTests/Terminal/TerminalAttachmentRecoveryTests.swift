@@ -53,6 +53,210 @@ struct TerminalAttachmentRecoveryTests {
         #expect(await session.waitForStartup())
     }
 
+    @Test("@spec AGENT-5.26: When a terminal reattaches to a confirmed existing zmx daemon, the application shall acknowledge retained attachment without requiring a new shell-startup receipt or replaying the initial command. If an existing daemon has a pending launch command without an acceptance receipt, then the application shall allow up to five seconds for a shared launch receipt, then report an actionable conflict and preserve the daemon if acceptance remains unconfirmed.", arguments: [false, true], [false, true])
+    func existingDaemonDoesNotWaitForNewReceipt(newCommand: Bool, receiptArrives: Bool) async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let id = PaneSlotID()
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let executable = try makeFakeZmx(attachCommand: "/bin/sleep 5")
+        let root = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "#!/bin/sh\nif [ \"$1\" = list ]; then echo retained; exit 0; fi\n: > attached\n[ -z \"${GRAFTTY_INITIAL_COMMAND-}\" ] || : > replayed\n/bin/sleep 5\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try Data().write(to: root.appendingPathComponent("retained"))
+        let receipt = root.appendingPathComponent("new-receipt")
+        let config = ZmxSpawnConfiguration(sessionName: "retained", argv: [executable.path, "attach", "retained"],
+            env: ["ZMX_DIR": root.path, "GRAFTTY_STARTUP_RECEIPT": receipt.path].merging(newCommand ? ["GRAFTTY_INITIAL_COMMAND": "exit 99"] : [:]) { _, value in value },
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil,
+            startupTimeout: .milliseconds(500))
+        defer { session.close() }
+        try session.start()
+        // Bound RED verification even though the broken implementation waits 300s.
+        let cleanup = Task { @MainActor in
+            try await Task.sleep(for: .seconds(2))
+            session.close()
+        }
+        defer { cleanup.cancel() }
+        var failure: String?
+        session.bindAttachmentFailure { failure = $0 }
+        let receiptWriter = Task { @MainActor in
+            if receiptArrives {
+                try await Task.sleep(for: .milliseconds(50))
+                try Data().write(to: receipt)
+            }
+        }
+        defer { receiptWriter.cancel() }
+        #expect(await session.waitForStartup() == (!newCommand || receiptArrives))
+        if !receiptArrives { #expect(!FileManager.default.fileExists(atPath: receipt.path)) }
+        if newCommand && !receiptArrives {
+            #expect(failure?.contains("Reconnect") == true)
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("attached").path))
+            return
+        }
+        let attached = root.appendingPathComponent("attached").path
+        let deadline = ContinuousClock.now + .milliseconds(100)
+        while !FileManager.default.fileExists(atPath: attached), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(FileManager.default.fileExists(atPath: attached))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("replayed").path))
+    }
+
+    @Test("@spec AGENT-5.27: If a terminal startup waiter is cancelled or backend acceptance times out, then the application shall return failed readiness within the startup bound without terminating the daemon or replaying the launch command.")
+    func cancelledStartupWaiterReturnsPromptly() async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let id = PaneSlotID()
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let executable = try makeFakeZmx(attachCommand: ": > attached; /bin/sleep 5")
+        let root = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let config = ZmxSpawnConfiguration(sessionName: "pending", argv: [executable.path, "attach"],
+            env: ["ZMX_DIR": root.path, "GRAFTTY_STARTUP_RECEIPT": root.appendingPathComponent("missing").path],
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil)
+        defer { session.close() }
+        try session.start()
+        let attached = root.appendingPathComponent("attached").path
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !FileManager.default.fileExists(atPath: attached), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(FileManager.default.fileExists(atPath: attached))
+        let waiter = Task { await session.waitForStartup() }
+        await Task.yield()
+        let cancelledAt = ContinuousClock.now
+        waiter.cancel()
+        let cleanup = Task { @MainActor in
+            try await Task.sleep(for: .seconds(2))
+            session.close()
+        }
+        defer { cleanup.cancel() }
+        #expect(!(await waiter.value))
+        #expect(ContinuousClock.now - cancelledAt < .seconds(1))
+        try Data().write(to: root.appendingPathComponent("missing"))
+        #expect(await session.waitForStartup(), "Cancelling one waiter must not cancel startup for other callers")
+    }
+
+    @Test("Startup timeout remains observable and reports an actionable attachment failure")
+    func startupTimeoutIsBounded() async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let id = PaneSlotID()
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let executable = try makeFakeZmx(attachCommand: "/bin/sleep 5")
+        let root = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let config = ZmxSpawnConfiguration(sessionName: "pending", argv: [executable.path, "attach"],
+            env: ["ZMX_DIR": root.path, "GRAFTTY_STARTUP_RECEIPT": root.appendingPathComponent("missing").path],
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil,
+            startupTimeout: .milliseconds(50))
+        defer { session.close() }
+        var failure: String?
+        session.bindAttachmentFailure { failure = $0 }
+        try session.start()
+        let started = ContinuousClock.now
+        #expect(!(await session.waitForStartup()))
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(failure?.contains("Reconnect") == true)
+        #expect(!(await session.waitForStartup()), "Timeout remains visible to a late waiter")
+    }
+
+    @Test("Reattaching a real daemon preserves the shell and never repeats its startup command",
+          .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TEST_ZMX"] != nil))
+    func realDaemonReattachmentPreservesStartup() async throws {
+        let executable = try #require(ProcessInfo.processInfo.environment["GRAFTTY_TEST_ZMX"])
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("reattach-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hooks = root.appendingPathComponent("hooks")
+        _ = try AgentHookInstaller(rootDirectory: hooks, grafttyCLIPath: "/usr/bin/false").install()
+        let marker = root.appendingPathComponent("started")
+        let receipt = root.appendingPathComponent("accepted")
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: executable), zmxDir: root)
+        let spawn = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: PaneSessionID(),
+            worktreePath: root.path, socketPath: "/tmp/unused.sock",
+            processEnv: ["SHELL": "/bin/zsh", "PATH": "/usr/bin:/bin", "HOME": root.path],
+            bundleURL: root, ghosttyResourcesDir: nil, agentHooksDisabled: true, agentHooksRoot: hooks,
+            initialCommand: "printf started >> " + WorktreeAgentLaunchCommand.shellLiteral(marker.path),
+            startupReceipt: receipt)
+        defer { launcher.kill(sessionName: spawn.sessionName) }
+        let first = ZmxAttachEngine(config: .init(zmxExecutable: launcher.executable, zmxDir: root,
+            sessionName: spawn.sessionName, workingDirectory: root, spawnConfiguration: spawn))
+        first.onPTYData = { _ in }
+        try first.start()
+        defer { first.close() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !FileManager.default.fileExists(atPath: receipt.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: receipt.path))
+        await first.close()
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let id = PaneSlotID()
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: root.path))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let restore = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: PaneSessionID(),
+            worktreePath: root.path, socketPath: "/tmp/unused.sock",
+            processEnv: ["SHELL": "/bin/zsh", "PATH": "/usr/bin:/bin", "HOME": root.path],
+            bundleURL: root, ghosttyResourcesDir: nil, agentHooksDisabled: true, agentHooksRoot: hooks)
+        let config = ZmxSpawnConfiguration(sessionName: spawn.sessionName,
+            argv: launcher.attachArgv(sessionName: spawn.sessionName), env: restore.env,
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil)
+        defer { session.close() }
+        try session.start()
+        #expect(await session.waitForStartup())
+        session.close()
+        #expect(try launcher.listSessions().contains(spawn.sessionName))
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "started")
+    }
+
+    @Test("A consumed old receipt cannot prove that a replacement attachment started", arguments: [0, 1])
+    func consumedReceiptDoesNotAcknowledgeFailedReplacement(exitStatus: Int) async throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-startup-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-unused"))
+        let id = PaneSlotID()
+        let handle = try #require(manager.createSurface(terminalID: id, paneSessionID: PaneSessionID(), worktreePath: "/tmp"))
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let executable = try makeFakeZmx(attachCommand: "/bin/sleep 0.1; exit \(exitStatus)")
+        let root = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let receipt = root.appendingPathComponent("already-consumed")
+        try Data().write(to: receipt)
+        let config = ZmxSpawnConfiguration(sessionName: "gone", argv: [executable.path, "attach"],
+            env: ["ZMX_DIR": root.path, "GRAFTTY_STARTUP_RECEIPT": receipt.path,
+                  "GRAFTTY_INITIAL_COMMAND": "printf consumed"],
+            workingDirectory: root, shellReadySignalAvailable: false)
+        let session = MacPagedZmxSession(surface: handle.surface, configuration: config, initialSize: nil,
+            startupTimeout: .seconds(1))
+        defer { session.close() }
+        try session.start()
+        #expect(!(await session.waitForStartup()))
+    }
+
     @Test("Typing k after an attachment failure does not close the native surface", arguments: [FailureMode.start, .queryUnavailable, .missingDaemon])
     func typingAfterFailureKeepsPane(mode: FailureMode) async throws {
         _ = NSApplication.shared

@@ -594,7 +594,8 @@ final class TerminalManager: ObservableObject {
         for splitTree: SplitTree,
         paneSessions: [PaneSlotID: PaneSessionID],
         worktreePath: String,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        confirmedLiveSessions: Set<String>? = nil
     ) -> [PaneSlotID: SurfaceHandle] {
         guard wakeWorktree(worktreePath) else { return [:] }
         recordPaneSessions(
@@ -604,7 +605,7 @@ final class TerminalManager: ObservableObject {
         )
         guard let app = ghosttyApp?.app else { return [:] }
 
-        var zmxSessionSnapshot: ZmxSessionSnapshot?
+        var zmxSessionSnapshot: ZmxSessionSnapshot? = confirmedLiveSessions.map(ZmxSessionSnapshot.live)
         func liveSessionsIfNeeded(for terminalID: PaneSlotID) -> ZmxSessionSnapshot? {
             guard rehydratedSurfaces.contains(terminalID),
                   let launcher = zmxLauncher else { return nil }
@@ -1000,6 +1001,17 @@ final class TerminalManager: ObservableObject {
         }
     }
 
+    /// A failed creation relinquishes its staged prompt. Never reuse its
+    /// loader or queued renderer input when the retained pane is reopened.
+    func discardInitialInput(for terminalID: PaneSlotID) {
+        if pendingShellReadyInitialInput[terminalID] != nil {
+            completeInitialInputDelivery(for: terminalID, success: false)
+        }
+        shellStartupCommands.removeValue(forKey: terminalID)
+        shellStartupReceipts.removeValue(forKey: terminalID)
+        explicitInitialInputSurfaces.remove(terminalID)
+    }
+
     /// Shared by the Ghostty PWD action and tests. The first prompt commits
     /// any queued launch command before default-command policy runs.
     func shellBecameReady(for terminalID: PaneSlotID) {
@@ -1303,7 +1315,7 @@ final class TerminalManager: ObservableObject {
            FileManager.default.fileExists(atPath: receipt.path) {
             shellStartupCommands.removeValue(forKey: terminalID)
         }
-        var command = initialCommand ?? shellStartupCommands[terminalID]
+        var command = initialCommand ?? (wasRehydrated(terminalID) ? nil : shellStartupCommands[terminalID])
         if command == nil, !shellReadyFired.contains(terminalID) {
             let decision = defaultCommandDecision(
                 defaultCommand: defaults.string(forKey: SettingsKeys.defaultCommand) ?? "",

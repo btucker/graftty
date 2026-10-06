@@ -63,6 +63,76 @@ struct RemoteWorktreeCreationTests {
         if case .success = result { Issue.record("Startup promoted a stale worktree") }
     }
 
+    @Test("@spec AGENT-5.29: When worktree rows or repositories move while terminal startup is pending, the application shall finalize only the requested worktree, preserve sibling states and pane mappings, and normalize focus on successful creation.", arguments: [true, false])
+    func reorderingDuringStartupFinalizesCorrectWorktree(startupAccepted: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("repo").path
+        try git(["init", "-b", "main", repo])
+        try git(["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                 "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "Initial"])
+        try git(["-C", repo, "branch", "feature"])
+        let path = repo + "/.worktrees/feature"
+        var state = AppState(repos: [RepoEntry(path: repo, displayName: "repo", worktrees: [
+            WorktreeEntry(path: repo, branch: "main")
+        ])])
+        let binding = Binding(get: { state }, set: { state = $0 })
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: root.appendingPathComponent("control.sock").path)
+        manager.initialize()
+        let executable = root.appendingPathComponent("zmx")
+        let completion = startupAccepted ? ": > \"$GRAFTTY_STARTUP_RECEIPT\"\n/bin/sleep 1" : "exit 1"
+        try "#!/bin/sh\nif [ \"$1\" = list ]; then exit 0; fi\n/bin/sleep 0.2\n\(completion)\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        manager.zmxLauncher = ZmxLauncher(executable: executable, zmxDir: root)
+        let monitor = WorktreeMonitor()
+        let stats = WorktreeStatsStore(compute: { _, _, _, _ in .init(defaultBranch: nil, stats: nil) }, fetch: { _ in })
+        defer {
+            manager.destroySurfaces(terminalIDs: state.worktree(forPath: path)?.splitTree.allLeaves ?? [])
+            monitor.stopWatchingWorktree(path)
+            stats.clear(worktreePath: path)
+        }
+        let reorder = Task { @MainActor in
+            let deadline = ContinuousClock.now + .seconds(3)
+            while state.worktree(forPath: path)?.splitTree.root == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            if let (repoIndex, worktreeIndex) = state.indices(forWorktreePath: path) {
+                // Discovery moves a new placeholder ahead of stale rows; repository
+                // navigation can also move its owner while startup is suspended.
+                let stale = WorktreeEntry(path: repo + "/gone", branch: "gone", state: .stale)
+                state.repos[repoIndex].worktrees.insert(stale, at: worktreeIndex)
+                state.repos[repoIndex].worktrees = WorktreeOrdering.staleLast(state.repos[repoIndex].worktrees)
+                state.repos.insert(RepoEntry(path: "/unrelated", displayName: "unrelated", worktrees: []), at: 0)
+            }
+        }
+        defer { reorder.cancel() }
+        _ = AddWorktreeFlow.beginCreate(repoPath: repo, worktreeName: "feature",
+            branch: .useExisting(name: "feature", source: .local), appState: binding)
+        let result = await AddWorktreeFlow.finishCreate(repoPath: repo, worktreePath: path,
+            branch: .useExisting(name: "feature", source: .local), appState: binding,
+            worktreeMonitor: monitor, statsStore: stats, terminalManager: manager,
+            teamEventDispatcher: TeamEventDispatcher(inbox: TeamInbox(rootDirectory: root.appendingPathComponent("inbox")),
+                preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" }),
+            initialCommand: "true", terminalStartTiming: .immediately)
+        try await reorder.value
+        let created = try #require(state.worktree(forPath: path))
+        #expect(created.state == (startupAccepted ? .running : .closed))
+        #expect(state.worktree(forPath: repo)?.state == .closed)
+        #expect(state.worktree(forPath: repo + "/gone")?.state == .stale)
+        #expect(state.repos[0].worktrees.isEmpty)
+        if startupAccepted {
+            guard case .success(let value) = result else { Issue.record("Startup failed: \(result)"); return }
+            let pane = try #require(created.splitTree.allLeaves.first)
+            #expect(created.focusedPaneSlotID == pane)
+            #expect(value.sessionName == created.paneSessions[pane].map(ZmxLauncher.sessionName(for:)))
+        } else if case .success = result {
+            Issue.record("Rejected startup reported ready")
+        }
+    }
+
     @Test("@spec GIT-5.23: When a paired client creates a worktree, the application shall register its first pane for terminal attachment and listening-port discovery without requiring a Mac terminal renderer or changing the Mac's selected worktree.")
     func creationSucceedsWithoutMacRenderer() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -118,6 +188,7 @@ struct RemoteWorktreeCreationTests {
         let worktree = try #require(state.worktree(forPath: path))
         let pane = try #require(worktree.splitTree.allLeaves.first)
         #expect(worktree.state == .running)
+        #expect(worktree.focusedPaneSlotID == pane, "A ready worktree must have usable initial focus")
         #expect(created.worktreePath == path)
         #expect(created.sessionName == worktree.paneSessions[pane].map(ZmxLauncher.sessionName(for:)))
         #expect(manager.worktreePath(forSessionName: created.sessionName) == path)
