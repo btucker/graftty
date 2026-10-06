@@ -37,8 +37,9 @@ struct BreadcrumbBarTests {
             return Data(pixels)
         }
         #expect(bar(home: true, emoji: "🐸", initials: "PR").iconIdentity == .project)
-        #expect(try render(bar(home: true, emoji: "🐸", initials: "PR"))
-            == render(bar(home: true, emoji: nil, initials: "PR")))
+        #expect(bar(home: true, emoji: nil, initials: "PR").identityView.identity == .project)
+        #expect(bar(home: true, emoji: "🐸", initials: "PR").identityView.project.displayInitials == "PR")
+        #expect(bar(home: true, emoji: "🐸", initials: "NEW").identityView.project.displayInitials == "NEW")
         #expect(try render(bar(home: true, emoji: "🐸", initials: "PR"))
             != render(bar(home: true, emoji: "🐸", initials: "NEW")))
         #expect(bar(home: false, emoji: "🚀", initials: "PR").iconIdentity == .emoji("🚀"))

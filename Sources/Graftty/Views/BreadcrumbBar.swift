@@ -151,9 +151,7 @@ struct BreadcrumbBar: View {
                     .foregroundColor(theme.foreground.opacity(0.3))
             }
             if let worktreeDisplayName {
-                WorktreeIdentityView(identity: iconIdentity,
-                    project: project ?? SidebarProject(id: worktreePath ?? "", repositoryID: worktreePath ?? "", name: repoName ?? ""),
-                    imageData: projectIconData, size: 18)
+                identityView
                 worktreeLabel(worktreeDisplayName)
             }
             if let branchName {
@@ -170,6 +168,12 @@ struct BreadcrumbBar: View {
         }
         .lineLimit(1)
         .truncationMode(.middle)
+    }
+
+    var identityView: WorktreeIdentityView {
+        WorktreeIdentityView(identity: iconIdentity,
+            project: project ?? SidebarProject(id: worktreePath ?? "", repositoryID: worktreePath ?? "", name: repoName ?? ""),
+            imageData: projectIconData, size: 18)
     }
 
     var iconIdentity: WorktreeIconIdentity {
