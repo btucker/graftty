@@ -41,8 +41,8 @@ struct SidebarPinnedTests {
         #expect(migrated["isPinnedCollapsed"] as? Bool == false)
     }
 
-    @Test("@spec LAYOUT-2.103: While the sidebar displays a repository, the application shall show temporary worktrees without a heading above a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.")
-    func pinnedFollowsTemporaryWorktreesInStableOrder() throws {
+    @Test("@spec LAYOUT-2.103: While the sidebar displays a repository, the application shall show temporary worktrees without a heading below a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.")
+    func pinnedPrecedesTemporaryWorktreesInStableOrder() throws {
         let main = WorktreeEntry(path: "/repo", branch: "main")
         var architect = try member("architect")
         var qa = try member("qa")
@@ -53,9 +53,9 @@ struct SidebarPinnedTests {
         taskA.attention = Attention(text: "A", timestamp: Date(timeIntervalSince1970: 100))
         taskB.attention = Attention(text: "B", timestamp: Date(timeIntervalSince1970: 200))
         var repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [architect, taskA, main, qa, taskB])
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["a", "b", "main", "architect", "qa"])
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "architect", "qa", "a", "b"])
         repo.worktreeOrderMode = .recentActivity
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["b", "a", "main", "architect", "qa"])
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "architect", "qa", "b", "a"])
         #expect(repo.worktrees.map(\.branch) == ["architect", "a", "main", "qa", "b"])
     }
 
@@ -63,7 +63,7 @@ struct SidebarPinnedTests {
         let home = WorktreeEntry(path: "/repo", branch: "local-experiment")
         let task = WorktreeEntry(path: "/repo/.worktrees/fix", branch: "fix")
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [home, task], defaultBranchHint: "trunk")
-        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.id) == [task.id, home.id])
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.id) == [home.id, task.id])
         #expect(SidebarWorktreeLabel.text(for: home, inRepoAtPath: repo.path,
             siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint) == "trunk")
     }
@@ -103,7 +103,7 @@ struct SidebarPinnedTests {
         #expect(SidebarHostNavigation.moveWorktree(in: &state, repositoryID: repo.path,
             worktreeID: qa.path, relativeTo: home.path, after: true))
         #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).map(\.id)
-            == [task.id, home.id, qa.id, architect.id])
+            == [home.id, qa.id, architect.id, task.id])
     }
 
     @Test("@spec LAYOUT-2.105: If a pinned worktree becomes stale, then the application shall retain its sidebar entry until the user explicitly dismisses it or removes its pin.")

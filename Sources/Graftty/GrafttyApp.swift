@@ -3876,7 +3876,7 @@ struct GrafttyApp: App {
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
-             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
+             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
              .worktreePinCapability, .setWorktreePinned,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
              .attentionReport:
@@ -3908,7 +3908,7 @@ struct GrafttyApp: App {
     ) async -> ResponseMessage? {
         switch message {
         case .offerResource(let path, _, _), .addPane(let path, _, _), .closePane(let path, _),
-             .showPane(let path, _, _), .sendPane(let path, _, _, _), .removeWorktree(let path, _):
+             .showPane(let path, _, _), .sendPane(let path, _, _, _):
             guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
         default: break
         }
@@ -4102,7 +4102,7 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
             return .ok
-        case .worktreeRemoveCapability, .worktreePinCapability:
+        case .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability:
             return .ok
         case .setWorktreePinned(let path, let isPinned):
             let response = WorktreePinRequestHandler.handle(
@@ -4144,10 +4144,11 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree creation operation")
             }
             return .worktreeCreate(status)
-        case .removeWorktree(let worktreePath, let force):
+        case .removeWorktree(let worktreePath, let force, let pinned):
             return beginCLIWorktreeRemoval(
                 worktreePath: worktreePath,
                 force: force,
+                pinned: pinned,
                 appState: appState,
                 terminalManager: terminalManager,
                 statsStore: statsStore,
@@ -4170,6 +4171,7 @@ struct GrafttyApp: App {
     private static func beginCLIWorktreeRemoval(
         worktreePath: String,
         force: Bool,
+        pinned: Bool,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         statsStore: WorktreeStatsStore,
@@ -4177,64 +4179,25 @@ struct GrafttyApp: App {
         teamEventDispatcher: TeamEventDispatcher,
         worktreeRemovals: CLIWorktreeRemovalStore
     ) -> ResponseMessage {
-        guard let (repoIndex, worktreeIndex) = appState.wrappedValue
-            .indices(forWorktreePath: worktreePath) else {
-            return .error("unknown worktree")
-        }
-        let repo = appState.wrappedValue.repos[repoIndex]
-        let worktree = repo.worktrees[worktreeIndex]
-        guard worktree.path != repo.path else {
-            return .error("cannot remove the main checkout")
-        }
-        guard worktree.state != .deleting else {
-            return .error("worktree removal is already in progress")
-        }
-        guard !worktreeRemovals.hasPendingRemoval(worktreePath: worktreePath) else {
-            return .error("worktree removal is already in progress")
-        }
-
-        let status = worktreeRemovals.begin(worktreePath: worktreePath)
-        Task { @MainActor in
-            let result = await DeleteWorktreeFlow.delete(
-                worktreePath: worktreePath,
-                force: force,
-                appState: appState,
-                terminalManager: terminalManager,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: teamEventDispatcher
-            )
-            switch result {
-            case .success:
-                worktreeRemovals.markRemoved(operationID: status.operationID)
-            case .failure(.gitFailedForceable(let stderr, let shortStatus)):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: stderr,
-                    forceAllowed: true,
-                    shortStatus: shortStatus.isEmpty ? nil : shortStatus
-                )
-            case .failure(.gitFailedFinal(let message)):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: message,
-                    forceAllowed: false
-                )
-            case .failure(.notFound):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: "unknown worktree",
-                    forceAllowed: false
-                )
-            case .failure(.mainCheckoutRejected):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: "cannot remove the main checkout",
-                    forceAllowed: false
+        CLIWorktreeRemovalRequestHandler.begin(
+            worktreePath: worktreePath,
+            force: force,
+            pinned: pinned,
+            appState: appState,
+            worktreeRemovals: worktreeRemovals,
+            wakeWorktree: { terminalManager.wakeWorktree($0) },
+            deleteWorktree: { path, force in
+                await DeleteWorktreeFlow.delete(
+                    worktreePath: path,
+                    force: force,
+                    appState: appState,
+                    terminalManager: terminalManager,
+                    statsStore: statsStore,
+                    prStatusStore: prStatusStore,
+                    teamEventDispatcher: teamEventDispatcher
                 )
             }
-        }
-        return .worktreeRemove(status)
+        )
     }
 
     @MainActor

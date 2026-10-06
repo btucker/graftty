@@ -27,6 +27,11 @@ Canonical worktree paths and their provider or exact-agent suffixes can target a
 
 Send existing agents questions or tasks with context, the requested result, and your reply address. A question alone does not require a new worktree.
 
+Before creating a task agent, check whether a pinned agent's shared role covers
+the work. Prefer that agent when suitable, and confirm reachability in the roster.
+Pinning keeps a worktree; it does not establish whether its agent is available.
+See [Keep a durable agent role](#keep-a-durable-agent-role) for pinning and role setup.
+
 ## Delegate work into a new worktree
 
 Each Graftty worktree maps to exactly one agent. Never create a worktree yourself: not with `git worktree add`, provider worktree tools such as Claude's `EnterWorktree`, worktree-isolated subagents, or any other skill or workflow, even when another skill recommends one. Work that needs its own worktree belongs to a new agent there, launched with `graftty worktree add` as shown below. Subagents that stay in your current worktree are fine.
@@ -91,7 +96,15 @@ Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane sh
 
 ### Remove a worktree
 
-`graftty worktree remove <worktree> [--force]` removes a linked worktree but keeps its branch. Dirty files require `--force`.
+`graftty worktree remove <worktree> [--pinned] [--force]` removes a linked worktree but keeps its branch. Removing a pinned worktree requires `--pinned`; dirty files also require `--force`. The flags acknowledge separate conditions, so `--force` alone cannot remove a pinned worktree.
+
+```sh
+graftty worktree remove feature-auth
+graftty worktree remove release-manager --pinned
+```
+
+Remove a pinned role only when the requested work includes retiring it. Do not
+unpin it to bypass the removal guard. The default-branch checkout cannot be removed.
 
 ## Send and reply
 
@@ -138,7 +151,10 @@ Replies arrive automatically through hooks; do not poll for completion. For deli
 
 ## Keep a durable agent role
 
-Use **Pinned Agents** for an ongoing responsibility that should outlive one task.
+Use **Pinned Agents** for an ongoing responsibility that should outlive one task,
+such as release management or crash investigation. Use temporary worktrees for
+bounded feature work. When setting up a requested durable role, pin its worktree
+and define its responsibilities in `GRAFTTY.md`.
 The repository's default-branch checkout is always pinned. Other tracked local
 worktrees can be pinned without changing their branch, panes, or instructions.
 
@@ -166,7 +182,7 @@ Pinned worktrees remain after their branch's PR or MR merges or closes. Graftty
 does not offer to delete them on resolution and does not automatically dismiss
 stale pinned entries. Unpinning returns the worktree to the temporary list;
 it preserves its workspace and instruction files. Explicit removal is still
-available through `graftty worktree remove` when requested.
+available through `graftty worktree remove <worktree> --pinned` when requested.
 
 ## Durable agent instructions
 

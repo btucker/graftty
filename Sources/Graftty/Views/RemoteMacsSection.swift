@@ -300,6 +300,7 @@ struct RemoteMacsSection: View {
     var editableProjectIDs: Set<String> = []
     var projects: [SidebarProject] = []
     var projectIcons: [String: Data] = [:]
+    var beforeTasks: AnyView = AnyView(EmptyView())
 
     @ViewBuilder
     var body: some View {
@@ -412,7 +413,7 @@ struct RemoteMacsSection: View {
                 (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
                     && SidebarInteractionPolicy.matches($0, query: query)
             }, rowInsets: showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil,
-               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty) { worktree in
+               folderIndent: showsMacHierarchy ? 0 : 16, showsSections: query.isEmpty, beforeTasks: beforeTasks) { worktree in
                 remoteWorktreeBlock(worktree, remoteMac: remoteMac)
                     .listRowInsets(
                         showsMacHierarchy ? EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0) : nil

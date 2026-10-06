@@ -204,7 +204,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.88** While an Attention card's agent is running, the application shall display elapsed running time in compact units from its resume time, preserve that time across snapshots and relaunches, and clear it when a new request arrives.
 
-**LAYOUT-2.89** While the project worktree list scrolls, the application shall keep Add Worktree fixed above the list for the selected editable project.
+**LAYOUT-2.89** While the project worktree list scrolls, the application shall scroll Sort order and Add Worktree with the list between Pinned Agents and temporary worktrees for the selected editable project.
 
 **LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
 
@@ -216,7 +216,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.94** While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents below them, preserve manual pinned order, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -232,7 +232,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.102** When worktree state is saved and restored, the application shall preserve explicit pin state and decode older linked worktrees as temporary worktrees.
 
-**LAYOUT-2.103** While the sidebar displays a repository, the application shall show temporary worktrees without a heading above a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.
+**LAYOUT-2.103** While the sidebar displays a repository, the application shall show temporary worktrees without a heading below a collapsible Pinned Agents section, put the default-branch checkout first in that section, and preserve manual pinned order even when temporary worktrees use recent activity order.
 
 **LAYOUT-2.104** When a worktree is reordered in the sidebar, the application shall constrain the move to siblings within the same temporary or pinned section, allowing manual pinned moves while temporary worktrees use recent activity order.
 
@@ -244,17 +244,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.108** When a host publishes sidebar metadata, the application shall include explicit pin state for remote clients while accepting older metadata without it.
 
-**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group temporary worktrees before Pinned Agents, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.
+**LAYOUT-2.109** When viewing sidebar membership from a host, the application shall group Pinned Agents before temporary worktrees, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.
 
 **LAYOUT-2.110** When a repository moves, the application shall preserve saved pinned order and pin state for both relocated and stale members while appending newly discovered worktrees as Tasks.
 
 **LAYOUT-2.111** When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.
 
-**LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and reserve more space above the section title than below it.
+**LAYOUT-2.112** While the sidebar displays Pinned Agents, the application shall align its disclosure and title with worktree rows and use compact spacing when the section begins the list.
 
 **LAYOUT-2.113** When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
 
 **LAYOUT-2.114** While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.
+
+**LAYOUT-2.115** While the sidebar displays Pinned Agents, the application shall place that section below search and above temporary worktrees, including remote projects.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -649,6 +651,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-3.20** If a linked worktree's `.git` entry is not a materialized regular file (an iCloud-evicted `SF_DATALESS` placeholder or a non-regular file type), then `WorktreeMonitor.resolveHeadLogPath` shall skip reading it — deciding via a metadata-only stat, which never triggers materialization — and fall back to the `<repoPath>/.git/worktrees/<basename>` guess, rather than issue a read(2) that blocks the calling thread on network materialization. `startup()` resolves reflog paths on the main thread, so a single iCloud-evicted `.git` file under `~/Documents` froze the whole app at launch (Application Not Responding).
 
 **GIT-3.21** When a Task worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
+
+**GIT-3.22** If a stale worktree becomes pinned while automatic dismissal discovery is suspended, then the application shall preserve the entry and its surfaces and caches.
 
 ### GIT-4.x — Deleting a Worktree
 
@@ -2236,7 +2240,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
-**TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree and unpinning, and explain role instruction files and retention after PR or MR resolution.
+**TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
 
 ### TEAM-5.x — `team_*` Inbox Events
 
@@ -2977,6 +2981,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-5.23** When CLI creation starts an asynchronous terminal backend, the application shall wait for backend startup acceptance before reporting the worktree ready, and shall report a failed startup instead of releasing ownership of the staged agent prompt.
 
 **AGENT-5.24** If a worktree becomes stale while its terminal startup is pending, then the application shall preserve the stale state and report failed creation instead of promoting it to running.
+
+**AGENT-5.25** When graftty worktree remove targets a pinned linked worktree, the application shall require --pinned independently of --force, validate pin state in the running app before removal, reject the main checkout, and verify pinned-removal protocol support before sending a removal request.
 
 ### AGENT-6.x
 

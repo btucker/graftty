@@ -91,11 +91,11 @@ public enum SidebarHostNavigation {
         worktree.path == repo.path || worktree.isPinned
     }
 
-    /// Temporary worktrees precede pinned agents. The default-branch row leads
+    /// Pinned agents precede temporary worktrees. The default-branch row leads
     /// the pinned section, followed by linked worktrees in saved manual order.
     public static func canonicalWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
-        WorktreeOrdering.staleLast(repo.worktrees.filter { !isPinned($0, in: repo) })
-            + pinnedWorktrees(in: repo)
+        pinnedWorktrees(in: repo)
+            + WorktreeOrdering.staleLast(repo.worktrees.filter { !isPinned($0, in: repo) })
     }
 
     private static func pinnedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
@@ -107,8 +107,8 @@ public enum SidebarHostNavigation {
     /// so pinned order stays stable and manual order survives mode changes.
     public static func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {
         guard repo.worktreeOrderMode == .recentActivity else { return canonicalWorktrees(in: repo) }
-        return WorktreeOrdering.byRecentActivity(repo.worktrees.filter { !isPinned($0, in: repo) })
-            + pinnedWorktrees(in: repo)
+        return pinnedWorktrees(in: repo)
+            + WorktreeOrdering.byRecentActivity(repo.worktrees.filter { !isPinned($0, in: repo) })
     }
 
     /// Published folder ancestry matches the separately rendered sections.

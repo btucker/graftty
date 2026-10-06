@@ -427,11 +427,14 @@ struct WorktreeRemove: ParsableCommand {
 
         Removal fails when Git finds modified, staged, or untracked files.
         Pass --force to mirror Graftty's “Force Delete” action.
+        Pinned linked worktrees also require --pinned. --force does not
+        authorize removing a pinned worktree. The main checkout cannot be removed.
 
         Examples:
           graftty worktree remove feature-auth
           graftty worktree remove /repo/.worktrees/feature-auth
           graftty worktree remove feature-auth --force
+          graftty worktree remove release-agent --pinned
         """
     )
 
@@ -440,6 +443,9 @@ struct WorktreeRemove: ParsableCommand {
 
     @Flag(name: .long, help: "Remove even when the worktree contains uncommitted or untracked files")
     var force: Bool = false
+
+    @Flag(name: .long, help: "Authorize removing a pinned linked worktree; required independently of --force")
+    var pinned: Bool = false
 
     @Option(name: .long, help: "Maximum seconds to wait for worktree removal")
     var timeout: Int = 300
@@ -470,11 +476,7 @@ struct WorktreeRemove: ParsableCommand {
             }
         }
 
-        try WorktreeCapability.require(
-            .worktreeRemoveCapability,
-            unsupportedMessage: "the running Graftty app does not support worktree remove; quit and relaunch the updated app, then retry",
-            verificationMessage: "could not verify worktree remove support; quit and relaunch Graftty, then retry"
-        )
+        try requirePinnedRemovalSupport()
 
         var response = try CLIEnv.sendRequest(removalRequest(worktreePath: worktreePath))
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
@@ -519,7 +521,20 @@ struct WorktreeRemove: ParsableCommand {
     }
 
     func removalRequest(worktreePath: String) -> NotificationMessage {
-        .removeWorktree(worktreePath: worktreePath, force: force)
+        .removeWorktree(worktreePath: worktreePath, force: force, pinned: pinned)
+    }
+
+    func requirePinnedRemovalSupport(
+        send: (NotificationMessage) throws -> ResponseMessage = { try SocketClient.sendExpectingResponse($0) }
+    ) throws {
+        // Probe for the guard even without --pinned: an older app could
+        // otherwise remove a pinned row using the legacy removal request.
+        try WorktreeCapability.require(
+            .worktreePinnedRemovalCapability,
+            unsupportedMessage: "the running Graftty app does not support safe pinned-worktree removal; quit and relaunch the updated app, then retry",
+            verificationMessage: "could not verify pinned-worktree removal protection; quit and relaunch Graftty, then retry",
+            send: send
+        )
     }
 
     static func resolveTarget(

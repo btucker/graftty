@@ -10,6 +10,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
     public var rowInsets: EdgeInsets?
     public var folderIndent: CGFloat
     public var showsSections: Bool
+    public var beforeTasks: AnyView
     @State private var collapsed: Set<String> = []
     @AppStorage private var isPinnedCollapsed: Bool
 
@@ -18,12 +19,14 @@ public struct SidebarWorktreeRows<Row: View>: View {
                 rowInsets: EdgeInsets? = nil,
                 folderIndent: CGFloat = 0,
                 showsSections: Bool = true,
+                beforeTasks: AnyView = AnyView(EmptyView()),
                 @ViewBuilder row: @escaping (WorktreePanes) -> Row) {
         self.worktrees = worktrees; self.allowsReordering = allowsReordering
         self.onMove = onMove; self.row = row
         self.rowInsets = rowInsets
         self.folderIndent = folderIndent
         self.showsSections = showsSections
+        self.beforeTasks = beforeTasks
         let projectID = worktrees.first.map(SidebarProjection.projectID) ?? "empty"
         self._isPinnedCollapsed = AppStorage(wrappedValue: false, "sidebar.pinned.collapsed.\(projectID)")
     }
@@ -31,14 +34,16 @@ public struct SidebarWorktreeRows<Row: View>: View {
     @ViewBuilder public var body: some View {
         let sections = SidebarWorktreeSections(worktrees)
         if showsSections && sections.hasPinMetadata {
-            rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
             SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed,
-                separatesPrecedingRows: !sections.tasks.isEmpty)
+                separatesPrecedingRows: false)
                 .listRowInsets(rowInsets)
             if !isPinnedCollapsed {
                 rows(SidebarWorktreeTree.nodes(sections.pinned), section: "pinned:")
             }
+            beforeTasks
+            rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
         } else {
+            beforeTasks
             rows(SidebarWorktreeTree.nodes(worktrees))
         }
     }

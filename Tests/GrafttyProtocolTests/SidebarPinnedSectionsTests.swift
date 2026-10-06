@@ -2,7 +2,7 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarPinnedSectionsTests {
-    @Test("@spec LAYOUT-2.109: When viewing sidebar membership from a host, the application shall group temporary worktrees before Pinned Agents, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.")
+    @Test("@spec LAYOUT-2.109: When viewing sidebar membership from a host, the application shall group Pinned Agents before temporary worktrees, place the default-branch checkout first among pinned rows, preserve other supplied order, and retain the existing layout for hosts without membership metadata.")
     func partitionsMembershipWithoutReorderingOrDroppingRows() {
         func row(_ id: String, isMember: Bool? = nil, isMain: Bool = false) -> WorktreePanes {
             WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", displayBranch: id,
