@@ -92,6 +92,7 @@ struct SidebarView: View {
     /// retained, scoped by repository so same-named folders do not share UI
     /// state across projects.
     @State private var worktreeFolderExpansion = SidebarWorktreeFolderExpansion()
+    @State private var remoteSectionExpansion = RemoteSidebarExpansion()
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
@@ -214,8 +215,8 @@ struct SidebarView: View {
             Button("Remove Repository") { onRemoveRepo(repo) }
         })
     }
-    private func remoteSection(projectFilter: String?, query: String = "", beforeTasks: AnyView = AnyView(EmptyView())) -> some View {
-        RemoteMacsSection(model: remoteMacsModel, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
+    private func remoteSection(projectFilter: String?, query: String = "", section: SidebarWorktreeSection = .all) -> some View {
+        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
@@ -225,7 +226,7 @@ struct SidebarView: View {
                           showsMacHierarchy: !showsProjectRail,
                           showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
                           editableProjectIDs: Set(projects.filter { $0.isAvailable && $0.supportsWorktreeEditing == true }.map(\.id)),
-                          projects: projects, projectIcons: projectIcons, beforeTasks: beforeTasks)
+                          projects: projects, projectIcons: projectIcons, section: section)
     }
 
     private var addRepositoryIconButton: some View {
@@ -294,14 +295,23 @@ struct SidebarView: View {
                     }
                 } else {
                     ScrollViewReader { proxy in
-                        Group {
+                        SidebarWorktreeViewport {
+                            if navigation.query.isEmpty {
+                                worktreeRows(section: .pinned)
+                                    .padding(.horizontal, showsProjectRail ? 6 : 10)
+                            }
+                        } controls: {
+                            selectedProjectAddWorktreeHeader
+                                .padding(.horizontal, showsProjectRail ? 6 : 10)
+                        } content: {
                             if showsProjectRail {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
-                                    worktreeRows
+                                    worktreeRows(section: .tasks)
                                 }
                                 .emptySpaceMenu(selectedProjectEmptySpaceMenu)
+                            } else {
+                                List { worktreeRows(section: .tasks) }.listStyle(.sidebar)
                             }
-                            else { List { worktreeRows }.listStyle(.sidebar) }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
                             if let path = navigation.selectedProjectID.flatMap({ navigation.rememberedWorktrees[$0] }) {
@@ -468,19 +478,14 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private var worktreeRows: some View {
+    private func worktreeRows(section: SidebarWorktreeSection) -> some View {
         let counts = SidebarActivityCounts(items: activity)
         if navigation.query.isEmpty {
             let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
             ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
-                repoSection(repo, attentionCounts: counts)
+                repoSection(repo, attentionCounts: counts, section: section)
             }
-            remoteSection(projectFilter: filter, beforeTasks: showsProjectRail ? AnyView(selectedProjectAddWorktreeHeader) : AnyView(EmptyView()))
-            if showsProjectRail, let filter,
-               !appState.repos.contains(where: { localProjectID($0) == filter }),
-               !remoteMacsModel.worktreePanesByRemote.values.joined().contains(where: { SidebarProjection.projectID($0) == filter }) {
-                selectedProjectAddWorktreeHeader
-            }
+            remoteSection(projectFilter: filter, section: section)
         } else {
             remoteSection(projectFilter: nil, query: navigation.query)
             ForEach(appState.repos) { repo in
@@ -549,7 +554,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func repoSection(_ repo: RepoEntry, attentionCounts: SidebarActivityCounts) -> some View {
+    private func repoSection(_ repo: RepoEntry, attentionCounts: SidebarActivityCounts, section: SidebarWorktreeSection) -> some View {
         let forgeLink = forgeLink(for: repo)
         let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
             forRepoAt: repo.path,
@@ -558,31 +563,34 @@ struct SidebarView: View {
         let worktrees = SidebarHostNavigation.displayedWorktrees(in: repo)
         let temporaryWorktrees = worktrees.filter { !SidebarHostNavigation.isPinned($0, in: repo) }
         let rows = Group {
-            SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
-                get: { repo.isPinnedCollapsed },
-                set: { collapsed in
-                    if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
-                        appState.repos[index].isPinnedCollapsed = collapsed
+            if section != .tasks {
+                SidebarWorktreeSectionHeader("Pinned Agents", color: theme.sidebarDimIcon, isCollapsed: Binding(
+                    get: { repo.isPinnedCollapsed },
+                    set: { collapsed in
+                        if let index = appState.repos.firstIndex(where: { $0.id == repo.id }) {
+                            appState.repos[index].isPinnedCollapsed = collapsed
+                        }
+                    }
+                ), separatesPrecedingRows: false)
+                .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
+                .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
+                if !repo.isPinnedCollapsed {
+                    let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
+                    worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
+                                     attentionCounts: attentionCounts, isPinnedSection: true)
+                    if members.isEmpty {
+                        Text("Right-click a worktree to pin it here.")
+                            .font(.caption)
+                            .foregroundColor(theme.sidebarDimIcon)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 6)
                     }
                 }
-            ), separatesPrecedingRows: false)
-            .listRowInsets(EdgeInsets(top: 0, leading: showsProjectRail ? 0 : -20, bottom: 0, trailing: 0))
-            .modifier(PinnedWorktreeDropTarget(repoID: repo.id, appState: $appState, isEnabled: navigation.query.isEmpty))
-            if !repo.isPinnedCollapsed {
-                let members = worktrees.filter { SidebarHostNavigation.isPinned($0, in: repo) }
-                worktreeNodeRows(members, repo: repo, defaultBranch: resolvedDefaultBranch,
-                                 attentionCounts: attentionCounts, isPinnedSection: true)
-                if members.isEmpty {
-                    Text("Right-click a worktree to pin it here.")
-                        .font(.caption)
-                        .foregroundColor(theme.sidebarDimIcon)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 6)
-                }
             }
-            if showsProjectRail { selectedProjectAddWorktreeHeader }
-            worktreeNodeRows(temporaryWorktrees,
-                             repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
+            if section != .pinned {
+                worktreeNodeRows(temporaryWorktrees,
+                                 repo: repo, defaultBranch: resolvedDefaultBranch, attentionCounts: attentionCounts)
+            }
         }
         if showsProjectRail {
             rows
@@ -661,13 +669,11 @@ struct SidebarView: View {
             if repo != nil || canAdd {
                 HStack {
                     if let repo {
-                        Menu { worktreeOrderPicker(repo).pickerStyle(.inline) } label: {
-                            Label(repo.worktreeOrderMode == .recentActivity ? "Recent Activity" : "Manual Order",
-                                  systemImage: "arrow.up.arrow.down")
-                        }
-                        .menuStyle(.borderlessButton).fixedSize()
-                        .help("Worktree order")
-                        .accessibilityLabel("Worktree order")
+                        SidebarWorktreeOrderControl(selection: Binding(
+                            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
+                            set: { setWorktreeOrderMode($0, for: repo) }
+                        ), color: NSColor(theme.sidebarDimIcon))
+                        .frame(width: 136, height: 28)
                     }
                     Spacer()
                     if canAdd {
@@ -937,9 +943,7 @@ struct SidebarView: View {
         appState.repos[index].worktreeOrderMode = mode
     }
 
-    private static let worktreeOrderChoices: [(title: String, mode: WorktreeOrderMode)] = [
-        ("Manual Order", .manual), ("Recent Activity", .recentActivity),
-    ]
+    private static let worktreeOrderChoices = SidebarWorktreeOrderControl.choices
 
     private func worktreeOrderPicker(_ repo: RepoEntry) -> some View {
         Picker("Sort Worktrees", selection: Binding(

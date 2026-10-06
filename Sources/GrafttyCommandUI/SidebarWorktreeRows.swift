@@ -1,6 +1,9 @@
 import SwiftUI
 import GrafttyProtocol
 
+/// Selects which membership region a sidebar container hosts.
+public enum SidebarWorktreeSection: Sendable { case all, pinned, tasks }
+
 /// Shares folder disclosure and sibling-only move gestures across remote clients.
 public struct SidebarWorktreeRows<Row: View>: View {
     public var worktrees: [WorktreePanes]
@@ -10,6 +13,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
     public var rowInsets: EdgeInsets?
     public var folderIndent: CGFloat
     public var showsSections: Bool
+    public var section: SidebarWorktreeSection
     public var beforeTasks: AnyView
     @State private var collapsed: Set<String> = []
     @AppStorage private var isPinnedCollapsed: Bool
@@ -20,6 +24,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
                 folderIndent: CGFloat = 0,
                 showsSections: Bool = true,
                 beforeTasks: AnyView = AnyView(EmptyView()),
+                section: SidebarWorktreeSection = .all,
                 @ViewBuilder row: @escaping (WorktreePanes) -> Row) {
         self.worktrees = worktrees; self.allowsReordering = allowsReordering
         self.onMove = onMove; self.row = row
@@ -27,6 +32,7 @@ public struct SidebarWorktreeRows<Row: View>: View {
         self.folderIndent = folderIndent
         self.showsSections = showsSections
         self.beforeTasks = beforeTasks
+        self.section = section
         let projectID = worktrees.first.map(SidebarProjection.projectID) ?? "empty"
         self._isPinnedCollapsed = AppStorage(wrappedValue: false, "sidebar.pinned.collapsed.\(projectID)")
     }
@@ -34,15 +40,19 @@ public struct SidebarWorktreeRows<Row: View>: View {
     @ViewBuilder public var body: some View {
         let sections = SidebarWorktreeSections(worktrees)
         if showsSections && sections.hasPinMetadata {
-            SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed,
-                separatesPrecedingRows: false)
-                .listRowInsets(rowInsets)
-            if !isPinnedCollapsed {
-                rows(SidebarWorktreeTree.nodes(sections.pinned), section: "pinned:")
+            if section != .tasks {
+                SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: $isPinnedCollapsed,
+                    separatesPrecedingRows: false)
+                    .listRowInsets(rowInsets)
+                if !isPinnedCollapsed {
+                    rows(SidebarWorktreeTree.nodes(sections.pinned), section: "pinned:")
+                }
             }
-            beforeTasks
-            rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
-        } else {
+            if section != .pinned {
+                beforeTasks
+                rows(SidebarWorktreeTree.nodes(sections.tasks), section: "tasks:")
+            }
+        } else if section != .pinned {
             beforeTasks
             rows(SidebarWorktreeTree.nodes(worktrees))
         }

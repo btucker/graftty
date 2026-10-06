@@ -204,7 +204,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.88** While an Attention card's agent is running, the application shall display elapsed running time in compact units from its resume time, preserve that time across snapshots and relaunches, and clear it when a new request arrives.
 
-**LAYOUT-2.89** While the project worktree list scrolls, the application shall scroll Sort order and Add Worktree with the list between Pinned Agents and temporary worktrees for the selected editable project.
+**LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
 
 **LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
 
@@ -222,7 +222,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.97** When a user picks an emoji from the native macOS emoji palette for a worktree, the application shall apply it as a manual identity only when it is a single emoji not used by another worktree.
 
-**LAYOUT-2.98** When right-click menus are nested, the application shall open the innermost menu under the pointer.
+**LAYOUT-2.98** When right-click menus are nested, the application shall open the innermost visible menu under the pointer, excluding hosts clipped out by a scroll viewport.
 
 **LAYOUT-2.99** When the native macOS emoji palette inserts text into the worktree identity capture, the application shall deliver only the first insertion and release the capture responder.
 
@@ -261,6 +261,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.116** When the user clicks a visible worktree heading in the project column outside its embedded controls such as the PR/MR badge, the application shall select that worktree, including after another block changes height, after the column scrolls, and after the window resizes.
 
 **LAYOUT-2.117** When the user clicks the vertical padding inside a grouped worktree block's highlight, the application shall select that worktree.
+
+**LAYOUT-2.118** When the user clicks the visible sidebar sort dropdown, the application shall open its order choices and apply the selected order without selecting a worktree, including after scrolling and resizing, with a target at least 28 points tall.
+
+**LAYOUT-2.119** If pinned agents exceed the available sidebar height, then the application shall scroll them independently within at most half the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and fit short pinned sections to their content.
 
 ### LAYOUT-3.x — Adding Repositories
 
