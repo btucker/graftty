@@ -301,8 +301,13 @@ struct SidebarView: View {
                                     .padding(.horizontal, showsProjectRail ? 6 : 10)
                             }
                         } controls: {
-                            selectedProjectAddWorktreeHeader
-                                .padding(.horizontal, showsProjectRail ? 6 : 10)
+                            if navigation.query.isEmpty {
+                                VStack(spacing: 0) {
+                                    Divider()
+                                    selectedProjectAddWorktreeHeader
+                                        .padding(.horizontal, showsProjectRail ? 6 : 10)
+                                }
+                            }
                         } content: {
                             if showsProjectRail {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
@@ -356,11 +361,11 @@ struct SidebarView: View {
             }.frame(minWidth: 220, maxWidth: .infinity)
         }
         }
+        }
         // The search row shares the title-bar strip with the traffic lights
         // and the sidebar toggle, so the sidebar extends under the title bar
         // the same way the detail column does for the breadcrumb.
         .ignoresSafeArea(.container, edges: .top)
-        }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()

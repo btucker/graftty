@@ -266,6 +266,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.119** If pinned agents exceed the available sidebar height, then the application shall scroll them independently within at most half the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and fit short pinned sections to their content.
 
+**LAYOUT-2.120** While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.
+
+**LAYOUT-2.121** When the user first clicks a pinned-agent heading in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

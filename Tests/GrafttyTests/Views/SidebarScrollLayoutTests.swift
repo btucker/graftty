@@ -43,7 +43,10 @@ private struct HostedSidebarScrollView: View {
                 selectedVoicePaneID: nil, theme: .fallback, statsStore: harness.stats, prStatusStore: harness.prs,
                 claudeSessionRegistry: harness.registry, remoteBranchStore: harness.branches,
                 remoteMacsModel: harness.remotes, selectedRemoteIdentity: nil, selectedRemoteWorktreePath: nil,
-                selectedRemotePaneSessionName: nil, onSelect: { harness.selections.append($0) },
+                selectedRemotePaneSessionName: nil, onSelect: {
+                    harness.selections.append($0)
+                    harness.state.selectedWorktreePath = $0
+                },
                 onSelectPane: { _, _ in }, onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in },
                 onSelectRemotePane: { _, _, _ in }, onAddRemoteWorktree: { _, _ in }, onDeleteRemoteWorktree: { _, _ in },
                 onAddRemoteMac: {}, onAddRepo: {}, onAddPath: { _ in }, onRemoveRepo: { _ in }, onInitializeGit: { _ in },
@@ -59,6 +62,77 @@ private struct HostedSidebarScrollView: View {
 @Suite("Sidebar scroll layout", .serialized)
 @MainActor
 struct SidebarScrollLayoutTests {
+    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true])
+    func pinnedContentStartsBelowSearchStrip(rail: Bool) async throws {
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
+        defer { hosted.tearDown() }
+        let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+        let document = try #require(pinned.documentView)
+        let content = document.convert(document.bounds, to: hosted.hosting)
+        let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
+            $0.placeholderString == "Find any project or worktree"
+        })
+        let searchFrame = search.convert(search.bounds, to: hosted.hosting)
+        #expect(content.minY - searchFrame.maxY <= 10)
+        #expect(content.minY >= searchFrame.maxY)
+        let bitmap = try #require(hosted.hosting.bitmapImageRepForCachingDisplay(in: hosted.hosting.bounds))
+        hosted.hosting.cacheDisplay(in: hosted.hosting.bounds, to: bitmap)
+        let scaleX = CGFloat(bitmap.pixelsWide) / hosted.hosting.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / hosted.hosting.bounds.height
+        let x = Int(content.midX * scaleX)
+        let y = Int(pinned.convert(pinned.bounds, to: hosted.hosting).maxY * scaleY)
+        let line = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+        let below = try #require(bitmap.colorAt(x: x, y: y + Int(2 * scaleY))?.usingColorSpace(.deviceRGB))
+        #expect(line.alphaComponent > 0.9)
+        #expect(abs(line.redComponent - below.redComponent)
+            + abs(line.greenComponent - below.greenComponent)
+            + abs(line.blueComponent - below.blueComponent) > 0.01)
+        for fraction in [0.25, 0.75] {
+            let sampleX = Int((content.minX + content.width * fraction) * scaleX)
+            let sample = try #require(bitmap.colorAt(x: sampleX, y: y)?.usingColorSpace(.deviceRGB))
+            #expect(abs(sample.redComponent - line.redComponent) < 0.01)
+            #expect(abs(sample.greenComponent - line.greenComponent) < 0.01)
+            #expect(abs(sample.blueComponent - line.blueComponent) < 0.01)
+        }
+        try hosted.captureIfRequested(name: "sidebar-followup-\(rail ? "rail" : "single")")
+    }
+
+    @Test("@spec LAYOUT-2.121: When the user first clicks a pinned-agent heading in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.", arguments: [false, true], ["main", "pinned-0"])
+    func firstPinnedHeadingClickSelects(rail: Bool, name: String) async throws {
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
+        defer { hosted.tearDown() }
+        let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+        func heading() throws -> NSView {
+            if name != "main" { return try hosted.dragView(named: name) }
+            // The main checkout has no drag source. Its heading's menu
+            // host supplies the visible bounds while passing left clicks
+            // through to the production SwiftUI button.
+            return try #require(Self.find(RightClickMenuHostView.self, in: hosted.hosting)
+                .filter { hosted.enclosingScroll($0) === pinned }
+                .min { $0.convert($0.bounds, to: hosted.hosting).minY < $1.convert($1.bounds, to: hosted.hosting).minY })
+        }
+        let row = try heading()
+        let originalFrame = row.convert(row.bounds, to: hosted.hosting)
+        #expect(!hosted.window.isKeyWindow)
+        let location = row.convert(CGPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
+        let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
+        let sources = Self.find(WorktreeDragSourceView.self, in: hosted.hosting)
+        for source in sources { source.currentEvent = { down } }
+        defer { for source in sources { source.currentEvent = { NSApp.currentEvent } } }
+        let root = try #require(hosted.window.contentView)
+        let hit = try #require(root.hitTest(root.superview?.convert(location, from: nil) ?? location))
+        #expect(hit.acceptsFirstMouse(for: down))
+        hosted.window.sendEvent(down)
+        hosted.window.sendEvent(up)
+        try await hosted.settle()
+        let expectedPath = name == "main" ? "/sidebar-test" : "/sidebar-test/.worktrees/" + name
+        #expect(hosted.harness.selections == [expectedPath])
+        #expect(hosted.harness.state.selectedWorktreePath == expectedPath)
+        let selectedRow = try heading()
+        #expect(selectedRow.convert(selectedRow.bounds, to: hosted.hosting) == originalFrame)
+    }
+
     @Test("@spec LAYOUT-2.89: While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.", arguments: [false, true])
     func ordinaryScrollKeepsPinnedRowsFixed(rail: Bool) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
@@ -172,6 +246,7 @@ struct SidebarScrollLayoutTests {
         let event: NSEvent
         let popup: NSPopUpButton
         var didRun = false
+        var fallbackFired = false
         init(window: NSWindow, event: NSEvent, popup: NSPopUpButton) {
             self.window = window; self.event = event; self.popup = popup
         }
@@ -185,7 +260,10 @@ struct SidebarScrollLayoutTests {
         }
         private func run() {
             let fallback = Timer(timeInterval: 0.5, repeats: false) { _ in
-                MainActor.assumeIsolated { self.popup.menu?.cancelTrackingWithoutAnimation() }
+                MainActor.assumeIsolated {
+                    self.fallbackFired = true
+                    self.popup.menu?.cancelTrackingWithoutAnimation()
+                }
             }
             RunLoop.main.add(fallback, forMode: .eventTracking)
             defer { fallback.invalidate() }
@@ -220,6 +298,7 @@ struct SidebarScrollLayoutTests {
                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
+            window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = hosting
             window.orderFront(nil)
         }
@@ -258,20 +337,22 @@ struct SidebarScrollLayoutTests {
                         modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
                         characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
                 }
-                let index = try XCTUnwrap(SidebarWorktreeOrderControl.choices.firstIndex { $0.mode == mode })
                 NSApp.postEvent(up, atStart: false)
-                if popup.indexOfSelectedItem != index {
-                    NSApp.postEvent(try key(index == 0 ? "\u{f700}" : "\u{f701}", code: index == 0 ? 126 : 125), atStart: false)
-                }
+                // A corner release can change the initial menu highlight.
+                // Type the unique item prefix instead of moving relative
+                // to an assumed highlight position.
+                NSApp.postEvent(try key(mode == .manual ? "m" : "r", code: mode == .manual ? 46 : 15), atStart: false)
                 NSApp.postEvent(try key("\r", code: 36), atStart: false)
                 let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup)
                 dispatch.perform()
                 XCTAssertTrue(dispatch.didRun)
+                XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
                 let menu = try XCTUnwrap(tracking.menu)
                 XCTAssertTrue(menu.items.map(\.title).contains("Manual Order"))
                 XCTAssertTrue(menu.items.map(\.title).contains("Recent Activity"))
                 try await settle()
-                XCTAssertEqual(harness.state.repos[0].worktreeOrderMode, mode)
+                XCTAssertEqual(harness.state.repos[0].worktreeOrderMode, mode,
+                    "mode \(mode), probe \(probe), native selection \(popup.indexOfSelectedItem)")
                 XCTAssertTrue(harness.selections.isEmpty)
             }
         }
