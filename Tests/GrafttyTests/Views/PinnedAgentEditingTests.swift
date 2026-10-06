@@ -75,7 +75,7 @@ struct PinnedAgentEditingTests {
         #expect(host.sizeThatFits(in: CGSize(width: 300, height: 1000)).height == 32)
         let firstHeader = NSHostingController(rootView: SidebarWorktreeSectionHeader("Pinned Agents",
             isCollapsed: .constant(false), separatesPrecedingRows: false))
-        #expect(firstHeader.sizeThatFits(in: CGSize(width: 300, height: 1000)).height == 24)
+        #expect(firstHeader.sizeThatFits(in: CGSize(width: 300, height: 1000)).height == 20)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
             let preview = ProjectWorktreeColumn {
                 SidebarWorktreeSectionHeader("Pinned Agents", isCollapsed: .constant(false), separatesPrecedingRows: false)

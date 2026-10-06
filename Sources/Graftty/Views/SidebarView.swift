@@ -260,9 +260,11 @@ struct SidebarView: View {
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
         let counts = SidebarActivityCounts(items: activity)
-        GeometryReader { geometry in
+        // Read native chrome height before expanding underneath it.
+        GeometryReader { titleBarGeometry in
+        GeometryReader { _ in
         VStack(spacing: 0) {
-        searchRow(height: max(geometry.safeAreaInsets.top, Self.searchRowMinimumHeight))
+        searchRow(height: max(titleBarGeometry.safeAreaInsets.top, Self.searchRowMinimumHeight))
         HStack(spacing: 0) {
             if showsProjectRail {
                 ProjectNavigationRail(projects: navigation.orderedProjects(projects), counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
@@ -366,6 +368,7 @@ struct SidebarView: View {
         // and the sidebar toggle, so the sidebar extends under the title bar
         // the same way the detail column does for the breadcrumb.
         .ignoresSafeArea(.container, edges: .top)
+        }
         .task {
             while !Task.isCancelled {
                 await refreshNavigation()
@@ -453,6 +456,8 @@ struct SidebarView: View {
     private static let searchRowLeadingInset: CGFloat = 112
     /// Fallback when the sidebar is not under a title bar.
     private static let searchRowMinimumHeight: CGFloat = 38
+    /// Compact native toolbar viewers still hit-test through 40 points.
+    private static let searchStripMinimumHeight: CGFloat = 40
 
     /// The one search box for both the worktree list and Attention. It lives
     /// in the title-bar row beside the sidebar toggle, so the list starts
@@ -464,6 +469,7 @@ struct SidebarView: View {
             .padding(.leading, Self.searchRowLeadingInset)
             .padding(.trailing, 10)
             .frame(height: height)
+            .frame(minHeight: Self.searchStripMinimumHeight, alignment: .top)
     }
 
     private func voiceDictationButton(collapsed: Bool) -> some View {

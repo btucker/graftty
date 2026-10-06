@@ -62,8 +62,63 @@ private struct HostedSidebarScrollView: View {
 @Suite("Sidebar scroll layout", .serialized)
 @MainActor
 struct SidebarScrollLayoutTests {
-    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true])
-    func pinnedContentStartsBelowSearchStrip(rail: Bool) async throws {
+    @Test("@spec LAYOUT-2.122: While the macOS sidebar shares the title-bar strip with native window controls, the application shall align the search field vertically with the sidebar toggle and place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
+    func searchAlignsWithNativeToggle(rail: Bool, compactToolbar: Bool) async throws {
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
+        defer { hosted.tearDown() }
+        hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
+        try await hosted.settle()
+        for width in [900.0, 720.0] {
+            hosted.window.setContentSize(NSSize(width: width, height: 540))
+            try await hosted.settle()
+            let toggle = try hosted.sidebarToggle()
+            let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
+                $0.placeholderString == "Find any project or worktree"
+            })
+            let toggleFrame = toggle.convert(toggle.bounds, to: hosted.hosting)
+            let toolbarItem = try #require(toggle.superview)
+            let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
+            let searchFrame = search.convert(search.bounds, to: hosted.hosting)
+            #expect(abs(toggleFrame.midY - searchFrame.midY) <= 1)
+            let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+            let document = try #require(pinned.documentView)
+            #expect(document.convert(document.bounds, to: hosted.hosting).minY >= toolbarFrame.maxY)
+        }
+    }
+
+    @Test("@spec LAYOUT-2.123: While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.")
+    func pinnedDisclosureRetainsTopEdgeClickTarget() async throws {
+        let header = NSHostingView(rootView: SidebarWorktreeSectionHeader("Pinned Agents",
+            isCollapsed: .constant(false), separatesPrecedingRows: false))
+        #expect(header.fittingSize.height == 20)
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: true)
+        defer { hosted.tearDown() }
+        let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+        let document = try #require(pinned.documentView)
+        let frame = document.convert(document.bounds, to: hosted.hosting)
+        // The first two points of the header must receive actual input
+        // below the native toolbar, including its invisible hit region.
+        let location = hosted.hosting.convert(CGPoint(x: frame.midX, y: frame.minY + 2), to: nil)
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
+        let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
+        let sources = Self.find(WorktreeDragSourceView.self, in: hosted.hosting)
+        for source in sources { source.currentEvent = { down } }
+        defer { for source in sources { source.currentEvent = { NSApp.currentEvent } } }
+        let root = try #require(hosted.window.contentView)
+        let contentHit = try #require(root.hitTest(root.superview?.convert(location, from: nil) ?? location))
+        let chrome = try #require(root.superview)
+        let chromeHit = try #require(chrome.hitTest(chrome.superview?.convert(location, from: nil) ?? location))
+        #expect(chromeHit === contentHit)
+        #expect(chromeHit.acceptsFirstMouse(for: down))
+        hosted.window.sendEvent(down)
+        hosted.window.sendEvent(up)
+        try await hosted.settle()
+        #expect(hosted.harness.state.repos[0].isPinnedCollapsed)
+        #expect(hosted.harness.selections.isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true], [1, 2])
+    func pinnedContentStartsBelowSearchStrip(rail: Bool, bitmapScale: Int) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
         let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
@@ -73,23 +128,39 @@ struct SidebarScrollLayoutTests {
             $0.placeholderString == "Find any project or worktree"
         })
         let searchFrame = search.convert(search.bounds, to: hosted.hosting)
-        #expect(content.minY - searchFrame.maxY <= 10)
+        let toggle = try hosted.sidebarToggle()
+        let toolbarItem = try #require(toggle.superview)
+        let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
+        #expect(abs(content.minY - toolbarFrame.maxY) <= 1)
         #expect(content.minY >= searchFrame.maxY)
-        let bitmap = try #require(hosted.hosting.bitmapImageRepForCachingDisplay(in: hosted.hosting.bounds))
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: Int(hosted.hosting.bounds.width) * bitmapScale,
+            pixelsHigh: Int(hosted.hosting.bounds.height) * bitmapScale,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.size = hosted.hosting.bounds.size
+        hosted.window.displayIfNeeded()
         hosted.hosting.cacheDisplay(in: hosted.hosting.bounds, to: bitmap)
         let scaleX = CGFloat(bitmap.pixelsWide) / hosted.hosting.bounds.width
         let scaleY = CGFloat(bitmap.pixelsHigh) / hosted.hosting.bounds.height
         let x = Int(content.midX * scaleX)
         let y = Int(pinned.convert(pinned.bounds, to: hosted.hosting).maxY * scaleY)
-        let line = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
-        let below = try #require(bitmap.colorAt(x: x, y: y + Int(2 * scaleY))?.usingColorSpace(.deviceRGB))
-        #expect(line.alphaComponent > 0.9)
-        #expect(abs(line.redComponent - below.redComponent)
-            + abs(line.greenComponent - below.greenComponent)
-            + abs(line.blueComponent - below.blueComponent) > 0.01)
+        let below = try #require(bitmap.colorAt(x: x, y: y + Int(3 * scaleY))?.usingColorSpace(.deviceRGB))
+        // Hairlines can rasterize on either pixel row within their point.
+        // Inspect the divider's one-point band, excluding pinned content,
+        // and compare against background beyond the entire band.
+        let band = y...y + Int(scaleY)
+        let lineY = try #require(band.first { candidate in
+            guard let color = bitmap.colorAt(x: x, y: candidate)?.usingColorSpace(.deviceRGB) else { return false }
+            return color.alphaComponent > 0.9
+                && abs(color.redComponent - below.redComponent)
+                    + abs(color.greenComponent - below.greenComponent)
+                    + abs(color.blueComponent - below.blueComponent) > 0.01
+        }, "Divider missing at scale \(bitmapScale), boundary \(y), pixels \(band.map { bitmap.colorAt(x: x, y: $0) }), background \(below)")
+        let line = try #require(bitmap.colorAt(x: x, y: lineY)?.usingColorSpace(.deviceRGB))
         for fraction in [0.25, 0.75] {
             let sampleX = Int((content.minX + content.width * fraction) * scaleX)
-            let sample = try #require(bitmap.colorAt(x: sampleX, y: y)?.usingColorSpace(.deviceRGB))
+            let sample = try #require(bitmap.colorAt(x: sampleX, y: lineY)?.usingColorSpace(.deviceRGB))
             #expect(abs(sample.redComponent - line.redComponent) < 0.01)
             #expect(abs(sample.greenComponent - line.greenComponent) < 0.01)
             #expect(abs(sample.blueComponent - line.blueComponent) < 0.01)
@@ -245,10 +316,14 @@ struct SidebarScrollLayoutTests {
         let window: NSWindow
         let event: NSEvent
         let popup: NSPopUpButton
+        let selectionEvents: [NSEvent]
+        let selectedTitle: String
         var didRun = false
         var fallbackFired = false
-        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton) {
+        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton, selectionEvents: [NSEvent], selectedTitle: String) {
             self.window = window; self.event = event; self.popup = popup
+            self.selectionEvents = selectionEvents
+            self.selectedTitle = selectedTitle
         }
         func perform() {
             let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
@@ -259,14 +334,48 @@ struct SidebarScrollLayoutTests {
             CFRunLoopRunInMode(.defaultMode, 2, false)
         }
         private func run() {
-            let fallback = Timer(timeInterval: 0.5, repeats: false) { _ in
+            var beganTracking = false
+            var navigationIndex = 0
+            var sentReturn = false
+            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                object: popup.menu, queue: .main) { _ in
+                MainActor.assumeIsolated { beganTracking = true }
+            }
+            // Let native tracking consume each navigation key before
+            // sending the next one. Commit only the observed target highlight.
+            let selection = Timer(timeInterval: 0.05, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    guard beganTracking, !sentReturn else { return }
+                    if navigationIndex == 0 {
+                        NSApp.postEvent(self.selectionEvents[0], atStart: false)
+                        navigationIndex = 1
+                    } else if navigationIndex == 1 {
+                        guard self.popup.menu?.highlightedItem?.title == "Manual Order" else { return }
+                        if self.selectedTitle == "Manual Order" {
+                            NSApp.postEvent(self.selectionEvents.last!, atStart: false)
+                            sentReturn = true
+                        } else {
+                            NSApp.postEvent(self.selectionEvents[1], atStart: false)
+                            navigationIndex = 2
+                        }
+                    } else if self.popup.menu?.highlightedItem?.title == self.selectedTitle {
+                        NSApp.postEvent(self.selectionEvents.last!, atStart: false)
+                        sentReturn = true
+                    }
+                }
+            }
+            RunLoop.main.add(selection, forMode: .eventTracking)
+            let fallback = Timer(timeInterval: 1, repeats: false) { _ in
                 MainActor.assumeIsolated {
                     self.fallbackFired = true
                     self.popup.menu?.cancelTrackingWithoutAnimation()
                 }
             }
             RunLoop.main.add(fallback, forMode: .eventTracking)
-            defer { fallback.invalidate() }
+            defer {
+                selection.invalidate(); fallback.invalidate()
+                NotificationCenter.default.removeObserver(observer)
+            }
             NSApp.finishLaunching()
             window.sendEvent(event)
             didRun = true
@@ -334,17 +443,21 @@ struct SidebarScrollLayoutTests {
                 // No global pointer movement or live app events.
                 func key(_ characters: String, code: UInt16) throws -> NSEvent {
                     try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: location,
-                        modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil,
                         characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
                 }
-                NSApp.postEvent(up, atStart: false)
-                // A corner release can change the initial menu highlight.
-                // Type the unique item prefix instead of moving relative
-                // to an assumed highlight position.
-                NSApp.postEvent(try key(mode == .manual ? "m" : "r", code: mode == .manual ? 46 : 15), atStart: false)
-                NSApp.postEvent(try key("\r", code: 36), atStart: false)
-                let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup)
+                // Keep the initial pointer press held during keyboard
+                // selection. Releasing over the initial item can commit
+                // that item before the queued keys reach menu tracking.
+                var selectionEvents = [try key("\u{F729}", code: 115)] // Home selects the first choice.
+                if mode == .recentActivity { selectionEvents.append(try key("\u{F701}", code: 125)) }
+                selectionEvents.append(try key("\r", code: 36))
+                let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup,
+                    selectionEvents: selectionEvents,
+                    selectedTitle: mode == .manual ? "Manual Order" : "Recent Activity")
                 dispatch.perform()
+                window.sendEvent(up)
                 XCTAssertTrue(dispatch.didRun)
                 XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
                 let menu = try XCTUnwrap(tracking.menu)
@@ -361,6 +474,11 @@ struct SidebarScrollLayoutTests {
             return try #require(SidebarScrollLayoutTests.find(WorktreeDragSourceView.self, in: hosting).first {
                 $0.payload?.worktreeID == row.id
             })
+        }
+        func sidebarToggle() throws -> NSView {
+            try #require(window.toolbar?.items.first {
+                $0.itemIdentifier == .toggleSidebar || $0.itemIdentifier.rawValue.hasSuffix("toggleSidebar")
+            }?.view)
         }
         func enclosingScroll(_ view: NSView) -> NSScrollView? {
             var ancestor = view.superview
