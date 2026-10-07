@@ -861,6 +861,17 @@ struct SidebarView: View {
             })
             hasPinnedActions = true
         }
+        if let title = GitAutoTracking.menuTitle(worktree: worktree, repo: repo) {
+            let item = ClosureMenuItem(title: title) {
+                guard GitAutoTracking.setEnabled(!worktree.autoTrackEnabled, worktreeID: worktree.id, in: &appState.repos) else { return }
+                statsStore.autoTracking.reset(worktreePath: worktree.path)
+                statsStore.refresh(worktreePath: worktree.path, repoPath: repo.path, branch: worktree.branch)
+                statsStore.refreshAutoTracking(repoPath: repo.path)
+            }
+            item.state = worktree.autoTrackEnabled ? .on : .off
+            menu.addItem(item)
+            hasPinnedActions = true
+        }
         if hasPinnedActions { menu.addItem(.separator()) }
         if worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {

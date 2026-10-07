@@ -69,11 +69,6 @@ struct DivergeTodo {
     func diverge_3_1() async throws { }
 
     @Test("""
-@spec DIVERGE-3.2: The application shall compute insertion and deletion line counts by running `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise `origin/<defaultBranch>`. The diff uses a single ref rather than the full union so the tooltip reports "your commits on this branch" rather than conflating feature-branch work with default-branch churn.
-""", .disabled("not yet implemented"))
-    func diverge_3_2() async throws { }
-
-    @Test("""
 @spec DIVERGE-3.3: The application shall detect uncommitted changes in each worktree by running `git status --porcelain` and treating any non-empty output (including modified, staged, deleted, or untracked entries) as "has uncommitted changes".
 """, .disabled("not yet implemented"))
     func diverge_3_3() async throws { }
