@@ -3,8 +3,7 @@ import AppKit
 /// @spec GIT-4.19
 /// Shared presenter for delete-flow confirmation dialogs. Centralises
 /// `NSAlert.beginSheetModal(for:)` so every dialog renders as a
-/// window-attached sheet — matching the policy GIT-4.14 already pins
-/// for the auto-triggered PR-resolved offer. `runModal()` blocks the
+/// window-attached sheet. `runModal()` blocks the
 /// main run loop's default mode, freezing libghostty's PTY callbacks
 /// for every embedded terminal pane while the dialog is on screen;
 /// sheets let the run loop keep pumping so panes keep rendering. The
@@ -28,8 +27,7 @@ enum SheetAlert {
 
     /// Presents `config` as a sheet on `window`. Caller owns the
     /// host-window guard — typically `guard let host = NSApp.mainWindow
-    /// else { return }` — so a no-op when no window is foregrounded
-    /// matches the GIT-4.7 offer-delete behaviour. For a single-button
+    /// else { return }`. For a single-button
     /// alert (`secondaryButton == nil`), the completion fires with
     /// `.primary` on the lone "OK" click.
     @MainActor

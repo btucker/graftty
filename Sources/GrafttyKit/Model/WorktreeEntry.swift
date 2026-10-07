@@ -127,13 +127,6 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// the slot keeps the same pane primary across worktree stops, app
     /// launches, and zmx restarts.
     public var primaryPaneSlotID: PaneSlotID?
-    /// PR number for which the "PR resolved — delete worktree?" offer
-    /// dialog has already been presented (the PR has either merged or
-    /// been closed without merging — GIT-4.7). Persisted so that a
-    /// force-push that closes PR N and reopens as PR M is correctly
-    /// treated as a fresh transition (the numbers differ), while a
-    /// steady poll of the same resolved PR stays quiet.
-    public var offeredDeleteForResolvedPR: Int?
 
     /// Most recent attention, agent progress, or agent stop time. Drives
     /// the sidebar's recent-activity worktree order.
@@ -170,7 +163,6 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.splitTree = splitTree
         self.focusedPaneSlotID = nil
         self.primaryPaneSlotID = nil
-        self.offeredDeleteForResolvedPR = nil
     }
 
     // Custom Decodable so fields added after the initial release are
@@ -180,18 +172,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
-             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
-             offeredDeleteForResolvedPR
+             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
-    }
-
-    /// Legacy key honored on decode only — state blobs persisted by
-    /// the build that knew only `.merged` PRs (before GIT-4.7 broadened
-    /// to include closed-without-merging) carry this name. Read in
-    /// `init(from:)` as a fallback so users upgrading from that build
-    /// don't get re-prompted for merged PRs they've already dismissed.
-    private enum LegacyCodingKeys: String, CodingKey {
-        case offeredDeleteForMergedPR
     }
 
     public init(from decoder: Decoder) throws {
@@ -231,12 +213,6 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
             PaneSlotID.self,
             forKey: .primaryPaneSlotID
         )
-        let resolved = try container.decodeIfPresent(
-            Int.self, forKey: .offeredDeleteForResolvedPR
-        )
-        let legacyMerged = try decoder.container(keyedBy: LegacyCodingKeys.self)
-            .decodeIfPresent(Int.self, forKey: .offeredDeleteForMergedPR)
-        self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
     /// True when this worktree is requesting attention at either scope — a
