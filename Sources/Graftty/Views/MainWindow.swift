@@ -420,6 +420,8 @@ struct MainWindow: View {
             activateRemoteNotification(event)
             remoteMacsModel.consumeRemoteNotificationActivation()
         }
+        .modifier(AgentNotificationActivationHandler(
+            activation: .shared, onActivate: activateLocalNotification))
         .onDisappear {
             voiceDictation.cancel()
             destroyAllRemoteSurfaces()
@@ -755,8 +757,9 @@ struct MainWindow: View {
         selectPane(worktreePath, terminalID, acknowledging: true)
     }
 
-    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) {
-        selectWorktree(worktreePath, acknowledging: acknowledging)
+    @discardableResult
+    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) -> Bool {
+        guard selectWorktree(worktreePath, acknowledging: acknowledging) else { return false }
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
@@ -773,6 +776,7 @@ struct MainWindow: View {
                         == terminalID
             }
         )
+        return true
     }
 
     private func selectWorktree(_ path: String) {
@@ -780,14 +784,15 @@ struct MainWindow: View {
         selectWorktree(path, acknowledging: true)
     }
 
-    private func selectWorktree(_ path: String, acknowledging: Bool) {
-        guard terminalManager.wakeWorktree(path) else { return }
+    @discardableResult
+    private func selectWorktree(_ path: String, acknowledging: Bool) -> Bool {
+        guard terminalManager.wakeWorktree(path) else { return false }
         // In-flight rows have no surfaces to focus and no PR / stats
         // to refresh — let the user keep their current worktree until
         // the owning flow finalizes (`.creating → .running`, or
         // `.deleting → removed`).
         if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
-            return
+            return false
         }
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
@@ -911,6 +916,15 @@ struct MainWindow: View {
         // backoff expires, and the user's only escape hatch is
         // right-click "Refresh now" on the PR button.
         refreshPR()
+        return true
+    }
+
+    private func activateLocalNotification(_ payload: AgentStopNotificationPayload) {
+        attentionOpenGeneration &+= 1
+        pendingRemoteNotificationActivation = nil
+        AgentNotificationActivation.open(payload, worktree: appState.worktree(forPath: payload.worktreePath),
+            selectWorktree: { selectWorktree($0, acknowledging: true) },
+            selectPane: { selectPane($0, $1, acknowledging: true) })
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {

@@ -1080,6 +1080,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.10** When identity lookup or notification authorization overlaps a newer Attention notification for the same worktree, the application shall deliver only the latest pending notification while preserving independent worktree deliveries and cleaning its original attachment source file.
 
+**NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
