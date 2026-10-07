@@ -784,6 +784,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.24** When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.
 
+### GIT-6.x — Auto-tracking Pinned Agents
+
+**GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
+
+**GIT-6.2** When the origin default branch changes and the main checkout has auto-tracking enabled, the application shall attempt a git pull in that checkout before merging the resulting local default branch into opted-in pinned agents.
+
+**GIT-6.3** When the local default branch changes, the application shall attempt git merge in every opted-in pinned agent, including closed worktrees, without requiring main-checkout tracking or a remote change.
+
+**GIT-6.4** If an automatic pull or merge fails, then the application shall leave Git's resulting state for the user, refresh divergence stats, and retry only when its upstream commit changes or tracking is re-enabled.
+
+**GIT-6.5** While an automatic tracking operation is in flight, the application shall serialize tracking within that repository, coalesce new signals, and recheck current opt-in and worktree eligibility before subsequent operations.
+
+**GIT-6.6** While an on-disk Git worktree is the main checkout or an explicitly pinned agent, the application shall offer an auto-tracking context-menu toggle that is checked when enabled and labeled Auto-Track Remote for the main checkout or Auto-Track Default Branch for linked agents.
+
+**GIT-6.7** While a pinned agent has auto-tracking enabled, the application shall measure its divergence against the local default branch plus its own remote branch when present, so failed merges remain visible before local default commits are pushed.
+
 ## ATTN — Attention Notification System
 
 ### ATTN-1.x — CLI Tool
@@ -1148,7 +1164,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
 
-**DIVERGE-3.2** The application shall compute insertion and deletion line counts by running `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise `origin/<defaultBranch>`. The diff uses a single ref rather than the full union so the tooltip reports "your commits on this branch" rather than conflating feature-branch work with default-branch churn.
+**DIVERGE-3.2** When computing insertion and deletion line counts, the application shall run `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise the local default branch for pinned agents with auto-tracking enabled or `origin/<defaultBranch>` for other worktrees. The diff shall use a single ref rather than the full union.
 
 **DIVERGE-3.3** The application shall detect uncommitted changes in each worktree by running `git status --porcelain` and treating any non-empty output (including modified, staged, deleted, or untracked entries) as "has uncommitted changes".
 
@@ -1168,7 +1184,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.5** When `WorktreeStatsStore.clear(worktreePath:)` is called — whether from a stale transition (GIT-3.13), a Dismiss (GIT-3.6), or a Delete (GIT-4.10) — a fetch that was already in flight at that moment shall not repopulate `stats` after the clear. Each `clear` bumps a per-path generation counter; `apply` captures the generation at refresh time and drops the write if the counter changed during the await. Without this, a `git worktree remove` that fires shortly after the 5s-polling refresh leaves the divergence indicator flashing back onto a cleared row for the duration of the git subprocess (~50–200ms). Mirrors `PRStatusStore`'s pattern (PR status gained this protection earlier; stats store was lagging).
 
-**DIVERGE-4.6** When the divergence-stats polling tick fires, the application shall recompute at most four eligible running worktrees and advance a round-robin cursor so every eligible worktree is recomputed within `ceil(runningCount / 4)` ticks. If the same tick dispatches a per-repo `git fetch`, that repository's worktrees shall be skipped because the fetch handler itself recomputes them on success; fetch-due repositories outside the network batch shall remain eligible for the local recompute batch.
+**DIVERGE-4.6** When the divergence-stats polling tick fires, the application shall recompute at most four eligible worktrees, including running worktrees and closed pinned or main worktrees with auto-tracking enabled, and advance a round-robin cursor so every eligible worktree is recomputed within `ceil(eligibleCount / 4)` ticks. If the same tick dispatches a per-repo `git fetch`, that repository's worktrees shall be skipped because the fetch handler itself recomputes them on success; fetch-due repositories outside the network batch shall remain eligible for the local recompute batch.
 
 **DIVERGE-4.7** When a remote-tracking-ref change event fires (GIT-2.5), the application shall immediately refresh divergence stats for every running worktree in the affected repository, without waiting for the polling fallback.
 
@@ -3168,7 +3184,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.2** The window chrome tint bridge shall reapply AppKit `NSWindow` chrome mutations when either the Ghostty theme changes or SwiftUI moves the bridge view to a different host window.
 
-**PERF-1.3** The stats polling loop shall skip closed worktrees during its recurring local recompute cadence; a closed worktree exists on disk but has no live terminal surface, and repeatedly running local git scans for every tracked-but-closed row makes CPU scale with sidebar history rather than active work.
+**PERF-1.3** While a closed worktree has no eligible auto-tracking opt-in, the application shall skip it during the stats polling loop's recurring local recompute cadence so CPU cost does not scale with sidebar history.
 
 **PERF-1.4** When macOS hides the app, the selected worktree's terminal surfaces shall be marked not visible so libghostty can stop repaint work that is not reaching the screen.
 

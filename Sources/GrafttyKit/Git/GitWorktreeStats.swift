@@ -88,11 +88,12 @@ public enum GitWorktreeStats {
         branch: String,
         defaultBranch: String,
         deadline: GitCommandDeadline?,
-        using executor: CLIExecutor? = nil
+        using executor: CLIExecutor? = nil,
+        includeDefaultBranchRemote: Bool = false
     ) async -> UpstreamRefs {
         let defaultRef = "origin/\(defaultBranch)"
         let fallback = UpstreamRefs(defaultRef: defaultRef)
-        guard !branch.isEmpty, branch != defaultBranch else { return fallback }
+        guard !branch.isEmpty, branch != defaultBranch || includeDefaultBranchRemote else { return fallback }
         let branchCandidate = "origin/\(branch)"
         let commandTimeout: Duration?
         do {

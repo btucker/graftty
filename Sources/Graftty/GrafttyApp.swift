@@ -1760,7 +1760,12 @@ struct GrafttyApp: App {
         )
         services.statsStore.start(
             ticker: statsTicker,
-            getRepos: { binding.wrappedValue.repos }
+            getRepos: { binding.wrappedValue.repos },
+            recordAutoTrackingAttempt: { path, target in
+                guard let indices = binding.wrappedValue.indices(forWorktreePath: path) else { return }
+                binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].autoTrackLastAttempt = target
+                Self.persistAppState(binding.wrappedValue)
+            }
         )
 
         // Local remote-ref scans seed PR polling's pushed-branch gate. Each
@@ -6517,6 +6522,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repo = binding.wrappedValue.repos.first(where: {
                 $0.path == repoPath && $0.isGitTracked
             }) else { return }
+            store.refreshAutoTracking(repoPath: repoPath)
             // Graftty's own periodic fetch also moves origin refs. Limit
             // this repo-wide signal to running rows so it doesn't turn
             // into recurring work proportional to closed history.
@@ -6577,6 +6583,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            store.refreshAutoTracking(repoPath: repoPath)
             if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
                 store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
             }
