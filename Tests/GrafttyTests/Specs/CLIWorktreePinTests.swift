@@ -145,14 +145,4 @@ struct CLIWorktreePinTests {
         }
         #expect(state.repos[0] == original)
     }
-
-    @Test func pinningViaCLIProtectsResolvedPullRequestsAndMergeRequests() {
-        let worktree = WorktreeEntry(path: "/repo/.worktrees/release", branch: "release")
-        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [worktree])])
-        #expect(WorktreePinRequestHandler.handle(worktreePath: worktree.path, isPinned: true, state: &state) == .ok)
-        for resolution in [PRInfo.State.merged, .closed] {
-            #expect(PRResolutionOfferAlert.configuration(prNumber: 7, prTitle: "Release", state: resolution,
-                isPinned: state.repos[0].worktrees[0].isPinned) == nil)
-        }
-    }
 }

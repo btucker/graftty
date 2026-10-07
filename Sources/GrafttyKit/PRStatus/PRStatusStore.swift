@@ -99,13 +99,6 @@ public final class PRStatusStore {
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
     private static let pollBatchSize = 4
 
-    /// Fires when a worktree's PR cache transitions into a terminal
-    /// resolved state — either `.merged` or `.closed` (closed without
-    /// merging) — for a (PR-number, state) pair that was not the
-    /// previous cache value. Drives the "PR resolved — delete
-    /// worktree?" offer dialog (GIT-4.7).
-    @ObservationIgnored public var onPRResolved: (@MainActor (_ worktreePath: String, _ prNumber: Int, _ prTitle: String, _ state: PRInfo.State) -> Void)?
-
     /// Fires on PR state, CI-conclusion, or mergeable-state transitions
     /// for a tracked worktree. Idempotent polls (same info twice) do not
     /// fire. The initial discovery of a PR (previous == nil) does not
@@ -393,8 +386,6 @@ public final class PRStatusStore {
                 continue
             }
             let prev = infos[wt.path]
-            let justResolved = pr.state.isTerminal
-                && (prev?.state != pr.state || prev?.number != pr.number)
             if let origin {
                 reconcileAndFireTransitions(
                     worktreePath: wt.path,
@@ -407,9 +398,6 @@ public final class PRStatusStore {
             }
             if absent.contains(wt.path) {
                 absent.remove(wt.path)
-            }
-            if justResolved, let onPRResolved {
-                onPRResolved(wt.path, pr.number, pr.title, pr.state)
             }
         }
 

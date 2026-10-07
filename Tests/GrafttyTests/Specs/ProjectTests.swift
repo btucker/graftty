@@ -97,7 +97,7 @@ struct AddWithoutGitTests {
     }
 }
 
-@Suite("@spec PROJECT-1.1: While a repository is not git-tracked, the application shall hide Add Worktree, Delete Worktree, and the PR-merged delete-offer affordance from its context menus.")
+@Suite("@spec PROJECT-1.1: While a repository is not git-tracked, the application shall hide Add Worktree and Delete Worktree from its context menus.")
 struct NonGitMenuVisibilityTests {
     @Test("Add Worktree affordance hidden for non-git repos")
     func addWorktreeHiddenForNonGit() {

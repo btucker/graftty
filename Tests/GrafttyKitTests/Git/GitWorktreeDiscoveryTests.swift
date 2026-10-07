@@ -73,7 +73,7 @@ struct GitWorktreeDiscoveryTests {
         #expect(entries[1].isPrunable)
     }
 
-    /// GIT-4.7 regression guard: `discover` throws when asked to inspect
+    /// `discover` throws when asked to inspect
     /// a path that isn't a git repository. The app-level callers wrap
     /// this in `try?` historically — cycle 100's fix makes them log via
     /// NSLog instead; that behavior depends on `discover` actually

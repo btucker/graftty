@@ -98,10 +98,6 @@ struct MainWindow: View {
         let repository: RemoteRepositoryInfo
     }
 
-    /// GIT-4.20: resolved-PR "delete worktree?" offers that fired while
-    /// no window could host the sheet, kept for retry when one appears.
-    @State private var pendingResolvedOffers = PendingResolvedOfferQueue()
-
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -383,14 +379,6 @@ struct MainWindow: View {
                 $appState.wrappedValue.windowFrame = newFrame
             }
         }
-        .onAppear {
-            // Wired here rather than in GrafttyApp.startup() so the
-            // closure captures MainWindow's `$appState` binding — both
-            // NSAlert presentation and the "offered" write-back need it.
-            prStatusStore.onPRResolved = { worktreePath, prNumber, prTitle, state in
-                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, prTitle: prTitle, state: state)
-            }
-        }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
         .focusedSceneValue(\.worktreeNavAction, worktreeNavAction)
         .persistSidebarWidth(to: Binding(
@@ -431,38 +419,6 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
             applyAppVisibility(isVisible: true)
-        }
-        // GIT-4.20: retry any resolved-PR offers that couldn't present
-        // when they fired (no host window). Two triggers, because the
-        // offer can be enqueued whenever `NSApp.mainWindow` is nil:
-        // `didBecomeActive` covers returning from the background (a PR
-        // merged while the user was away — the reported case), and
-        // `didBecomeMain` covers a window reappearing while the app
-        // stayed active (e.g. the primary window was deminiaturized).
-        // The retry hosts on `NSApp.mainWindow`, same as every other
-        // alert site here — presenting on a non-primary main window is
-        // still strictly better than losing the offer, which is what
-        // happened before.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            retryPendingResolvedOffers()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in
-            retryPendingResolvedOffers()
-        }
-    }
-
-    /// GIT-4.20: re-attempt the resolved-PR "delete worktree?" offers
-    /// that were queued while no window could host the sheet. Each retry
-    /// re-enters `offerDeleteForResolvedPR`, which re-checks the marker /
-    /// stale guards and re-queues itself if a window still isn't ready.
-    private func retryPendingResolvedOffers() {
-        for offer in pendingResolvedOffers.drain() {
-            offerDeleteForResolvedPR(
-                worktreePath: offer.worktreePath,
-                prNumber: offer.prNumber,
-                prTitle: offer.prTitle,
-                state: offer.state
-            )
         }
     }
 
@@ -3011,11 +2967,9 @@ struct MainWindow: View {
         appState.removeRepo(atPath: repo.path)
     }
 
-    /// Shared `git worktree remove` + teardown path used by both the
-    /// user-initiated "Delete Worktree" menu action and the PR-merged
-    /// offer dialog. Callers own the confirmation UX — this helper runs
-    /// git unconditionally and surfaces failures via the same error
-    /// alert as the menu path. `force` is set internally on retry from
+    /// Runs `git worktree remove` and tears down the worktree after
+    /// the caller confirms deletion. Surfaces failures via an error
+    /// alert. `force` is set internally on retry from
     /// the GIT-4.4 dialog; see GIT-4.12.
     private func performDeleteWorktree(_ worktreePath: String, force: Bool = false) {
         Task { @MainActor in
@@ -3075,49 +3029,6 @@ struct MainWindow: View {
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
                 dispatcher: teamEventDispatcher
             )
-        }
-    }
-
-    /// GIT-4.7 / GIT-4.14. The "offered" marker is persisted via
-    /// `AppState.onChange` so Keep is sticky across restarts, not just
-    /// across polls — and is written only once we know the sheet is
-    /// going up, so a no-window early-return leaves the next poll free
-    /// to retry. `beginSheetModal(for:)` (rather than `runModal()`)
-    /// keeps the main run loop's default mode pumping so libghostty's
-    /// PTY callbacks keep flowing for every embedded pane while the
-    /// auto-triggered offer is on screen.
-    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, prTitle: String, state: PRInfo.State) {
-        guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
-        let repo = appState.repos[repoIdx]
-        let wt = repo.worktrees[wtIdx]
-
-        // Mirrors GIT-4.1: git refuses to remove the main checkout, and
-        // a stale entry has no live worktree to remove.
-        guard wt.path != repo.path, wt.state != .stale else { return }
-        guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state, isPinned: wt.isPinned) else { return }
-        // `NSApp.mainWindow` only — falling through to "any visible
-        // non-panel window" would attach the sheet to Settings or the
-        // Team Activity Log when those are foregrounded. GIT-4.20: the
-        // store fires the resolved edge exactly once (GIT-4.7 idempotent
-        // guard), so we can't rely on "the next poll retries" — queue
-        // the offer instead and retry it when a window appears.
-        guard let host = NSApp.mainWindow else {
-            pendingResolvedOffers.enqueue(PendingResolvedOffer(
-                worktreePath: worktreePath, prNumber: prNumber,
-                prTitle: prTitle, state: state
-            ))
-            return
-        }
-
-        // The offer is presenting, so it no longer needs to be retried.
-        pendingResolvedOffers.remove(worktreePath: worktreePath)
-        // Set the marker now that the sheet is definitely going up, so a
-        // user who clicks Keep doesn't get re-prompted on the next poll.
-        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
-        SheetAlert.present(config, on: host) { response in
-            guard response == .primary else { return }
-            performDeleteWorktree(worktreePath)
         }
     }
 

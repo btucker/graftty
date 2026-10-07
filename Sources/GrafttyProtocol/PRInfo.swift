@@ -5,14 +5,12 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         case open
         case merged
         /// PR/MR closed by the author or a maintainer without ever
-        /// merging. `isTerminal` groups it with `.merged` for any
-        /// rendering / dedup / offer-delete logic that treats "the PR
-        /// is done" as a single condition (GIT-4.7, PR-8.20).
+        /// merging. `isTerminal` groups it with `.merged` for rendering
+        /// logic that treats "the PR is done" as a single condition (PR-8.20).
         case closed
 
         /// True for the terminal states `.merged` and `.closed`. Used
-        /// to drive the offer-delete dialog (GIT-4.7), the badge-tone
-        /// terminal-state priority (PR-8.20), the fetcher's decision
+        /// for the badge-tone terminal-state priority (PR-8.20), the fetcher's decision
         /// to drop stale CI / mergeable signals, and the breadcrumb
         /// pill's resolved-state styling.
         public var isTerminal: Bool {
@@ -23,8 +21,8 @@ public struct PRInfo: Codable, Sendable, Equatable, Identifiable {
         }
 
         /// One-word user-facing verb for a terminal PR resolution
-        /// ("merged", "closed"); `nil` for `.open`. Backs the dialog
-        /// title and the breadcrumb pill suffix.
+        /// ("merged", "closed"); `nil` for `.open`. Backs the
+        /// breadcrumb pill suffix.
         public var resolutionWord: String? {
             switch self {
             case .merged: return "merged"
