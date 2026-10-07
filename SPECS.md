@@ -282,7 +282,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
 
-**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset its question with an accent for pending input and a neutral treatment for viewed questions.
+**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
 
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 

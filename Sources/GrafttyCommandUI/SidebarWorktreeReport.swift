@@ -58,7 +58,7 @@ public struct SidebarWorktreeReport: View {
 }
 
 /// Report text shared by the Mac popover and the mobile report sheet.
-/// @spec LAYOUT-2.135: While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset its question with an accent for pending input and a neutral treatment for viewed questions.
+/// @spec LAYOUT-2.135: While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
 public struct SidebarWorktreeReportContent: View {
     public let context: SidebarWorktreeContext
     private let foreground: Color
@@ -168,8 +168,7 @@ public struct SidebarWorktreeReportContent: View {
     }
 
     private func questionSection(_ section: SidebarAttentionCardContent.Section) -> some View {
-        let accent = context.question == nil ? foreground : Color.orange
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             Label(label(section.kind), systemImage: "bubble.left")
                 .font(.caption).fontWeight(.semibold)
                 .foregroundStyle(foreground)
@@ -178,9 +177,9 @@ public struct SidebarWorktreeReportContent: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(accent.opacity(context.question == nil ? 0.05 : 0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(accent.opacity(context.question == nil ? 0.16 : 0.4), lineWidth: 1)
+            .stroke(Color.orange.opacity(0.4), lineWidth: 1)
             .allowsHitTesting(false))
         .accessibilityElement(children: .combine)
     }
