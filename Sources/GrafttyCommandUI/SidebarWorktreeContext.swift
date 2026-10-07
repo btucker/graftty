@@ -44,6 +44,7 @@ public struct SidebarWorktreeContext: Equatable {
         self.pending = live.filter { candidate in
             candidate.needsAttention && !candidate.isBusy && !isViewed(candidate)
                 && !(candidate.agentStop != nil && busy)
+                && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
         }
         let currentQuestion = pending.contains { $0.id == target.id && $0.occurrence == target.occurrence }
             ? stop?.recap?.need : nil
@@ -59,7 +60,12 @@ public struct SidebarWorktreeContext: Equatable {
 
 extension SidebarNavigationState {
     public func nextPendingWorktree(in worktrees: [WorktreePanes], projectID: String?, after path: String?) -> SidebarActivityItem? {
-        let rows = worktrees.filter { (projectID == nil || SidebarProjection.projectID($0) == projectID) && $0.state.hasOnDiskWorktree }
+        var seen: Set<String> = []
+        let rows = worktrees.filter {
+            let project = SidebarProjection.projectID($0)
+            let identity = "\(project.utf8.count):\(project)\($0.path)"
+            return (projectID == nil || project == projectID) && $0.state.hasOnDiskWorktree && seen.insert(identity).inserted
+        }
         guard !rows.isEmpty else { return nil }
         let start = path.flatMap { path in rows.firstIndex { $0.path == path } }.map { $0 + 1 } ?? 0
         for offset in 0..<rows.count {

@@ -67,6 +67,7 @@ struct SidebarWorktreeContextTests {
         let a = worktree(unseen: stop(), path: "/a")
         let b = worktree(unseen: stop(), path: "/b")
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/a")?.worktreeID == "/b")
+        #expect(navigation.nextPendingWorktree(in: [a,a,b], projectID: "p", after: "/a")?.worktreeID == "/b")
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/b")?.worktreeID == "/a")
         navigation.opened(navigation.worktreeContext(b).item)
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/a")?.worktreeID == "/a")
@@ -81,5 +82,28 @@ struct SidebarWorktreeContextTests {
         #expect(navigation.worktreeContext(row).question == nil)
         #expect(navigation.worktreeContext(worktree(unseen: stop(101), last: stop(101))).question != nil)
         #expect(SidebarWorktreeContext(worktree: worktree(unseen: stop(), last: stop(), progress: ["agent": 110])).pending.isEmpty)
+    }
+
+    @Test func olderHostKeepsDismissedReportAfterResumeAndRelaunch() throws {
+        let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+        let navigation = SidebarNavigationState(prefix: "legacy", defaults: defaults)
+        let projects = [SidebarProject(id: "p", repositoryID: "r", name: "Project")]
+        let row = worktree(unseen: stop())
+        navigation.reconcile(worktrees: [row], projects: projects)
+        navigation.forget(navigation.worktreeContext(row).item.id)
+        let resumed = worktree(progress: ["agent": 110])
+        navigation.reconcile(worktrees: [resumed], projects: projects)
+        #expect(navigation.worktreeContext(resumed).item.agentStop?.recap == stop().recap)
+        #expect(navigation.worktreeContext(resumed).question == nil)
+        let restored = SidebarNavigationState(prefix: "legacy", defaults: defaults)
+        #expect(restored.worktreeContext(resumed).item.agentStop?.recap == stop().recap)
+    }
+
+    @Test func delayedStopCannotBecomeAPendingTarget() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        navigation.updateAttentionItems(SidebarProjection.activity([worktree(unseen: stop(110))]))
+        let context = navigation.worktreeContext(worktree(unseen: stop(100)))
+        #expect(context.item.agentStop?.timestamp == 110)
+        #expect(context.pending.isEmpty)
     }
 }

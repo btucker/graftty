@@ -27,6 +27,7 @@ public final class SidebarNavigationState {
         let previousSelection: String?
     }
     private var workspace: SidebarAttentionWorkspace
+    private var retainedReports: [SidebarActivityItem] = []
     private var opening: [UUID: Opening] = [:]
     private var selectionOpeningID: UUID?
     private var bannerSnapshotReceived = false
@@ -47,12 +48,15 @@ public final class SidebarNavigationState {
         if defaults.data(forKey: prefix + ".attentionWorkspace") == nil {
             workspace.merge(history.entries.map(\.item))
         }
+        retainedReports = defaults.data(forKey: prefix + ".worktreeReports").flatMap {
+            try? JSONDecoder().decode([SidebarActivityItem].self, from: $0)
+        } ?? workspace.items.filter { $0.agentStop != nil }
     }
     public func opened(_ item: SidebarActivityItem) {
         updateAttentionItems([item])
         history.open(item)
         persistHistory()
-        attentionBanners.removeAll { $0.worktreeIdentity == item.worktreeIdentity }
+        dismissAttentionBanner(item)
     }
     public func beginOpening(_ item: SidebarActivityItem) -> UUID {
         let id = UUID()
@@ -78,7 +82,7 @@ public final class SidebarNavigationState {
         }
     }
     public func worktreeContext(_ worktree: WorktreePanes) -> SidebarWorktreeContext {
-        SidebarWorktreeContext(worktree: worktree, retained: workspace.items, isViewed: hasViewed)
+        SidebarWorktreeContext(worktree: worktree, retained: workspace.items + retainedReports, isViewed: hasViewed)
     }
 
     public func hasViewed(_ item: SidebarActivityItem) -> Bool {
@@ -153,6 +157,7 @@ public final class SidebarNavigationState {
         return rows.filter { matching.contains($0.id) && projectIDs.contains($0.projectID) }
     }
     public func updateAttentionItems(_ live: [SidebarActivityItem]) {
+        retainReports(live)
         observeAttentionBanners(live)
         pruneAttentionBanners(live: live)
         var next = workspace
@@ -208,10 +213,32 @@ public final class SidebarNavigationState {
         defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".attentionWorkspace")
     }
 
+    private func retainReports(_ items: [SidebarActivityItem], worktrees: [WorktreePanes]? = nil,
+                               authoritativeProjectIDs: Set<String> = []) {
+        var next = retainedReports
+        for item in items where item.agentStop != nil {
+            if let index = next.firstIndex(where: { $0.worktreeIdentity == item.worktreeIdentity }) {
+                if item.agentStop!.timestamp >= next[index].agentStop!.timestamp { next[index] = item }
+            } else { next.append(item) }
+        }
+        if let worktrees {
+            next.removeAll { item in
+                authoritativeProjectIDs.contains(item.projectID) && !worktrees.contains {
+                    SidebarProjection.projectID($0) == item.projectID && $0.path == item.worktreeID
+                }
+            }
+        }
+        guard next != retainedReports else { return }
+        retainedReports = next
+        defaults.set(try? JSONEncoder().encode(next), forKey: prefix + ".worktreeReports")
+    }
+
     public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject], authoritativeProjectIDs: Set<String>? = nil) {
         observeAttentionBanners(SidebarProjection.activity(worktrees))
         let availableProjectIDs = Set(projects.filter(\.isAvailable).map(\.id))
             .intersection(authoritativeProjectIDs ?? Set(projects.map(\.id)))
+        retainReports(worktrees.map { worktreeContext($0).item }, worktrees: worktrees,
+                      authoritativeProjectIDs: availableProjectIDs)
         pruneAttentionBanners(live: SidebarProjection.activity(worktrees), authoritativeProjectIDs: availableProjectIDs)
         var cards = workspace
         cards.reconcile(worktrees: worktrees, availableProjectIDs: availableProjectIDs)

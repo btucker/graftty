@@ -65,6 +65,19 @@ struct SidebarAttentionBannerTests {
         #expect(navigation.attentionBanner == nil)
     }
 
+    @Test func openingAnOlderRequestPreservesANewerBanner() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        navigation.updateAttentionItems([])
+        let first = item("stop", time: 10, worktree: "/wt")
+        navigation.updateAttentionItems([first])
+        let opening = navigation.beginOpening(first)
+        let next = item("stop", time: 20, worktree: "/wt")
+        navigation.updateAttentionItems([next])
+        navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.attentionBanner?.occurrence == next.occurrence)
+        #expect(!navigation.hasViewed(next))
+    }
+
     @Test("@spec LAYOUT-2.91: When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.")
     func bannerOpensWorktreeDirectly() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
