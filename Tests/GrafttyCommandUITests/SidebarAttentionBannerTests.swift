@@ -18,7 +18,7 @@ struct SidebarAttentionBannerTests {
               isBusy: false)
     }
 
-    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.")
+    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.")
     func onlyNewRequestsShowBanners() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
@@ -35,12 +35,12 @@ struct SidebarAttentionBannerTests {
         navigation.dismissAttentionBanner(second)
         navigation.updateAttentionItems([existing, first, second])
         #expect(navigation.attentionBanner == nil)
-        navigation.enterAttention(projects: [project], items: [existing, first, second])
-        let hidden = item("while-attention-open", time: 40)
+        navigation.showProject(project.id)
+        let hidden = item("while-project-open", time: 40)
         navigation.updateAttentionItems([hidden])
-        navigation.leaveAttention()
+        navigation.resetSelection()
         navigation.updateAttentionItems([hidden])
-        #expect(navigation.attentionBanner == nil)
+        #expect(navigation.attentionBanner?.id == hidden.id)
     }
 
     @Test("A newer request replaces its worktree's queued banner and an old expiry cannot hide it")
@@ -65,8 +65,21 @@ struct SidebarAttentionBannerTests {
         #expect(navigation.attentionBanner == nil)
     }
 
-    @Test("@spec LAYOUT-2.91: When an Attention banner is clicked, the application shall select its worktree, switch to the Needs You queue, and retain the existing queue order.")
-    func bannerOpensAttentionAndWorktree() throws {
+    @Test func openingAnOlderRequestPreservesANewerBanner() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        navigation.updateAttentionItems([])
+        let first = item("stop", time: 10, worktree: "/wt")
+        navigation.updateAttentionItems([first])
+        let opening = navigation.beginOpening(first)
+        let next = item("stop", time: 20, worktree: "/wt")
+        navigation.updateAttentionItems([next])
+        navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.attentionBanner?.occurrence == next.occurrence)
+        #expect(!navigation.hasViewed(next))
+    }
+
+    @Test("@spec LAYOUT-2.91: When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.")
+    func bannerOpensWorktreeDirectly() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let existing = item("existing", time: 10)
@@ -76,11 +89,11 @@ struct SidebarAttentionBannerTests {
         navigation.filter = .running
         let opening = navigation.beginOpeningAttentionBanner(incoming, projects: [project], items: [existing, incoming])
         navigation.finishOpening(opening, succeeded: true)
-        #expect(navigation.showsAttention)
-        #expect(navigation.filter == .needsYou)
+        #expect(navigation.selectedProjectID == project.id)
         #expect(navigation.selectedAttentionID == incoming.id)
         #expect(navigation.rememberedWorktrees[project.id] == incoming.worktreeID)
-        #expect(navigation.attentionItems(live: [], projects: [project]).map(\.id) == [incoming.id, existing.id])
+        #expect(navigation.hasViewed(incoming))
+        #expect(!navigation.hasViewed(existing))
         #expect(navigation.attentionBanner == nil)
     }
 

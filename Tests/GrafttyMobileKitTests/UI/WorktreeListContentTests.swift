@@ -34,27 +34,20 @@ struct WorktreeListContentTests {
         #expect(!WorktreeListContent.shouldApplyNavigationSnapshot(.snapshot([]), matching: rows))
     }
 
-    @Test("Selecting a project or changing navigation mode cancels an outstanding attention open, including offline projects")
-    func projectAndModeChangesCancelAttentionOpen() {
+    @Test("Selecting a project cancels an outstanding report open, including offline projects")
+    func projectChangesCancelReportOpen() {
         let defaults = UserDefaults(suiteName: "selection-\(UUID())")!
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         var generation: UInt64 = 7
         for isAvailable in [true, false] {
             let pending = generation
-            navigation.showsAttention = true
             let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project", isAvailable: isAvailable)
             WorktreeListContent.applyProjectSelection(project, navigation: navigation, selectionGeneration: &generation)
             #expect(!WorktreeListContent.shouldApplySelectionIntent(capturedGeneration: pending, currentGeneration: generation))
             #expect(navigation.selectedProjectID == "project")
-            #expect(!navigation.showsAttention)
             #expect(!navigation.compactShowsProjects)
         }
-        for showsAttention in [true, false] {
-            let pending = generation
-            WorktreeListContent.applyNavigationMode(showsAttention: showsAttention, navigation: navigation, selectionGeneration: &generation)
-            #expect(!WorktreeListContent.shouldApplySelectionIntent(capturedGeneration: pending, currentGeneration: generation))
-            #expect(navigation.showsAttention == showsAttention)
-        }
+
     }
 
     private func sampleHost() -> Host {

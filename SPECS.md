@@ -126,8 +126,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.48** When the user drags the project rail edge, the application shall resize the rail, collapse it to icons below the collapse threshold, and retain the last expanded width across relaunches.
 
-**LAYOUT-2.49** While Attention is displayed in a narrow sidebar column, the application shall fit its filter and request cards within that column, omit the visible filter label, and stack compact Needs You labels above their questions.
-
 **LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 
 **LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
@@ -141,8 +139,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.55** While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
-
-**LAYOUT-2.57** When an Attention card body is opened, the application shall keep Attention open, keep the queue ordered newest first as reports update, and collapse a card only when its agent resumes.
 
 **LAYOUT-2.58** While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
 
@@ -172,11 +168,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.72** When a stopped agent belongs to a named pane, the application shall retain that pane name in its Attention card and make it searchable.
 
-**LAYOUT-2.73** When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
-
-**LAYOUT-2.74** When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
-
-**LAYOUT-2.75** When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.
+**LAYOUT-2.73** When a worktree report is previewed, the application shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
 
 **LAYOUT-2.76** When a worktree has no emoji identity, the application shall leave it identity-less until the first valid agent recap proposes an unused emoji, then retain that emoji across later recaps and relaunches while honoring manual edits.
 
@@ -184,9 +176,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.78** When upgrading from automatically assigned worktree emojis, the application shall remove generated identities while preserving edits that differ from the old automatic choice.
 
-**LAYOUT-2.79** While Attention cards are displayed, the application shall expand stopped reports regardless of viewing or selection and collapse resumed agents into Running rows.
-
-**LAYOUT-2.80** When a project icon or an Attention card's worktree name is opened, the application shall leave Attention and select the target project and worktree.
+**LAYOUT-2.80** When a project or report target is opened, the application shall select the target project and worktree only after a successful visit and preserve newer navigation intentions.
 
 **LAYOUT-2.81** While a linked worktree has an assigned emoji and is not in flight, its project-view row shall display the emoji, then any PR/MR badge, then the worktree name; otherwise, the row shall use its type or progress icon in the same position.
 
@@ -194,11 +184,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
 
-**LAYOUT-2.84** When an agent resumes, the application shall retain its Attention card in place as Running and expand the same card when a new stopped report arrives.
+**LAYOUT-2.84** When an agent resumes, the application shall retain its latest report as previous context and replace it when a newer stopped report arrives.
 
-**LAYOUT-2.85** While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
-
-**LAYOUT-2.86** While Attention is displayed, the application shall show at most one card per project and worktree in every filter, prefer pending requests over resumed activity and the latest request among pending requests, and place the worktree according to its representative's report time.
+**LAYOUT-2.85** While agent request context is retained, the application shall preserve it across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 
 **LAYOUT-2.87** When an Attention worktree card is dismissed, the application shall hide all retained requests for that worktree until a later request arrives.
 
@@ -206,15 +194,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
 
-**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots, and requests received while Attention is open.
+**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.
 
-**LAYOUT-2.91** When an Attention banner is clicked, the application shall select its worktree, switch to the Needs You queue, and retain the existing queue order.
+**LAYOUT-2.91** When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
 
 **LAYOUT-2.92** When an available project's worktree is deleted, the application shall remove all of its retained Attention cards and queued banners while preserving cards for offline projects.
 
 **LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
-
-**LAYOUT-2.94** While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
 
 **LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
@@ -254,7 +240,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.113** When a user drops an eligible temporary local worktree on the Pinned Agents header or a pinned row in its repository, the application shall pin it, reveal the section, preserve its workspace and existing peer order, and keep the default checkout first, including when temporary worktrees use recent activity order.
 
-**LAYOUT-2.114** While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.
+**LAYOUT-2.114** While worktree reports are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.
 
 **LAYOUT-2.115** While the sidebar displays Pinned Agents, the application shall place that section below search and above temporary worktrees, including remote projects.
 
@@ -275,6 +261,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.123** While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
 
 **LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
+
+**LAYOUT-2.125** When a worktree has an unacknowledged agent question, the application shall show the full question inline until it is opened, dismissed, superseded, or its agent resumes, while retaining the recap for preview.
+
+**LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
+
+**LAYOUT-2.127** When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.
+
+**LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next unviewed pending worktree in displayed order within the requested project and wrap at the end.
+
+**LAYOUT-2.129** When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.
+
+**LAYOUT-2.130** While a Mac report popover is visible, the application shall close it when its information button is removed and cap long reports with scrolling.
+
+**LAYOUT-2.131** While a mobile worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.
+
+**LAYOUT-2.132** While a Mac worktree report popover is visible, the application shall fit short reports to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.
+
+**LAYOUT-2.133** While an inline worktree question is displayed, the application shall align its accent and text to the leading edge regardless of question length.
+
+**LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
+
+**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
+
+**LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
+
+**LAYOUT-2.141** When a mobile worktree row recognizes a 500ms hold, the application shall show its report without selecting the worktree, acknowledging its request, or firing its terminal tap action.
+
+**LAYOUT-2.142** When a mobile worktree search matches a retained report field, the application shall include that worktree without changing host-published order.
+
+**LAYOUT-2.143** When mobile pending navigation is invoked, the application shall visit pending worktrees in displayed host order, wrap after the last worktree, and route to its project without entering Attention mode.
+
+**LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1068,6 +1086,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.10** When identity lookup or notification authorization overlaps a newer Attention notification for the same worktree, the application shall deliver only the latest pending notification while preserving independent worktree deliveries and cleaning its original attachment source file.
 
+**NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
@@ -1830,13 +1850,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
 
-**IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display it through the shared Attention pane within a compact iPhone width.
+**IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display its full report in a presentation that fits a compact iPhone width.
 
-**IOS-4.34** While a mobile pane is open, its back button shall badge unviewed Needs Attention cards from other worktrees and open Needs Attention when tapped with a nonzero badge.
+**IOS-4.34** While a mobile pane is open, its back button shall badge pending worktrees elsewhere and navigate to the next pending worktree and project when tapped with a nonzero badge.
 
-**IOS-4.35** While Attention is displayed on a compact mobile screen, the application shall use an inline host title and a single-row filter and search header, revealing the search field only when requested or when a query is active.
-
-**IOS-4.36** While the mobile Attention list is displayed, stopped cards shall remain expanded with their available recap text visible regardless of viewing or selection, and resumed agents shall collapse into Running rows.
+**IOS-4.36** While a mobile worktree report is displayed, the application shall retain its last recap after viewing and identify it as a previous report after the agent resumes.
 
 **IOS-4.37** When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.
 
@@ -3415,3 +3433,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.3** While the WebRTC send buffer is full, the SSH transport shall defer ordered writes, resume them after draining, and fail pending writes on close.
 
 **SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.
+
+**SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.

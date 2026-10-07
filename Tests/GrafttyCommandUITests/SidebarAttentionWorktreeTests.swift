@@ -20,7 +20,7 @@ struct SidebarAttentionWorktreeTests {
               isBusy: busy)
     }
 
-    @Test("@spec LAYOUT-2.86: While Attention is displayed, the application shall show at most one card per project and worktree in every filter, prefer pending requests over resumed activity and the latest request among pending requests, and place the worktree according to its representative's report time.")
+    @Test("Retained request candidates collapse to one representative per worktree")
     func oneCardPerWorktreeInEveryFilter() throws {
         let navigation = try navigation()
         let older = item("old-question", time: 10)
@@ -41,7 +41,7 @@ struct SidebarAttentionWorktreeTests {
         #expect(navigation.attentionItems(live: live + [secondRunning], projects: [project]).map(\.id) == ["running-two"])
     }
 
-    @Test("@spec LAYOUT-2.94: While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.")
+    @Test("Retained request candidates rank by latest report time")
     func cardsAreOrderedNewestFirst() throws {
         let navigation = try navigation()
         let first = item("first", time: 10, worktree: "/first")

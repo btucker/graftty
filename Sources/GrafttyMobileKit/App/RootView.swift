@@ -185,7 +185,7 @@ public struct RootView: View {
         .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
         .task {
             if let project,
-               iPadAppState.sidebarNavigation.selectedProjectID != project.id || iPadAppState.sidebarNavigation.showsAttention {
+               iPadAppState.sidebarNavigation.selectedProjectID != project.id {
                 iPadAppState.sidebarNavigation.showProject(project.id)
             }
         }
@@ -989,7 +989,7 @@ struct SingleSessionView: View {
         TerminalFloatingGlyphButton(
             systemName: "chevron.left",
             accessibilityLabel: pendingAttentionCount > 0
-                ? "Needs Attention, \(pendingAttentionCount) new requests in other worktrees" : "Back",
+                ? "Next pending worktree, \(pendingAttentionCount) pending worktrees" : "Back",
             action: popToParent
         )
         .overlay(alignment: .topTrailing) {
@@ -1046,12 +1046,14 @@ struct SingleSessionView: View {
     }
 
     private func popToParent() {
-        if pendingAttentionCount > 0, let sidebarNavigation {
-            MobilePaneAttention.open(worktrees: attentionWorktrees, projects: attentionProjects,
-                                     navigation: sidebarNavigation)
-            // Skip a possible split-pane picker and return directly to the list.
+        if pendingAttentionCount > 0, let sidebarNavigation,
+           let item = MobilePaneAttention.open(worktrees: attentionWorktrees, projects: attentionProjects,
+                navigation: sidebarNavigation, currentWorktree: step.worktreePath),
+           let project = attentionProjects.first(where: { $0.id == item.projectID }) {
+            // The list owns remote opening, terminal routing, and exact acknowledgement.
             var path = NavigationPath()
             path.append(step.host)
+            path.append(ProjectStep(host: step.host, project: project))
             navigationPath = path
             return
         }

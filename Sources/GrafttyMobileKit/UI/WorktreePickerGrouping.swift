@@ -1,4 +1,3 @@
-#if canImport(UIKit)
 import GrafttyProtocol
 
 /// Pure grouping helper for `WorktreePickerView`. Extracted from the
@@ -114,4 +113,3 @@ extension WorktreePickerGrouping {
         return .delete
     }
 }
-#endif

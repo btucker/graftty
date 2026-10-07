@@ -5,7 +5,7 @@ import Testing
 import GrafttyProtocol
 @testable import GrafttyCommandUI
 
-@Suite("@spec LAYOUT-2.114: While Attention rows are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.")
+@Suite("@spec LAYOUT-2.114: While worktree reports are displayed, the application shall use the worktree name as the heading and show the branch name dimmed on the next line only if it is nonempty and differs from the worktree name.")
 struct SidebarAttentionIdentityTests {
     private func worktree(name: String = "review-checkout", branch: String = "feature/review") -> WorktreePanes {
         WorktreePanes(path: "/repo/review-checkout", displayName: name, repoDisplayName: "Repo",
@@ -119,8 +119,7 @@ struct SidebarAttentionIdentityTests {
             return Data(pixels)
         }
         func card(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
-            let list = SidebarAttentionList(navigation: SidebarNavigationState(prefix: UUID().uuidString), items: [item], projects: [project], onOpen: { _ in true })
-            return try render(list.identity(item, accent: .purple))
+            try render(WorktreeIdentityView(identity: item.iconIdentity, project: project, size: 28))
         }
         func banner(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
             try render(SidebarAttentionBanner(item: item, project: project, onOpen: {}, onDismiss: {}).identityView)

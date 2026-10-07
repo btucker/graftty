@@ -199,7 +199,7 @@ public enum SidebarHostNavigation {
         return .init(id: "\(projectID):\(worktree.id.uuidString)", projectID: projectID, folders: folders, folderIDs: folderIDs,
                      paneIDs: Dictionary(worktree.paneSessions.map { (ZmxLauncher.sessionName(for: $0.value), $0.key.id.uuidString) }, uniquingKeysWith: { first, _ in first }),
                      paneSlotIDs: worktree.splitTree.allLeaves.map { $0.id.uuidString },
-                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop,
+                     attentionTimestamps: times, unseenAgentStop: worktree.unseenAgentStop, lastAgentStop: worktree.lastAgentStop,
                      agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned)
     }
 

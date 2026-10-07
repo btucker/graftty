@@ -39,7 +39,7 @@ struct WorktreeBlock<Heading: View, Panes: View>: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
+                .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
         // PWD-1.5: drop-target highlight. Stroked so it composes with
         // the active-worktree background fill above when the dragged-

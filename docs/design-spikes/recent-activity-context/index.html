@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graftty · Worktree context spike</title>
+<style>
+/* A browser approximation of the existing native sidebar, using system fonts.
+   This fixture does not connect to Graftty or change application state. */
+:root { color-scheme: dark; --page:#141617; --sidebar:#242728; --terminal:#1b1e20; --text:#e1e4e6; --muted:#a4aaad; --line:#383c3e; --orange:#f7b66c; --green:#9ac99a; --blue:#a8c9e9; --row-width:310px; }
+* { box-sizing:border-box; }
+body { margin:0; padding:30px 38px; background:var(--page); color:var(--text); font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+button,input,select { font:inherit; color:inherit; }
+button { cursor:pointer; }
+button,select { border:1px solid var(--line); border-radius:5px; background:#2b2e30; }
+button:hover { background:#383d40; }
+button:focus-visible,input:focus-visible,select:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+button:disabled { opacity:.45; cursor:default; }
+button[hidden],[hidden] { display:none !important; }
+.brief { max-width:1440px; margin:0 auto 20px; display:flex; align-items:center; justify-content:space-between; gap:24px; }
+h1 { margin:0 0 3px; font-size:20px; font-weight:600; letter-spacing:-.35px; }
+.brief p { margin:0; color:var(--muted); }
+.spike-controls { display:flex; align-items:center; gap:16px; white-space:nowrap; color:var(--muted); font-size:12px; }
+.spike-controls label { display:flex; align-items:center; gap:7px; }
+.spike-controls select { padding:5px 8px; }
+.spike-controls button { padding:5px 10px; }
+.window { position:relative; margin:auto; max-width:1440px; height:740px; border:1px solid #42484b; border-radius:10px; overflow:hidden; background:var(--terminal); box-shadow:0 18px 60px #0004; }
+.chrome { height:44px; background:#282b2d; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:18px; padding:0 15px; }
+.lights { display:flex; gap:8px; }
+.lights span { width:11px; height:11px; border-radius:50%; background:#fc6259; }
+.lights span:nth-child(2) { background:#fdbc40; }
+.lights span:nth-child(3) { background:#34c84a; }
+.window-title { color:#bfc4c7; font-size:12px; flex:1; text-align:center; padding-right:52px; }
+.workspace { height:calc(100% - 44px); display:flex; }
+.sidebar { width:calc(58px + var(--row-width)); flex-shrink:0; background:var(--sidebar); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+.search { height:43px; display:flex; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); gap:8px; color:var(--muted); }
+.search input { min-width:0; width:100%; border:0; background:none; font-size:12px; outline-offset:0; }
+.search input::placeholder { color:var(--muted); }
+.sidebar-columns { display:flex; flex:1; min-height:0; }
+.rail { width:58px; flex-shrink:0; border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center; padding:12px 5px 10px; gap:9px; }
+.project { width:44px; height:43px; position:relative; padding:7px; background:transparent; border:0; }
+.project[aria-pressed="true"] { background:#42474a; }
+.project-icon { display:grid; place-items:center; width:28px; height:28px; font-size:10px; font-weight:700; border-radius:6px; background:#363145; border:1px solid #6e5e88; color:#d0bce6; }
+.project[data-project="relay"] .project-icon { background:#263c3d; border-color:#527778; color:#a8d1d2; }
+.project[data-project="notes"] .project-icon { background:#3d3730; border-color:#827155; color:#e0c79e; }
+.badge { position:absolute; right:0; top:0; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:var(--orange); color:#2a1e10; font-size:10px; font-weight:700; line-height:16px; }
+.rail-spacer { flex:1; }
+.rail-tool { border:0; background:transparent; color:var(--muted); font-size:18px; padding:2px; cursor:default; }
+.column { flex:1; min-width:0; display:flex; flex-direction:column; }
+.pinned { padding:10px 6px 9px; border-bottom:1px solid var(--line); }
+.section-label { color:var(--muted); font-size:10px; padding:0 8px 6px; }
+.list-toolbar { min-height:43px; padding:0 12px; display:flex; align-items:center; justify-content:space-between; gap:4px; }
+.list-toolbar select { border:0; background:transparent; font-size:11px; font-weight:600; width:128px; padding:3px 0; }
+.waiting-jump { color:var(--orange); font-size:11px; border:0; background:transparent; padding:4px; }
+.worktrees { flex:1; min-height:0; overflow:auto; padding:0 6px 12px; scrollbar-width:thin; }
+.tree { position:relative; border-radius:6px; padding:5px 0 7px; margin-bottom:4px; }
+.tree.active { background:#ffffff16; }
+.tree.previewed { box-shadow:inset 0 0 0 1px #ffffff35; }
+.tree.stale { opacity:.7; }
+.tree-head { display:flex; align-items:center; gap:6px; min-height:28px; width:100%; padding:3px 8px; background:transparent; border:0; text-align:left; }
+.tree-head:hover { background:transparent; }
+.identity { width:18px; flex-shrink:0; text-align:center; font-size:15px; }
+.pr { font-size:10px; font-weight:600; color:var(--green); white-space:nowrap; }
+.tree-name { min-width:0; flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
+.age { font-size:10px; color:var(--muted); white-space:nowrap; }
+.pane { display:flex; align-items:baseline; gap:6px; padding:0 8px 0 33px; font-size:11px; color:var(--muted); min-height:21px; }
+.pane.running .pane-name { font-style:italic; }
+.pane-name { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex:1; }
+.pane .state { font-size:10px; white-space:nowrap; }
+.pane.running .state { color:var(--green); }
+.pane-count { color:var(--orange); font-weight:600; }
+.input-note { margin:5px 12px 4px 33px; border-left:2px solid #b98548; padding-left:9px; }
+.input-note .label { font-size:10px; color:var(--orange); font-weight:600; margin-bottom:2px; }
+.input-note p { margin:0; font-size:12px; line-height:1.45; color:#f0d8bb; }
+.context-trigger { position:absolute; right:5px; bottom:5px; width:23px; height:22px; padding:0; border:0; background:var(--sidebar); color:var(--muted); opacity:0; }
+.tree:hover .context-trigger,.tree:focus-within .context-trigger,.tree.previewed .context-trigger { opacity:1; }
+.tree:has(.input-note) .context-trigger { top:34px; bottom:auto; }
+.tree:has(.input-note) .pane { padding-right:29px; }
+.context-trigger:hover { color:var(--text); background:#42474a; }
+.empty { padding:24px 12px; color:var(--muted); font-size:12px; }
+.column-footer { border-top:1px solid var(--line); padding:9px 12px; font-size:11px; color:var(--muted); display:flex; justify-content:space-between; }
+.terminal { flex:1; min-width:0; display:flex; flex-direction:column; }
+.terminal-tabs { height:39px; border-bottom:1px solid #34393c; padding:0 20px; display:flex; align-items:center; justify-content:space-between; color:var(--muted); font-size:11px; }
+.terminal-tabs strong { color:#cbd0d3; font-weight:500; }
+.terminal-content { padding:29px 31px; font:12px/1.85 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#b6bdc0; overflow:auto; flex:1; }
+.terminal-content p { margin:0 0 21px; }
+.terminal-path { color:var(--green); }
+.terminal-heading { color:var(--text); font-weight:600; }
+.terminal-muted { color:#929a9f; }
+.terminal-block { border-left:2px solid #4a5154; padding-left:18px; max-width:610px; }
+.terminal-input { border-top:1px solid #373e42; border-bottom:1px solid #373e42; padding:13px 0; margin-top:30px; color:#cfd4d7; }
+.terminal-footer { font-size:10px; color:var(--muted); padding:7px 20px; border-top:1px solid #34393c; display:flex; justify-content:space-between; }
+.popover { position:absolute; z-index:5; width:370px; max-width:calc(100% - 20px); border:1px solid #62696d; border-radius:9px; background:#303537; box-shadow:0 14px 35px #0008,0 2px 8px #0006; padding:17px 19px 13px; max-height:calc(100% - 100px); overflow:auto; }
+.popover-top { display:flex; gap:8px; align-items:center; margin-bottom:4px; font-size:12px; }
+.popover-top strong { flex:1; overflow-wrap:anywhere; font-weight:600; }
+.popover-top button { padding:3px 6px; font-size:11px; color:var(--muted); background:transparent; border:0; }
+.popover-top button[aria-pressed="true"] { color:var(--blue); background:#a8c9e918; }
+.report-meta { font-size:10px; color:#afb8bd; margin:0 0 17px 26px; }
+.popover h2 { font-size:16px; line-height:1.35; margin:0 0 13px; font-weight:600; letter-spacing:-.2px; }
+.report-section { margin:12px 0; }
+.report-label { font-size:10px; font-weight:600; color:#bac4c9; margin-bottom:4px; }
+.report-section p { margin:0; font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.report-section.completed p { color:#b6c0c5; }
+.report-section.need { background:#f7b66c0d; border-left:2px solid var(--orange); padding:9px 11px; }
+.report-section.need .report-label { color:var(--orange); }
+.report-section.need p { color:#f3dcc0; font-size:13px; }
+.report-section.next .report-label { color:#a7d2ce; }
+.report-actions { display:flex; align-items:center; justify-content:space-between; border-top:1px solid #50575b; padding-top:11px; margin-top:17px; gap:12px; }
+.report-actions button { border-color:#626c71; background:#414a4f; padding:5px 9px; font-size:11px; }
+.report-actions span { color:#adb7bd; font-size:10px; }
+.no-report { color:#b6c0c5; }
+.callouts { max-width:1440px; margin:19px auto 0; display:flex; gap:34px; align-items:flex-start; color:var(--muted); font-size:12px; }
+.callouts p { margin:0; flex:1; max-width:420px; }
+.callouts strong { color:#d2d7da; font-weight:500; }
+.demo-label { color:#b1a080; font-size:11px; }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media (max-width:1000px) { body { padding:20px 16px; } .brief { align-items:flex-start; flex-direction:column; gap:12px; } .window { height:760px; } .terminal-content { padding:24px 20px; } .callouts { gap:20px; } }
+@media (max-width:650px) { body { padding:16px 10px; } :root { --row-width:calc(100vw - 82px); } .terminal { display:none; } .sidebar { width:100%; border:0; } .window { height:740px; } .popover { width:calc(100% - 24px); max-height:calc(100% - 125px); } .callouts { flex-direction:column; gap:12px; } .spike-controls { gap:10px; flex-wrap:wrap; } }
+</style>
+</head>
+<body>
+<header class="brief">
+  <div><h1>One worktree list. Context when you need it.</h1><p>Questions stay in the row. Hover for the full report, over the terminal.</p></div>
+  <div class="spike-controls">
+    <span class="demo-label">Design spike · sample data</span>
+    <label>Row width <select id="width"><option value="310">310 px</option><option value="260">260 px</option><option value="360">360 px</option></select></label>
+    <button id="reset">Reset demo</button>
+  </div>
+</header>
+<main class="window" id="window" aria-label="Interactive Graftty sidebar mock">
+  <div class="chrome"><div class="lights" aria-hidden="true"><span></span><span></span><span></span></div><div class="window-title">Graftty</div></div>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="Projects and worktrees">
+      <label class="search"><span aria-hidden="true">⌕</span><input id="search" placeholder="Search worktrees and reports" aria-label="Search worktrees and reports"><span aria-hidden="true">⌘K</span></label>
+      <div class="sidebar-columns">
+        <nav class="rail" aria-label="Projects">
+          <button class="project" data-project="graftty" title="Graftty" aria-label="Graftty, 2 requests for input" aria-pressed="true"><span class="project-icon">Gt</span><span class="badge">2</span></button>
+          <button class="project" data-project="relay" title="Relay" aria-label="Relay, 1 request for input" aria-pressed="false"><span class="project-icon">Ry</span><span class="badge">1</span></button>
+          <button class="project" data-project="notes" title="Notes" aria-label="Notes, no requests for input" aria-pressed="false"><span class="project-icon">N</span></button>
+          <div class="rail-spacer"></div><span class="rail-tool" aria-hidden="true">⚙</span>
+        </nav>
+        <div class="column">
+          <div class="pinned"><div class="section-label">Pinned Agents</div><div id="pinned"></div></div>
+          <div class="list-toolbar"><label class="sr-only" for="order">Worktree order</label><select id="order"><option value="recent">Recent Activity</option><option value="manual">Manual Order</option></select><button id="waiting" class="waiting-jump" title="Jump to the next worktree that needs your input"></button></div>
+          <div class="worktrees" id="worktrees" aria-label="Worktrees"></div>
+          <div class="column-footer"><span id="project-name">Graftty</span><span id="tree-count"></span></div>
+        </div>
+      </div>
+    </aside>
+    <section class="terminal" aria-label="Sample terminal">
+      <div class="terminal-tabs"><strong id="terminal-title"></strong><span>Codex</span></div>
+      <div class="terminal-content" id="terminal-content"></div>
+      <div class="terminal-footer"><span>Local · MacBook Pro</span><span>⌘1</span></div>
+    </section>
+  </div>
+  <section id="popover" class="popover" aria-label="Worktree report" hidden></section>
+</main>
+<footer class="callouts">
+  <p><strong>Point at any worktree.</strong> The report appears beside it. Move into the preview to keep reading. Pin it to keep it open.</p>
+  <p><strong>A question is part of the row.</strong> Opening the worktree acknowledges it; the report remains available on hover. Project badges and the input count help you find older requests.</p>
+  <p><strong>Try it without a mouse.</strong> Tab to a worktree to preview. Use its ⋯ button to pin the report. Escape closes it. Narrow the rows to check wrapping.</p>
+</footer>
+<div id="announcement" role="status" class="sr-only" aria-live="polite"></div>
+<script>
+const trees = [
+  { id:'main', project:'graftty', name:'main', emoji:'Gt', pinned:true, age:'', minutes:0, panes:[{name:'Shell',state:'idle'}] },
+  { id:'sidebar', project:'graftty', name:'merge-recent-activity-attention', emoji:'🧩', age:'1m', minutes:1, panes:[{name:'Codex · sidebar design spike',state:'running'}], report:{title:'Worktree report previews',context:'Combine recent activity and agent reports in the worktree pane. Keep requests for input visible while the rest of the report appears on hover.',completed:'Mapped report fields to the worktree block and sketched a preview beside the list.',next:'Try the mock at a narrow sidebar width and with several pending questions.',age:'12m ago',previous:true} },
+  { id:'crash', project:'graftty', name:'crash-report-from-main', emoji:'🔎', age:'3m', minutes:3, pr:842, panes:[{name:'Claude · crash report investigation',state:'waiting'}], report:{title:'Crash on restoring a closed pane',context:'The saved layout can reference a terminal surface that has already been released. Restoring that pane follows the old reference.',completed:'Found the restore path and reproduced the crash with a saved two-pane layout.',need:'Should the fix restore the pane, or remove it from the saved layout?',next:'Implement the chosen restore behavior and verify the crash reproduction.',age:'3m ago'} },
+  { id:'reconnect', project:'graftty', name:'remote-reconnect', emoji:'🔌', age:'7m', minutes:7, panes:[{name:'Codex · reconnect handling',state:'waiting'}], report:{title:'Reconnect after a sleeping Mac',context:'A paired Mac can appear online while its control connection is stale. The reconnect path needs a decision about when to retry.',completed:'Confirmed the stale connection state and added a retry prototype.',need:'Retry silently, or ask before reconnecting?',next:'Apply the retry policy, then verify both Macs recover after sleep.',age:'7m ago'} },
+  { id:'api', project:'graftty', name:'api-timeouts', emoji:'⏱️', age:'11m', minutes:11, pr:839, panes:[{name:'Codex · request timeout tests',state:'stopped'},{name:'Dev server · localhost:3000',state:'running'}], report:{title:'Request timeout handling',context:'Requests can wait indefinitely when a relay stays connected but stops responding.',completed:'Added a timeout and verified that a late response does not complete the next request.',next:'Review the patch and open a pull request.',age:'11m ago'} },
+  { id:'titles', project:'graftty', name:'pane-title-cleanup', emoji:'🏷️', age:'32m', minutes:32, panes:[{name:'Codex · title fallback',state:'stopped'}], report:{title:'Pane title fallback',completed:'Whitespace-only titles now use the working directory name. The focused-pane title stays readable.',next:'Review the screenshots at the default sidebar width.',age:'32m ago'} },
+  { id:'old', project:'graftty', name:'old-sidebar-experiment', emoji:'⑂', age:'2d', minutes:2880, stale:true, panes:[] },
+  { id:'relay-main', project:'relay', name:'main', emoji:'Ry', pinned:true, age:'', minutes:0, panes:[{name:'Shell',state:'idle'}] },
+  { id:'relay-auth', project:'relay', name:'session-refresh', emoji:'🔑', age:'5m', minutes:5, panes:[{name:'Codex · refresh tokens',state:'waiting'}], report:{title:'Refresh expired sessions',context:'Clients can keep an expired session cached after the server rotates credentials.',completed:'Reproduced the refresh failure and narrowed it to the cache invalidation path.',need:'Should active clients retry once after refreshing their session?',next:'Implement the chosen retry behavior.',age:'5m ago'} },
+  { id:'relay-log', project:'relay', name:'connection-logging', emoji:'📡', age:'18m', minutes:18, panes:[{name:'Claude · connection logs',state:'running'}] },
+  { id:'notes-main', project:'notes', name:'main', emoji:'N', pinned:true, age:'', minutes:0, panes:[{name:'Shell',state:'idle'}] }
+];
+const projects = {graftty:'Graftty',relay:'Relay',notes:'Notes'};
+const byId = id => trees.find(tree => tree.id === id);
+const $ = id => document.getElementById(id);
+const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+let project = 'graftty', selected = 'sidebar', preview = null, pinned = false;
+const viewed = new Set();
+const isPending = tree => !!tree.report?.need && !viewed.has(tree.id);
+let showTimer, hideTimer;
+let suppressed = null;
+const stateText = {running:'Working',stopped:'Stopped',idle:'Idle'};
+function treeHTML(tree) {
+  const report = tree.report;
+  return `<article class="tree ${tree.id===selected?'active':''} ${tree.stale?'stale':''}" data-id="${tree.id}">
+    <button class="tree-head" aria-label="Open ${escapeHTML(tree.name)}${isPending(tree)?', needs your input':''}" ${tree.id===selected?'aria-current="true"':''}>
+      <span class="identity" aria-hidden="true">${escapeHTML(tree.emoji)}</span>${tree.pr?`<span class="pr">#${tree.pr}</span>`:''}<span class="tree-name">${escapeHTML(tree.name)}</span><span class="age">${escapeHTML(tree.age)}</span>
+    </button>
+    ${tree.panes.map(pane=>`<div class="pane ${pane.state}"><span class="${pane.state==='waiting'&&isPending(tree)?'pane-count':''}">${pane.state==='waiting'&&isPending(tree)?'1':'↳'}</span><span class="pane-name">${escapeHTML(pane.name)}</span>${stateText[pane.state]?`<span class="state">${stateText[pane.state]}</span>`:''}</div>`).join('')}
+    ${isPending(tree)?`<div class="input-note"><div class="label">Needs your input</div><p>${escapeHTML(report.need)}</p></div>`:''}
+    ${!tree.panes.length?'<div class="pane">Worktree no longer on disk</div>':''}
+    <button class="context-trigger" aria-label="Pin report for ${escapeHTML(tree.name)}" aria-controls="popover" aria-expanded="false">⋯</button>
+  </article>`;
+}
+function renderList() {
+  const query = $('search').value.trim().toLowerCase();
+  const all = trees.filter(tree => tree.project===project);
+  const matches = tree => !query || [tree.name,...tree.panes.map(p=>p.name),...Object.values(tree.report||{})].join(' ').toLowerCase().includes(query);
+  const tasks = all.filter(tree=>!tree.pinned && matches(tree));
+  if ($('order').value==='recent') tasks.sort((a,b)=>Number(!!a.stale)-Number(!!b.stale)||a.minutes-b.minutes);
+  $('pinned').innerHTML=all.filter(tree=>tree.pinned && matches(tree)).map(treeHTML).join('');
+  $('worktrees').innerHTML=tasks.map(treeHTML).join('') || `<p class="empty">${query?'No matching worktrees or reports.':'No task worktrees in this project.'}</p>`;
+  const waiting = all.filter(isPending).length;
+  $('waiting').textContent = `${waiting} need input`;
+  $('waiting').disabled = waiting===0;
+  $('tree-count').textContent = `${all.filter(tree=>!tree.pinned).length} worktrees`;
+  $('project-name').textContent = projects[project];
+  document.querySelectorAll('.project').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.project===project)));
+  document.querySelectorAll('.tree').forEach(row=>{
+    const id=row.dataset.id;
+    row.addEventListener('mouseenter',()=>{ suppressed=null; schedulePreview(id, 'pointer'); });
+    row.addEventListener('mouseleave',scheduleHide);
+    row.addEventListener('focusin',()=>schedulePreview(id, 'keyboard'));
+    row.addEventListener('focusout',event=>{ if (!row.contains(event.relatedTarget) && !$('popover').contains(event.relatedTarget)) scheduleHide(); });
+    row.querySelector('.tree-head').addEventListener('click',()=>selectTree(id));
+    row.querySelector('.context-trigger').addEventListener('click',()=>{ showPreview(id, 'keyboard'); pinPreview(); });
+  });
+  syncPreviewMarkers();
+  updateProjectCounts();
+}
+function selectTree(id) {
+  selected=id;
+  viewed.add(id);
+  const openedRow=document.querySelector(`.tree[data-id="${id}"]`);
+  openedRow?.querySelector(".input-note")?.remove();
+  openedRow?.querySelectorAll(".pane-count").forEach(count=>{count.textContent="↳";count.classList.remove("pane-count");});
+  const pending=trees.filter(tree=>tree.project===project && isPending(tree)).length;
+  $("waiting").textContent=`${pending} need input`;
+  $("waiting").disabled=pending===0;
+  // Update existing rows in place so a click does not invalidate hover/focus.
+  document.querySelectorAll('.tree').forEach(row=>{
+    row.classList.toggle('active',row.dataset.id===selected);
+    const button=row.querySelector('.tree-head');
+    if(row.dataset.id===selected) button.setAttribute('aria-current','true'); else button.removeAttribute('aria-current');
+  });
+  updateProjectCounts();
+  renderTerminal();
+  $('announcement').textContent=`Opened ${byId(id).name}. Its request is acknowledged; the report remains available.`;
+}
+function updateProjectCounts() {
+  document.querySelectorAll('.project').forEach(button=>{
+    const count=trees.filter(tree=>tree.project===button.dataset.project&&isPending(tree)).length;
+    const badge=button.querySelector('.badge');
+    if(badge) { badge.textContent=count; badge.hidden=count===0; }
+    button.setAttribute('aria-label',`${projects[button.dataset.project]}, ${count} requests for input`);
+  });
+}
+function renderTerminal() {
+  const tree=byId(selected), report=tree.report;
+  $('terminal-title').textContent=tree.name;
+  $('terminal-content').innerHTML=`<p class="terminal-path">~/projects/${tree.project}/${escapeHTML(tree.name)} <span class="terminal-muted">${tree.pinned?'':'⑂ '+escapeHTML(tree.name)}</span></p>
+    <p class="terminal-muted">${tree.panes[0]?.state==='running'?'● Agent working':'Agent session'} · ${escapeHTML(tree.panes[0]?.name || 'No active pane')}</p>
+    <p class="terminal-heading">${escapeHTML(report?.title || 'Ready for a task')}</p>
+    <div class="terminal-block"><p>${escapeHTML(report?.completed || 'The terminal is ready. No agent report has been posted yet.')}</p><p class="terminal-muted">${escapeHTML(report?.need || report?.next || 'Select a task worktree to continue.')}</p></div>
+    <div class="terminal-input">› <span class="terminal-muted">${report?.need?'Reply to the agent…':'Send a follow-up…'}</span></div><p class="terminal-muted" style="margin-top:10px;font-size:10px">Sample terminal content for this design spike</p>`;
+}
+function schedulePreview(id, origin) {
+  clearTimeout(hideTimer); clearTimeout(showTimer);
+  if(pinned || suppressed===id) return;
+  showTimer=setTimeout(()=>showPreview(id,origin),origin==='keyboard'?0:250);
+}
+function scheduleHide() {
+  clearTimeout(showTimer); clearTimeout(hideTimer);
+  if(!pinned) hideTimer=setTimeout(closePreview,300);
+}
+function showPreview(id, origin) {
+  if(pinned && preview!==id) return;
+  clearTimeout(showTimer); clearTimeout(hideTimer);
+  preview=id;
+  const tree=byId(id), report=tree.report;
+  const section=(label,text,kind)=>text?`<div class="report-section ${kind}"><div class="report-label">${label}</div><p>${escapeHTML(text)}</p></div>`:'';
+  const pane=tree.panes.find(pane=>pane.state==='waiting'||pane.state==='stopped') || tree.panes[0];
+  $('popover').innerHTML=`<div class="popover-top"><span aria-hidden="true">${escapeHTML(tree.emoji)}</span><strong>${escapeHTML(tree.name)}</strong><button id="pin-preview" aria-label="${pinned?'Unpin':'Pin'} report" aria-pressed="${pinned}">${pinned?'Pinned':'Pin'}</button><button id="close-preview" aria-label="Close report">×</button></div>
+    <div class="report-meta">${escapeHTML(pane?.name || 'No active pane')}${report?' · '+(report.previous?'Last report · ':'')+escapeHTML(report.age):''}</div>
+    <h2>${escapeHTML(report?.title || 'No report yet')}</h2>
+    ${report?section('Context',report.context,'context')+section('Completed',report.completed,'completed')+section(isPending(tree)?'Needs your input':'Question from report',report.need,'need')+section('Next',report.next,'next'):`<p class="no-report">${tree.stale?'This worktree is no longer on disk. There is no saved report for it.':'This pane has not posted an agent recap. Open the worktree to see its terminal.'}</p>`}
+    <div class="report-actions"><span>${report?.previous?'Agent working · previous recap':isPending(tree)?'Waiting for your reply':report?'Latest agent recap':'No saved recap'}</span><button id="open-preview" ${tree.stale?'disabled':''}>Open worktree →</button></div>`;
+  $('popover').hidden=false;
+  $('pin-preview').onclick=()=>{ pinned=!pinned; updatePin(); };
+  $('close-preview').onclick=()=>dismissPreview();
+  $('open-preview').onclick=()=>{selectTree(id);closePreview();};
+  syncPreviewMarkers(); positionPreview();
+}
+function updatePin() {
+  clearTimeout(hideTimer);
+  $('pin-preview').textContent=pinned?'Pinned':'Pin';
+  $('pin-preview').setAttribute('aria-pressed',String(pinned));
+  $('pin-preview').setAttribute('aria-label',`${pinned?'Unpin':'Pin'} report`);
+  if(!pinned && !$('popover').matches(':hover') && !document.querySelector(`.tree[data-id="${preview}"]`)?.matches(':hover') && !$('popover').contains(document.activeElement)) scheduleHide();
+}
+function pinPreview() { pinned=true; updatePin(); }
+function syncPreviewMarkers() {
+  document.querySelectorAll('.tree').forEach(row=>{
+    const visible=row.dataset.id===preview;
+    row.classList.toggle('previewed',visible);
+    row.querySelector('.context-trigger').setAttribute('aria-expanded',String(visible));
+  });
+}
+function positionPreview() {
+  if(!preview) return;
+  const row=document.querySelector(`.tree[data-id="${preview}"]`);
+  if(!row) {closePreview();return;}
+  const frame=$('window').getBoundingClientRect(), rect=row.getBoundingClientRect();
+  const column=$('worktrees').getBoundingClientRect();
+  if(!byId(preview).pinned && (rect.bottom<column.top || rect.top>column.bottom)) {closePreview();return;}
+  const popup=$('popover');
+  const side=document.querySelector('.sidebar').getBoundingClientRect().right-frame.left+8;
+  popup.style.left=`${Math.min(side,Math.max(12,frame.width-popup.offsetWidth-14))}px`;
+  popup.style.top=`${Math.max(54,Math.min(rect.top-frame.top,frame.height-popup.offsetHeight-15))}px`;
+}
+function closePreview() {
+  clearTimeout(hideTimer);clearTimeout(showTimer);
+  const id=preview;
+  const returnFocus=$('popover').contains(document.activeElement);
+  $('popover').hidden=true;preview=null;pinned=false;syncPreviewMarkers();
+  if(returnFocus && id) {
+    suppressed=id;
+    document.querySelector(`.tree[data-id="${id}"] .context-trigger`)?.focus();
+  }
+}
+function dismissPreview() { suppressed=preview; closePreview(); }
+$('popover').addEventListener('mouseenter',()=>clearTimeout(hideTimer));
+$('popover').addEventListener('mouseleave',()=>{if(!$('popover').contains(document.activeElement)) scheduleHide();});
+$('popover').addEventListener('focusin',()=>clearTimeout(hideTimer));
+$('popover').addEventListener('focusout',event=>{if(!$('popover').contains(event.relatedTarget)) scheduleHide();});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape') {dismissPreview();}
+  if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k') {event.preventDefault();$('search').focus();}
+});
+document.addEventListener('pointerdown',event=>{if(preview && !$('popover').contains(event.target) && !event.target.closest('.tree')) dismissPreview();});
+document.querySelectorAll('.project').forEach(button=>button.addEventListener('click',()=>{
+  closePreview();project=button.dataset.project;selected=trees.find(tree=>tree.project===project).id;$('search').value='';renderList();renderTerminal();
+}));
+$('search').addEventListener('input',()=>{closePreview();renderList();});
+$('order').addEventListener('change',()=>{closePreview();renderList();});
+$('width').addEventListener('change',()=>{document.documentElement.style.setProperty('--row-width',`${$('width').value}px`);positionPreview();});
+$('waiting').addEventListener('click',()=>{
+  const waiting=trees.filter(tree=>tree.project===project&&isPending(tree));
+  const index=waiting.findIndex(tree=>tree.id===selected);
+  const target=waiting[(index+1)%waiting.length];
+  if(!target) return;
+  closePreview();$('search').value='';renderList();
+  document.querySelector(`.tree[data-id="${target.id}"]`).scrollIntoView({block:'nearest'});
+  selectTree(target.id);showPreview(target.id,'keyboard');pinPreview();$('pin-preview').focus();
+});
+$('reset').addEventListener('click',()=>{
+  closePreview();viewed.clear();suppressed=null;project='graftty';selected='sidebar';$('search').value='';$('order').value='recent';$('width').value='310';document.documentElement.style.removeProperty('--row-width');renderList();renderTerminal();$('worktrees').scrollTop=0;
+});
+$('worktrees').addEventListener('scroll',positionPreview);
+window.addEventListener('resize',positionPreview);
+renderList();renderTerminal();
+</script>
+</body>
+</html>

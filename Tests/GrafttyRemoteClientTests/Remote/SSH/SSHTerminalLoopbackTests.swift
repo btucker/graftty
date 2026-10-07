@@ -30,8 +30,13 @@ struct SSHTerminalLoopbackTests {
         case idle, sharedConnection, separateDataChannel, separateConnection
     }
 
-    @Test(.timeLimit(.minutes(3)), arguments: LatencyScenario.allCases)
+    @Test("@spec SSH-1.5: While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.",
+          .timeLimit(.minutes(3)), arguments: LatencyScenario.allCases)
     func interactiveLatencyWithSiblingTraffic(scenario: LatencyScenario) async throws {
+        // Twenty 4 MiB transfers can legitimately take longer than 45 seconds
+        // on the shared connection. Include setup in the deadline and reserve
+        // the final 30 seconds of the three-minute case budget for teardown.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(150))
         let bulkBytes = scenario == .idle ? 0 : 4 * 1024 * 1024
         let bulkStream = EchoStream()
         let connection = try await makeLoopbackConnection { channel, type in
@@ -73,7 +78,7 @@ struct SSHTerminalLoopbackTests {
             parentHandler: bulkConnection.sshHandler, sessionName: "bulk"
         )
         let timeout = Task {
-            do { try await Task.sleep(for: .seconds(45)) } catch { return }
+            do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
             interactive.close()
             bulk.close()
         }
@@ -104,14 +109,18 @@ struct SSHTerminalLoopbackTests {
                 samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
                 try await drain.value
             }
+            guard ContinuousClock.now < deadline else { throw LoopbackError.timedOut }
             samples.sort()
             print("[terminal-latency] scenario=\(scenario.rawValue) siblingBytes=\(bulkBytes) samples=\(samples.count) p50_ms=\(samples[10]) p95_ms=\(samples[18]) max_ms=\(samples[19])")
         } catch {
+            // A deadline close can make the next send throw outputClosed.
+            // Report the actual timeout instead of blaming the SSH transport.
+            let failure: any Error = ContinuousClock.now >= deadline ? LoopbackError.timedOut : error
             interactive.close()
             bulk.close()
             await connection.close()
             await separateConnection?.close()
-            throw error
+            throw failure
         }
         await connection.close()
         await separateConnection?.close()

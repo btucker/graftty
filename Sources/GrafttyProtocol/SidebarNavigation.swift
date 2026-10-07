@@ -25,35 +25,6 @@ public enum SidebarLayoutPolicy {
     }
 }
 
-/// @spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
-public struct SidebarAttentionWidthState {
-    private var previousWidth: Double?
-    private var railWidthAtEntry = 0.0
-
-    public init() {}
-
-    public mutating func enter(currentWidth: Double, railWidth: Double, windowWidth: Double) -> Double? {
-        guard previousWidth == nil,
-              currentWidth.isFinite, railWidth.isFinite, windowWidth.isFinite else { return nil }
-        let target = min(676, railWidth + 410)
-        guard currentWidth < target, windowWidth - target >= 640 else { return nil }
-        previousWidth = currentWidth
-        railWidthAtEntry = railWidth
-        return target
-    }
-
-    public mutating func leave(currentRailWidth: Double) -> Double? {
-        guard let previousWidth else { return nil }
-        self.previousWidth = nil
-        return previousWidth + currentRailWidth - railWidthAtEntry
-    }
-
-    public func adjustedWidth(forRailWidth railWidth: Double) -> Double? {
-        guard previousWidth != nil, railWidth.isFinite else { return nil }
-        return min(676, railWidth + 410)
-    }
-}
-
 /// Stable presentation identity is separate from the live, opaque management route.
 public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -201,14 +172,16 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var paneSlotIDs: [String]?
     public var attentionTimestamps: [String: Double]?
     public var unseenAgentStop: SidebarAgentStop?
+    /// Latest recap remains available to clients after acknowledgement.
+    public var lastAgentStop: SidebarAgentStop?
     /// Latest progress from each provider session, used to retire viewed
     /// stopped cards after their agent resumes.
     public var agentProgressTimes: [String: Double]?
     public var emoji: String?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
         self.isPinned = isPinned
     }
 

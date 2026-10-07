@@ -1275,12 +1275,9 @@ struct GrafttyApp: App {
 
         terminalManager.initialize()
         AgentNotificationRouter.shared.install()
-        AgentNotificationRouter.shared.onActivate = { [appState = $appState, tm = terminalManager] payload in
-            Self.activateAgentStopNotification(
-                payload,
-                appState: appState,
-                terminalManager: tm
-            )
+        AgentNotificationRouter.shared.onActivate = { payload in
+            NSApp.activate(ignoringOtherApps: true)
+            AgentNotificationActivation.shared.enqueue(payload)
         }
         services.remoteMacsModel.onRemoteNotification = { [remoteMacsModel = services.remoteMacsModel] event in
             AgentNotificationRouter.shared.post(event, resolvingIdentity: {
@@ -4928,24 +4925,6 @@ struct GrafttyApp: App {
             providerSessionKey: providerSessionKey,
             progressedAt: progressedAt
         )
-    }
-
-    @MainActor
-    private static func activateAgentStopNotification(
-        _ payload: AgentStopNotificationPayload,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager
-    ) {
-        NSApp.activate(ignoringOtherApps: true)
-        AgentStopNotification.acknowledgeSelection(
-            appState: &appState.wrappedValue,
-            worktreePath: payload.worktreePath
-        )
-        if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
-           let terminalID = agentStopFocusTarget(
-               worktree: worktree, paneSessionName: payload.paneSessionName) {
-            terminalManager.setFocus(terminalID)
-        }
     }
 
     /// AGENT-3.3: the pane to focus when an agent-stop notification is

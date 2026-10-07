@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyCommandUI
 
 struct SidebarAttentionCardContentTests {
-    @Test("@spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.")
+    @Test("@spec LAYOUT-2.73: When a worktree report is previewed, the application shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.")
     func stoppedCardUsesChosenHierarchy() {
         let recap = AttentionRecap(
             title: "Paired-device push notifications",
@@ -42,22 +42,4 @@ struct SidebarAttentionCardContentTests {
         #expect(fallback.sections[0].detail == nil)
     }
 
-    @MainActor
-    @Test("@spec LAYOUT-2.79: While Attention cards are displayed, the application shall expand stopped reports regardless of viewing or selection and collapse resumed agents into Running rows.")
-    func collapsesOnlyAfterResume() {
-        let navigation = SidebarNavigationState(prefix: "presentation-\(UUID())")
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
-            recap: .init(title: "Task", context: "Context", completed: "Done", next: "Next", need: "Which device?"))
-        var item = SidebarActivityItem(id: "stop", projectID: "p", worktreeID: "wt", paneID: nil,
-            projectName: "graftty", worktreeName: "wt", title: stop.title,
-            occurrence: stop.occurrence, isBusy: false, agentStop: stop)
-        let list = SidebarAttentionList(navigation: navigation, items: [item], projects: [], onOpen: { _ in true })
-        #expect(list.rowStyle(for: item) == .expanded)
-        navigation.opened(item)
-        #expect(list.rowStyle(for: item) == .expanded)
-        item.isBusy = true
-        #expect(list.rowStyle(for: item) == .running)
-        item.isBusy = false
-        #expect(list.rowStyle(for: item) == .expanded)
-    }
 }

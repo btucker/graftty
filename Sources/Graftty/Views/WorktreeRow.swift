@@ -263,6 +263,7 @@ struct WorktreeRow: View {
     /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
+    var reportButton: SidebarReportButton? = nil
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -301,6 +302,10 @@ struct WorktreeRow: View {
                     }
                 case .label:
                     branchLabel
+                    if let reportButton {
+                        reportButton.frame(width: 20, height: 20)
+                            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { [.reportButton: $0] }
+                    }
                 }
             }
             if let attentionStyle {

@@ -1354,10 +1354,16 @@ private struct IPadDetailColumn: View {
                 // reserve a dead leading slot when no attention is set.
                 if shouldShowAttentionDot {
                     ToolbarItem(placement: .topBarLeading) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                            .accessibilityLabel("Attention needed in sidebar")
+                        Button {
+                            MobilePaneAttention.open(worktrees: appState.latestWorktrees,
+                                projects: SidebarProjection.projects(appState.latestWorktrees),
+                                navigation: appState.sidebarNavigation,
+                                currentWorktree: appState.selectedWorktreePath)
+                        } label: {
+                            Circle().fill(Color.red).frame(width: 8, height: 8)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("Next pending worktree")
                     }
                 }
                 if shouldShowSplitControls {

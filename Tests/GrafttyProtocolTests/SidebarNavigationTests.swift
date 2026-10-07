@@ -157,18 +157,6 @@ struct SidebarNavigationTests {
         #expect(try JSONDecoder().decode(AttentionRecap.self, from: old).context == nil)
     }
 
-    @Test("@spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.")
-    func attentionReadingWidthRestoresPreviousWidth() {
-        var state = SidebarAttentionWidthState()
-        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 1200) == 410)
-        #expect(state.leave(currentRailWidth: 0) == 256)
-        #expect(state.enter(currentWidth: 256, railWidth: 0, windowWidth: 900) == nil)
-        #expect(state.leave(currentRailWidth: 0) == nil)
-        #expect(state.enter(currentWidth: 460, railWidth: 197, windowWidth: 1400) == 607)
-        #expect(state.adjustedWidth(forRailWidth: 65) == 475)
-        #expect(state.leave(currentRailWidth: 65) == 328)
-    }
-
     @Test("@spec LAYOUT-2.68: While a worktree has a PR or MR, the application shall include its current reference, status, and browser link on its Attention items, including retained history on Mac and mobile.")
     func attentionIncludesForgeBadge() throws {
         let badge = PRBadge(number: 342, state: .open, checks: .pending,
