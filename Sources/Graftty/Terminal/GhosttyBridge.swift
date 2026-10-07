@@ -103,6 +103,17 @@ struct GhosttyTheme: Equatable {
     var background: Color { core.background }
     var foreground: Color { core.foreground }
     var sidebarBackground: Color { core.sidebarBackground }
+
+    /// Share one opaque highlight between selected worktrees and their reports.
+    var highlightedWorktreeBackgroundNSColor: NSColor {
+        let base = core.sidebarBackgroundRGB
+        let foreground = core.foregroundRGB
+        return NSColor(srgbRed: base.r * 0.84 + foreground.r * 0.16,
+                       green: base.g * 0.84 + foreground.g * 0.16,
+                       blue: base.b * 0.84 + foreground.b * 0.16, alpha: 1)
+    }
+    var highlightedWorktreeBackground: Color { Color(nsColor: highlightedWorktreeBackgroundNSColor) }
+
     var isDark: Bool { core.isDark }
 
     // Sidebar text-color accessors live on the shared core type so the iPad

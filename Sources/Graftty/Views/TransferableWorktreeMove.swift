@@ -160,10 +160,10 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Bounds of a worktree heading and its independently clickable PR/MR badge.
+/// Bounds of a worktree heading and its independently clickable controls.
 /// The block-level drag source covers the heading but lets badge clicks through.
 struct WorktreeHeadingAnchor: PreferenceKey {
-    enum Region: Hashable { case heading, prBadge }
+    enum Region: Hashable { case heading, prBadge, reportButton }
     static let defaultValue: [Region: Anchor<CGRect>] = [:]
     static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
@@ -215,9 +215,9 @@ struct WorktreeReorderTarget: ViewModifier {
                             payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
                             blockRect: CGRect(x: -heading.minX, y: -heading.minY,
                                               width: proxy.size.width, height: proxy.size.height),
-                            excludedRects: anchors[.prBadge].map {
-                                [proxy[$0].offsetBy(dx: -heading.minX, dy: -heading.minY)]
-                            } ?? [],
+                            excludedRects: [WorktreeHeadingAnchor.Region.prBadge, .reportButton].compactMap { anchors[$0] }.map {
+                                proxy[$0].offsetBy(dx: -heading.minX, dy: -heading.minY)
+                            },
                             onClick: onSelect)
                         .frame(width: heading.width, height: heading.height)
                         .offset(x: heading.minX, y: heading.minY)

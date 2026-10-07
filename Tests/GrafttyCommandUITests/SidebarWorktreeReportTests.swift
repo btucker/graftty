@@ -7,7 +7,33 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarWorktreeReportTests {
-    @Test("@spec LAYOUT-2.131: While a worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.")
+    @Test("@spec LAYOUT-2.133: While an inline worktree question is displayed, the application shall align its accent and text to the leading edge regardless of question length.")
+    func questionUsesLeadingEdge() throws {
+        for question in ["Set auto-merge?", "Refresh the token so the analytics agent can read the pages and continue its work."] {
+            let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+                recap: .init(title: "Report", context: "Context", completed: "Done", next: "Next", need: question))
+            let row = WorktreePanes(path: "/task", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                sidebar: .init(id: "task", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop))
+            let host = NSHostingView(rootView: VStack {
+                SidebarWorktreeQuestion(context: SidebarWorktreeContext(worktree: row))
+            }.frame(width: 380).fixedSize(horizontal: false, vertical: true))
+            host.setFrameSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var firstAccentX: Int?
+            for x in 0..<bitmap.pixelsWide {
+                if (0..<bitmap.pixelsHigh).contains(where: { y in
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                    return color.redComponent > 0.5 && color.redComponent > color.greenComponent * 1.3 && color.greenComponent > color.blueComponent * 1.3
+                }) { firstAccentX = x; break }
+            }
+            #expect(firstAccentX == 0)
+        }
+    }
+
+    @Test("@spec LAYOUT-2.131: While a mobile worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.")
     func reportFitsNarrowWidth() async throws {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date().addingTimeInterval(-420),
             recap: .init(title: "Reconnect after a sleeping Mac", context: "A paired Mac appears online while its control connection is stale.",

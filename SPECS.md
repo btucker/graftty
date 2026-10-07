@@ -270,11 +270,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next unviewed pending worktree in displayed order within the requested project and wrap at the end.
 
-**LAYOUT-2.129** When the pointer rests on a worktree for 250 milliseconds, the application shall preview its report without selecting the worktree or taking terminal focus, allow 300 milliseconds to enter the preview, and keep a pinned preview open until dismissed.
+**LAYOUT-2.129** When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.
 
-**LAYOUT-2.130** While a worktree report preview is visible, the application shall constrain it to the parent window and close it when its anchor is removed.
+**LAYOUT-2.130** While a Mac report popover is visible, the application shall close it when its information button is removed and cap long reports with scrolling.
 
-**LAYOUT-2.131** While a worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.
+**LAYOUT-2.131** While a mobile worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.
+
+**LAYOUT-2.132** While a Mac worktree report popover is visible, the application shall fit short reports to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.
+
+**LAYOUT-2.133** While an inline worktree question is displayed, the application shall align its accent and text to the leading edge regardless of question length.
+
+**LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
 
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 

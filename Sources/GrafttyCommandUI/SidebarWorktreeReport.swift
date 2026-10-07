@@ -14,6 +14,7 @@ public struct SidebarWorktreeQuestion: View {
             .padding(.leading, 9)
             .overlay(alignment: .leading) { Rectangle().fill(.orange.opacity(0.7)).frame(width: 2) }
             .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         }
     }
@@ -33,42 +34,8 @@ public struct SidebarWorktreeReport: View {
     }
 
     public var body: some View {
-        let card = SidebarAttentionCardContent(item: context.item)
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(card.headerName).font(.subheadline).fontWeight(.semibold)
-                    if let branch = card.branchName { Text(branch).font(.caption2).foregroundStyle(.secondary) }
-                    if let pane = card.paneTitle { Text(pane).font(.caption2).foregroundStyle(.secondary) }
-                    if let badge = context.item.prBadge { SidebarPRBadge(badge: badge) }
-                    if context.isRunning { Label("Running", systemImage: "circle.fill").font(.caption2).foregroundStyle(.secondary) }
-                }
-                Spacer()
-                Button(action: onClose) { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).accessibilityLabel("Close report")
-            }
-            if let stop = context.item.agentStop {
-                Text("\(context.isRunning ? "Previous report" : "Last report") · \(stop.elapsedDescription(at: .now))")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(context.item.agentStop?.recap == nil ? "No report yet" : card.title).font(.headline)
-                    if card.sections.isEmpty {
-                        Text(context.pending.first?.title ?? "This worktree has no saved agent recap.")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    ForEach(card.sections) { section in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(label(section.kind)).font(.caption2).fontWeight(.semibold)
-                                .foregroundStyle(section.kind == .needsYou && context.question != nil ? Color.orange : .secondary)
-                            Text(section.text).font(.callout)
-                            if let detail = section.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
+            SidebarWorktreeReportContent(context: context, scrolls: true, onClose: onClose)
             if error { Text("Couldn't open this worktree. Its request may have changed.").font(.caption).foregroundStyle(.red) }
             Divider()
             HStack {
@@ -87,6 +54,73 @@ public struct SidebarWorktreeReport: View {
                 }.disabled(opening || !context.worktree.state.hasOnDiskWorktree)
             }
         }.padding(16)
+    }
+}
+
+/// Report text shared by the Mac popover and the mobile report sheet.
+public struct SidebarWorktreeReportContent: View {
+    public let context: SidebarWorktreeContext
+    private let foreground: Color
+    private let secondary: Color
+    private let scrolls: Bool
+    private let onClose: (() -> Void)?
+
+    public init(context: SidebarWorktreeContext, foreground: Color = .primary,
+                secondary: Color = .secondary, scrolls: Bool = false, onClose: (() -> Void)? = nil) {
+        self.context = context
+        self.foreground = foreground
+        self.secondary = secondary
+        self.scrolls = scrolls
+        self.onClose = onClose
+    }
+
+    public var body: some View {
+        let card = SidebarAttentionCardContent(item: context.item)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(card.headerName).font(.subheadline).fontWeight(.semibold)
+                    if let branch = card.branchName { Text(branch).font(.caption2).foregroundStyle(secondary) }
+                    if let pane = card.paneTitle { Text(pane).font(.caption2).foregroundStyle(secondary) }
+                    if let badge = context.item.prBadge { SidebarPRBadge(badge: badge) }
+                    if context.isRunning { Label("Running", systemImage: "circle.fill").font(.caption2).foregroundStyle(secondary) }
+                }
+                Spacer()
+                if let onClose {
+                    Button(action: onClose) { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).accessibilityLabel("Close report")
+                }
+            }
+            if let stop = context.item.agentStop {
+                Text("\(context.isRunning ? "Previous report" : "Last report") · \(stop.elapsedDescription(at: .now))")
+                    .font(.caption2).foregroundStyle(secondary)
+            }
+            if scrolls {
+                ScrollView { sections }
+            } else {
+                sections
+            }
+        }.foregroundStyle(foreground)
+    }
+
+    private var sections: some View {
+        let card = SidebarAttentionCardContent(item: context.item)
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(context.item.agentStop?.recap == nil ? "No report yet" : card.title).font(.headline)
+            if card.sections.isEmpty {
+                Text(context.pending.first?.title ?? "This worktree has no saved agent recap.")
+                    .font(.callout).foregroundStyle(secondary)
+            }
+            ForEach(card.sections) { section in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(label(section.kind)).font(.caption2).fontWeight(.semibold)
+                        .foregroundStyle(section.kind == .needsYou && context.question != nil ? Color.orange : secondary)
+                    Text(section.text).font(.callout)
+                    if let detail = section.detail { Text(detail).font(.caption).foregroundStyle(secondary) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
     }
 
     private func label(_ kind: SidebarAttentionCardContent.Section.Kind) -> String {

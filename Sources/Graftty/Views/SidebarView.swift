@@ -207,13 +207,9 @@ struct SidebarView: View {
         return opened
     }
 
-    private func dismissReport(_ context: SidebarWorktreeContext) {
-        navigation.dismissRequest(in: context)
-    }
-
     @ViewBuilder private var pendingNavigationButton: some View {
         let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
-        let rows = pendingNavigationRows.filter { projectFilter == nil || SidebarProjection.projectID($0) == projectFilter }
+        let rows = pendingNavigationRows.filter { $0.state.hasOnDiskWorktree && (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter) }
         let count = rows.filter { !navigation.worktreeContext($0).pending.isEmpty }.count
         if count > 0 {
             Button("\(count) pending") {
@@ -343,7 +339,7 @@ struct SidebarView: View {
                           projects: projects, projectIcons: projectIcons, section: section,
                           reportController: reportController, contextForWorktree: { row in
                               contexts[(row.sidebar?.id ?? row.path) + "\u{0}" + SidebarProjection.projectID(row)] ?? navigation.worktreeContext(row)
-                          }, onOpenReport: openReport, onDismissReport: dismissReport)
+                          })
     }
 
     private var addRepositoryIconButton: some View {
@@ -856,7 +852,8 @@ struct SidebarView: View {
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                         onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
                                         onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
-            }
+            },
+            reportButton: SidebarReportButton(controller: reportController, context: context, theme: theme)
         )
         .frame(minHeight: showsProjectRail ? (groupsPanes ? 28 : 44) : 0)
         .overlay(alignment: .trailing) {
@@ -920,12 +917,16 @@ struct SidebarView: View {
             heading
         } panes: {
             panes
-            if context.questionPaneID == nil {
+            if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
+                                          displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
                 SidebarWorktreeQuestion(context: context).padding(.leading, 33).padding(.trailing, 8)
             }
         }
-        .modifier(SidebarReportPreview(controller: reportController, context: context,
-                                      onOpen: { await openReport(context) }, onDismiss: { dismissReport(context) }))
+    }
+
+    static func showsWorktreeQuestion(questionPaneID: String?, displayedPaneSessions: [String]) -> Bool {
+        guard let questionPaneID else { return true }
+        return !displayedPaneSessions.contains(questionPaneID)
     }
 
     /// Worktree row's right-click menu. Built as `NSMenu` (not a

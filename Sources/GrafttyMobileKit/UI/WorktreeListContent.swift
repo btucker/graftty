@@ -549,7 +549,8 @@ public struct WorktreeListContent: View {
             VStack(spacing: 0) {
                 TextField("Find any project or worktree", text: $navigation.query)
                     .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-                pendingButton(worktrees, projectID: navigation.selectedProjectID)
+                pendingButton(worktrees, projectID: SidebarLayoutPolicy.projectFilter(
+                    selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail))
                 worktreeList(worktrees.filter { navigation.worktreeContext($0).matches(query: navigation.query) })
             }
         } else if horizontalSizeClass == .regular {

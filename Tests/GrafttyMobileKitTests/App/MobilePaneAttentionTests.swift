@@ -71,6 +71,21 @@ struct MobilePaneAttentionTests {
         MobilePaneAttention.consumePendingRoute(for: navigation)
     }
 
+    @Test("Pending navigation includes all displayed projects when the project rail is hidden")
+    func hiddenRailIncludesOtherProjects() {
+        let navigation = SidebarNavigationState(prefix: "mobile-all-projects.\(UUID())")
+        let selected = worktree("selected")
+        let other = worktree("other", projectID: "other-project")
+        navigation.showProject("project")
+        navigation.opened(SidebarProjection.activity([selected])[0])
+        let rows = [selected, other]
+        let projectID = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: false)
+        let scopedRows = rows.filter { projectID == nil || SidebarProjection.projectID($0) == projectID }
+        #expect(MobilePaneAttention.pendingCount(worktrees: scopedRows, currentWorktree: nil, navigation: navigation) == 1)
+        #expect(navigation.nextPendingWorktree(in: rows, projectID: projectID, after: selected.path)?.worktreeID == other.path)
+        #expect(navigation.nextPendingWorktree(in: rows, projectID: navigation.selectedProjectID, after: selected.path) == nil)
+    }
+
     @Test("Opening a worktree with an old recap targets its new pending request")
     func livePendingRequestWinsOverRetainedRecap() {
         let navigation = SidebarNavigationState(prefix: "mobile-target.\(UUID())")
@@ -87,12 +102,12 @@ struct MobilePaneAttentionTests {
     }
 
     private func worktree(_ name: String, source: AttentionSource = .agentStop, stoppedAt: TimeInterval = 100,
-                          isPinned: Bool? = nil, folders: [String] = []) -> WorktreePanes {
+                          isPinned: Bool? = nil, folders: [String] = [], projectID: String = "project") -> WorktreePanes {
         WorktreePanes(path: "/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
             attentionText: source == .commandFinished ? "Done" : nil,
             attentionSource: source == .commandFinished ? source : nil, layout: nil,
-            sidebar: .init(id: name, projectID: "project", folders: folders, unseenAgentStop: source == .agentStop
+            sidebar: .init(id: name, projectID: projectID, folders: folders, unseenAgentStop: source == .agentStop
                 ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: stoppedAt)) : nil, isPinned: isPinned))
     }
 }

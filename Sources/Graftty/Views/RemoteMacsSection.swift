@@ -306,8 +306,6 @@ struct RemoteMacsSection: View {
     var section: SidebarWorktreeSection = .all
     var reportController: SidebarReportController? = nil
     var contextForWorktree: (WorktreePanes) -> SidebarWorktreeContext = { .init(worktree: $0) }
-    var onOpenReport: (SidebarWorktreeContext) async -> Bool = { _ in false }
-    var onDismissReport: (SidebarWorktreeContext) -> Void = { _ in }
 
     @ViewBuilder
     var body: some View {
@@ -485,7 +483,8 @@ struct RemoteMacsSection: View {
             && selectedRemoteWorktreePath == worktree.path
         let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
         let context = contextForWorktree(worktree)
-        let questionPane = context.question == nil ? nil : SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
+        let reportPane = SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
+        let questionPane = context.question == nil ? nil : reportPane
         let pending = context.pending
         let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]).filter { raw in
             pending.contains { item in
@@ -514,7 +513,8 @@ struct RemoteMacsSection: View {
                 )
             },
             attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0],
-            project: project, projectIconData: projectIcons[projectID]
+            project: project, projectIconData: projectIcons[projectID],
+            reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) }
         )
         .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
         .contentShape(Rectangle())
@@ -562,7 +562,7 @@ struct RemoteMacsSection: View {
                 panes
             }
             .padding(.vertical, groupsPanes ? 8 : 0)
-            .background(theme.foreground.opacity(isActive ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .background((isActive ? theme.highlightedWorktreeBackground : .clear), in: RoundedRectangle(cornerRadius: 6))
             .background(theme.background, in: RoundedRectangle(cornerRadius: 6))
         )
         VStack(spacing: 0) {
@@ -595,10 +595,8 @@ struct RemoteMacsSection: View {
         .padding(.vertical, groupsPanes ? 8 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
+                .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
         )
-        .modifier(RemoteReportPreview(controller: reportController, context: context,
-                                      onOpen: onOpenReport, onDismiss: onDismissReport))
     }
 
     private func groupedRepositories(
