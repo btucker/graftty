@@ -210,6 +210,73 @@ public struct WorktreeListContent: View {
     }
 
     public var body: some View {
+        presentedContent
+        // @spec IOS-4.30
+        // The readiness bit is part of the identity so an initial task that
+        // mounted behind the biometric gate re-runs as soon as unlock makes
+        // authenticated connections available. A successful host is latched
+        // to avoid replacing the list with a spinner after every transient
+        // `.inactive` → `.active` cycle.
+        .task(id: WorktreeListLoadKey(
+            hostID: host.id,
+            isReady: isReadyToLoad
+        )) {
+            await loadIfReady()
+        }
+        .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
+            consumePendingWorktreeRoute()
+        }
+        .task(id: externalRefreshToken) {
+            guard externalRefreshToken != 0 else { return }
+            await refresh()
+        }
+        .onChange(of: selectedWorktreePath) { _, path in
+            selectionIntentGeneration &+= 1
+            if let path, case .loaded(let rows) = state, let worktree = rows.first(where: { $0.path == path }) {
+                rememberWorktree(worktree)
+            }
+        }
+        .onChange(of: focusedPaneId) { _, _ in
+            selectionIntentGeneration &+= 1
+        }
+        .onChange(of: navigation.query) { _, _ in closeReport() }
+        .onChange(of: navigation.selectedProjectID) { _, _ in closeReport() }
+        .onChange(of: host.id) { _, _ in
+            presentedHostID = host.id
+            selectionIntentGeneration &+= 1
+            pendingDelete = nil
+            pendingForceDelete = nil
+            remoteMacConnections = []
+            reconnectingRemoteMacIDs = []
+            orderMutationID = nil
+            sidebarSnapshot = nil
+            closeReport()
+            MobilePaneAttention.consumePendingRoute(for: navigation)
+            showsRemoteMacManagement = false
+        }
+        .task(id: RemotePollingKey(
+            hostID: host.id,
+            enabled: includeRemoteWorktrees,
+            isReady: isReadyToLoad
+        )) {
+            await pollRemoteWorktrees()
+        }
+        .task(id: RemoteMacConnectionPollingKey(
+            hostID: host.id,
+            enabled: includeRemoteWorktrees,
+            isReady: isReadyToLoad
+        )) {
+            await pollRemoteMacConnections()
+        }
+        .onDisappear {
+            selectionIntentGeneration &+= 1
+            errorToastTask?.cancel()
+            closeReport()
+        }
+        .environment(\.editMode, $listEditMode)
+    }
+
+    private var loadContent: some View {
         Group {
             switch state {
             case .loading:
@@ -254,6 +321,10 @@ public struct WorktreeListContent: View {
                 }
             }
         }
+    }
+
+    private var presentedContent: some View {
+        loadContent
         .onChange(of: showsProjectRail) { _, _ in
             selectionIntentGeneration &+= 1
             navigation.resetSelection()
@@ -374,117 +445,66 @@ public struct WorktreeListContent: View {
                 Task { await handleCreated(response) }
             }
         }
-        // @spec IOS-4.30
-        // The readiness bit is part of the identity so an initial task that
-        // mounted behind the biometric gate re-runs as soon as unlock makes
-        // authenticated connections available. A successful host is latched
-        // to avoid replacing the list with a spinner after every transient
-        // `.inactive` → `.active` cycle.
-        .task(id: WorktreeListLoadKey(
+    }
+
+    private func loadIfReady() async {
+        presentedHostID = host.id
+        guard Self.shouldAutomaticallyLoad(
             hostID: host.id,
+            loadedHostID: loadedHostID,
             isReady: isReadyToLoad
-        )) {
-            presentedHostID = host.id
-            guard Self.shouldAutomaticallyLoad(
-                hostID: host.id,
-                loadedHostID: loadedHostID,
-                isReady: isReadyToLoad
-            ) else {
+        ) else {
+            return
+        }
+        await load()
+    }
+
+    private func pollRemoteWorktrees() async {
+        guard includeRemoteWorktrees, isReadyToLoad else { return }
+        let requestHostID = host.id
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(1))
+                let list = try await fetchWorktrees(
+                    host: host,
+                    remoteSnapshotProvider: remoteSnapshotProvider,
+                    includeRemoteWorktrees: true
+                )
+                guard Self.shouldApplyLoadResult(
+                    requestHostID: requestHostID,
+                    presentedHostID: presentedHostID,
+                    isCancelled: Task.isCancelled
+                ) else { return }
+                applyLoadedList(list)
+                // Sidebar-only changes (order, availability, and icons) may
+                // arrive while the worktree array itself is unchanged.
+                await updateNavigationMetadata(list, requestHostID: requestHostID)
+            } catch is CancellationError {
                 return
-            }
-            await load()
-        }
-        .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
-            consumePendingWorktreeRoute()
-        }
-        .task(id: externalRefreshToken) {
-            guard externalRefreshToken != 0 else { return }
-            await refresh()
-        }
-        .onChange(of: selectedWorktreePath) { _, path in
-            selectionIntentGeneration &+= 1
-            if let path, case .loaded(let rows) = state, let worktree = rows.first(where: { $0.path == path }) {
-                rememberWorktree(worktree)
+            } catch {
+                // Keep the last usable list. The primary load/refresh
+                // paths still surface transport errors to the user.
             }
         }
-        .onChange(of: focusedPaneId) { _, _ in
-            selectionIntentGeneration &+= 1
-        }
-        .onChange(of: navigation.query) { _, _ in closeReport() }
-        .onChange(of: navigation.selectedProjectID) { _, _ in closeReport() }
-        .onChange(of: host.id) { _, _ in
-            presentedHostID = host.id
-            selectionIntentGeneration &+= 1
-            pendingDelete = nil
-            pendingForceDelete = nil
+    }
+
+    private func pollRemoteMacConnections() async {
+        guard includeRemoteWorktrees, isReadyToLoad else {
             remoteMacConnections = []
             reconnectingRemoteMacIDs = []
-            orderMutationID = nil
-            sidebarSnapshot = nil
-            closeReport()
-            MobilePaneAttention.consumePendingRoute(for: navigation)
-            showsRemoteMacManagement = false
+            return
         }
-        .task(id: RemotePollingKey(
-            hostID: host.id,
-            enabled: includeRemoteWorktrees,
-            isReady: isReadyToLoad
-        )) {
-            guard includeRemoteWorktrees, isReadyToLoad else { return }
-            let requestHostID = host.id
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(1))
-                    let list = try await fetchWorktrees(
-                        host: host,
-                        remoteSnapshotProvider: remoteSnapshotProvider,
-                        includeRemoteWorktrees: true
-                    )
-                    guard Self.shouldApplyLoadResult(
-                        requestHostID: requestHostID,
-                        presentedHostID: presentedHostID,
-                        isCancelled: Task.isCancelled
-                    ) else { return }
-                    applyLoadedList(list)
-                    // Sidebar-only changes (order, availability, and icons) may
-                    // arrive while the worktree array itself is unchanged.
-                    await updateNavigationMetadata(list, requestHostID: requestHostID)
-                } catch is CancellationError {
-                    return
-                } catch {
-                    // Keep the last usable list. The primary load/refresh
-                    // paths still surface transport errors to the user.
-                }
-            }
-        }
-        .task(id: RemoteMacConnectionPollingKey(
-            hostID: host.id,
-            enabled: includeRemoteWorktrees,
-            isReady: isReadyToLoad
-        )) {
-            guard includeRemoteWorktrees, isReadyToLoad else {
-                remoteMacConnections = []
-                reconnectingRemoteMacIDs = []
+        let requestHostID = host.id
+        while !Task.isCancelled {
+            guard let delay = await refreshRemoteMacConnections(
+                requestHostID: requestHostID
+            ) else { return }
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
                 return
             }
-            let requestHostID = host.id
-            while !Task.isCancelled {
-                guard let delay = await refreshRemoteMacConnections(
-                    requestHostID: requestHostID
-                ) else { return }
-                do {
-                    try await Task.sleep(for: delay)
-                } catch {
-                    return
-                }
-            }
         }
-        .onDisappear {
-            selectionIntentGeneration &+= 1
-            errorToastTask?.cancel()
-            closeReport()
-        }
-        .environment(\.editMode, $listEditMode)
     }
 
     private func consumePendingWorktreeRoute() {
