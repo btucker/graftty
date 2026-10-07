@@ -395,12 +395,7 @@ public struct WorktreeListContent: View {
             await load()
         }
         .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
-            guard horizontalSizeClass == .regular || !showsProjectRail || project?.id == navigation.selectedProjectID,
-                  let item = MobilePaneAttention.pendingRoute(for: navigation),
-                  case .loaded(let rows) = state,
-                  rows.contains(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }) else { return }
-            MobilePaneAttention.consumePendingRoute(for: navigation)
-            Task { await openReportTarget(item, worktrees: rows) }
+            consumePendingWorktreeRoute()
         }
         .task(id: externalRefreshToken) {
             guard externalRefreshToken != 0 else { return }
@@ -490,6 +485,17 @@ public struct WorktreeListContent: View {
             closeReport()
         }
         .environment(\.editMode, $listEditMode)
+    }
+
+    private func consumePendingWorktreeRoute() {
+        guard horizontalSizeClass == .regular || !showsProjectRail || project?.id == navigation.selectedProjectID,
+              let item = MobilePaneAttention.pendingRoute(for: navigation),
+              case .loaded(let rows) = state,
+              rows.contains(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }) else { return }
+        MobilePaneAttention.consumePendingRoute(for: navigation)
+        // Consuming the route changes the task identity. Keep opening outside
+        // that task so its cancellation cannot interrupt navigation.
+        Task { await openReportTarget(item, worktrees: rows) }
     }
 
     @ViewBuilder
@@ -1199,7 +1205,7 @@ public struct WorktreeListContent: View {
             guard includeRemoteWorktrees,
                   let request = SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: supportsExact) else { continue }
             let requestHostID = host.id
-            let provider = remoteConnectionProvider
+            let provider: RemoteConnectionProvider? = remoteConnectionProvider
             Task {
                 let response = try? await RelayedWorktreeManagementClient.send(request, using: provider)
                 guard presentedHostID == requestHostID else { return }
