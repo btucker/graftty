@@ -282,6 +282,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
 
+**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset its question with an accent for pending input and a neutral treatment for viewed questions.
+
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 
 **LAYOUT-2.141** When a mobile worktree row recognizes a 500ms hold, the application shall show its report without selecting the worktree, acknowledging its request, or firing its terminal tap action.
@@ -3443,3 +3445,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.3** While the WebRTC send buffer is full, the SSH transport shall defer ordered writes, resume them after draining, and fail pending writes on close.
 
 **SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.
+
+**SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.

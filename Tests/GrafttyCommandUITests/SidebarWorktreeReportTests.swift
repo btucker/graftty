@@ -73,8 +73,57 @@ struct SidebarWorktreeReportTests {
                 let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                 host.cacheDisplay(in: host.bounds, to: bitmap)
                 try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent("report-\(Int(width)).png"))
+                if width == 380 { try capturePopoverVariants(row, directory: url) }
             }
         }
     }
+
+    private func capturePopoverVariants(_ row: WorktreePanes, directory: URL) throws {
+        let themes: [(String, ColorScheme, GhosttyThemeColors)] = [
+            ("dark", .dark, .fallback),
+            ("light", .light, .init(backgroundRGB: .init(r: 0.95, g: 0.91, b: 0.83),
+                                   foregroundRGB: .init(r: 0.2, g: 0.16, b: 0.1)))
+        ]
+        for (name, scheme, theme) in themes {
+            let base = theme.sidebarBackgroundRGB, foreground = theme.foregroundRGB
+            let background = Color(.sRGB, red: base.r * 0.84 + foreground.r * 0.16,
+                                   green: base.g * 0.84 + foreground.g * 0.16,
+                                   blue: base.b * 0.84 + foreground.b * 0.16, opacity: 1)
+            for state in ["pending", "viewed", "running"] {
+                let displayedRow: WorktreePanes
+                if state == "running" {
+                    var sidebar = row.sidebar
+                    sidebar?.agentProgressTimes = ["codex": Date().timeIntervalSinceReferenceDate]
+                    displayedRow = WorktreePanes(path: row.path, displayName: "merge-recent-activity-attention",
+                        repoDisplayName: row.repoDisplayName, displayBranch: row.displayBranch, state: .running,
+                        isMainCheckout: false, prBadge: .init(number: 401, state: .open, checks: .failure,
+                            url: URL(string: "https://github.com/btucker/graftty/pull/401")!),
+                        stats: nil, attentionText: nil, layout: nil, sidebar: sidebar)
+                } else {
+                    displayedRow = row
+                }
+                let context = SidebarWorktreeContext(worktree: displayedRow, isViewed: { _ in state == "viewed" })
+                let content = SidebarWorktreeReportContent(context: context, foreground: theme.foreground,
+                                                          secondary: theme.foreground.opacity(0.8))
+                    .padding(16).frame(width: 380).fixedSize(horizontal: false, vertical: true)
+                    .background(background).environment(\.colorScheme, scheme)
+                let host = NSHostingView(rootView: content)
+                let size = host.fittingSize
+                let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: size.width, height: size.height),
+                                      styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+                window.orderFront(nil)
+                defer { window.close() }
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(
+                    to: directory.appendingPathComponent("popover-\(name)-\(state).png"))
+            }
+        }
+    }
+
 }
 #endif

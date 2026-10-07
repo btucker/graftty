@@ -41,7 +41,7 @@ final class SidebarReportController: NSObject, ObservableObject, NSPopoverDelega
         let width = min(380, max(1, window.contentLayoutRect.width - 24))
         host.rootView = AnyView(
             SidebarWorktreeReportContent(context: context, foreground: theme.foreground,
-                                         secondary: theme.sidebarSecondaryText)
+                                         secondary: theme.foreground.opacity(0.8))
                 .padding(16)
                 .frame(width: width, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
