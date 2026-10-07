@@ -185,7 +185,7 @@ public struct RootView: View {
         .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
         .task {
             if let project,
-               iPadAppState.sidebarNavigation.selectedProjectID != project.id || iPadAppState.sidebarNavigation.showsAttention {
+               iPadAppState.sidebarNavigation.selectedProjectID != project.id {
                 iPadAppState.sidebarNavigation.showProject(project.id)
             }
         }

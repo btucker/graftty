@@ -60,7 +60,6 @@ struct MainWindow: View {
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
-    @State private var attentionSidebarWidth: Double?
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
@@ -124,7 +123,6 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
-                onAttentionWidthChange: { attentionSidebarWidth = $0 },
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -144,7 +142,7 @@ struct MainWindow: View {
             )
             .navigationSplitViewColumnWidth(
                 min: minimumSidebarWidth,
-                ideal: max(minimumSidebarWidth, attentionSidebarWidth ?? appState.sidebarWidth),
+                ideal: max(minimumSidebarWidth, appState.sidebarWidth),
                 max: 676
             )
             // SidebarView opts out of the title-bar safe area itself and
@@ -396,7 +394,7 @@ struct MainWindow: View {
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
-        ), when: attentionSidebarWidth == nil)
+        ), when: true)
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
         }
@@ -711,16 +709,13 @@ struct MainWindow: View {
                   remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil else { return false }
             guard let current = remoteMacsModel.promotedWorktreesForRelay().first(where: { $0.path == item.worktreeID }) else { return false }
             var resolvedItem = item
-            if item.paneID != nil {
-                guard let paneID = SidebarProjection.paneRoute(for: item, in: current) else { return false }
+            if let paneID = SidebarProjection.attentionPaneRoute(for: item, in: current) {
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
-                resolvedItem.paneID = paneID
+                if item.paneID != nil { resolvedItem.paneID = paneID }
                 selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
-            } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
-            if let stop = worktree.sidebar?.unseenAgentStop {
-                guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(.acknowledgeOccurrence(
-                    worktreeID: item.worktreeID, paneID: nil, occurrence: stop.occurrence)) else { return false }
-                if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
+            } else {
+                guard item.paneID == nil else { return false }
+                selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false)
             }
             let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
@@ -732,18 +727,24 @@ struct MainWindow: View {
         }
         guard let worktree = appState.worktree(forPath: item.worktreeID), worktree.state.hasOnDiskWorktree else { return false }
         var selectedSlot: PaneSlotID?
+        let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: item.projectID, folders: [])
         if item.paneID != nil {
-            let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: item.projectID, folders: [])
             guard let slotID = SidebarProjection.paneSlotID(for: item, in: metadata),
                   let slot = worktree.splitTree.allLeaves.first(where: { $0.id.uuidString == slotID }) else { return false }
             selectedSlot = slot
-            selectPane(worktree.path, slot, acknowledging: false)
-        } else { selectWorktree(worktree.path, acknowledging: false) }
+        } else if let slotID = item.agentStop?.paneSlotID {
+            selectedSlot = worktree.splitTree.allLeaves.first { $0.id.uuidString == slotID }
+        } else if let title = item.agentStop?.paneTitle {
+            let matches = worktree.splitTree.allLeaves.filter { terminalManager.displayTitles[$0] == title }
+            if matches.count == 1 { selectedSlot = matches[0] }
+        } else if worktree.splitTree.allLeaves.count == 1 { selectedSlot = worktree.splitTree.allLeaves.first }
+        if let selectedSlot { selectPane(worktree.path, selectedSlot, acknowledging: false) }
+        else { selectWorktree(worktree.path, acknowledging: false) }
         guard appState.selectedWorktreePath == item.worktreeID,
               let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
               !active.splitTree.allLeaves.isEmpty else { return false }
         if let occurrence = item.occurrence {
-            let paneID = selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
+            let paneID = item.paneID == nil ? nil : selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
             SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: paneID, occurrence: occurrence)
         }
         return true

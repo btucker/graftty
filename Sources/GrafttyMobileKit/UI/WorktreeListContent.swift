@@ -48,7 +48,7 @@ public struct WorktreeListContent: View {
     private var projectIcons: [String: Data] { projectIconCache.icons }
     @State private var listEditMode: EditMode = .inactive
     @State private var reportWorktreeID: String?
-    @State private var reportOrder: MobileWorktreeReportOrder?
+    @State private var reportOrder: SidebarWorktreeReportOrder?
     @State private var orderMutationID: UUID?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @State private var worktreeScrollSpace = UUID()
@@ -256,7 +256,7 @@ public struct WorktreeListContent: View {
         }
         .onChange(of: showsProjectRail) { _, _ in
             selectionIntentGeneration &+= 1
-            navigation.leaveAttention()
+            navigation.resetSelection()
         }
         .confirmationDialog(
             pendingDelete?.action.dialogTitle ?? "",
@@ -415,6 +415,8 @@ public struct WorktreeListContent: View {
         .onChange(of: focusedPaneId) { _, _ in
             selectionIntentGeneration &+= 1
         }
+        .onChange(of: navigation.query) { _, _ in closeReport() }
+        .onChange(of: navigation.selectedProjectID) { _, _ in closeReport() }
         .onChange(of: host.id) { _, _ in
             presentedHostID = host.id
             selectionIntentGeneration &+= 1
@@ -553,7 +555,7 @@ public struct WorktreeListContent: View {
         } else if horizontalSizeClass == .regular {
             HStack(spacing: 0) {
                 ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
-                                      selectedID: navigation.selectedProjectID, showsAttention: false, showsAttentionButton: false,
+                                      selectedID: navigation.selectedProjectID,
                                       collapsed: Binding(get: {
                     SidebarLayoutPolicy.railCollapsed(preference: navigation.railCollapsed, isMobile: true, windowWidth: navigationWindowWidth)
                 }, set: { navigation.railCollapsed = $0 }),
@@ -562,7 +564,7 @@ public struct WorktreeListContent: View {
                                       canExpand: navigationWindowWidth >= 1100,
                                       selectionColor: theme?.foreground.opacity(0.16) ?? .primary.opacity(0.12),
                                       onSelect: { project in selectProject(project, worktrees: worktrees) },
-                                      onAttention: {},
+
                                       onMove: moveProject)
                 Divider()
                 projectDetail(worktrees, projects: projects)
@@ -633,7 +635,7 @@ public struct WorktreeListContent: View {
     private func showReport(_ worktree: WorktreePanes) {
         guard reportWorktreeID == nil, case .loaded(let worktrees) = state else { return }
         selectionIntentGeneration &+= 1
-        reportOrder = MobileWorktreeReportOrder(worktrees: worktrees, projects: projects(for: worktrees))
+        reportOrder = SidebarWorktreeReportOrder(worktrees: worktrees, projects: projects(for: worktrees))
         reportWorktreeID = worktree.path
     }
 
@@ -733,19 +735,27 @@ public struct WorktreeListContent: View {
             if item.paneID != nil { currentItem.paneID = paneID }
             let supportsExactAcknowledgement = projects(for: worktrees)
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-            if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
-                for: currentItem, supportsExactAcknowledgement: supportsExactAcknowledgement
-            ) {
-                let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
-                guard presentedHostID == requestHostID else { return false }
-                if case .error(let code, let message, _, _) = response, code != "occurrence-changed" { showErrorToast(message); return false }
-            }
             guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
-            // Complete acknowledgement before pushing a terminal so a failed report Open stays visible.
             if let leaf {
                 if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
             } else if let onSelectWorktreeDetail { onSelectWorktreeDetail(target) }
             else { onSelect(target) }
+            // The visit has occurred. A delayed acknowledgement must not consume
+            // an unopened request or later replace a newer navigation choice.
+            if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
+                for: currentItem, supportsExactAcknowledgement: supportsExactAcknowledgement
+            ) {
+                Task {
+                    do {
+                        let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
+                        guard presentedHostID == requestHostID else { return }
+                        if case .error(let code, let message, _, _) = response, code != "occurrence-changed" { showErrorToast(message) }
+                    } catch {
+                        guard presentedHostID == requestHostID else { return }
+                        showErrorToast("Couldn't mark this request as viewed.")
+                    }
+                }
+            }
             return true
         } catch {
             guard presentedHostID == requestHostID else { return false }
@@ -819,7 +829,7 @@ public struct WorktreeListContent: View {
                                         projectColumn: showsProjectRail && horizontalSizeClass == .regular,
                                         context: navigation.worktreeContext(wt),
                                         onSelect: {
-                                            Task { await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: worktrees) }
+                                            beginSelectingWorktree(wt)
                                         },
                                         onSelectPane: { leaf in
                                             rememberWorktree(wt)
@@ -835,7 +845,7 @@ public struct WorktreeListContent: View {
                                     )
                                     .popover(isPresented: Binding(
                                         get: { reportWorktreeID == wt.path },
-                                        set: { if !$0 { closeReport() } }
+                                        set: { if !$0, reportWorktreeID == wt.path { closeReport() } }
                                     ), arrowEdge: .leading) {
                                         MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
                                             let rows: [WorktreePanes]
@@ -843,11 +853,10 @@ public struct WorktreeListContent: View {
                                             return await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: rows)
                                         }, onDismiss: {
                                             let context = navigation.worktreeContext(wt)
-                                            navigation.updateAttentionItems(context.pending)
-                                            navigation.forget(context.item.id)
+                                            navigation.dismissRequest(in: context)
                                             closeReport()
                                         },
-                                        onClose: closeReport)
+                                        onClose: { if reportWorktreeID == wt.path { closeReport() } })
                                         .presentationCompactAdaptation(.sheet)
                                     }
                                     .id(wt.sidebar?.id ?? wt.path)
@@ -1087,6 +1096,7 @@ public struct WorktreeListContent: View {
     /// live multi-pane hierarchy and its `SessionClient`s out of SwiftUI's
     /// update path until pane metadata or topology actually changes.
     private func applyLoadedList(_ list: [WorktreePanes]) {
+        if let reportWorktreeID, !list.contains(where: { $0.path == reportWorktreeID }) { closeReport() }
         let next = LoadState.loaded(list)
         let changed = Self.shouldPublishLoadedList(
             current: state,
@@ -1629,7 +1639,7 @@ struct WorktreeBlock: View {
                 project: project, projectIconData: projectIconData,
                 theme: theme,
                 isActive: isActive,
-                isOpening: isOpening
+                isOpening: isOpening, attentionCount: context.pending.count
             )
             .frame(minHeight: projectColumn ? 44 : 0)
         } else {
@@ -1639,7 +1649,7 @@ struct WorktreeBlock: View {
                     project: project, projectIconData: projectIconData,
                     theme: theme,
                     isActive: isActive,
-                    isOpening: isOpening
+                    isOpening: isOpening, attentionCount: context.pending.count
                 )
                 .frame(minHeight: projectColumn ? 44 : 0)
                 .contentShape(Rectangle())
@@ -1701,11 +1711,12 @@ private struct WorktreeRowContent: View {
     /// siblings (IPAD-1.16).
     let isActive: Bool
     let isOpening: Bool
+    let attentionCount: Int
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if worktree.layout?.leaves.isEmpty != false {
-                SidebarActivityBadge(SidebarActivityCounts(items: SidebarProjection.activity([worktree])).attentionByWorktree[worktree.path, default: 0])
+                SidebarActivityBadge(attentionCount)
             }
             typeIcon
             if let badge = worktree.prBadge {

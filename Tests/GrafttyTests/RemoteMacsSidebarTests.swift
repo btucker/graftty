@@ -82,9 +82,9 @@ struct RemoteMacsSidebarTests {
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {
-            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p", showsAttention: false,
+            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p",
                 collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
-                onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
+                onSelect: { _ in },  onMove: { _, _, _ in })
             Divider()
             ProjectWorktreeColumn {
                 RemoteMacsSection(model: model, expansion: .constant(RemoteSidebarExpansion()), worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],

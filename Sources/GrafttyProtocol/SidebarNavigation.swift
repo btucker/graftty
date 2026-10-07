@@ -25,35 +25,6 @@ public enum SidebarLayoutPolicy {
     }
 }
 
-/// @spec LAYOUT-2.74: When Attention opens in a wide enough window, the application shall widen its content column for reading and restore the previous sidebar width when leaving, while preserving project-rail size changes.
-public struct SidebarAttentionWidthState {
-    private var previousWidth: Double?
-    private var railWidthAtEntry = 0.0
-
-    public init() {}
-
-    public mutating func enter(currentWidth: Double, railWidth: Double, windowWidth: Double) -> Double? {
-        guard previousWidth == nil,
-              currentWidth.isFinite, railWidth.isFinite, windowWidth.isFinite else { return nil }
-        let target = min(676, railWidth + 410)
-        guard currentWidth < target, windowWidth - target >= 640 else { return nil }
-        previousWidth = currentWidth
-        railWidthAtEntry = railWidth
-        return target
-    }
-
-    public mutating func leave(currentRailWidth: Double) -> Double? {
-        guard let previousWidth else { return nil }
-        self.previousWidth = nil
-        return previousWidth + currentRailWidth - railWidthAtEntry
-    }
-
-    public func adjustedWidth(forRailWidth railWidth: Double) -> Double? {
-        guard previousWidth != nil, railWidth.isFinite else { return nil }
-        return min(676, railWidth + 410)
-    }
-}
-
 /// Stable presentation identity is separate from the live, opaque management route.
 public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var id: String

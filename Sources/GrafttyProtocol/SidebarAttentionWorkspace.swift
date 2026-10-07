@@ -1,6 +1,6 @@
 import Foundation
 
-/// @spec LAYOUT-2.85: While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
+/// @spec LAYOUT-2.85: While agent request context is retained, the application shall preserve it across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 ///
 /// Durable cards are separate from the bounded history of viewed requests.
 /// An occurrence is retained for identity and acknowledgement; `isBusy` controls
@@ -39,7 +39,6 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
         return rows
     }
 
-    /// @spec LAYOUT-2.94: While Attention cards are displayed, the application shall order them newest first by each card's latest report time and move a card to the top when a newer report arrives for its worktree.
     public static func newestFirst(_ rows: [SidebarActivityItem]) -> [SidebarActivityItem] {
         rows.enumerated().sorted { left, right in
             let leftTime = reportTime(left.element), rightTime = reportTime(right.element)
@@ -149,5 +148,13 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             if let occurrence = item.occurrence { dismissed[item.id] = occurrence }
         }
         items.removeAll { $0.worktreeIdentity == target.worktreeIdentity }
+    }
+
+    /// A report action may finish after another request reaches this worktree.
+    public mutating func dismissOccurrence(_ item: SidebarActivityItem) {
+        guard let occurrence = item.occurrence,
+              items.contains(where: { $0.id == item.id && $0.occurrence == occurrence }) else { return }
+        dismissed[item.id] = occurrence
+        items.removeAll { $0.id == item.id && $0.occurrence == occurrence }
     }
 }

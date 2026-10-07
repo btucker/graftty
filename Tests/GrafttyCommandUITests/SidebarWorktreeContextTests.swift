@@ -12,10 +12,10 @@ struct SidebarWorktreeContextTests {
     }
 
     private func worktree(unseen: SidebarAgentStop? = nil, last: SidebarAgentStop? = nil,
-                          progress: [String: Double] = [:], path: String = "/wt") -> WorktreePanes {
+                          progress: [String: Double] = [:], path: String = "/wt", stableID: String? = nil, state: WorktreeWireState = .running, attention: String? = nil) -> WorktreePanes {
         .init(path: path, displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
-              state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-              layout: nil, sidebar: .init(id: path, projectID: "p", unseenAgentStop: unseen,
+              state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: attention,
+              layout: nil, sidebar: .init(id: stableID ?? path, projectID: "p", unseenAgentStop: unseen,
                                          lastAgentStop: last, agentProgressTimes: progress))
     }
 
@@ -106,4 +106,63 @@ struct SidebarWorktreeContextTests {
         #expect(context.item.agentStop?.timestamp == 110)
         #expect(context.pending.isEmpty)
     }
+    @Test func frozenOrderRetainsMembershipAndLiveContent() {
+        func row(_ path: String, pinned: Bool = false, folders: [String] = [], last: SidebarAgentStop? = nil) -> WorktreePanes {
+            .init(path: path, displayName: path, repoDisplayName: "Project", displayBranch: path,
+                  state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                  sidebar: .init(id: path, projectID: "p", folders: folders, lastAgentStop: last, isPinned: pinned))
+        }
+        let a = row("a", folders: ["folder"]), b = row("b"), c = row("c", folders: ["folder"])
+        let order = SidebarWorktreeReportOrder(worktrees: [a, b, c])
+        let current = row("a", pinned: true, folders: ["moved"], last: stop(120))
+        let frozen = order.orderedWorktrees([b, current, c])
+        #expect(frozen.map(\.path) == ["a", "b", "c"])
+        #expect(frozen[0].sidebar?.isPinned == false)
+        #expect(frozen[0].sidebar?.folders == ["folder"])
+        #expect(frozen[0].sidebar?.lastAgentStop == stop(120))
+        #expect(SidebarWorktreeReportOrder.displayedWorktrees(frozen).map(\.path) == ["a", "c", "b"])
+        #expect(order.orderedWorktrees([b, c]).map(\.path) == ["b", "c"])
+    }
+
+    @Test func retainedReportsFollowStableIdentityAcrossMovesAndPathReuse() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        let projects = [SidebarProject(id: "p", repositoryID: "r", name: "Project")]
+        let original = worktree(unseen: stop(), path: "/old", stableID: "stable")
+        navigation.reconcile(worktrees: [original], projects: projects)
+        navigation.forget(navigation.worktreeContext(original).item.id)
+        let relocated = worktree(path: "/new", stableID: "stable")
+        navigation.reconcile(worktrees: [relocated], projects: projects)
+        #expect(navigation.worktreeContext(relocated).item.agentStop == stop())
+        let replacement = worktree(path: "/new", stableID: "replacement")
+        navigation.reconcile(worktrees: [replacement], projects: projects)
+        #expect(navigation.worktreeContext(replacement).item.agentStop == nil)
+    }
+
+    @Test func closedWorktreeDoesNotShowRunningFromHistoricalProgress() {
+        let context = SidebarWorktreeContext(worktree: worktree(unseen: stop(), last: stop(), progress: ["agent": 110], state: .closed))
+        #expect(!context.isRunning)
+        #expect(context.pending.isEmpty)
+    }
+
+    @Test func dismissTargetsPendingRequestAndPreservesNewerOccurrence() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        let notification = worktree(last: stop(), attention: "Choose a device")
+        let report = navigation.worktreeContext(notification)
+        navigation.dismissRequest(in: report)
+        #expect(navigation.worktreeContext(notification).pending.isEmpty)
+
+        let old = navigation.worktreeContext(worktree(unseen: stop(120)))
+        let newer = worktree(unseen: stop(130))
+        navigation.updateAttentionItems(SidebarProjection.activity([newer]))
+        navigation.dismissRequest(in: old)
+        #expect(navigation.worktreeContext(newer).pending.count == 1)
+
+        let another = SidebarNavigationState(prefix: UUID().uuidString)
+        let captured = another.worktreeContext(notification)
+        let incoming = worktree(unseen: stop(140), attention: "Choose a device")
+        another.updateAttentionItems(SidebarProjection.activity([incoming]))
+        another.dismissRequest(in: captured)
+        #expect(another.worktreeContext(incoming).pending.contains { $0.agentStop?.timestamp == 140 })
+    }
+
 }

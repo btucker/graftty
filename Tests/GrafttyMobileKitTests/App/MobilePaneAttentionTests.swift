@@ -20,7 +20,6 @@ struct MobilePaneAttentionTests {
         navigation.filter = .running
         navigation.query = "old search"
         MobilePaneAttention.open(worktrees: rows, projects: SidebarProjection.projects(rows), navigation: navigation)
-        #expect(!navigation.showsAttention)
         #expect(navigation.selectedProjectID == "project")
         #expect(navigation.rememberedWorktrees["project"] == current.path)
         #expect(navigation.query.isEmpty)
@@ -45,7 +44,6 @@ struct MobilePaneAttentionTests {
             navigation: navigation, currentWorktree: "/second")
         #expect(next?.worktreeID == "/third")
         #expect(MobilePaneAttention.pendingRoute(for: navigation)?.worktreeID == "/third")
-        #expect(!navigation.showsAttention)
         MobilePaneAttention.consumePendingRoute(for: navigation)
         #expect(MobilePaneAttention.pendingRoute(for: navigation) == nil)
         let wrap = MobilePaneAttention.open(worktrees: rows, projects: projects,
@@ -99,13 +97,13 @@ struct MobilePaneAttentionTests {
     }
 }
 
-struct MobileWorktreeReportOrderTests {
+struct SidebarWorktreeReportOrderTests {
     @Test("@spec LAYOUT-2.140: While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.")
     func freezesPositionsAndMembershipOnly() {
         let first = row("first", project: "a")
         let second = row("second", project: "b")
         let projects = SidebarProjection.projects([first, second])
-        let order = MobileWorktreeReportOrder(worktrees: [first, second], projects: projects)
+        let order = SidebarWorktreeReportOrder(worktrees: [first, second], projects: projects)
         let changed = row("first", project: "a", displayName: "Updated title",
             attentionText: "New question", isPinned: true, folders: ["New folder"])
         let added = row("added", project: "a")
@@ -123,7 +121,7 @@ struct MobileWorktreeReportOrderTests {
     func opaqueOwnerRoutesRemainDistinct() {
         let first = row("same", project: "a")
         let second = row("same", project: "b", displayName: "Remote")
-        let order = MobileWorktreeReportOrder(worktrees: [first, second], projects: [])
+        let order = SidebarWorktreeReportOrder(worktrees: [first, second], projects: [])
         #expect(order.orderedWorktrees([second, first]).map(\.displayName) == ["same", "Remote"])
     }
 

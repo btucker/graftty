@@ -121,19 +121,29 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:],
                           defaultBranch: (RepoEntry) -> String? = { $0.defaultBranchHint }) -> [WorktreePanes] {
     state.repos.flatMap { repo in
-        let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
         let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
         let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
                                                defaultBranch: defaultBranch(repo))
-        return repo.worktrees.map { wt in
-            WorktreePanes(path: wt.path, displayName: labels[wt.id] ?? "", repoDisplayName: repo.displayName,
-                          repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
-                          isMainCheckout: wt.path == repo.path, prBadge: prBadges[wt.path], stats: nil,
-                          attentionText: wt.attention?.text, attentionSource: wt.attention?.source,
-                          attentionTimestamp: wt.attention?.timestamp,
-                          layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles, paneAttention: wt.paneAttention, liveness: liveness) },
-                          origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)))
+        return SidebarHostNavigation.displayedWorktrees(in: repo).map { wt in
+            sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: labels[wt.id] ?? "",
+                                 titles: titles, liveness: liveness, prBadge: prBadges[wt.path],
+                                 folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
         }
     }
+}
+
+/// Build one row without projecting every sibling on each row render.
+@MainActor
+func sidebarLocalWorktree(_ wt: WorktreeEntry, repo: RepoEntry, owner: WorktreeOrigin,
+                          displayName: String, titles: [PaneSlotID: String], liveness: [String: AgentLiveness],
+                          prBadge: PRBadge?, folders: [String] = [], folderIDs: [String]? = nil) -> WorktreePanes {
+    let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
+    return WorktreePanes(path: wt.path, displayName: displayName, repoDisplayName: repo.displayName,
+        repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
+        isMainCheckout: wt.path == repo.path, prBadge: prBadge, stats: nil,
+        attentionText: wt.attention?.text, attentionSource: wt.attention?.source, attentionTimestamp: wt.attention?.timestamp,
+        layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles,
+                                                       paneAttention: wt.paneAttention, liveness: liveness) },
+        origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID, folders: folders,
+                                                               repositoryPath: repo.path, folderIDs: folderIDs))
 }

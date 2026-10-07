@@ -41,12 +41,10 @@ struct WorktreeListContentTests {
         var generation: UInt64 = 7
         for isAvailable in [true, false] {
             let pending = generation
-            navigation.showsAttention = true
             let project = SidebarProject(id: "project", repositoryID: "repo", name: "Project", isAvailable: isAvailable)
             WorktreeListContent.applyProjectSelection(project, navigation: navigation, selectionGeneration: &generation)
             #expect(!WorktreeListContent.shouldApplySelectionIntent(capturedGeneration: pending, currentGeneration: generation))
             #expect(navigation.selectedProjectID == "project")
-            #expect(!navigation.showsAttention)
             #expect(!navigation.compactShowsProjects)
         }
 

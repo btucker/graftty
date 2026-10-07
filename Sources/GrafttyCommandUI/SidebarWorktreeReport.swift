@@ -40,6 +40,8 @@ public struct SidebarWorktreeReport: View {
                     Text(card.headerName).font(.subheadline).fontWeight(.semibold)
                     if let branch = card.branchName { Text(branch).font(.caption2).foregroundStyle(.secondary) }
                     if let pane = card.paneTitle { Text(pane).font(.caption2).foregroundStyle(.secondary) }
+                    if let badge = context.item.prBadge { SidebarPRBadge(badge: badge) }
+                    if context.isRunning { Label("Running", systemImage: "circle.fill").font(.caption2).foregroundStyle(.secondary) }
                 }
                 Spacer()
                 Button(action: onClose) { Image(systemName: "xmark") }

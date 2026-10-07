@@ -28,17 +28,8 @@ enum MobilePaneAttention {
     }
 
     static func displayedWorktrees(_ worktrees: [WorktreePanes]) -> [WorktreePanes] {
-        func flatten(_ nodes: [SidebarWorktreeTree]) -> [WorktreePanes] {
-            nodes.flatMap { node in
-                if let worktree = node.worktree { return [worktree] }
-                return flatten(node.children ?? [])
-            }
-        }
-        return WorktreePickerGrouping.grouped(worktrees).flatMap { group in
-            let sections = SidebarWorktreeSections(group.worktrees)
-            return sections.hasPinMetadata
-                ? flatten(SidebarWorktreeTree.nodes(sections.pinned)) + flatten(SidebarWorktreeTree.nodes(sections.tasks))
-                : flatten(SidebarWorktreeTree.nodes(group.worktrees))
+        WorktreePickerGrouping.grouped(worktrees).flatMap {
+            SidebarWorktreeReportOrder.displayedWorktrees($0.worktrees)
         }
     }
 

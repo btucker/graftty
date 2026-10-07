@@ -1,7 +1,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// @spec LAYOUT-2.73: When an agent recap is expanded in Attention, the card shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
+/// @spec LAYOUT-2.73: When a worktree report is previewed, the application shall show the worktree heading, any gray pane title, and task context, any user question, and the next step in that order.
 struct SidebarAttentionCardContent {
     struct Section: Identifiable {
         enum Kind: Hashable {

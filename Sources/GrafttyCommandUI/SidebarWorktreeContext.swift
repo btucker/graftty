@@ -16,7 +16,7 @@ public struct SidebarWorktreeContext: Equatable {
         let projectID = SidebarProjection.projectID(worktree)
         let stableID = worktree.sidebar?.id ?? "\(projectID):\(worktree.path)"
         let live = SidebarProjection.activity([worktree])
-        let saved = retained.filter { $0.projectID == projectID && $0.worktreeID == worktree.path }
+        let saved = retained.filter { Self.matchesRetainedReport($0, worktree: worktree) }
         let stop = ([worktree.sidebar?.unseenAgentStop, worktree.sidebar?.lastAgentStop].compactMap { $0 }
             + saved.compactMap(\.agentStop)).max { $0.timestamp < $1.timestamp }
         var target = live.first ?? SidebarActivityItem(id: stableID, projectID: projectID,
@@ -37,13 +37,14 @@ public struct SidebarWorktreeContext: Equatable {
         let resumedAt = stop?.providerSessionKey.flatMap { progress[$0] }
             ?? (stop?.providerSessionKey == nil ? progress.values.max() : nil)
         let resumed = stop.map { (resumedAt ?? -.infinity) >= $0.timestamp } ?? false
-        let busy = resumed || worktree.layout?.leaves.first(where: { $0.sessionName == route })?.isBusy == true
+        let busy = worktree.state == .running
+            && (resumed || worktree.layout?.leaves.first(where: { $0.sessionName == route })?.isBusy == true)
         target.isBusy = busy
         self.item = target
         self.isRunning = busy
         self.pending = live.filter { candidate in
             candidate.needsAttention && !candidate.isBusy && !isViewed(candidate)
-                && !(candidate.agentStop != nil && busy)
+                && !(candidate.agentStop != nil && (resumed || busy))
                 && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
         }
         let currentQuestion = pending.contains { $0.id == target.id && $0.occurrence == target.occurrence }
@@ -55,6 +56,11 @@ public struct SidebarWorktreeContext: Equatable {
     public func matches(query: String) -> Bool {
         SidebarInteractionPolicy.matches(worktree, query: query)
             || !SidebarActivityFilter.all.apply(to: [item] + pending, query: query).isEmpty
+    }
+
+    static func matchesRetainedReport(_ item: SidebarActivityItem, worktree: WorktreePanes) -> Bool {
+        if let id = worktree.sidebar?.id { return item.id == id + ":stop" }
+        return item.projectID == SidebarProjection.projectID(worktree) && item.worktreeID == worktree.path
     }
 }
 

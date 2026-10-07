@@ -25,6 +25,8 @@ struct MobileWorktreeReportTarget<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     func activate(_ value: ExclusiveGesture<LongPressGesture, TapGesture>.Value) {
+        hoverTask?.cancel()
+        hoverTask = nil
         switch value {
         case .first(true): onReport()
         case .first(false): break

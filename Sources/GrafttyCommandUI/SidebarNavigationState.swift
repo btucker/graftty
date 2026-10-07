@@ -2,12 +2,9 @@ import Foundation
 import Observation
 import GrafttyProtocol
 
-/// @spec LAYOUT-2.75: When Attention mode opens, the application shall include every project, order projects by pending attention with direct requests ranked first, and keep that order fixed until Attention closes.
 @Observable @MainActor
 public final class SidebarNavigationState {
     public var selectedProjectID: String?
-    public var showsAttention = false
-    private var attentionProjectOrder: [String] = []
     public var filter: SidebarActivityFilter = .needsYou
     public var query = ""
     public var rememberedWorktrees: [String: String] = [:]
@@ -93,45 +90,15 @@ public final class SidebarNavigationState {
         if item.id == selectedAttentionID { return true }
         return workspace.items.first { $0.id == selectedAttentionID }?.worktreeIdentity == item.worktreeIdentity
     }
-    public func enterAttention(projects: [SidebarProject], items: [SidebarActivityItem]) {
-        updateAttentionItems(items)
-        attentionBanners.removeAll()
-        selectionOpeningID = nil
-        let pending = items.filter { $0.needsAttention && !hasViewed($0) }
-        let counts = Dictionary(grouping: pending, by: \.projectID).mapValues { group in
-            let direct = group.filter { $0.agentStop?.recap?.need != nil || $0.occurrence?.source == .userNotify }.count
-            return (direct: direct, total: group.count)
-        }
-        let positions = Dictionary(projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
-        attentionProjectOrder = projects.map(\.id).sorted { left, right in
-            let a = counts[left] ?? (0, 0), b = counts[right] ?? (0, 0)
-            if a.direct != b.direct { return a.direct > b.direct }
-            if a.total != b.total { return a.total > b.total }
-            return positions[left, default: .max] < positions[right, default: .max]
-        }
-        showsAttention = true
-        query = ""
-    }
-    public func leaveAttention() {
-        showsAttention = false
+    public func resetSelection() {
         selectedAttentionID = nil
         selectionOpeningID = nil
-        attentionProjectOrder = []
         query = ""
     }
     public func showProject(_ id: String) {
-        leaveAttention()
+        resetSelection()
         selectedProjectID = id
         compactShowsProjects = false
-    }
-    public func orderedProjects(_ projects: [SidebarProject]) -> [SidebarProject] {
-        guard showsAttention else { return projects }
-        let positions = Dictionary(attentionProjectOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
-        return projects.enumerated().sorted {
-            let left = positions[$0.element.id, default: attentionProjectOrder.count + $0.offset]
-            let right = positions[$1.element.id, default: attentionProjectOrder.count + $1.offset]
-            return left < right
-        }.map(\.element)
     }
     public func attentionItems(live: [SidebarActivityItem], projects: [SidebarProject]) -> [SidebarActivityItem] {
         var current = workspace
@@ -175,12 +142,12 @@ public final class SidebarNavigationState {
                    timestamp <= previousTimestamp { continue }
             }
             bannerOccurrences[item.id] = occurrence
-            if bannerSnapshotReceived, !showsAttention, !item.isBusy, !hasViewed(item) {
+            if bannerSnapshotReceived, !item.isBusy, !hasViewed(item) {
                 incoming.append(item)
             }
         }
         bannerSnapshotReceived = true
-        attentionBanners = showsAttention ? [] : SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
+        attentionBanners = SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
     }
 
     public func dismissAttentionBanner(_ item: SidebarActivityItem) {
@@ -217,14 +184,14 @@ public final class SidebarNavigationState {
                                authoritativeProjectIDs: Set<String> = []) {
         var next = retainedReports
         for item in items where item.agentStop != nil {
-            if let index = next.firstIndex(where: { $0.worktreeIdentity == item.worktreeIdentity }) {
-                if item.agentStop!.timestamp >= next[index].agentStop!.timestamp { next[index] = item }
+            if let index = next.firstIndex(where: { $0.id == item.id }) {
+                if item.agentStop!.timestamp >= (next[index].agentStop?.timestamp ?? -.infinity) { next[index] = item }
             } else { next.append(item) }
         }
         if let worktrees {
             next.removeAll { item in
                 authoritativeProjectIDs.contains(item.projectID) && !worktrees.contains {
-                    SidebarProjection.projectID($0) == item.projectID && $0.path == item.worktreeID
+                    SidebarWorktreeContext.matchesRetainedReport(item, worktree: $0)
                 }
             }
         }
@@ -263,6 +230,15 @@ public final class SidebarNavigationState {
         attentionBanners.removeAll { $0.worktreeIdentity == target?.worktreeIdentity }
         for forgottenID in forgotten { history.remove(forgottenID) }
         persistHistory()
+    }
+    public func dismissRequest(in context: SidebarWorktreeContext) {
+        updateAttentionItems(context.pending)
+        var next = workspace
+        for item in context.pending {
+            next.dismissOccurrence(item)
+            dismissAttentionBanner(item)
+        }
+        storeWorkspace(next)
     }
     private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: prefix + ".recent") }
 }
