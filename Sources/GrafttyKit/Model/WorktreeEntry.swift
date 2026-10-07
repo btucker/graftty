@@ -86,6 +86,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emojiSource: WorktreeEmojiSource?
     /// Explicit sidebar pin; instruction files alone do not imply it.
     public var isPinned: Bool = false
+    /// Pull origin in the main checkout; merge the local default in pinned agents.
+    public var autoTrackEnabled: Bool = false
+    /// Suppresses retries against the same upstream after an app restart.
+    public var autoTrackLastAttempt: GitAutoTracking.Target?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -167,7 +171,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -180,6 +184,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
+        self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)

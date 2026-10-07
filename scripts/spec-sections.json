@@ -84,6 +84,7 @@
     "GIT.3": "Change Handling",
     "GIT.4": "Deleting a Worktree",
     "GIT.5": "Creating a Worktree",
+    "GIT.6": "Auto-tracking Pinned Agents",
     "ATTN.1": "CLI Tool",
     "ATTN.2": "Communication Protocol",
     "ATTN.3": "Error Handling",
