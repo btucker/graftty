@@ -61,6 +61,7 @@ public struct ProjectNavigationRail: View {
     public var icons: [String: Data]
     public var selectedID: String?
     public var showsAttention: Bool
+    public var showsAttentionButton: Bool
     @Binding public var collapsed: Bool
     @Binding public var expandedWidth: Double
     public var onSelect: (SidebarProject) -> Void
@@ -77,7 +78,7 @@ public struct ProjectNavigationRail: View {
     @State private var resizeStartWidth: Double?
 
     public init(projects: [SidebarProject], counts: [String: Int], workingCounts: [String: Int] = [:], icons: [String: Data], selectedID: String?,
-                showsAttention: Bool, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
+                showsAttention: Bool, showsAttentionButton: Bool = true, collapsed: Binding<Bool>, expandedWidth: Binding<Double> = .constant(196), allowsReordering: Bool = true, canExpand: Bool = true, selectionColor: Color = .primary.opacity(0.16),
                 onSelect: @escaping (SidebarProject) -> Void, onAttention: @escaping () -> Void,
                 onMove: @escaping (String, String, Bool) -> Void,
                 localDeviceID: RemoteDeviceID? = nil,
@@ -88,7 +89,7 @@ public struct ProjectNavigationRail: View {
         self.workingCounts = workingCounts
         self.localDeviceID = localDeviceID; self.management = management
         self.aboveManagement = aboveManagement
-        self.showsAttention = showsAttention; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
+        self.showsAttention = showsAttention; self.showsAttentionButton = showsAttentionButton; self._collapsed = collapsed; self._expandedWidth = expandedWidth; self.onSelect = onSelect
         self.onAttention = onAttention; self.onMove = onMove; self.menu = menu; self.allowsReordering = allowsReordering; self.canExpand = canExpand; self.selectionColor = selectionColor
     }
     public var body: some View {
@@ -96,6 +97,7 @@ public struct ProjectNavigationRail: View {
             HStack {
                 if !collapsed { Text("Projects").font(.caption).foregroundStyle(.secondary); Spacer() }
             }.frame(height: 40).padding(.horizontal, 10)
+            if showsAttentionButton {
             Button(action: onAttention) {
                 HStack(spacing: 9) {
                     Image(systemName: "tray.full").frame(width: 28, height: 28)
@@ -114,6 +116,7 @@ public struct ProjectNavigationRail: View {
                 .accessibilityLabel("Attention, \(counts.values.reduce(0, +)) pending requests")
                 .help(showsAttention ? "Show worktrees" : "Attention across all projects")
             Divider().padding(.vertical, 8)
+            }
             ScrollView {
                 LazyVStack(spacing: 3) {
                     ForEach(projects) { project in

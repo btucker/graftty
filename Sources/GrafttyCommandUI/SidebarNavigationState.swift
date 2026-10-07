@@ -77,6 +77,10 @@ public final class SidebarNavigationState {
             selectionOpeningID = nil
         }
     }
+    public func worktreeContext(_ worktree: WorktreePanes) -> SidebarWorktreeContext {
+        SidebarWorktreeContext(worktree: worktree, retained: workspace.items, isViewed: hasViewed)
+    }
+
     public func hasViewed(_ item: SidebarActivityItem) -> Bool {
         workspace.isDismissed(item) || history.entries.contains { $0.id == item.id && $0.item.occurrence == item.occurrence }
     }
@@ -194,8 +198,8 @@ public final class SidebarNavigationState {
 
     public func beginOpeningAttentionBanner(_ item: SidebarActivityItem, projects: [SidebarProject],
                                             items: [SidebarActivityItem]) -> UUID {
-        filter = .needsYou
-        enterAttention(projects: projects, items: items)
+        updateAttentionItems(items)
+        showProject(item.projectID)
         return beginOpening(item)
     }
     private func storeWorkspace(_ next: SidebarAttentionWorkspace) {

@@ -65,8 +65,8 @@ struct SidebarAttentionBannerTests {
         #expect(navigation.attentionBanner == nil)
     }
 
-    @Test("@spec LAYOUT-2.91: When an Attention banner is clicked, the application shall select its worktree, switch to the Needs You queue, and retain the existing queue order.")
-    func bannerOpensAttentionAndWorktree() throws {
+    @Test("@spec LAYOUT-2.91: When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.")
+    func bannerOpensWorktreeDirectly() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)
         let existing = item("existing", time: 10)
@@ -76,11 +76,12 @@ struct SidebarAttentionBannerTests {
         navigation.filter = .running
         let opening = navigation.beginOpeningAttentionBanner(incoming, projects: [project], items: [existing, incoming])
         navigation.finishOpening(opening, succeeded: true)
-        #expect(navigation.showsAttention)
-        #expect(navigation.filter == .needsYou)
+        #expect(!navigation.showsAttention)
+        #expect(navigation.selectedProjectID == project.id)
         #expect(navigation.selectedAttentionID == incoming.id)
         #expect(navigation.rememberedWorktrees[project.id] == incoming.worktreeID)
-        #expect(navigation.attentionItems(live: [], projects: [project]).map(\.id) == [incoming.id, existing.id])
+        #expect(navigation.hasViewed(incoming))
+        #expect(!navigation.hasViewed(existing))
         #expect(navigation.attentionBanner == nil)
     }
 
