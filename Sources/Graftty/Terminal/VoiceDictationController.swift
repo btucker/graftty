@@ -29,8 +29,8 @@ struct VoiceDictationTarget {
                 && !view.isHiddenOrHasHiddenAncestor && !view.hasMarkedText()
         }
         preview = { [weak handle] text in
-            guard let view = handle?.view as? SurfaceNSView, let surface = view.surface else { return }
-            view.surfaceOperations.preedit(surface, text)
+            guard let view = handle?.view as? SurfaceNSView else { return }
+            view.showVoicePreview(text)
         }
         write = { [weak handle] text in handle?.writeText(text) ?? false }
         submit = { [weak handle] in handle?.pressReturn() }

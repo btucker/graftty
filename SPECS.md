@@ -1044,6 +1044,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
 
+**KEY-4.9** When on-device speech recognition completes an utterance before its task ends, the application shall commit that utterance once, preserve it across later previews, and recognize a standalone Send prompt command.
+
+**KEY-4.10** While provisional dictation exceeds the terminal pane width, the application shall wrap its preview within the pane, reflow it on resize, and keep terminal keyboard focus.
+
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
 ### MOUSE-1.x — Mouse
