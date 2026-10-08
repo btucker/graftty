@@ -481,7 +481,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -493,7 +493,8 @@ struct AgentPluginInstallerTests {
                 "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
             ))
             #expect(skill.contains("\"context\""))
-            #expect(skill.contains("what this worktree is trying to accomplish"))
+            #expect(skill.contains("problem this work addresses"))
+            #expect(skill.contains("why solving it matters"))
             #expect(skill.contains("one sentence"))
             #expect(skill.contains("recent verified progress"))
             #expect(skill.contains("task-specific"))

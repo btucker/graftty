@@ -3124,7 +3124,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
