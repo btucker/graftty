@@ -908,10 +908,32 @@ final class SurfaceNSView: NSView {
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t? {
         didSet {
-            if surface == nil { voiceInputInterrupted?(); cancelTextComposition() }
+            if surface == nil { voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
         }
     }
     var voiceInputInterrupted: (() -> Void)?
+    private var voicePreview: VoiceDictationPreview?
+
+    func showVoicePreview(_ text: String) {
+        guard !text.isEmpty else {
+            voicePreview?.removeFromSuperview()
+            voicePreview = nil
+            return
+        }
+        let preview = voicePreview ?? VoiceDictationPreview(frame: .zero)
+        if voicePreview == nil {
+            voicePreview = preview
+            addSubview(preview)
+        }
+        preview.update(text, in: bounds, cursorRect: voicePreviewCursorRect)
+    }
+
+    private var voicePreviewCursorRect: NSRect {
+        guard let surface else { return .zero }
+        var rect = surfaceOperations.imeRect(surface)
+        rect.origin.y = bounds.height - rect.origin.y
+        return rect
+    }
     var markedText = NSAttributedString(string: "")
     var markedSelection = NSRange(location: 0, length: 0)
     var interpretingComposition = false
@@ -941,7 +963,7 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false {
         didSet {
-            if isReadonly { voiceInputInterrupted?(); cancelTextComposition() }
+            if isReadonly { voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
         }
     }
 
@@ -1094,6 +1116,7 @@ final class SurfaceNSView: NSView {
         compositionContext?.textInputClientWillStartScrollingOrZooming()
         defer { compositionContext?.textInputClientDidEndScrollingOrZooming() }
         super.setFrameSize(newSize)
+        voicePreview?.fit(in: bounds, cursorRect: voicePreviewCursorRect)
         guard synchronizeSurfaceSize(newSize) else { return }
         markVisibleForInput()
     }
@@ -1621,6 +1644,7 @@ final class SurfaceNSView: NSView {
 
     override func resignFirstResponder() -> Bool {
         voiceInputInterrupted?()
+        showVoicePreview("")
         acceptsCompositionCallbacks = false
         cancelTextComposition()
         if let surface { surfaceOperations.setFocus(surface, false) }
@@ -1639,6 +1663,7 @@ final class SurfaceNSView: NSView {
 
     @objc private func windowLostTextInputFocus(_ notification: Notification) {
         voiceInputInterrupted?()
+        showVoicePreview("")
         acceptsCompositionCallbacks = false
         cancelTextComposition()
     }

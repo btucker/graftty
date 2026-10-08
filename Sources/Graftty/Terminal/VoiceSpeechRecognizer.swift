@@ -37,10 +37,11 @@ final class VoiceSpeechRecognizer: VoiceSpeechRecognizing {
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var recognitionDelegate: VoiceSpeechTaskDelegate?
     private var deadline: Task<Void, Never>?
     private var activityMonitor: Task<Void, Never>?
     private var onResult: ((UUID, String, Bool) -> Void)?
-    private var utterance = UUID()
+    private var requestID = UUID()
     nonisolated private let feeder = VoiceAudioFeeder()
     private var awaitingFinal = false
     private var onError: ((String) -> Void)?
@@ -71,6 +72,7 @@ final class VoiceSpeechRecognizer: VoiceSpeechRecognizing {
         guard let recognizer = SFSpeechRecognizer(locale: .current),
               recognizer.supportsOnDeviceRecognition else { throw Failure.unavailableLanguage }
         guard recognizer.isAvailable else { throw Failure.unavailableRecognizer }
+        recognizer.queue = .main
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
@@ -139,51 +141,52 @@ final class VoiceSpeechRecognizer: VoiceSpeechRecognizing {
         request.taskHint = .dictation
         request.contextualStrings = ["Send prompt"]
         self.request = request
-        utterance = UUID()
-        let utteranceID = utterance
+        requestID = UUID()
+        let currentRequest = requestID
         awaitingFinal = false
         startedAt = ProcessInfo.processInfo.systemUptime
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            let text = result?.bestTranscription.formattedString
-            let isFinal = result?.isFinal ?? false
-            let failure = error?.localizedDescription
-            Task { @MainActor [weak self] in
-                guard let self, self.generation == token, self.utterance == utteranceID else { return }
-                if let text {
-                    let callback = self.onResult
-                    var completion: (() -> Void)?
-                    if isFinal {
-                        let bufferedSpeech = self.awaitingFinal && self.feeder.hasPendingSpeech
-                        if !self.awaitingFinal {
-                            self.voicedDuration = 0
-                            self.lastSpeechAt = nil
-                        }
-                        self.deadline?.cancel()
-                        self.deadline = nil
-                        self.feeder.endRequest()
-                        self.recognitionTask = nil
-                        self.request = nil
-                        // Invalidate this task before delivering a final, since
-                        // the caller may cancel or start another session.
-                        self.utterance = UUID()
-                        if self.finishing && !bufferedSpeech {
-                            completion = self.onFinished
-                            self.cancel()
-                        }
-                    }
-                    callback?(utteranceID, text, isFinal)
-                    completion?()
-                    if isFinal {
-                        guard self.generation == token else { return }
-                        self.beginUtterance(token: token)
-                        if self.finishing { self.endUtterance() }
-                        return
-                    }
-                }
-                if let failure { self.fail(failure) }
+        let delegate = VoiceSpeechTaskDelegate { [weak self] event in
+            guard let self, self.generation == token, self.requestID == currentRequest else { return }
+            switch event {
+            case .result(let utteranceID, let text, let final):
+                // End this request at an authoritative utterance boundary,
+                // buffering subsequent audio until task completion.
+                if final { self.endUtterance() }
+                self.onResult?(utteranceID, text, final)
+            case .finished(let error):
+                if let error { self.fail(error); return }
+                self.completeRequest(token: token)
+            case .cancelled:
+                self.fail(Failure.unavailableRecognizer.localizedDescription)
             }
         }
+        recognitionDelegate = delegate
+        recognitionTask = recognizer.recognitionTask(with: request, delegate: delegate)
         feeder.begin(append: { request.append($0) }, endAudio: { request.endAudio() })
+    }
+
+    private func completeRequest(token: UUID) {
+        let bufferedSpeech = awaitingFinal && feeder.hasPendingSpeech
+        if !awaitingFinal {
+            voicedDuration = 0
+            lastSpeechAt = nil
+        }
+        deadline?.cancel()
+        deadline = nil
+        feeder.endRequest()
+        recognitionTask = nil
+        recognitionDelegate = nil
+        request = nil
+        requestID = UUID()
+        if finishing && !bufferedSpeech {
+            let completion = onFinished
+            cancel()
+            completion?()
+            return
+        }
+        guard generation == token else { return }
+        beginUtterance(token: token)
+        if finishing { endUtterance() }
     }
 
     /// Ends capture, retaining the recognition task until its final result.
@@ -207,11 +210,12 @@ final class VoiceSpeechRecognizer: VoiceSpeechRecognizing {
         voicedDuration = 0
         lastSpeechAt = nil
         feeder.endRequest()
+        recognitionTask?.finish()
         let token = generation
-        let utteranceID = utterance
+        let currentRequest = requestID
         deadline = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            guard let self, self.generation == token, self.utterance == utteranceID else { return }
+            guard let self, self.generation == token, self.requestID == currentRequest else { return }
             self.fail(Failure.finalizationTimeout.localizedDescription)
         }
     }
@@ -224,6 +228,7 @@ final class VoiceSpeechRecognizer: VoiceSpeechRecognizing {
         feeder.reset()
         recognitionTask?.cancel()
         recognitionTask = nil
+        recognitionDelegate = nil
         request = nil
         recognizer = nil
         onResult = nil
