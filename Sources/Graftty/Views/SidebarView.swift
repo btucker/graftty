@@ -888,7 +888,7 @@ struct SidebarView: View {
                 paneRow(terminalID)
             }
             .buttonStyle(.plain)
-            .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
+            .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
             // PWD-1.4: pane rows are drag sources. The payload
             // is a typed wrapper around the pane's UUID so
             // SwiftUI's Transferable matching keeps unrelated

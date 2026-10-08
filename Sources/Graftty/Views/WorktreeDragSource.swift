@@ -28,11 +28,9 @@ final class WorktreeDragPasteboardWriter: NSObject, NSPasteboardWriting {
 /// payload. Right-clicks and ctrl-clicks pass through to the menu overlay.
 /// Independently clickable controls pass through within `excludedRects`.
 /// A nil payload preserves selection while disabling worktree drags.
-/// `blockRect` is the whole worktree block in the overlay's (top-left)
-/// coordinates; it is what lifts under the cursor.
+/// Its bounds cover the whole worktree block and form the drag image.
 struct WorktreeDragSourceOverlay: NSViewRepresentable {
     let payload: TransferableWorktreeMove?
-    var blockRect: CGRect? = nil
     var excludedRects: [CGRect] = []
     let onClick: () -> Void
 
@@ -46,7 +44,6 @@ struct WorktreeDragSourceOverlay: NSViewRepresentable {
 
     private func update(_ view: WorktreeDragSourceView) {
         view.payload = payload
-        view.blockRect = blockRect
         view.excludedRects = excludedRects
         view.onClick = onClick
     }
@@ -54,8 +51,6 @@ struct WorktreeDragSourceOverlay: NSViewRepresentable {
 
 final class WorktreeDragSourceView: NSView, NSDraggingSource {
     var payload: TransferableWorktreeMove?
-    /// The block to lift, in this view's coordinates; nil lifts the view itself.
-    var blockRect: CGRect?
     /// Controls that must receive their own clicks, in this view's coordinates.
     var excludedRects: [CGRect] = []
     var onClick: (() -> Void)?
@@ -64,7 +59,7 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
     /// Movement before a press becomes a drag instead of a click.
     static let dragThreshold: CGFloat = 4
 
-    /// Top-left origin, matching the SwiftUI geometry that supplies `blockRect`.
+    /// Top-left origin, matching the SwiftUI control anchors.
     override var isFlipped: Bool { true }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -95,7 +90,7 @@ final class WorktreeDragSourceView: NSView, NSDraggingSource {
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x - press.origin.x, point.y - press.origin.y) >= Self.dragThreshold else { return }
         self.press = nil
-        let lifted = blockRect ?? bounds
+        let lifted = bounds
         let item = NSDraggingItem(pasteboardWriter: writer)
         item.setDraggingFrame(lifted, contents: snapshot(of: lifted))
         beginDraggingSession(with: [item], event: press.event, source: self)

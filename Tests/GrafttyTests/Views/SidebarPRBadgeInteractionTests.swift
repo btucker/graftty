@@ -40,7 +40,7 @@ struct SidebarPRBadgeInteractionTests {
                 Button { paneSelections += 1 } label: {
                     Text("Pane").frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
                 }.buttonStyle(.plain)
-                    .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.pane(paneID)] = $1 }
+                    .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(paneID)] = $1 }
             }
         }
         .environment(\.openURL, OpenURLAction { openedURLs.append($0); return .handled })

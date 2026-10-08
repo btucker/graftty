@@ -162,8 +162,8 @@ private struct WorktreeRowDropDelegate: DropDelegate {
 
 /// Bounds of independently clickable controls inside a worktree block.
 /// The native selection target lets pane, badge, and report clicks through.
-struct WorktreeHeadingAnchor: PreferenceKey {
-    enum Region: Hashable { case heading, prBadge, reportButton, pane(PaneSlotID) }
+struct WorktreeControlAnchors: PreferenceKey {
+    enum Region: Hashable { case prBadge, reportButton, pane(PaneSlotID) }
     static let defaultValue: [Region: Anchor<CGRect>] = [:]
     static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
@@ -206,11 +206,11 @@ struct WorktreeReorderTarget: ViewModifier {
     }
 
     private func dragSource(_ content: Content) -> some View {
-        content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchors in
+        content.overlayPreferenceValue(WorktreeControlAnchors.self) { anchors in
             GeometryReader { proxy in
                 WorktreeDragSourceOverlay(
                     payload: canDrag ? TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID) : nil,
-                    excludedRects: anchors.filter { $0.key != .heading }.map { proxy[$0.value] },
+                    excludedRects: anchors.values.map { proxy[$0] },
                     onClick: onSelect)
             }
         }

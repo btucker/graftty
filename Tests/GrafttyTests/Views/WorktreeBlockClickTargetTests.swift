@@ -79,7 +79,7 @@ private struct WorktreeBlockClickColumn: View {
                                  isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
                 }
                 .buttonStyle(.plain)
-                .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
+                .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
                 .draggable(TransferablePaneSlotID(id: terminalID.id))
                 .rightClickMenu { NSMenu() }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
@@ -196,7 +196,7 @@ struct WorktreeBlockClickTargetTests {
         }
     }
 
-    @Test("@spec LAYOUT-2.145: When the user clicks anywhere in a macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.145: When the user clicks anywhere in a local macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.", arguments: [false, true])
     func questionAndSurroundingSpaceSelectWorktree(reorderingEnabled: Bool) async throws {
         let hosted = try await Hosted.make(rowCount: Self.rowCount)
         defer { hosted.tearDown() }

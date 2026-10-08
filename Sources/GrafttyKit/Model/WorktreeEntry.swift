@@ -288,7 +288,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
     /// Finds attention by its persisted owner rather than re-resolving the
     /// provider's current pane, which may have moved since the prompt began.
     public mutating func clearAgentStopAttention(
@@ -324,14 +324,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
            (stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey) {
             unseenAgentStop = nil
         }
+        // Restored overlays predating session ownership use the same
+        // timestamp-guarded fallback as legacy stopped-turn reports above.
         if attention?.source == .agentStop,
-           attention?.providerSessionKey == providerSessionKey,
+           (attention?.providerSessionKey == nil || attention?.providerSessionKey == providerSessionKey),
            (attention?.timestamp ?? .distantFuture) <= progressedAt {
             attention = nil
         }
         paneAttention = paneAttention.filter { _, attention in
             attention.source != .agentStop
-                || attention.providerSessionKey != providerSessionKey
+                || (attention.providerSessionKey != nil && attention.providerSessionKey != providerSessionKey)
                 || attention.timestamp > progressedAt
         }
     }

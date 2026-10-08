@@ -31,7 +31,6 @@ struct WorktreeBlock<Heading: View, Panes: View>: View {
             Button(action: onSelect) { heading() }
                 .buttonStyle(.plain)
                 .id(worktree.path)
-                .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
                 .rightClickMenu(anchored: menu)
 
             panes()

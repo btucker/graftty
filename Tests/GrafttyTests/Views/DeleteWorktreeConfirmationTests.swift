@@ -7,7 +7,7 @@ import GrafttyKit
 @Suite("Sidebar worktree deletion confirmation", .serialized)
 @MainActor
 struct DeleteWorktreeConfirmationTests {
-    @Test("@spec GIT-4.20: When Delete Worktree is invoked on an unselected sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.", arguments: [true, false])
+    @Test("@spec GIT-4.20: When Delete Worktree is invoked on an unselected local sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.", arguments: [true, false])
     func unselectedWorktreeConfirmsOnOwningWindow(confirm: Bool) async throws {
         let selectedPath = "/repo"
         let targetPath = "/repo/.worktrees/task"

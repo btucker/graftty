@@ -294,7 +294,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
 
-**LAYOUT-2.145** When the user clicks anywhere in a macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.
+**LAYOUT-2.145** When the user clicks anywhere in a local macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.
 
 **LAYOUT-2.146** When a periodic sidebar snapshot leaves application state unchanged, the application shall avoid writing back the state binding.
 
@@ -732,7 +732,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
-**GIT-4.20** When Delete Worktree is invoked on an unselected sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.
+**GIT-4.20** When Delete Worktree is invoked on an unselected local sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -2936,7 +2936,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
 
-**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
 
 **AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 

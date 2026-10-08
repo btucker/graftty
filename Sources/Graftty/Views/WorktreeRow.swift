@@ -299,13 +299,13 @@ struct WorktreeRow: View {
                     if let prBadge {
                         SidebarPRBadge(badge: prBadge)
                             .fixedSize(horizontal: true, vertical: false)
-                            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { [.prBadge: $0] }
+                            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.prBadge: $0] }
                     }
                 case .label:
                     branchLabel
                     if let reportButton {
                         reportButton.frame(width: 20, height: 20)
-                            .anchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { [.reportButton: $0] }
+                            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }
                     }
                 }
             }
