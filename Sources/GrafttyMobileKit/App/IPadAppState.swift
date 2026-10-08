@@ -46,6 +46,9 @@ public final class IPadAppState {
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
     public var latestWorktrees: [WorktreePanes] = []
+    /// Preserve the compact picker across layout changes before iPad data loads.
+    /// A different selected project invalidates this fallback; host switches clear it.
+    var worktreePickerProject: SidebarProject?
     public private(set) var focusRequestCount: Int = 0
     /// How much of `focusRequestCount` has been honored with a successful
     /// keyboard focus. Lives here — the same scope as the counter — so a
