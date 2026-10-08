@@ -121,15 +121,21 @@ struct SessionClientTests {
             previewClient: { $0 == "left" ? client : nil }, onSelect: { _ in }))
         window.rootViewController = host
         window.makeKeyAndVisible()
-        client.start()
         defer { client.stop(); window.isHidden = true }
-        try await waitUntil("resident replay", timeout: .seconds(8)) {
-            client.session.readViewportText()?.contains("resident row 59") == true
-        }
         func containers(_ view: UIView) -> [TerminalInputContainerView] {
             (view as? TerminalInputContainerView).map { [$0] } ?? view.subviews.flatMap(containers)
         }
+        // The first preview creates Ghostty and its Metal renderer. Finish
+        // mounting before measuring replay so cold startup cannot consume
+        // the replay deadline on a hosted simulator.
+        try await waitUntil("preview terminal surface", timeout: .seconds(8)) {
+            containers(host.view).first?.terminalView.surface != nil
+        }
         let container = try #require(containers(host.view).first)
+        client.start()
+        try await waitUntil("resident replay", timeout: .seconds(8)) {
+            client.session.readViewportText()?.contains("resident row 59") == true
+        }
         try await waitUntil("visible resident history") {
             container.snapshotScrollView.refreshAdditionalHistory()
             return container.snapshotScrollView.additionalHistoryTextForTesting?.contains("resident row 35") == true
