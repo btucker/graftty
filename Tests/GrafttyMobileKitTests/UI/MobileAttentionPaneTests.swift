@@ -40,7 +40,7 @@ struct MobileAttentionPaneTests {
         #expect(navigation.hasViewed(context.item))
     }
 
-    @Test("@spec IOS-4.36: While a mobile worktree report is displayed, the application shall retain its last recap after viewing and identify it as a previous report after the agent resumes.")
+    @Test("@spec IOS-4.36: When a mobile worktree report is viewed, the application shall preserve its pending question until the agent resumes and retain the recap as a previous report afterward.")
     func reportSurvivesViewingAndResume() {
         let navigation = SidebarNavigationState(prefix: "mobile-retained.\(UUID())")
         var row = worktree()
@@ -48,9 +48,10 @@ struct MobileAttentionPaneTests {
         #expect(pending.question != nil)
         navigation.opened(pending.item)
         let viewed = navigation.worktreeContext(row)
-        #expect(viewed.question == nil)
+        #expect(viewed.question == pending.question)
+        #expect(viewed.pending.count == pending.pending.count)
         #expect(viewed.item.agentStop?.recap == pending.item.agentStop?.recap)
-        row = worktree(progressTimes: ["codex": Date.now.timeIntervalSinceReferenceDate + 1])
+        row = worktree(progressTimes: ["codex": 101])
         let resumed = navigation.worktreeContext(row)
         #expect(resumed.isRunning)
         #expect(resumed.question == nil)
@@ -81,7 +82,7 @@ struct MobileAttentionPaneTests {
     }
 
     private func worktree(progressTimes: [String: Double]? = nil) -> WorktreePanes {
-        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now,
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 100),
             recap: .init(title: "Paired-device push notifications",
                          context: "The client integration is committed.", completed: "CI passed.",
                          next: "Verify delivery on the phone.", need: "Which device should receive the test?"),
