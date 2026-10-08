@@ -1852,7 +1852,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display its full report in a presentation that fits a compact iPhone width.
 
-**IOS-4.34** While a mobile pane is open, its back button shall badge pending worktrees elsewhere and navigate to the next pending worktree and project when tapped with a nonzero badge.
+**IOS-4.34** When the user taps Back from a mobile terminal, the application shall return to the worktree list regardless of pending work, preserving pending-work navigation as a separate action.
 
 **IOS-4.36** While a mobile worktree report is displayed, the application shall retain its last recap after viewing and identify it as a previous report after the agent resumes.
 

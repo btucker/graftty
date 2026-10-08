@@ -3,11 +3,14 @@ import GrafttyCommandUI
 import GrafttyProtocol
 import Testing
 @testable import GrafttyMobileKit
+#if canImport(UIKit)
+import SwiftUI
+#endif
 
 @Suite("Pane Attention navigation")
 @MainActor
 struct MobilePaneAttentionTests {
-    @Test("@spec IOS-4.34: While a mobile pane is open, its back button shall badge pending worktrees elsewhere and navigate to the next pending worktree and project when tapped with a nonzero badge.")
+    @Test("Pending attention counts other worktrees and opens a separate pending route")
     func countsOtherWorktreesAndNavigatesDirectly() {
         let navigation = SidebarNavigationState(prefix: "pane-attention.\(UUID())")
         let current = worktree("current")
@@ -148,3 +151,133 @@ struct SidebarWorktreeReportOrderTests {
             sidebar: .init(id: name, projectID: project, folders: folders, isPinned: isPinned))
     }
 }
+
+#if canImport(UIKit)
+@MainActor
+@Suite("@spec IOS-4.34: When the user taps Back from a mobile terminal, the application shall return to the worktree list regardless of pending work, preserving pending-work navigation as a separate action.")
+struct TerminalBackNavigationTests {
+    @Test(arguments: [false, true], [false, true])
+    func returnsToProjectWorktrees(hasPendingWork: Bool, throughPaneDetail: Bool) {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false)
+        let other = worktree("other", pending: hasPendingWork)
+        let navigation = SidebarNavigationState(prefix: "terminal-back.\(UUID())")
+        let project = SidebarProjection.projects([current, other])[0]
+        navigation.showProject(project.id)
+        navigation.query = "keep this search"
+        let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell",
+                               worktreePickerDepth: 2)
+        var pickerPath = NavigationPath()
+        pickerPath.append(host)
+        pickerPath.append(ProjectStep(host: host, project: project))
+        var path = pickerPath
+        if throughPaneDetail { path.append(WorktreeStep(host: host, worktree: current)) }
+        path.append(step)
+        let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }),
+                                     sidebarNavigation: navigation, attentionWorktrees: [current, other])
+
+        view.popToParent()
+
+        #expect(path == pickerPath)
+        #expect(MobilePaneAttention.pendingRoute(for: navigation) == nil)
+        #expect(navigation.query == "keep this search")
+        #expect(navigation.rememberedWorktrees[project.id] == nil)
+        #expect(view.backAccessibilityLabel == (hasPendingWork
+            ? "Back to worktrees, 1 pending worktree" : "Back to worktrees"))
+        MobilePaneAttention.consumePendingRoute(for: navigation)
+    }
+
+    @Test(arguments: [false, true])
+    func returnsToHostWorktreesWithoutAProject(throughPaneDetail: Bool) {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false)
+        let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell")
+        var pickerPath = NavigationPath()
+        pickerPath.append(host)
+        var path = pickerPath
+        if throughPaneDetail { path.append(WorktreeStep(host: host, worktree: current)) }
+        path.append(step)
+        let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }))
+
+        view.popToParent()
+
+        #expect(path == pickerPath)
+    }
+
+    @Test(arguments: [false, true])
+    func ipadBackUsesTheWorktreeListCallback(hasPendingWork: Bool) {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false)
+        let other = worktree("other", pending: hasPendingWork)
+        let navigation = SidebarNavigationState(prefix: "ipad-back.\(UUID())")
+        let appState = IPadAppState(defaults: UserDefaults(suiteName: "ipad-back.\(UUID())")!)
+        appState.selectedWorktreePath = current.path
+        appState.focusedPaneId = "s"
+        appState.columnVisibility = .detailOnly
+        var path = NavigationPath()
+        var callbackCount = 0
+        let view = SingleSessionView(
+            step: SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell"),
+            navigationPath: Binding(get: { path }, set: { path = $0 }),
+            isFullScreen: false, isEmbeddedPane: true,
+            onBackToWorktrees: {
+                callbackCount += 1
+                IPadRootLayout.applyBackToWorktrees(appState: appState)
+            },
+            sidebarNavigation: navigation, attentionWorktrees: [current, other])
+
+        view.popToParent()
+
+        #expect(callbackCount == 1)
+        #expect(appState.selectedWorktreePath == nil)
+        #expect(appState.focusedPaneId == nil)
+        #expect(appState.columnVisibility == .all)
+        #expect(path.isEmpty)
+        #expect(MobilePaneAttention.pendingRoute(for: navigation) == nil)
+        MobilePaneAttention.consumePendingRoute(for: navigation)
+    }
+
+    @Test
+    func emptyNavigationPathIsSafe() {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        var path = NavigationPath()
+        let view = SingleSessionView(step: SessionStep(host: host, sessionName: "s", title: "Shell"),
+                                     navigationPath: Binding(get: { path }, set: { path = $0 }))
+        view.popToParent()
+        #expect(path.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func adaptiveLayoutBackReachesWorktrees(showsProjectRail: Bool) throws {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false,
+            layout: .leaf(sessionName: "s", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil))
+        let state = IPadAppState(defaults: UserDefaults(suiteName: "adaptive-back.\(UUID())")!)
+        state.selectedHostId = host.id
+        state.selectedWorktreePath = current.path
+        state.focusedPaneId = "s"
+        state.latestWorktrees = [current]
+        let selection = try #require(RootView.compactSelection(appState: state, hosts: [host],
+                                                             showsProjectRail: showsProjectRail))
+        let step = try #require(selection.session)
+        var path = selection.path
+        var pickerPath = NavigationPath()
+        pickerPath.append(host)
+        if showsProjectRail {
+            pickerPath.append(ProjectStep(host: host, project: SidebarProjection.projects([current])[0]))
+        }
+        let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }))
+
+        view.popToParent()
+
+        #expect(path == pickerPath)
+    }
+
+    private func worktree(_ name: String, pending: Bool, layout: PaneLayoutNode? = nil) -> WorktreePanes {
+        WorktreePanes(path: "/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: name, projectID: "project", unseenAgentStop: pending
+                ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100)) : nil))
+    }
+}
+#endif
