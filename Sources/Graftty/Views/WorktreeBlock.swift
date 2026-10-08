@@ -21,7 +21,7 @@ struct WorktreeBlock<Heading: View, Panes: View>: View {
     let onSelect: () -> Void
     let onMovePane: (PaneSlotID, String) -> Void
     let onPaneTargeted: (Bool) -> Void
-    let menu: () -> NSMenu
+    let menu: (NSView) -> NSMenu
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let panes: () -> Panes
 
@@ -32,11 +32,12 @@ struct WorktreeBlock<Heading: View, Panes: View>: View {
                 .buttonStyle(.plain)
                 .id(worktree.path)
                 .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.heading] = $1 }
-                .rightClickMenu(menu)
+                .rightClickMenu(anchored: menu)
 
             panes()
             if groupsPanes { breathingRoom }
         }
+        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.highlightedWorktreeBackground : .clear)
@@ -60,15 +61,9 @@ struct WorktreeBlock<Heading: View, Panes: View>: View {
         )
     }
 
-    /// LAYOUT-2.117: a grouped block's vertical breathing room is a clear
-    /// button rather than padding, so a click inside the highlight above
-    /// the heading or below the last pane still selects the worktree.
+    /// LAYOUT-2.117: the native block target also selects through this space.
     private var breathingRoom: some View {
-        Button(action: onSelect) {
-            Color.clear.frame(maxWidth: .infinity).frame(height: 8).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .accessibilityHidden(true)
+        Color.clear.frame(maxWidth: .infinity).frame(height: 8)
+            .accessibilityHidden(true)
     }
 }

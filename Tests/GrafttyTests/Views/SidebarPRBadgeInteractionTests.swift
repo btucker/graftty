@@ -17,6 +17,7 @@ struct SidebarPRBadgeInteractionTests {
         var openedURLs: [URL] = []
         var selections = 0
         var paneSelections = 0
+        let paneID = PaneSlotID()
         let worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature",
                                     state: groupsPanes ? .running : .closed)
         let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
@@ -27,7 +28,7 @@ struct SidebarPRBadgeInteractionTests {
             appState: Binding(get: { state }, set: { state = $0 }),
             reorderingEnabled: true,
             onSelect: { selections += 1 }, onMovePane: { _, _ in }, onPaneTargeted: { _ in },
-            menu: { NSMenu() }
+            menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
                         theme: .fallback, stats: nil, baseRef: nil,
@@ -39,6 +40,7 @@ struct SidebarPRBadgeInteractionTests {
                 Button { paneSelections += 1 } label: {
                     Text("Pane").frame(maxWidth: .infinity).frame(height: 28).contentShape(Rectangle())
                 }.buttonStyle(.plain)
+                    .transformAnchorPreference(key: WorktreeHeadingAnchor.self, value: .bounds) { $0[.pane(paneID)] = $1 }
             }
         }
         .environment(\.openURL, OpenURLAction { openedURLs.append($0); return .handled })
@@ -51,7 +53,7 @@ struct SidebarPRBadgeInteractionTests {
         try await Task.sleep(for: .milliseconds(100))
         hosting.layoutSubtreeIfNeeded()
         let dragView = try #require(findDragView(in: hosting))
-        let badgeRect = try #require(dragView.excludedRects.first)
+        let badgeRect = try #require(dragView.excludedRects.min { $0.width * $0.height < $1.width * $1.height })
 
         let badgePoint = dragView.convert(NSPoint(x: badgeRect.midX, y: badgeRect.midY), to: nil)
         try click(at: badgePoint, in: window, dragView: dragView)
@@ -59,13 +61,14 @@ struct SidebarPRBadgeInteractionTests {
         #expect(openedURLs == [url])
         #expect(selections == 0)
 
-        let rowPoint = dragView.convert(NSPoint(x: 150, y: dragView.bounds.midY), to: nil)
+        let rowPoint = dragView.convert(NSPoint(x: 150, y: badgeRect.midY), to: nil)
         try click(at: rowPoint, in: window, dragView: dragView)
         try await Task.sleep(for: .milliseconds(50))
         #expect(openedURLs == [url])
         #expect(selections == 1)
         if groupsPanes {
-            let panePoint = dragView.convert(NSPoint(x: 150, y: dragView.bounds.maxY + 14), to: nil)
+            let paneRect = try #require(dragView.excludedRects.max { $0.width * $0.height < $1.width * $1.height })
+            let panePoint = dragView.convert(NSPoint(x: paneRect.midX, y: paneRect.midY), to: nil)
             try click(at: panePoint, in: window, dragView: dragView)
             try await Task.sleep(for: .milliseconds(50))
             #expect(paneSelections == 1)

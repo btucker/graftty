@@ -29,11 +29,6 @@ struct StateTodo {
     func state_2_1() async throws { }
 
     @Test("""
-@spec STATE-2.4: When the user clicks a worktree entry that has any attention overlay (worktree-scoped or pane-scoped on any of its panes), the application shall clear all attention overlays on that worktree.
-""", .disabled("not yet implemented"))
-    func state_2_4() async throws { }
-
-    @Test("""
 @spec STATE-2.5: When the CLI sends a clear message for a worktree, the application shall clear the worktree-scoped attention overlay. Pane-scoped overlays are not affected by CLI clear messages; they auto-clear on their own timers.
 """, .disabled("not yet implemented"))
     func state_2_5() async throws { }

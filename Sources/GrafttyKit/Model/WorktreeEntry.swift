@@ -263,20 +263,26 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return true
     }
 
-    /// The user is now looking at this worktree (sidebar click or
-    /// notification activation): clear ALL attention — worktree-scoped and
-    /// every pane (STATE-2.4). One method so both acknowledgement paths
-    /// can't drift on scope.
+    /// Viewing a worktree clears notifications. Stopped agents still need
+    /// attention until provider progress or explicit occurrence dismissal.
+    public mutating func viewAttention() {
+        if attention?.source != .agentStop { attention = nil }
+        paneAttention = paneAttention.filter { $0.value.source == .agentStop }
+    }
+
+    /// Viewing a pane clears its notification while preserving agent requests.
+    public mutating func viewPaneAttention(_ pane: PaneSlotID) {
+        if paneAttention[pane]?.source != .agentStop { paneAttention[pane] = nil }
+    }
+
+    /// Explicitly acknowledges every request and notification on the worktree.
     public mutating func acknowledgeAttention() {
         unseenAgentStop = nil
         attention = nil
         paneAttention.removeAll()
     }
 
-    /// The user focused one specific pane (clicked its terminal, or its
-    /// sidebar row): clear just that pane's attention (STATE-2.4). The
-    /// worktree-scoped overlay and sibling panes are left alone — the user
-    /// only attended to this one.
+    /// Explicitly acknowledges the stopped turn and the chosen pane's attention.
     public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
         unseenAgentStop = nil
         paneAttention[pane] = nil

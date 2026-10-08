@@ -16,14 +16,14 @@ struct MobilePaneAttentionTests {
         let completedCommand = worktree("command", source: .commandFinished)
         let rows = [current, other, viewed, completedCommand]
         navigation.opened(SidebarProjection.activity([viewed])[0])
-        #expect(MobilePaneAttention.pendingCount(worktrees: rows, currentWorktree: current.path, navigation: navigation) == 1)
+        #expect(MobilePaneAttention.pendingCount(worktrees: rows, currentWorktree: current.path, navigation: navigation) == 2)
         navigation.filter = .running
         navigation.query = "old search"
         MobilePaneAttention.open(worktrees: rows, projects: SidebarProjection.projects(rows), navigation: navigation)
         #expect(navigation.selectedProjectID == "project")
         #expect(navigation.rememberedWorktrees["project"] == current.path)
         #expect(navigation.query.isEmpty)
-        #expect(MobilePaneAttention.pendingCount(worktrees: [current, viewed, completedCommand], currentWorktree: current.path, navigation: navigation) == 0)
+        #expect(MobilePaneAttention.pendingCount(worktrees: [current, viewed, completedCommand], currentWorktree: current.path, navigation: navigation) == 1)
     }
 
     @Test("A new stop at a previously viewed worktree counts again")
@@ -50,7 +50,7 @@ struct MobilePaneAttentionTests {
             navigation: navigation, currentWorktree: "/third")
         #expect(wrap?.worktreeID == "/first")
         navigation.opened(SidebarProjection.activity([rows[0]])[0])
-        #expect(MobilePaneAttention.pendingCount(worktrees: rows + [rows[1]], currentWorktree: "/third", navigation: navigation) == 1)
+        #expect(MobilePaneAttention.pendingCount(worktrees: rows + [rows[1]], currentWorktree: "/third", navigation: navigation) == 2)
         #expect(navigation.nextPendingWorktree(in: rows, projectID: "other-project", after: nil) == nil)
         #expect(MobilePaneAttention.open(worktrees: [rows[2]], projects: projects,
             navigation: navigation, currentWorktree: rows[2].path)?.worktreeID == rows[2].path)
@@ -81,9 +81,9 @@ struct MobilePaneAttentionTests {
         let rows = [selected, other]
         let projectID = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: false)
         let scopedRows = rows.filter { projectID == nil || SidebarProjection.projectID($0) == projectID }
-        #expect(MobilePaneAttention.pendingCount(worktrees: scopedRows, currentWorktree: nil, navigation: navigation) == 1)
+        #expect(MobilePaneAttention.pendingCount(worktrees: scopedRows, currentWorktree: nil, navigation: navigation) == 2)
         #expect(navigation.nextPendingWorktree(in: rows, projectID: projectID, after: selected.path)?.worktreeID == other.path)
-        #expect(navigation.nextPendingWorktree(in: rows, projectID: navigation.selectedProjectID, after: selected.path) == nil)
+        #expect(navigation.nextPendingWorktree(in: rows, projectID: navigation.selectedProjectID, after: selected.path)?.worktreeID == selected.path)
     }
 
     @Test("Opening a worktree with an old recap targets its new pending request")

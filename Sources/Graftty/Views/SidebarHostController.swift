@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
@@ -13,12 +14,26 @@ final class SidebarHostController: ObservableObject {
     let remoteIconCache = ProjectIconCache()
     var remoteIcons: [String: Data] { remoteIconCache.icons }
     private var resolvedSignatures: [UUID: IconSignature] = [:]
+    private struct IconMetadata {
+        let data: Data
+        let revision: String
+        let accentHex: String?
+    }
+    private var iconMetadata: [UUID: IconMetadata] = [:]
+    private let resolveAccent: (Data) -> String?
+
+    init(resolveAccent: @escaping (Data) -> String? = ProjectIconDiscovery.accentHex) {
+        self.resolveAccent = resolveAccent
+    }
+
     private var checked: [UUID: Date] = [:]
     private struct IconSignature: Equatable { var path: String; var iconOverride: ProjectIconOverride? }
     private var signatures: [UUID: IconSignature] = [:]
     private var loading: [UUID: (signature: IconSignature, token: UUID)] = [:]
 
     func refreshIcons(_ repos: [RepoEntry], force: Bool = false) {
+        let ids = Set(repos.map(\.id))
+        iconMetadata = iconMetadata.filter { ids.contains($0.key) }
         for repo in repos {
             let signature = IconSignature(path: repo.path, iconOverride: repo.iconOverride)
             let previous = signatures[repo.id]
@@ -74,11 +89,37 @@ final class SidebarHostController: ObservableObject {
 
     func project(for repo: RepoEntry, owner: WorktreeOrigin) -> SidebarProject {
         let data = iconData(for: repo)
+        let metadata: IconMetadata?
+        if let data {
+            if let cached = iconMetadata[repo.id], cached.data == data { metadata = cached }
+            else {
+                let resolved = IconMetadata(data: data, revision: ProjectIconDiscovery.revision(data),
+                                            accentHex: resolveAccent(data))
+                iconMetadata[repo.id] = resolved
+                metadata = resolved
+            }
+        } else {
+            iconMetadata[repo.id] = nil
+            metadata = nil
+        }
         let initials: String?
         if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
         return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
-            name: repo.displayName, owner: owner, iconRevision: data.map(ProjectIconDiscovery.revision),
-            initials: initials, accentHex: data.flatMap(ProjectIconDiscovery.accentHex), supportsWorktreeEditing: true)
+            name: repo.displayName, owner: owner, iconRevision: metadata?.revision,
+            initials: initials, accentHex: metadata?.accentHex, supportsWorktreeEditing: true)
+    }
+
+    /// Inout access to a SwiftUI binding writes back even when the snapshot
+    /// didn't mutate its value. Poll using a copy and publish actual changes.
+    func snapshot(state: Binding<AppState>, owner: WorktreeOrigin, remote: [SidebarProject],
+                  authoritativeRemoteOwners: Set<RemoteDeviceID> = [],
+                  savedRemoteOwners: Set<RemoteDeviceID>? = nil) -> SidebarSnapshot {
+        let previous = state.wrappedValue
+        var next = previous
+        let result = snapshot(state: &next, owner: owner, remote: remote,
+            authoritativeRemoteOwners: authoritativeRemoteOwners, savedRemoteOwners: savedRemoteOwners)
+        if next != previous { state.wrappedValue = next }
+        return result
     }
 
     func snapshot(state: inout AppState, owner: WorktreeOrigin, remote: [SidebarProject], authoritativeRemoteOwners: Set<RemoteDeviceID> = [], savedRemoteOwners: Set<RemoteDeviceID>? = nil) -> SidebarSnapshot {

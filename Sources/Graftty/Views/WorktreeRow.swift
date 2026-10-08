@@ -70,7 +70,8 @@ struct PaneTitleRow: View {
     /// pane title (LAYOUT-2.30); the title truncates to make room rather
     /// than being replaced. Agent "needs input" (`.needsInput`) shows an
     /// icon; `graftty notify` / ✓! (`.text`) show their text. Cleared when
-    /// the user clicks the worktree (STATE-2.4). Worktree-scoped pings
+    /// the agent resumes or the request is dismissed; notifications clear
+    /// when the user clicks the worktree (STATE-2.4). Worktree-scoped pings
     /// render on the worktree row instead (STATE-2.3).
     let attentionStyle: AttentionCapsuleStyle?
     /// Port bindings detected for this pane's process subtree (PORTS-3.1).

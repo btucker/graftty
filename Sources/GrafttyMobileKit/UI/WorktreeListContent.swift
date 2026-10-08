@@ -769,7 +769,7 @@ public struct WorktreeListContent: View {
             else { onSelect(target) }
             // The visit has occurred. A delayed acknowledgement must not consume
             // an unopened request or later replace a newer navigation choice.
-            if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgement(
+            if includeRemoteWorktrees, let request = SidebarInteractionPolicy.acknowledgementOnOpen(
                 for: currentItem, supportsExactAcknowledgement: supportsExactAcknowledgement
             ) {
                 Task {
@@ -1193,26 +1193,9 @@ public struct WorktreeListContent: View {
         navigation.selectedProjectID = id
     }
 
-    private func acknowledgeViewedStop(_ worktree: WorktreePanes) {
+    private func recordViewedStop(_ worktree: WorktreePanes) {
         if let stop = SidebarProjection.activity([worktree]).first(where: { $0.agentStop != nil }) {
             navigation.opened(stop)
-        }
-        guard includeRemoteWorktrees,
-              projects(for: [worktree]).first(where: { $0.id == SidebarProjection.projectID(worktree) })?.supportsWorktreeEditing == true,
-              let request = SidebarInteractionPolicy.stoppedTurnAcknowledgement(for: worktree) else { return }
-        let provider: RemoteConnectionProvider? = remoteConnectionProvider
-        let requestHostID = host.id
-        Task {
-            do {
-                let response = try await RelayedWorktreeManagementClient.send(request, using: provider)
-                guard presentedHostID == requestHostID else { return }
-                if case .error(let code, _, _, _) = response, code != "occurrence-changed" {
-                    showErrorToast("Couldn't mark this agent stop as viewed.")
-                }
-            } catch {
-                guard presentedHostID == requestHostID else { return }
-                showErrorToast("Couldn't mark this agent stop as viewed.")
-            }
         }
     }
 
@@ -1223,7 +1206,7 @@ public struct WorktreeListContent: View {
         for item in items {
             navigation.opened(item)
             guard includeRemoteWorktrees,
-                  let request = SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: supportsExact) else { continue }
+                  let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: supportsExact) else { continue }
             let requestHostID = host.id
             let provider: RemoteConnectionProvider? = remoteConnectionProvider
             Task {
@@ -1277,7 +1260,7 @@ public struct WorktreeListContent: View {
         ) else {
             if selectionIsCurrent() {
                 onSelect(worktree)
-                acknowledgeViewedStop(worktree)
+                recordViewedStop(worktree)
             }
             return
         }
@@ -1322,7 +1305,7 @@ public struct WorktreeListContent: View {
                 }) {
                     if selectionIsCurrent() {
                         onSelect(opened)
-                        acknowledgeViewedStop(opened)
+                        recordViewedStop(opened)
                     }
                     return
                 }

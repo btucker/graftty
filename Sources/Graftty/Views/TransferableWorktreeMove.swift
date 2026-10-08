@@ -160,10 +160,10 @@ private struct WorktreeRowDropDelegate: DropDelegate {
     }
 }
 
-/// Bounds of a worktree heading and its independently clickable controls.
-/// The block-level drag source covers the heading but lets badge clicks through.
+/// Bounds of independently clickable controls inside a worktree block.
+/// The native selection target lets pane, badge, and report clicks through.
 struct WorktreeHeadingAnchor: PreferenceKey {
-    enum Region: Hashable { case heading, prBadge, reportButton }
+    enum Region: Hashable { case heading, prBadge, reportButton, pane(PaneSlotID) }
     static let defaultValue: [Region: Anchor<CGRect>] = [:]
     static func reduce(value: inout [Region: Anchor<CGRect>], nextValue: () -> [Region: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
@@ -173,7 +173,7 @@ struct WorktreeHeadingAnchor: PreferenceKey {
 /// Drag source + drop target for one worktree block (heading + pane
 /// rows). The source is an AppKit overlay (`WorktreeDragSourceOverlay`)
 /// because SwiftUI's `.draggable` never began a session for these rows on
-/// the project column; it sits over the heading and drags the block.
+/// the project column; it selects and drags the block outside its controls.
 /// Drops resolve against the block's midpoint, so a worktree lands before
 /// or after another whole worktree, never between its panes.
 struct WorktreeReorderTarget: ViewModifier {
@@ -205,27 +205,15 @@ struct WorktreeReorderTarget: ViewModifier {
         return repo.worktreeOrderMode == .manual || SidebarHostNavigation.isPinned(worktree, in: repo)
     }
 
-    @ViewBuilder private func dragSource(_ content: Content) -> some View {
-        if canDrag {
-            content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchors in
-                GeometryReader { proxy in
-                    if let anchor = anchors[.heading] {
-                        let heading = proxy[anchor]
-                        WorktreeDragSourceOverlay(
-                            payload: TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID),
-                            blockRect: CGRect(x: -heading.minX, y: -heading.minY,
-                                              width: proxy.size.width, height: proxy.size.height),
-                            excludedRects: [WorktreeHeadingAnchor.Region.prBadge, .reportButton].compactMap { anchors[$0] }.map {
-                                proxy[$0].offsetBy(dx: -heading.minX, dy: -heading.minY)
-                            },
-                            onClick: onSelect)
-                        .frame(width: heading.width, height: heading.height)
-                        .offset(x: heading.minX, y: heading.minY)
-                    }
-                }
+    private func dragSource(_ content: Content) -> some View {
+        content.overlayPreferenceValue(WorktreeHeadingAnchor.self) { anchors in
+            GeometryReader { proxy in
+                WorktreeDragSourceOverlay(
+                    payload: canDrag ? TransferableWorktreeMove(repoID: repoID, worktreeID: worktreeID) : nil,
+                    excludedRects: anchors.filter { $0.key != .heading }.map { proxy[$0.value] },
+                    onClick: onSelect)
             }
         }
-        else { content }
     }
 
     func body(content: Content) -> some View {

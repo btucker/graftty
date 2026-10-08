@@ -69,27 +69,34 @@ struct WorktreeEntryAttentionTests {
         #expect(e.paneAttention[slot] == second)
     }
 
-    @Test func acknowledgePaneClearsOnlyThatPane() {
+    @Test func viewingPanePreservesStoppedAgentAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let focused = PaneSlotID(id: UUID())
         let other = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[focused] = att("needs input", .agentStop)
         e.paneAttention[other] = att("needs input", .agentStop)
-        e.acknowledgePaneAttention(focused)
-        #expect(e.paneAttention[focused] == nil)   // focused pane cleared
+        e.viewPaneAttention(focused)
+        #expect(e.paneAttention[focused] != nil)   // agent still needs input
         #expect(e.paneAttention[other] != nil)      // sibling pane untouched
         #expect(e.attention != nil)                 // worktree-scoped untouched
     }
 
-    @Test func acknowledgeClearsWorktreeAndAllPanes() {
+    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.")
+    func viewingWorktreePreservesStoppedAgents() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[slot] = att("p", .agentStop)
-        e.acknowledgeAttention()
+        let notification = PaneSlotID(id: UUID())
+        e.paneAttention[notification] = att("done", .commandFinished)
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
+        e.recordAgentStop(stop)
+        e.viewAttention()
         #expect(e.attention == nil)
-        #expect(e.paneAttention.isEmpty)
+        #expect(e.paneAttention[slot] != nil)
+        #expect(e.paneAttention[notification] == nil)
+        #expect(e.unseenAgentStop == stop)
     }
 
     @Test("""

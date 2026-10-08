@@ -262,13 +262,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 
-**LAYOUT-2.125** When a worktree has an unacknowledged agent question, the application shall show the full question inline until it is opened, dismissed, superseded, or its agent resumes, while retaining the recap for preview.
+**LAYOUT-2.125** When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.
 
 **LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
 
 **LAYOUT-2.127** When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.
 
-**LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next unviewed pending worktree in displayed order within the requested project and wrap at the end.
+**LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.
 
 **LAYOUT-2.129** When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.
 
@@ -293,6 +293,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.143** When mobile pending navigation is invoked, the application shall visit pending worktrees in displayed host order, wrap after the last worktree, and route to its project without entering Attention mode.
 
 **LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
+
+**LAYOUT-2.145** When the user clicks anywhere in a macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.
+
+**LAYOUT-2.146** When a periodic sidebar snapshot leaves application state unchanged, the application shall avoid writing back the state binding.
+
+**LAYOUT-2.147** While a project's icon bytes remain unchanged, the application shall reuse its derived sidebar color and revision across refreshes and recalculate them when the icon changes.
+
+**LAYOUT-2.148** When Change Emoji is chosen from a worktree identity menu, the application shall open the native picker after menu tracking ends with the owning window key and its capture responder ready, including on repeated attempts.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -354,7 +362,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **STATE-2.3** While a worktree entry has a worktree-scoped attention overlay, the sidebar shall render its text in a red capsule on the worktree's own row (next to the branch label), regardless of the worktree's running state. One worktree-scoped notification produces exactly one visible capsule — pane rows render only their own pane-scoped overlays per STATE-2.2 and do not mirror the worktree-scoped text. A notification set while a worktree is closed therefore remains visible on its row without requiring the user to launch panes first.
 
-**STATE-2.4** When the user clicks a worktree entry that has any attention overlay (worktree-scoped or pane-scoped on any of its panes), the application shall clear all attention overlays on that worktree.
+**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.
 
 **STATE-2.5** When the CLI sends a clear message for a worktree, the application shall clear the worktree-scoped attention overlay. Pane-scoped overlays are not affected by CLI clear messages; they auto-clear on their own timers.
 
@@ -723,6 +731,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-4.18** While a worktree entry is in the `.deleting` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — `git worktree remove` is mid-call and the admin entry may disappear from porcelain before `DeleteWorktreeFlow` removes the model entry — and only `DeleteWorktreeFlow` is permitted to clear the placeholder (success → remove from model, failure → restore prior state). Mirrors `GIT-5.8` for `.creating`.
 
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
+
+**GIT-4.20** When Delete Worktree is invoked on an unselected sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.
 
 ### GIT-5.x — Creating a Worktree
 

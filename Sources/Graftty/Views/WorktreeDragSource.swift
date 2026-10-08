@@ -21,16 +21,17 @@ final class WorktreeDragPasteboardWriter: NSObject, NSPasteboardWriting {
     }
 }
 
-/// AppKit drag source laid over a worktree heading. SwiftUI's `.draggable`
+/// AppKit selection and drag source laid over a worktree block. SwiftUI's `.draggable`
 /// never started a session for these rows on the project column, so this
 /// overlay owns the left mouse button: a press-and-release selects, and a
 /// drag past the threshold begins an `NSDraggingSession` with the move
 /// payload. Right-clicks and ctrl-clicks pass through to the menu overlay.
 /// Independently clickable controls pass through within `excludedRects`.
+/// A nil payload preserves selection while disabling worktree drags.
 /// `blockRect` is the whole worktree block in the overlay's (top-left)
 /// coordinates; it is what lifts under the cursor.
 struct WorktreeDragSourceOverlay: NSViewRepresentable {
-    let payload: TransferableWorktreeMove
+    let payload: TransferableWorktreeMove?
     var blockRect: CGRect? = nil
     var excludedRects: [CGRect] = []
     let onClick: () -> Void

@@ -13,6 +13,14 @@ public enum SidebarInteractionPolicy {
         return .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence)
     }
 
+    /// Opening agent content records a visit without retiring its request.
+    /// Explicit dismissal continues to use `acknowledgement(for:)`.
+    public static func acknowledgementOnOpen(for item: SidebarActivityItem,
+                                             supportsExactAcknowledgement: Bool) -> WorktreeManagementRequest? {
+        guard item.occurrence?.source != .agentStop else { return nil }
+        return acknowledgement(for: item, supportsExactAcknowledgement: supportsExactAcknowledgement)
+    }
+
     public static func matches(_ worktree: WorktreePanes, query: String) -> Bool {
         matches(query: query, projectName: worktree.repoDisplayName,
                 worktreeName: worktree.displayName, branch: worktree.displayBranch)
