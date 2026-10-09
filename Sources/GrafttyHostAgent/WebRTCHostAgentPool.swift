@@ -1,3 +1,4 @@
+#if canImport(WebRTC)
 import Foundation
 import GrafttyProtocol
 import WebRTC
@@ -183,3 +184,5 @@ public actor WebRTCHostAgentPool {
         }
     }
 }
+
+#endif

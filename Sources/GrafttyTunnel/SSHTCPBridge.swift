@@ -1,7 +1,9 @@
 import Foundation
-import Network
 import NIOCore
 import NIOSSH
+
+#if canImport(Network)
+import Network
 
 /// Bridges a TCP socket and one SSH direct-tcpip channel. Each direction waits
 /// for its previous write before requesting more bytes.
@@ -144,6 +146,75 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
         channel?.close(promise: nil)
     }
 }
+
+#else
+import NIOPosix
+
+/// Linux TCP forwarding with reads paced by the destination's write completion.
+public enum SSHTCPBridge {
+    private static let capacity = TunnelCapacity()
+    public static func connect(host: String, port: Int, channel: Channel) -> EventLoopFuture<Void> {
+        guard !host.isEmpty, host.utf8.count <= 253, (1...65535).contains(port), capacity.acquire() else {
+            return channel.eventLoop.makeFailedFuture(ChannelError.inappropriateOperationForState)
+        }
+        channel.closeFuture.whenComplete { _ in capacity.release() }
+        return channel.setOption(ChannelOptions.autoRead, value: false).flatMap {
+            ClientBootstrap(group: channel.eventLoop)
+                .connectTimeout(.seconds(10))
+                .channelOption(ChannelOptions.autoRead, value: false)
+                .channelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 48 * 1024))
+                .channelInitializer { tcp in
+                    tcp.pipeline.addHandler(TCPToSSHRelay(ssh: channel))
+                }.connect(host: host, port: port)
+        }.flatMap { tcp in
+            channel.closeFuture.whenComplete { _ in tcp.close(promise: nil) }
+            return channel.pipeline.addHandler(SSHToTCPRelay(tcp: tcp)).flatMapError { error in
+                tcp.close(promise: nil)
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
+    }
+}
+
+private final class TCPToSSHRelay: ChannelInboundHandler, Sendable {
+    typealias InboundIn = ByteBuffer
+    let ssh: Channel
+    init(ssh: Channel) { self.ssh = ssh }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let tcp = context.channel
+        ssh.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(unwrapInboundIn(data)))).whenComplete { result in
+            switch result {
+            case .success: tcp.read()
+            case .failure: tcp.close(promise: nil)
+            }
+        }
+    }
+    func channelInactive(context: ChannelHandlerContext) { ssh.close(promise: nil); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+}
+private final class SSHToTCPRelay: ChannelInboundHandler, Sendable {
+    typealias InboundIn = SSHChannelData
+    let tcp: Channel
+    init(tcp: Channel) { self.tcp = tcp }
+    func handlerAdded(context: ChannelHandlerContext) {
+        if context.channel.isActive { context.read(); tcp.read() }
+    }
+    func channelActive(context: ChannelHandlerContext) { context.read(); tcp.read(); context.fireChannelActive() }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let value = unwrapInboundIn(data)
+        guard value.type == .channel, case .byteBuffer(let buffer) = value.data else { context.close(promise: nil); return }
+        let ssh = context.channel
+        tcp.writeAndFlush(buffer).whenComplete { result in
+            switch result {
+            case .success: ssh.read()
+            case .failure: ssh.close(promise: nil)
+            }
+        }
+    }
+    func channelInactive(context: ChannelHandlerContext) { tcp.close(promise: nil); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+}
+#endif
 
 private final class TunnelCapacity: @unchecked Sendable {
     private let lock = NSLock()

@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 import NIO
@@ -16,10 +20,11 @@ public enum SSHClientSetup {
     public static func makeHandler(
         clientKey: Curve25519.Signing.PrivateKey,
         expectedHostFingerprint: RemoteIdentityFingerprint,
-        allocator: ByteBufferAllocator
+        allocator: ByteBufferAllocator,
+        onAuthenticationRejected: (@Sendable () -> Void)? = nil
     ) -> NIOSSHHandler {
         let config = SSHClientConfiguration(
-            userAuthDelegate: SingleKeyUserAuthDelegate(key: clientKey),
+            userAuthDelegate: SingleKeyUserAuthDelegate(key: clientKey, onRejected: onAuthenticationRejected),
             serverAuthDelegate: PinnedHostKeyAuthDelegate(expectedFingerprint: expectedHostFingerprint)
         )
         return NIOSSHHandler(
@@ -37,9 +42,11 @@ private final class SingleKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDel
     private let key: Curve25519.Signing.PrivateKey
     private let lock = NSLock()
     private var offered = false
+    private let onRejected: (@Sendable () -> Void)?
 
-    init(key: Curve25519.Signing.PrivateKey) {
+    init(key: Curve25519.Signing.PrivateKey, onRejected: (@Sendable () -> Void)?) {
         self.key = key
+        self.onRejected = onRejected
     }
 
     func nextAuthenticationType(
@@ -49,6 +56,7 @@ private final class SingleKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDel
         lock.lock()
         defer { lock.unlock() }
         guard !offered, availableMethods.contains(.publicKey) else {
+            onRejected?()
             nextChallengePromise.succeed(nil)
             return
         }

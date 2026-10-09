@@ -2886,6 +2886,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-14.11** When a viewed agent stop is acknowledged remotely, the application shall clear only that stop occurrence and preserve newer stops and unrelated prompts.
 
+### REMOTE-20.x
+
+**REMOTE-20.1** When a saved remote host has no transport field, the application shall use WebRTC.
+
+**REMOTE-20.2** When a remote host uses direct SSH, the application shall persist its explicit Graftty endpoint with default port 8801.
+
+**REMOTE-20.3** When a paired peer connects over direct SSH, the application shall authenticate and dispatch existing Graftty subsystem channels over TCP.
+
+**REMOTE-20.4** If a direct SSH host key is unpinned or a peer lacks trust or terminal control, then the application shall reject the connection.
+
+**REMOTE-20.5** While distinct paired peers use direct SSH, the application shall keep their connections independent and close revoked peers before rejecting fresh authentication.
+
+**REMOTE-20.6** When direct SSH is selected during pairing, the application shall save a separately validated Graftty host and port instead of the pairing or OpenSSH port.
+
+**REMOTE-20.7** When a paired peer reconnects over direct SSH, the application shall authenticate a fresh session and prevent stale teardown from closing the replacement.
+
+**REMOTE-20.8** If direct SSH is selected without an explicit endpoint, then the application shall reject the connection before dialing a transport.
+
+**REMOTE-20.9** When a saved direct SSH host connects or reconnects, the application shall dial its explicit endpoint and build the pane environment without a WebRTC signaling exchange.
+
+**REMOTE-20.10** While a peer is authenticated over direct SSH, the application shall enforce its worktree management and port tunnel capabilities for each channel.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

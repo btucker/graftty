@@ -1,3 +1,4 @@
+#if canImport(WebRTC)
 import Foundation
 import WebRTC
 
@@ -134,3 +135,5 @@ public final class DataChannelInbox: NSObject, RTCDataChannelDelegate, @unchecke
         bufferedMessages.append(data)
     }
 }
+
+#endif

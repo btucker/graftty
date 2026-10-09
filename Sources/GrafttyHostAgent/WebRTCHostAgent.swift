@@ -1,4 +1,9 @@
+#if canImport(WebRTC)
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
@@ -704,77 +709,30 @@ public actor WebRTCHostAgent {
         let peerBox = bulk ? AuthenticatedPeerBox() : primaryPeerBox
         do {
             try await transport.eventLoop.submit { [self, hostKey, trustedPeerStore, activeRemotePeers, transport] in
-                let handler = SSHServerSetup.makeHandler(
+                let configuration = SSHHostSessionConfiguration(
+                    streamFactory: factory, pagedFactory: pagedFactory,
+                    panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
+                    paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+                    ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
+                    teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
+                )
+                let handler = configuration.makeHandler(
+                    channel: transport.channel,
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
                     expectedDeviceID: expectedSignalingDeviceID,
-                    activePeerRegistry: activeRemotePeers,
-                    closeActiveTransport: {
-                        await transport.close()
-                    },
-                    onActivePeerRegistered: { entryID in
-                        transport.channel.closeFuture.whenComplete { _ in
-                            activeRemotePeers.unregister(entryID: entryID)
-                        }
-                    },
-                    allocator: transport.channel.allocator,
+                    activeRemotePeers: activeRemotePeers,
+                    peerBox: peerBox,
+                    bulkChannels: bulkChannels,
+                    isBulkTransport: bulk,
+                    closeTransport: { await transport.close() },
                     onAuthenticatedPeer: { [weak self = self] peer in
-                        peerBox.peer = peer
-                        // REMOTE-3.1 revocation (W4): `onAuthenticatedPeer` runs
-                        // synchronously on the transport's event loop, not
-                        // on this actor, and `SSHConnectionRegistry.register`
-                        // is async — so registration happens via a Task
-                        // hop rather than inline here. That means a
-                        // channel-open racing this Task's actor hop is
-                        // possible in theory, but harmless: `peerBox`
-                        // (read by every child channel's `deviceIDProvider`)
-                        // is already populated synchronously above, and
-                        // the registry's only job is to make a FUTURE
-                        // `revoke` able to find this connection — it
-                        // doesn't gate channel-open.
                         if !bulk {
                             Task {
                                 await self?.registerAuthenticatedConnection(
-                                    deviceID: peer.id,
-                                    generation: generation,
-                                    transport: transport
+                                    deviceID: peer.id, generation: generation, transport: transport
                                 )
                             }
-                        }
-                    },
-                    inboundChildChannelInitializer: { child, channelType in
-                        if case .directTCPIP(let destination) = channelType {
-                            guard peerBox.browserTunnelAllowed(host: destination.targetHost) else {
-                                return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
-                            }
-                            return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
-                        }
-                        guard case .session = channelType else {
-                            return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
-                        }
-                        return child.eventLoop.makeCompletedFuture {
-                            let dispatcher = SubsystemDispatcher(
-                                streamFactory: factory,
-                                pagedFactory: pagedFactory,
-                                panesStateSubscribe: panesStateSubscribe,
-                                panesStateV2Subscribe: panesStateV2Subscribe,
-                                paneControlMutator: paneControlMutator,
-                                worktreeManagementMutator: worktreeManagementMutator,
-                                ownershipStore: ownershipStore,
-                                ownershipBroadcaster: ownershipBroadcaster,
-                                deviceIDProvider: { peerBox.deviceID },
-                                worktreeManagementAllowed: {
-                                    peerBox.worktreeManagementAllowed
-                                },
-                                displayKindProvider: { peerBox.displayKind },
-                                teamHandler: teamHandler,
-                                teamOnConnect: teamOnConnect,
-                                teamOnDisconnect: teamOnDisconnect,
-                                teamAllowed: { peerBox.peer?.kind == .mac },
-                                bulkChannels: bulkChannels,
-                                isBulkTransport: bulk
-                            )
-                            try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
                     }
                 )
@@ -1077,10 +1035,6 @@ public actor WebRTCHostAgent {
         )
     }
 
-    private enum WebRTCHostAgentError: Error {
-        case unsupportedChannelType
-    }
-
     /// `RTCInitializeSSL` is process-wide and not refcounted in every SDK
     /// build, so a per-instance `deinit { RTCCleanupSSL() }` would tear SSL
     /// down for other live connections. A one-shot static token initialises
@@ -1193,74 +1147,5 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     }
 }
 
-/// Thread-safe box holding the trusted peer that
-/// completed SSH userauth on this connection. One instance per
-/// `installSSHHandler` call (i.e. per data channel / SSH connection);
-/// `SSHUserAuthDelegate.onAuthenticatedPeer` sets it synchronously during
-/// userauth, and `SubsystemDispatcher` reads its identity and display kind
-/// once per child channel thereafter.
-private final class AuthenticatedPeerBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _peer: TrustedPeer?
 
-    var peer: TrustedPeer? {
-        get { lock.lock(); defer { lock.unlock() }; return _peer }
-        set { lock.lock(); defer { lock.unlock() }; _peer = newValue }
-    }
-
-    var deviceID: RemoteDeviceID? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _peer?.id
-    }
-
-    var displayKind: DisplayClientKind {
-        lock.lock()
-        defer { lock.unlock() }
-        switch _peer?.kind {
-        case .mac:
-            return .mac
-        case .iphone, .ipad, nil:
-            return .ios
-        }
-    }
-
-    var worktreeManagementAllowed: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _peer?.capabilities.worktreeManagement == .allowed
-    }
-
-    func browserTunnelAllowed(host: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let peer = _peer else { return false }
-        return BrowserTunnelAuthorization.allows(
-            capability: peer.capabilities.portTunnel,
-            host: host,
-            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved(deviceID: peer.id)
-        )
-    }
-}
-
-enum BrowserTunnelAuthorization {
-    static func allows(
-        capability: PairedDeviceCapabilities.PortTunnel,
-        host: String,
-        hasUserApproval: Bool
-    ) -> Bool {
-        switch capability {
-        case .disabled:
-            return false
-        case .askEachTime:
-            return hasUserApproval
-        case .allowedLoopback:
-            let normalized = host.lowercased()
-            let ipv4Loopback = IPv4Address(normalized)?.rawValue.first == 127
-            return normalized == "localhost"
-                || normalized.hasSuffix(".localhost")
-                || ipv4Loopback
-                || IPv6Address(normalized)?.isLoopback == true
-        }
-    }
-}
+#endif

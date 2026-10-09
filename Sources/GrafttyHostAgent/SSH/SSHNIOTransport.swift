@@ -1,3 +1,4 @@
+#if canImport(WebRTC)
 import Foundation
 import NIO
 import NIOEmbedded
@@ -512,3 +513,5 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
 
     func flush(context: ChannelHandlerContext) { resumeSending() }
 }
+
+#endif

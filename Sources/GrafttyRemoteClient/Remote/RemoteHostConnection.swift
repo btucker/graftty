@@ -1,4 +1,9 @@
+#if canImport(WebRTC)
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 import GrafttyTunnel
@@ -27,26 +32,7 @@ public protocol WebRTCIceCandidateReceiver: Sendable {
 /// the current connection down and builds a fresh one.
 public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
-    public enum State: Sendable, Equatable {
-        case idle
-        case connecting
-        case connected
-        case failed(reason: String)
-        case closed
-
-        /// `true` for the two terminal values. `RemoteHostConnection.setState`
-        /// refuses any further transition once this is true — see its doc
-        /// comment. Public because connection lifecycle coordinators live in
-        /// platform UI modules while this state machine is shared by macOS
-        /// and iOS. Keeping the predicate here avoids duplicating the
-        /// terminal-case switch across consumers if a state is added later.
-        public var isTerminal: Bool {
-            switch self {
-            case .failed, .closed: return true
-            case .idle, .connecting, .connected: return false
-            }
-        }
-    }
+    public typealias State = RemoteHostConnectionState
 
     public private(set) var state: State = .idle
 
@@ -935,3 +921,5 @@ private final class SSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
 }
+
+#endif

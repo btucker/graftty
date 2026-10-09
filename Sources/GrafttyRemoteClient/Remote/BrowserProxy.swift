@@ -1,3 +1,4 @@
+#if canImport(Network)
 import Foundation
 import Network
 
@@ -148,3 +149,5 @@ public final class BrowserProxy: @unchecked Sendable {
 
     enum ProxyError: Error { case invalidHandshake }
 }
+
+#endif

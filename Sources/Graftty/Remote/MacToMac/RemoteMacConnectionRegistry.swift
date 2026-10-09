@@ -128,6 +128,8 @@ final class RemoteMacConnectionRegistry {
 
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
+        case missingDirectEndpoint(RemoteMacIdentity)
+        case unsupportedTransport
         case notConnected(RemoteMacIdentity)
         case paneEnvironmentUnavailable(RemoteMacIdentity)
         case connectionTerminated(RemoteMacIdentity)
@@ -149,6 +151,7 @@ final class RemoteMacConnectionRegistry {
     private let pinnedHostUpdater: PinnedHostUpdater?
     private let signalingClient: SignalingClient
     private let connectionFactory: HostConnectionFactory
+    private let directConnectionFactory: HostConnectionFactory
     private let paneEnvironmentBuilder: PaneEnvironmentBuilder
     var onPaneSnapshot: PaneSnapshotHandler
     var onConnectionStateChange: ConnectionStateHandler
@@ -183,6 +186,11 @@ final class RemoteMacConnectionRegistry {
                 )
             )
         }
+        self.directConnectionFactory = { clientKey, fingerprint in
+            LiveDirectSSHMacHostConnection(connection: DirectSSHHostConnection(
+                clientKey: clientKey, expectedHostFingerprint: fingerprint
+            ))
+        }
         self.paneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
             await RemoteMacPaneEnvironment.build(
                 remoteHost: remoteHost,
@@ -209,6 +217,9 @@ final class RemoteMacConnectionRegistry {
         pinnedHostUpdater: PinnedHostUpdater? = nil,
         signalingClient: SignalingClient,
         connectionFactory: @escaping HostConnectionFactory,
+        directConnectionFactory: @escaping HostConnectionFactory = { key, fingerprint in
+            LiveDirectSSHMacHostConnection(connection: DirectSSHHostConnection(clientKey: key, expectedHostFingerprint: fingerprint))
+        },
         paneEnvironmentBuilder: @escaping PaneEnvironmentBuilder,
         onPaneSnapshot: @escaping PaneSnapshotHandler = { _, _ in },
         now: @escaping @Sendable () -> Date = { Date() }
@@ -220,6 +231,7 @@ final class RemoteMacConnectionRegistry {
         self.pinnedHostUpdater = pinnedHostUpdater
         self.signalingClient = signalingClient
         self.connectionFactory = connectionFactory
+        self.directConnectionFactory = directConnectionFactory
         self.paneEnvironmentBuilder = paneEnvironmentBuilder
         self.onPaneSnapshot = onPaneSnapshot
         self.onConnectionStateChange = { _, _ in }
@@ -386,12 +398,15 @@ final class RemoteMacConnectionRegistry {
         attemptID: UUID,
         replacingExistingHostConnection: Bool
     ) async throws -> Entry {
-        guard let baseURL = remoteMac.lastKnownBaseURL else {
+        if remoteMac.transport == .webRTC, remoteMac.lastKnownBaseURL == nil {
             throw ConnectionError.missingBaseURL(identity)
         }
-
+        if remoteMac.transport == .directSSH, remoteMac.directEndpoint == nil {
+            throw ConnectionError.missingDirectEndpoint(identity)
+        }
         let clientKey = try identityProvider()
-        let connection = connectionFactory(clientKey, identity.fingerprint)
+        let factory = remoteMac.transport == .directSSH ? directConnectionFactory : connectionFactory
+        let connection = factory(clientKey, identity.fingerprint)
         await observe(
             connection: connection,
             identity: identity,
@@ -401,41 +416,49 @@ final class RemoteMacConnectionRegistry {
         var paneEnvironment: RemoteMacPaneEnvironment?
         do {
             var refreshedPinnedHost: PinnedHost?
-            let offerSDP = try await connection.createOfferSDP()
-            try ensureCurrentAttempt(attemptID, identity: identity)
-            let answerSDP: String
-            guard let pinnedHost = pinnedHostProvider(remoteMac.id) else {
-                throw ConnectionError.notConnected(identity)
+            guard let pinnedHost = pinnedHostProvider(remoteMac.id) else { throw ConnectionError.notConnected(identity) }
+            if remoteMac.transport == .directSSH {
+                guard pinnedHost.fingerprint == identity.fingerprint else { throw ConnectionError.notConnected(identity) }
+                guard let endpoint = remoteMac.directEndpoint else { throw ConnectionError.missingDirectEndpoint(identity) }
+                try await connection.connectDirect(endpoint: endpoint)
+                try ensureCurrentAttempt(attemptID, identity: identity)
+                var refreshed = pinnedHost
+                refreshed.lastConnectedAt = now()
+                refreshedPinnedHost = refreshed
+            } else {
+                let offerSDP = try await connection.createOfferSDP()
+                try ensureCurrentAttempt(attemptID, identity: identity)
+                let answerSDP: String
+                var routes: [RemoteConnectionRoute] = []
+                if let lastSuccessful = remoteMac.lastSuccessfulRoute {
+                    routes.append(lastSuccessful)
+                }
+                routes.append(contentsOf: remoteMac.routes)
+                routes.append(contentsOf: pinnedHost.routes)
+                if routes.isEmpty {
+                    routes.append(RemoteConnectionRoute(kind: .lan, baseURL: try requiredBaseURL(remoteMac, identity: identity)))
+                }
+                let exchange = try await signalingClient.authenticatedExchange(
+                    routes: routes,
+                    hostDeviceID: remoteMac.id,
+                    hostPublicKey: pinnedHost.publicKey,
+                    clientDeviceID: clientDeviceID,
+                    clientKey: clientKey,
+                    sdp: offerSDP,
+                    replacesExistingConnection: replacingExistingHostConnection,
+                    wakeOnLAN: pinnedHost.wakeOnLAN
+                )
+                var refreshed = pinnedHost
+                refreshed.routes = exchange.answer.routes
+                refreshed.lastSuccessfulRoute = exchange.route
+                refreshed.wakeOnLAN = exchange.wakeOnLAN
+                refreshed.lastConnectedAt = now()
+                refreshedPinnedHost = refreshed
+                answerSDP = exchange.answer.sdp
+                try ensureCurrentAttempt(attemptID, identity: identity)
+                try await connection.applyAnswerSDP(answerSDP)
+                try ensureCurrentAttempt(attemptID, identity: identity)
             }
-            var routes: [RemoteConnectionRoute] = []
-            if let lastSuccessful = remoteMac.lastSuccessfulRoute {
-                routes.append(lastSuccessful)
-            }
-            routes.append(contentsOf: remoteMac.routes)
-            routes.append(contentsOf: pinnedHost.routes)
-            if routes.isEmpty {
-                routes.append(RemoteConnectionRoute(kind: .lan, baseURL: baseURL))
-            }
-            let exchange = try await signalingClient.authenticatedExchange(
-                routes: routes,
-                hostDeviceID: remoteMac.id,
-                hostPublicKey: pinnedHost.publicKey,
-                clientDeviceID: clientDeviceID,
-                clientKey: clientKey,
-                sdp: offerSDP,
-                replacesExistingConnection: replacingExistingHostConnection,
-                wakeOnLAN: pinnedHost.wakeOnLAN
-            )
-            var refreshed = pinnedHost
-            refreshed.routes = exchange.answer.routes
-            refreshed.lastSuccessfulRoute = exchange.route
-            refreshed.wakeOnLAN = exchange.wakeOnLAN
-            refreshed.lastConnectedAt = now()
-            refreshedPinnedHost = refreshed
-            answerSDP = exchange.answer.sdp
-            try ensureCurrentAttempt(attemptID, identity: identity)
-            try await connection.applyAnswerSDP(answerSDP)
-            try ensureCurrentAttempt(attemptID, identity: identity)
             let environment = await paneEnvironmentBuilder(
                 connection,
                 { [weak self] snapshot in
@@ -486,6 +509,11 @@ final class RemoteMacConnectionRegistry {
             await connection.close()
             throw error
         }
+    }
+
+    private func requiredBaseURL(_ remoteMac: RemoteMac, identity: RemoteMacIdentity) throws -> URL {
+        guard let url = remoteMac.lastKnownBaseURL else { throw ConnectionError.missingBaseURL(identity) }
+        return url
     }
 
     private func ensureCurrentAttempt(
@@ -674,6 +702,7 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
         _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
     ) async
     func currentState() async -> RemoteHostConnection.State
+    func connectDirect(endpoint: DirectSSHEndpoint) async throws
     func createOfferSDP() async throws -> String
     func applyAnswerSDP(_ sdp: String) async throws
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
@@ -688,6 +717,9 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
 }
 
 extension RemoteMacHostConnection {
+    func connectDirect(endpoint: DirectSSHEndpoint) async throws {
+        throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport
+    }
     func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
         try await openTerminalSession(sessionName: sessionName)
     }
@@ -793,7 +825,7 @@ private final class NegotiatingPanesStateDriver:
         case channelClosedDuringOpen(String)
     }
 
-    private let connection: RemoteHostConnection
+    private let connection: any PanesStateClientMaking
     private let lock = NSLock()
     private var onSnapshot: PanesStateChannelClient.OnSnapshot
     private var onClosed: PanesStateChannelClient.OnClosed
@@ -806,7 +838,7 @@ private final class NegotiatingPanesStateDriver:
     private var closed = false
 
     init(
-        connection: RemoteHostConnection,
+        connection: any PanesStateClientMaking,
         onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
         onClosed: @escaping PanesStateChannelClient.OnClosed
     ) {
@@ -971,4 +1003,43 @@ private final class NegotiatingPanesStateDriver:
             return false
         }
     }
+}
+
+private protocol PanesStateClientMaking: Sendable {
+    func makePanesStateClient(onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+                             onClosed: @escaping @Sendable (String) async -> Void,
+                             originAware: Bool, requestReply: Bool) async throws -> PanesStateChannelClient
+}
+extension RemoteHostConnection: PanesStateClientMaking {}
+extension DirectSSHHostConnection: PanesStateClientMaking {}
+
+private final class LiveDirectSSHMacHostConnection: RemoteMacHostConnection, Sendable {
+    private let connection: DirectSSHHostConnection
+    init(connection: DirectSSHHostConnection) { self.connection = connection }
+    func connectDirect(endpoint: DirectSSHEndpoint) async throws {
+        try await connection.connect(host: endpoint.host, port: endpoint.port)
+    }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) async {
+        await connection.setOnStateChange(handler)
+    }
+    func currentState() async -> RemoteHostConnection.State { await connection.state }
+    func createOfferSDP() async throws -> String { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
+    func applyAnswerSDP(_ sdp: String) async throws { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
+    func makePanesStateDriver(onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+                             onClosed: @escaping @Sendable (String) async -> Void) async throws -> any PanesStateChannelDriver {
+        NegotiatingPanesStateDriver(connection: connection, onSnapshot: onSnapshot, onClosed: onClosed)
+    }
+    func makePaneControlDriver() async throws -> any PaneControlChannelDriver { try await connection.makePaneControlClient() }
+    func makeWorktreeManagementDriver() async throws -> any WorktreeManagementChannelDriver { try await connection.makeWorktreeManagementClient() }
+    func makeTeamClient(handler: @escaping @Sendable (Data) async -> Data,
+                        onClose: @escaping @Sendable () async -> Void) async throws -> TeamChannelClient {
+        try await connection.makeTeamClient(handler: handler, onClose: onClose)
+    }
+    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
+        try await openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
+    }
+    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
+        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+    }
+    func close() async { await connection.close() }
 }
