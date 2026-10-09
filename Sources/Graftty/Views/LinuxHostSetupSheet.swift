@@ -122,8 +122,12 @@ struct LinuxHostSetupSheet: View {
             }.accessibilityIdentifier("linuxSetupProgress")
         }
         if case .failed(let message) = form.phase {
-            Text(message).font(.callout).foregroundStyle(.red).textSelection(.enabled)
-                .accessibilityIdentifier("linuxSetupError")
+            ScrollView {
+                Text(message).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("linuxSetupError")
+            }.frame(height: 100)
         }
         if form.phase == .cancelled {
             Text("Setup cancelled. Completed installs and imports are kept. Retry checks each destination before continuing.")
