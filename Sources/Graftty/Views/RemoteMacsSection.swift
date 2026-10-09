@@ -283,6 +283,7 @@ struct RemoteMacsSection: View {
         _, _ in
     }
     let onAddRemoteMac: () -> Void
+    var onSetupLinuxHost: (() -> Void)? = nil
 
     private var projection: RemoteMacsSidebarProjection {
         RemoteMacsSidebarProjection.make(
@@ -353,6 +354,14 @@ struct RemoteMacsSection: View {
             }
             .buttonStyle(.plain)
             .help("Add Remote Mac")
+            if let onSetupLinuxHost {
+                Button(action: onSetupLinuxHost) {
+                    Label("Set Up Linux Host...", systemImage: "server.rack")
+                        .foregroundColor(theme.sidebarPrimaryText(isActive: false))
+                }
+                .buttonStyle(.plain)
+                .help("Install Graftty on an Ubuntu host using OpenSSH")
+            }
         }
     }
 

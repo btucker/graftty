@@ -2908,6 +2908,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.10** While a peer is authenticated over direct SSH, the application shall enforce its worktree management and port tunnel capabilities for each channel.
 
+### REMOTE-21.x
+
+**REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
+
+**REMOTE-21.2** If the destination is not Ubuntu on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+
+**REMOTE-21.3** When Linux setup imports a project, the application shall transfer committed branch and tag history including unpushed commits and the selected branch while excluding working changes and untracked files.
+
+**REMOTE-21.4** When Linux setup retries a repository import, the application shall reuse only its own clean checkout at the imported commit and refuse unrelated, dirty, or advanced destination repositories.
+
+**REMOTE-21.5** If OpenSSH rejects the host key or authentication, then the application shall explain how to resolve it with system SSH without disabling host-key verification.
+
+**REMOTE-21.6** When Linux setup validates a plan, the application shall reject overlapping destination names, relative destination roots, and origins containing private URL credentials.
+
+**REMOTE-21.7** While Linux host setup is running, the application shall display its current step, prevent duplicate starts, and offer cancellation; after failure it shall retain the plan for retry.
+
+**REMOTE-21.8** When Linux setup installs a release, the application shall use an explicit version and architecture archive, verify its SHA-256 checksum, install a user service, and exchange only public identity over authenticated OpenSSH.
+
+**REMOTE-21.9** When a development archive is selected, the application shall transfer that archive over authenticated OpenSSH without fetching a release or transferring private credentials.
+
+**REMOTE-21.10** When Linux setup is cancelled during an OpenSSH command, the application shall terminate the bootstrap process and stop subsequent setup commands before allowing a retry.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
