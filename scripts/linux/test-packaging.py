@@ -29,6 +29,19 @@ else:
 """)
     path.chmod(0o755)
 
+def write_timeout(path):
+    """Bound fixture commands without requiring GNU coreutils on macOS."""
+    path.write_text(f"#!{sys.executable}\n" + """
+import subprocess, sys
+# Support the invocation used by install.sh; the fake host has no descendants.
+assert sys.argv[1] == '--kill-after=1', sys.argv
+try:
+    sys.exit(subprocess.run(sys.argv[3:], timeout=float(sys.argv[2])).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+""")
+    path.chmod(0o755)
+
 class PackagingBuildTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="graftty-package-build-")
@@ -135,12 +148,14 @@ exit 0
         shutil.copy(ROOT / "install.sh", self.archive / "install.sh")
         self.home = self.root / 'user with spaces'
         self.home.mkdir()
-        self.env = {**os.environ, "HOME": str(self.home)}
+        # Installer tests must not borrow GNU tools from a developer's PATH.
+        self.env = {**os.environ, "HOME": str(self.home), "PATH": os.defpath}
         self.env.pop("XDG_CONFIG_HOME", None)
         self.env.pop("XDG_DATA_HOME", None)
         tools = self.root / "tools"
         tools.mkdir()
         write_flock(tools / "flock")
+        write_timeout(tools / "timeout")
         self.env["PATH"] = str(tools) + os.pathsep + self.env["PATH"]
 
     def install(self, *args, success=True):
