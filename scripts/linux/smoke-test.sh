@@ -46,9 +46,9 @@ start_host() {
     return 1
 }
 start_host
-graftty pane add fixture --command 'echo GRAFTTY_READY; exec bash'
-graftty pane list fixture
-graftty pane send fixture:1 'export GRAFTTY_PERSIST_PROBE=survives'
+graftty pane add /tmp/fixture --command 'echo GRAFTTY_READY; exec bash'
+graftty pane list /tmp/fixture
+graftty pane send /tmp/fixture:1 'export GRAFTTY_PERSIST_PROBE=survives'
 before=$(ZMX_DIR=/tmp/graftty-state/zmx zmx list --short | sort)
 [[ -n $before ]]
 # TERM the main host only, matching the installed KillMode=process policy.
@@ -58,10 +58,10 @@ host_pid=""
 [[ $(ZMX_DIR=/tmp/graftty-state/zmx zmx list --short | sort) == "$before" ]]
 start_host
 [[ $(ZMX_DIR=/tmp/graftty-state/zmx zmx list --short | sort) == "$before" ]]
-graftty pane send fixture:1 'printf "GRAFTTY_PERSIST=%s\n" "$GRAFTTY_PERSIST_PROBE"'
+graftty pane send /tmp/fixture:1 'printf "GRAFTTY_PERSIST=%s\n" "$GRAFTTY_PERSIST_PROBE"'
 found_marker=0
 for attempt in $(seq 1 100); do
-    output=$(graftty pane show fixture:1 --lines 100)
+    output=$(graftty pane show /tmp/fixture:1 --lines 100)
     if [[ $output == *GRAFTTY_PERSIST=survives* ]]; then found_marker=1; break; fi
     sleep 0.1
 done
