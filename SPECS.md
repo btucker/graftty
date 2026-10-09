@@ -3008,6 +3008,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.10** If an Attention event handler cannot persist its result, then the application shall retain the event for retry.
 
+**REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

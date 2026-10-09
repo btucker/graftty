@@ -13,6 +13,37 @@ import Glibc
 @Suite("PtyProcess — PTY allocation + fork/exec", .serialized)
 struct PtyProcessTests {
 
+    #if os(Linux)
+    @Test("@spec REMOTE-23.11: When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.")
+    func concurrentSlavePathLookupsStayWithTheirMaster() throws {
+        var descriptors: [Int32] = []
+        defer { for fd in descriptors { close(fd) } }
+        for _ in 0..<16 {
+            let fd = posix_openpt(O_RDWR | O_NOCTTY)
+            #expect(fd >= 0)
+            guard fd >= 0 else { return }
+            descriptors.append(fd)
+            #expect(grantpt(fd) == 0)
+            #expect(unlockpt(fd) == 0)
+        }
+        let masters = descriptors
+        let expected = try masters.map { try #require(GrafttyPOSIX.ptySlavePath($0)) }
+        #expect(Set(expected).count == masters.count)
+        let failure = MutableBox<String?>(nil)
+        // Exercise the shared-name race without concurrently forking Swift.
+        DispatchQueue.concurrentPerform(iterations: masters.count) { index in
+            for _ in 0..<10_000 {
+                let actual = GrafttyPOSIX.ptySlavePath(masters[index])
+                guard actual == expected[index] else {
+                    failure.value = "master \(masters[index]) resolved to \(actual ?? "nil"), expected \(expected[index])"
+                    return
+                }
+            }
+        }
+        #expect(failure.value == nil)
+    }
+    #endif
+
     @Test("@spec REMOTE-23.8: When the host ignores termination signals for its event loop, the application shall restore normal termination signals in spawned terminal processes.")
     func childRestoresIgnoredTerminationSignal() throws {
         let previous = signal(SIGTERM, SIG_IGN)

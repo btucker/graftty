@@ -116,11 +116,10 @@ public enum PtyProcess {
             throw Error.unlockptFailed(errno: err)
         }
 
-        guard let slaveNameCStr = ptsname(master) else {
+        guard let slavePath = GrafttyPOSIX.ptySlavePath(master) else {
             close(master)
             throw Error.ptsnameFailed
         }
-        let slavePath = String(cString: slaveNameCStr)
 
         // Keep the parent's slave fd open across fork. On macOS, when the
         // slave ref count crosses zero the PTY enters an EOF state on the

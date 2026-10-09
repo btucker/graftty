@@ -12,6 +12,18 @@ public enum GrafttyPOSIX {
     public static let streamSocket = SOCK_STREAM
     #endif
 
+    static func ptySlavePath(_ masterFD: Int32) -> String? {
+        #if os(Linux)
+        // glibc ptsname() returns process-wide storage shared by concurrent spawns.
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard ptsname_r(masterFD, &buffer, buffer.count) == 0 else { return nil }
+        return String(cString: buffer)
+        #else
+        guard let path = ptsname(masterFD) else { return nil }
+        return String(cString: path)
+        #endif
+    }
+
     public static func peerUserID(_ fd: Int32) -> uid_t? {
         #if canImport(Darwin)
         var user: uid_t = 0
@@ -217,6 +229,6 @@ public enum GrafttyPOSIX {
 @_silgen_name("posix_openpt") func posix_openpt(_ flags: Int32) -> Int32
 @_silgen_name("grantpt") func grantpt(_ fd: Int32) -> Int32
 @_silgen_name("unlockpt") func unlockpt(_ fd: Int32) -> Int32
-@_silgen_name("ptsname") func ptsname(_ fd: Int32) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("ptsname_r") func ptsname_r(_ fd: Int32, _ buffer: UnsafeMutablePointer<CChar>, _ count: Int) -> Int32
 @_silgen_name("close_range") func linuxCloseRange(_ first: UInt32, _ last: UInt32, _ flags: Int32) -> Int32
 #endif
