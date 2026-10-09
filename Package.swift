@@ -197,6 +197,11 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
+            name: "GrafttyHostTests",
+            dependencies: ["GrafttyHost", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
             name: "GrafttyProtocolTests",
             dependencies: ["GrafttyProtocol"] + cryptoDependencies,
             exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],

@@ -52,6 +52,13 @@ Install the project's compilers, dependencies, and agent executables on Linux.
 Authenticate Codex or Claude using that provider's Linux CLI. Mac credentials
 and installed tools are not copied during setup.
 
+The host prepares the selected provider's Graftty plugin when launching an agent.
+To install the available provider plugins explicitly, run:
+
+```sh
+~/.local/bin/graftty-host setup --install-agent-plugins --json
+```
+
 Use ordinary Graftty worktree, pane, and team commands inside the remote terminal.
 The host exports its socket and state paths to each pane.
 
@@ -62,6 +69,9 @@ Run these commands on Linux:
 ```sh
 ~/.local/bin/graftty-host status --json
 ~/.local/bin/graftty-host project add /absolute/path/to/repository --json
+systemctl --user status graftty-host.service
+systemctl --user restart graftty-host.service
+journalctl --user -u graftty-host.service -n 100
 ```
 
 For a foreground host, run:
