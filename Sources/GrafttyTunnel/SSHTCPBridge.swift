@@ -167,8 +167,9 @@ public enum SSHTCPBridge {
                     tcp.pipeline.addHandler(TCPToSSHRelay(ssh: channel))
                 }.connect(host: host, port: port)
         }.flatMap { tcp in
-            channel.closeFuture.whenComplete { _ in tcp.close(promise: nil) }
-            return channel.pipeline.addHandler(SSHToTCPRelay(tcp: tcp)).flatMapError { error in
+            let relay = SSHToTCPRelay(tcp: tcp)
+            channel.closeFuture.whenComplete { _ in relay.inputClosed() }
+            return channel.pipeline.addHandler(relay).flatMapError { error in
                 tcp.close(promise: nil)
                 return channel.eventLoop.makeFailedFuture(error)
             }
@@ -176,26 +177,37 @@ public enum SSHTCPBridge {
     }
 }
 
-private final class TCPToSSHRelay: ChannelInboundHandler, Sendable {
+final class TCPToSSHRelay: ChannelInboundHandler, Sendable {
     typealias InboundIn = ByteBuffer
     let ssh: Channel
-    init(ssh: Channel) { self.ssh = ssh }
+    private let writes: RelayPendingWrites
+    init(ssh: Channel) {
+        self.ssh = ssh
+        writes = RelayPendingWrites(destination: ssh)
+    }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let tcp = context.channel
+        writes.started()
         ssh.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(unwrapInboundIn(data)))).whenComplete { result in
+            self.writes.completed(result)
             switch result {
-            case .success: tcp.read()
+            case .success: if tcp.isActive { tcp.read() }
             case .failure: tcp.close(promise: nil)
             }
         }
     }
-    func channelInactive(context: ChannelHandlerContext) { ssh.close(promise: nil); context.fireChannelInactive() }
+    func channelInactive(context: ChannelHandlerContext) { writes.inputClosed(); context.fireChannelInactive() }
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
-private final class SSHToTCPRelay: ChannelInboundHandler, Sendable {
+final class SSHToTCPRelay: ChannelInboundHandler, Sendable {
     typealias InboundIn = SSHChannelData
     let tcp: Channel
-    init(tcp: Channel) { self.tcp = tcp }
+    private let writes: RelayPendingWrites
+    init(tcp: Channel) {
+        self.tcp = tcp
+        writes = RelayPendingWrites(destination: tcp)
+    }
+    func inputClosed() { writes.inputClosed() }
     func handlerAdded(context: ChannelHandlerContext) {
         if context.channel.isActive { context.read(); tcp.read() }
     }
@@ -204,15 +216,40 @@ private final class SSHToTCPRelay: ChannelInboundHandler, Sendable {
         let value = unwrapInboundIn(data)
         guard value.type == .channel, case .byteBuffer(let buffer) = value.data else { context.close(promise: nil); return }
         let ssh = context.channel
+        writes.started()
         tcp.writeAndFlush(buffer).whenComplete { result in
+            self.writes.completed(result)
             switch result {
-            case .success: ssh.read()
+            case .success: if ssh.isActive { ssh.read() }
             case .failure: ssh.close(promise: nil)
             }
         }
     }
-    func channelInactive(context: ChannelHandlerContext) { tcp.close(promise: nil); context.fireChannelInactive() }
+    func channelInactive(context: ChannelHandlerContext) { inputClosed(); context.fireChannelInactive() }
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+}
+
+/// Both channels share an event loop. EOF may arrive in the same read cycle as
+/// the final bytes, before their destination write has cleared backpressure.
+private final class RelayPendingWrites: @unchecked Sendable {
+    private let destination: Channel
+    private var pending = 0
+    private var ended = false
+
+    init(destination: Channel) { self.destination = destination }
+    func started() { pending += 1 }
+    func completed(_ result: Result<Void, Error>) {
+        pending -= 1
+        if case .failure = result {
+            destination.close(promise: nil)
+        } else if ended && pending == 0 {
+            destination.close(promise: nil)
+        }
+    }
+    func inputClosed() {
+        ended = true
+        if pending == 0 { destination.close(promise: nil) }
+    }
 }
 #endif
 
