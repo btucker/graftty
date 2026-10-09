@@ -41,7 +41,7 @@ struct ImagePasteHostTests {
                 if case .imagePaste(.result(_, let error)) = try? WebControlEnvelope.parse(Data(text.utf8)) {
                     recorder.record(error == nil ? "success" : "error")
                 }
-            }, resize: { _, _ in },
+            }, resize: { _ in },
             write: { data in recorder.record(data == Data([0x16]) ? "ctrl-v" : "unexpected-input") },
             supportsImagePaste: supportsImagePaste,
             pasteImage: { _ in

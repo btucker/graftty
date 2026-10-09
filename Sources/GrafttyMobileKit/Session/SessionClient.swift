@@ -167,6 +167,10 @@ public final class SessionClient {
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
+    /// IOS-4.43: pixel size of `lastIOSViewport`'s grid, sent with owner
+    /// resizes so the host PTY reports the phone's real pixel geometry.
+    @ObservationIgnored
+    private var lastIOSViewportPixels: TerminalPixelSize = .unspecified
     @ObservationIgnored
     private var displayClientID: DisplayClientID = SessionClient.makeDisplayClientID()
     @ObservationIgnored
@@ -185,7 +189,7 @@ public final class SessionClient {
     /// IOS-4.39: quiet window during which successive owner viewport changes
     /// collapse into one trailing `ownerResize` (keyboard animation, rotation).
     nonisolated public static let ownerResizeQuietWindow: TimeInterval = 0.15
-    private var pendingOwnerResize: (cols: UInt16, rows: UInt16, epoch: UInt64)?
+    private var pendingOwnerResize: (cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64)?
     private var ownerResizeCoalescer: Task<Void, Never>?
     /// IOS-4.24 / IOS-4.41 / IOS-4.42: the owner-transition resize is parked
     /// behind the quiet window. While set, owner input stays in `pendingInput`
@@ -412,14 +416,23 @@ public final class SessionClient {
         guard snapshotCanvasGrid == nil,
               !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)
+        let pixels = TerminalPixelSize(
+            cols: cols,
+            rows: rows,
+            cellWidthPixels: viewport.cellWidthPixels,
+            cellHeightPixels: viewport.cellHeightPixels,
+            widthPixels: viewport.widthPixels,
+            heightPixels: viewport.heightPixels
+        )
+        lastIOSViewportPixels = pixels
         switch ownershipTransportMode {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
             if awaitingOwnerViewport {
                 awaitingOwnerViewport = false
-                flushPendingInputAfterOwnerResize(cols: cols, rows: rows, epoch: epoch)
+                flushPendingInputAfterOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
             } else {
-                scheduleCoalescedOwnerResize(cols: cols, rows: rows, epoch: epoch)
+                scheduleCoalescedOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
             }
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
@@ -1160,8 +1173,8 @@ public final class SessionClient {
     /// forwarded verbatim is a daemon PTY resize, a SIGWINCH, and a TUI
     /// repaint on every display. Park the latest grid and send it once the
     /// burst goes quiet; a newer tick restarts the window.
-    private func scheduleCoalescedOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
-        pendingOwnerResize = (cols, rows, epoch)
+    private func scheduleCoalescedOwnerResize(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
+        pendingOwnerResize = (cols, rows, pixels, epoch)
         ownerResizeCoalescer?.cancel()
         ownerResizeCoalescer = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1174,9 +1187,11 @@ public final class SessionClient {
             guard !self.stopped, self.isOwner, self.ownershipSnapshot?.epoch == pending.epoch else { return }
             let frames = carriesInput ? self.pendingInput.drain() : []
             if frames.isEmpty {
-                self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, epoch: pending.epoch)
+                self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, pixels: pending.pixels, epoch: pending.epoch)
             } else {
-                self.sendOwnerResizeThenFrames(cols: pending.cols, rows: pending.rows, epoch: pending.epoch, frames: frames)
+                self.sendOwnerResizeThenFrames(
+                    cols: pending.cols, rows: pending.rows, pixels: pending.pixels, epoch: pending.epoch, frames: frames
+                )
             }
         }
     }
@@ -1197,7 +1212,7 @@ public final class SessionClient {
         sendBinaryFrames(frames)
     }
 
-    private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, epoch: UInt64) {
+    private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
         let generation = transportGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1207,7 +1222,8 @@ public final class SessionClient {
                 clientID: clientID,
                 epoch: epoch,
                 cols: Int(cols),
-                rows: Int(rows)
+                rows: Int(rows),
+                pixels: pixels
             )
         }
     }
@@ -1219,7 +1235,7 @@ public final class SessionClient {
     /// guarantee, so the queued keystrokes could otherwise be processed at the
     /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
     /// order on its single thread; this restores the same guarantee on iOS.
-    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
+    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
         // IOS-4.41: the confirmed viewport is measured before the software
         // keyboard slides in, so sending it at once produced a grow-then-
         // shrink bounce on the PTY. Park it, and the queued input, behind the
@@ -1227,16 +1243,18 @@ public final class SessionClient {
         // bytes (IOS-4.24) while carrying the settled grid. Input typed in
         // the meantime queues behind it as well (IOS-4.42).
         ownerTransitionResizePending = true
-        scheduleCoalescedOwnerResize(cols: cols, rows: rows, epoch: epoch)
+        scheduleCoalescedOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
     }
 
-    private func sendOwnerResizeThenFrames(cols: UInt16, rows: UInt16, epoch: UInt64, frames: [Data]) {
+    private func sendOwnerResizeThenFrames(
+        cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64, frames: [Data]
+    ) {
         let clientID = displayClientID
         let generation = transportGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
-            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
+            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows), pixels: pixels)
             await self.sendBinaryFrames(frames, on: ws, generation: generation)
         }
     }
@@ -1351,7 +1369,9 @@ public final class SessionClient {
                 if !wasOwner,
                    ownershipTransportMode == .webControl,
                    let viewport = lastIOSViewport {
-                    flushPendingInputAfterOwnerResize(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+                    flushPendingInputAfterOwnerResize(
+                        cols: viewport.cols, rows: viewport.rows, pixels: lastIOSViewportPixels, epoch: snapshot.epoch
+                    )
                 } else {
                     flushPendingInput()
                 }

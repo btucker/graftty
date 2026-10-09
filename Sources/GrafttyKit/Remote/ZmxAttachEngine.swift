@@ -280,12 +280,18 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// size-poller thread's own `isClosed`-under-lock check, just above,
     /// documents the identical fd-reuse race for reads).
     public func resize(cols: UInt16, rows: UInt16) {
+        try? resize(windowSize: PtyProcess.WindowSize(cols: cols, rows: rows))
+    }
+
+    /// REMOTE-9.12: set the attach PTY's grid and pixel size together, so
+    /// `zmx attach` forwards the owner's real pixel geometry to the session.
+    public func resize(windowSize: PtyProcess.WindowSize) throws {
         stateLock.lock()
         let closed = isClosed
         let fd = spawned?.masterFD
         stateLock.unlock()
         guard !closed, let fd else { return }
-        try? PtyProcess.resize(masterFD: fd, cols: cols, rows: rows)
+        try PtyProcess.resize(masterFD: fd, windowSize: windowSize)
     }
 
     /// `TerminalByteStream.resize`: the behavioral upgrade this engine

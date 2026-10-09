@@ -84,4 +84,14 @@ public protocol TerminalSizeReporting: AnyObject {
 /// resize keep working via the existing `Task`-wrapped fallback.
 public protocol TerminalSyncResizing: AnyObject {
     func resize(cols: UInt16, rows: UInt16)
+    /// REMOTE-9.12: apply the grid together with the owner's pixel size.
+    /// Zero pixel fields mean unspecified. The default drops the pixels and
+    /// forwards the grid, so grid-only conformers keep working.
+    func resize(windowSize: PtyProcess.WindowSize) throws
+}
+
+public extension TerminalSyncResizing {
+    func resize(windowSize: PtyProcess.WindowSize) throws {
+        resize(cols: windowSize.cols, rows: windowSize.rows)
+    }
 }

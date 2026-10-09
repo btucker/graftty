@@ -1184,8 +1184,8 @@ public final class WebServer {
                         channel.writeAndFlush(frame, promise: nil)
                     }
                 },
-                resize: { [weak self] cols, rows in
-                    self?.session?.resize(cols: cols, rows: rows)
+                resize: { [weak self] windowSize in
+                    self?.session?.resize(windowSize: windowSize)
                 },
                 write: { data in writeOnLoop.value(data) },
                 followDisplayGrid: { [loop = context.eventLoop] snapshot in

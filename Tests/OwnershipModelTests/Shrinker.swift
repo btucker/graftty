@@ -230,7 +230,7 @@ private func webEnvelopeToOp(_ env: WebControlEnvelope) -> Op {
     case let .takeControl(id, _, cols, rows):
         let grid = (try? DisplayGrid(cols: cols, rows: rows)) ?? .daemonFallback
         return .takeControl(id, grid: grid)
-    case let .ownerResize(id, epoch, cols, rows):
+    case let .ownerResize(id, epoch, cols, rows, _, _):
         let grid = (try? DisplayGrid(cols: cols, rows: rows)) ?? .daemonFallback
         return .ownerResize(id, believedEpoch: epoch, grid: grid)
     case .resize, .grid, .ownership, .imagePaste:
@@ -304,7 +304,7 @@ private func webEnvelopeSourceLiteral(_ env: WebControlEnvelope) -> String {
         return ".hello(clientID: DisplayClientID(\"\(id.rawValue)\"), kind: .\(kind.rawValue), role: .\(role.rawValue), visible: \(visible), cols: \(cols), rows: \(rows))"
     case let .takeControl(id, kind, cols, rows):
         return ".takeControl(clientID: DisplayClientID(\"\(id.rawValue)\"), kind: .\(kind.rawValue), cols: \(cols), rows: \(rows))"
-    case let .ownerResize(id, epoch, cols, rows):
+    case let .ownerResize(id, epoch, cols, rows, _, _):
         return ".ownerResize(clientID: DisplayClientID(\"\(id.rawValue)\"), epoch: \(epoch), cols: \(cols), rows: \(rows))"
     case let .resize(cols, rows):
         return ".resize(cols: \(cols), rows: \(rows))"
