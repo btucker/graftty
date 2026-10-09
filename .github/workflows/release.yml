@@ -16,6 +16,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  linux-build:
+    uses: ./.github/workflows/linux.yml
+    with:
+      version: ${{ github.ref_name }}
+
+  linux-release-assets:
+    needs: [release, linux-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: graftty-linux-*
+          merge-multiple: true
+          path: linux-artifacts
+      - name: Upload Linux archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release upload "$RELEASE_TAG" linux-artifacts/*.tar.gz linux-artifacts/*.tar.gz.sha256 --clobber
+
   release:
     # macos-26 mirrors the CI workflow — same Xcode, same Swift, same
     # toolchain quirks already known to work for this repo.

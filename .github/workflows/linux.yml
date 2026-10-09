@@ -1,0 +1,92 @@
+name: Linux host
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag or version. Empty builds a CI archive.
+        required: false
+        type: string
+        default: ''
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.2.3-noble
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 curl ca-certificates xz-utils git file
+          scripts/linux/install-zig.sh /opt/zig
+          echo /opt/zig >> "$GITHUB_PATH"
+      - name: Verify toolchain and architecture
+        run: |
+          test "$(cat scripts/linux/SWIFT_IMAGE)" = swift:6.2.3-noble
+          test "$(uname -m)" = '${{ matrix.arch }}'
+          swift --version
+          zig version
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: linux-${{ matrix.arch }}-swift623-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: linux-${{ matrix.arch }}-swift623-
+      - name: Run portable tests
+        run: |
+          python3 scripts/generate-specs.py --check
+          python3 scripts/linux/test-packaging.py
+          swift test --no-parallel
+      - name: Build archive
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED_VERSION#v}"
+          if [ -z "$version" ]; then version="ci-${GITHUB_SHA:0:12}"; fi
+          scripts/linux/package.sh "$version" "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graftty-linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: graftty-linux-${{ matrix.arch }}
+          path: dist
+      - name: Verify checksums and runtime on fresh Ubuntu 24.04
+        run: |
+          (cd dist && sha256sum -c ./*.sha256)
+          scripts/linux/smoke-test.sh dist/*.tar.gz
