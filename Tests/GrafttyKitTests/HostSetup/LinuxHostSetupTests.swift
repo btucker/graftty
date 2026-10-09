@@ -24,12 +24,14 @@ struct LinuxHostSetupTests {
         #expect(LinuxHostScripts.quote("a'b $HOME; x") == "'a'\\''b $HOME; x'")
     }
 
-    @Test("@spec REMOTE-21.2: If the destination is not Ubuntu on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.")
+    @Test("@spec REMOTE-21.2: If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.")
     func platformAndDependencies() throws {
-        #expect(try LinuxHostPlatform.parse("ubuntu\nx86_64\n/home/alice\n").architecture == "x86_64")
-        #expect(try LinuxHostPlatform.parse("ubuntu\naarch64\n/home/alice\n").architecture == "aarch64")
-        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("debian\nx86_64\n/home/alice\n") }
-        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\ns390x\n/home/alice\n") }
+        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\nx86_64\n/home/alice\n").architecture == "x86_64")
+        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\naarch64\n/home/alice\n").architecture == "aarch64")
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("debian\n24.04\nx86_64\n/home/alice\n") }
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n24.04\ns390x\n/home/alice\n") }
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n22.04\nx86_64\n/home/alice\n") }
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n") }
         #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_MISSING:git").localizedDescription.contains("git"))
     }
 

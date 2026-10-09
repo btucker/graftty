@@ -34,15 +34,18 @@ public struct LinuxHostResolvedSSH: Sendable, Equatable {
 }
 
 public struct LinuxHostPlatform: Sendable, Equatable {
+    public static let supportedUbuntuVersion = "24.04"
     public let architecture: String
     public let homeDirectory: String
 
     public static func parse(_ output: String) throws -> Self {
         let lines = output.split(separator: "\n").map(String.init)
-        guard lines.count == 3, lines[0] == "ubuntu", ["x86_64", "aarch64"].contains(lines[1]), lines[2].hasPrefix("/") else {
-            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires Ubuntu on x86_64 or ARM64. Check the destination and its operating system.")
+        guard lines.count == 4, lines[0] == "ubuntu", lines[1] == supportedUbuntuVersion,
+              ["x86_64", "aarch64"].contains(lines[2]), lines[3].hasPrefix("/") else {
+            let reported = lines.prefix(2).joined(separator: " ")
+            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires Ubuntu \(supportedUbuntuVersion) on x86_64 or ARM64. The destination reported \(reported.isEmpty ? "an unknown operating system" : reported). Use a supported Ubuntu host before retrying; no installation changes were made.")
         }
-        return Self(architecture: lines[1], homeDirectory: lines[2])
+        return Self(architecture: lines[2], homeDirectory: lines[3])
     }
 }
 

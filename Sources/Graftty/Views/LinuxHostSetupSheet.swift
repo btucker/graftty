@@ -42,7 +42,7 @@ struct LinuxHostSetupSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Set Up Linux Host").font(.title2.weight(.semibold))
-            Text("Use an Ubuntu x86_64 or ARM64 host you can access with OpenSSH keys or ssh-agent. Graftty installs a service for your Linux user and connects directly to port 8801.")
+            Text("Use an Ubuntu \(LinuxHostPlatform.supportedUbuntuVersion) x86_64 or ARM64 host you can access with OpenSSH keys or ssh-agent. Graftty installs a service for your Linux user and connects directly to port 8801.")
                 .foregroundStyle(.secondary)
             Form {
                 TextField("SSH destination", text: $form.destination, prompt: Text("user@host or ~/.ssh/config alias"))

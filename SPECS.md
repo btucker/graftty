@@ -2924,7 +2924,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
 
-**REMOTE-21.2** If the destination is not Ubuntu on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+**REMOTE-21.2** If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
 
 **REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
 

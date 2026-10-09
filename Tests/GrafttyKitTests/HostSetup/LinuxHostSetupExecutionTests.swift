@@ -56,6 +56,22 @@ struct LinuxHostSetupExecutionTests {
         #expect(started.duration(to: .now) < .seconds(3))
     }
 
+    @Test func rejectsUbuntu2204BeforeRemoteWrites() async throws {
+        let ssh = RecordingSetupSSH(ubuntuVersion: "22.04")
+        let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()))
+        do {
+            _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+            Issue.record("Ubuntu 22.04 must be refused before installation")
+        } catch let error as LinuxHostSetupError {
+            #expect(error.localizedDescription.contains("Ubuntu 24.04"))
+            #expect(error.localizedDescription.contains("22.04"))
+        }
+        let calls = await ssh.calls
+        #expect(calls.count == 1)
+        #expect(calls.first?.arguments.last?.contains("/etc/os-release") == true)
+        #expect(calls.first?.arguments.last?.contains("VERSION_ID") == true)
+    }
+
     @Test func processTimeout() async throws {
         let runner = LinuxHostSSHRunner(executable: "/bin/sleep", timeout: 0.1)
         await #expect(throws: CLIError.self) { try await runner.capture(arguments: ["10"], inputFile: nil) }
@@ -83,10 +99,12 @@ private struct SetupConfigExecutor: CLIExecutor {
 private actor RecordingSetupSSH: LinuxHostSSHExecuting {
     struct Call: Sendable { let arguments: [String]; let input: Data? }
     private(set) var calls: [Call] = []
+    private let ubuntuVersion: String
+    init(ubuntuVersion: String = "24.04") { self.ubuntuVersion = ubuntuVersion }
     func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         calls.append(.init(arguments: arguments, input: try inputFile.map { try Data(contentsOf: $0) }))
         let command = arguments.last ?? ""
-        if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\naarch64\n/home/developer\n", stderr: "", exitCode: 0) }
+        if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n", stderr: "", exitCode: 0) }
         if command.contains("mktemp -d /tmp/graftty-setup") { return .init(stdout: "/tmp/graftty-setup.test123\n", stderr: "", exitCode: 0) }
         if command.contains("trust-client") {
             let identity = LinuxHostIdentity(deviceID: "linux", displayName: "Ubuntu", publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801)

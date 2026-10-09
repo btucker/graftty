@@ -21,7 +21,7 @@ enum LinuxHostScripts {
     done
     systemctl --user show-environment >/dev/null 2>&1 || { echo 'GRAFTTY_MISSING:systemd-user-session' >&2; exit 70; }
     . /etc/os-release
-    printf '%s\\n' "$ID" "$(uname -m)" "$HOME"
+    printf '%s\\n' "$ID" "${VERSION_ID:-unknown}" "$(uname -m)" "$HOME"
     """
 
     static func install(staging: String, archiveURL: URL?) -> String {
