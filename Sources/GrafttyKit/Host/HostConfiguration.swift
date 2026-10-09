@@ -72,6 +72,10 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
         guard !bindAddress.isEmpty, (0...65535).contains(httpPort), (0...65535).contains(sshPort) else {
             throw HostRuntimeError.invalid("invalid bind address or port")
         }
+        guard socketPath.utf8.count <= SocketServer.maxPathBytes,
+              HostAdministrationServer.socketPath(configuration: self).utf8.count <= SocketServer.maxPathBytes else {
+            throw HostRuntimeError.invalid("Unix socket path is too long; choose a shorter --runtime-directory")
+        }
         for directory in [stateDirectory, runtimeDirectory, zmxDirectory, identityDirectory] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: NSNumber(value: 0o700)])

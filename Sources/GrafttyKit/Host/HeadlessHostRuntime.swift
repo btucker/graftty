@@ -13,21 +13,27 @@ public final class HeadlessHostRuntime {
     let inbox: TeamInbox
     let presence: TeamPresenceStorage
     let recaps = AttentionRecapCoordinator()
+    let agentSetup: HostAgentSetup
     var busyPaths: Set<String> = []
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]
     var busyAgents: Set<String> = []
     var deliveryTask: Task<Void, Never>?
     public var remoteTeamSender: (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage)?
+    var maintenance: HostMaintenance?
+    var repositoryBranches: [String: RemoteBranchSnapshot] = [:]
+    var operationGeneration: UInt64 = 0
+    var worktreeStats: [String: WorktreeWireStats] = [:]
     public var origin: WorktreeOrigin?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
                 initialState: AppState? = nil) throws {
         self.configuration = configuration
+        agentSetup = HostAgentSetup(configuration: configuration)
         launcher = ZmxLauncher(executable: configuration.zmxExecutable, zmxDir: configuration.zmxDirectory)
         self.terminals = terminals ?? ZmxHostTerminalDriver(launcher: launcher)
         state = try initialState ?? AppState.load(from: configuration.stateDirectory)
-        inbox = TeamInbox(rootDirectory: configuration.stateDirectory.appendingPathComponent("teams"))
+        inbox = TeamInbox(rootDirectory: configuration.stateDirectory.appendingPathComponent("team-inbox"))
         presence = TeamPresenceStorage(rootDirectory: configuration.stateDirectory.appendingPathComponent("teams"))
     }
 
@@ -39,11 +45,13 @@ public final class HeadlessHostRuntime {
     }
 
     func acquire(_ path: String) throws {
-        guard busyPaths.insert(path).inserted else { throw HostRuntimeError.busy("worktree operation in progress: \(path)") }
+        guard !busyPaths.contains(path) else { throw HostRuntimeError.busy("worktree operation in progress: \(path)") }
+        busyPaths.insert(path)
+        operationGeneration &+= 1
     }
 
     public func registerRepository(_ rawPath: String) async throws -> RepoEntry {
-        let path = URL(fileURLWithPath: rawPath).standardizedFileURL.resolvingSymlinksInPath().path
+        let path = CanonicalPath.canonicalize(URL(fileURLWithPath: rawPath).standardizedFileURL.path)
         try acquire(path)
         defer { busyPaths.remove(path) }
         let discovered = try await GitWorktreeDiscovery.discover(repoPath: path)
@@ -165,16 +173,25 @@ public final class HeadlessHostRuntime {
             throw HostRuntimeError.invalid(error)
         }
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: prompt) { throw HostRuntimeError.invalid(error) }
-        let path = URL(fileURLWithPath: repo.path).appendingPathComponent(".worktrees").appendingPathComponent(name).standardizedFileURL.path
-        let container = URL(fileURLWithPath: repo.path).appendingPathComponent(".worktrees").standardizedFileURL.path
+        let container = (repo.path as NSString).appendingPathComponent(".worktrees")
+        let path = (container as NSString).appendingPathComponent(name)
         guard path.hasPrefix(container + "/"), !FileManager.default.fileExists(atPath: path), state.worktree(forPath: path) == nil else {
             throw HostRuntimeError.invalid("worktree destination already exists or is invalid")
         }
         // Reject existing symlink parents, including .worktrees itself.
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        guard resolved == path else { throw HostRuntimeError.invalid("worktree destination contains a symlink") }
+        var ancestor = (path as NSString).deletingLastPathComponent
+        while ancestor.hasPrefix(container) {
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: ancestor),
+               attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                throw HostRuntimeError.invalid("worktree destination contains a symlink")
+            }
+            let parent = (ancestor as NSString).deletingLastPathComponent
+            if parent == ancestor { break }
+            ancestor = parent
+        }
         try acquire(path)
         defer { busyPaths.remove(path) }
+        if let agent { try await agentSetup.ensure(agent) }
         let launch = try WorktreeAgentLaunchCommand.prepare(agent: agent, prompt: prompt, exactCommand: command,
             promptDirectory: configuration.stateDirectory.appendingPathComponent("agent-launch-prompts"))
         do {
@@ -207,18 +224,25 @@ public final class HeadlessHostRuntime {
         try save()
     }
 
-    public func shutdown() throws { deliveryTask?.cancel(); deliveryTask = nil; try save(); terminals.detachAll() }
+    public func shutdown() throws { deliveryTask?.cancel(); deliveryTask = nil; maintenance?.stop(); maintenance = nil; try save(); terminals.detachAll() }
 
     public func spawn(session: PaneSessionID, path: String, command: String? = nil) -> ZmxSpawnConfiguration {
         var environment = ProcessInfo.processInfo.environment
         for key in ZmxLauncher.leakyEnvKeysToStripAtAppLaunch { environment.removeValue(forKey: key) }
         environment["SHELL"] = configuration.shell
         environment["GRAFTTY_STATE_DIR"] = configuration.stateDirectory.path
-        return ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,
+        let config = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,
             socketPath: configuration.socketPath, processEnv: environment,
             bundleURL: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
             ghosttyResourcesDir: nil, agentHooksDisabled: false, agentHooksRoot: configuration.hooksDirectory,
             initialCommand: command)
+        if let command, !config.runsInitialCommand {
+            let script = command + "\nexec " + WorktreeAgentLaunchCommand.shellLiteral(configuration.shell) + " -l"
+            return ZmxSpawnConfiguration(sessionName: config.sessionName,
+                argv: [launcher.executable.path, "attach", config.sessionName, "/bin/sh", "-c", script],
+                env: config.env, workingDirectory: config.workingDirectory, shellReadySignalAvailable: false)
+        }
+        return config
     }
 
     public func resolve(_ target: String) throws -> (path: String, slot: PaneSlotID) {
@@ -254,7 +278,7 @@ public final class HeadlessHostRuntime {
             repo.worktrees.map { worktree in
                 WorktreePanes(path: worktree.path, displayName: worktree.displayName(amongSiblingPaths: repo.worktrees.map(\.path)),
                     repoDisplayName: repo.displayName, repositoryID: repo.path, displayBranch: worktree.displayBranch,
-                    state: worktree.state.wireState, isMainCheckout: worktree.path == repo.path, prBadge: nil, stats: nil,
+                    state: worktree.state.wireState, isMainCheckout: worktree.path == repo.path, prBadge: nil, stats: worktreeStats[worktree.path],
                     attentionText: worktree.attention?.text, attentionSource: worktree.attention?.source,
                     attentionTimestamp: worktree.attention?.timestamp,
                     layout: worktree.state == .running ? worktree.splitTree.root.flatMap { layout($0, worktree: worktree) } : nil,

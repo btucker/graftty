@@ -36,7 +36,7 @@ public extension HeadlessHostRuntime {
         do {
             switch request {
             case .listRepositories:
-                return .repositories(state.repos.map { RemoteRepositoryInfo(id: $0.path, displayName: $0.displayName, origin: nil, defaultBranchStatus: nil, branches: []) })
+                return .repositories(await repositoryInfo())
             case .create(let repository, let name, let branch, let source):
                 let result = try await createWorktree(repository: repository, name: name, branch: branch,
                     existing: source != nil, remoteOnly: source == .remoteOnly)
@@ -152,15 +152,28 @@ public extension HeadlessHostRuntime {
             case .teamList(let path):
                 let result = try teamHandler().members(callerWorktree: path, worktree: nil, repo: nil, repos: state.repos, teamsEnabled: true)
                 return .teamList(teamName: result.teamName, members: result.members)
-            case .teamHook(let path, let agent, let runtime, let event, let sessionID, let pane, _, let active, _):
+            case .teamHook(let path, let agent, let runtime, let event, let sessionID, let pane, let reason, let active, _):
+                var instructions = ""
+                if event == .sessionStart, let team = TeamLookup.team(for: path, in: state.repos),
+                   let member = team.members.first(where: { $0.worktreePath == path }) {
+                    instructions = await InstructionSessionText.render(team: team, viewer: member,
+                        defaultBranch: state.repo(forWorktreePath: path)?.defaultBranchHint,
+                        applicationSupportDirectory: configuration.stateDirectory)
+                }
                 let output = try teamHandler().hook(callerWorktree: path, runtime: runtime, event: event, sessionID: sessionID,
-                    paneSessionName: pane, repos: state.repos, teamsEnabled: true, agentID: agent)
+                    paneSessionName: pane, repos: state.repos, teamsEnabled: true, instructions: instructions, agentID: agent)
                 if let pane {
                     if event == .userPromptSubmit || event == .preToolUse { busyAgents.insert(pane) }
                     if event == .stop { busyAgents.remove(pane) }
                 }
                 let index = try indices(path)
-                let key = sessionID.map { "\(runtime.rawValue):\($0)" }
+                let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: agent)
+                if let reason {
+                    let slot = pane.flatMap { state.repos[index.repo].worktrees[index.worktree].paneSlot(forSessionName: $0) }
+                    _ = state.repos[index.repo].worktrees[index.worktree].setAgentStopAttentionIfAbsent(
+                        Attention(text: AgentStopNotification.attentionText(runtime: runtime, reason: reason), timestamp: Date(),
+                            source: .agentStop, providerSessionKey: key), pane: slot)
+                }
                 if event == .stop {
                     switch recaps.stop(worktree: path, agentID: agent, stopHookActive: active) {
                     case .requestRecap: return .teamHookOutput(TeamHookRenderer.requestRecap())
@@ -170,7 +183,7 @@ public extension HeadlessHostRuntime {
                             stoppedAt: Date(), recap: recap, paneSlotID: slot?.id.uuidString, providerSessionKey: key))
                         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: path, in: &state.repos)
                     }
-                } else if event == .userPromptSubmit || event == .preToolUse || event == .postToolUse {
+                } else if reason == nil && (event == .userPromptSubmit || event == .preToolUse || event == .postToolUse) {
                     state.clearAgentStopAttention(worktreePath: path, providerSessionKey: key)
                 }
                 try save()

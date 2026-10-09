@@ -46,12 +46,14 @@ struct Setup: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Prepare state, agent hooks, and a stable host identity.")
     @OptionGroup var paths: HostOptions
     @Flag var json = false
+    @Flag(help: "Install Graftty lifecycle plugins into available Codex and Claude CLIs.") var installAgentPlugins = false
     mutating func run() async throws {
         let config = try paths.resolved()
         let lease = try HostProcessLease(configuration: config)
         defer { withExtendedLifetime(lease) {} }
         try config.save()
         _ = try AgentHookInstaller(rootDirectory: config.hooksDirectory, grafttyCLIPath: HostService.cliPath).install()
+        if installAgentPlugins { try await HostAgentSetup.install(configuration: config) }
         try printJSON(HostService.identity(configuration: config))
     }
 }
@@ -65,8 +67,11 @@ struct TrustClient: AsyncParsableCommand {
         guard stdin else { throw ValidationError("trust-client requires --stdin") }
         let config = try paths.resolved()
         try config.prepareDirectories()
-        let bytes = try FileHandle.standardInput.read(upToCount: 65537) ?? Data()
-        guard bytes.count <= 65536 else { throw ValidationError("trust request exceeds 64 KiB") }
+        var bytes = Data()
+        while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
+            bytes.append(chunk)
+            guard bytes.count <= 65536 else { throw ValidationError("trust request exceeds 64 KiB") }
+        }
         let request = try JSONDecoder().decode(LinuxHostTrustRequest.self, from: bytes)
         guard !request.deviceID.isEmpty, !request.displayName.isEmpty,
               let data = Data(base64Encoded: request.publicKey) else { throw ValidationError("invalid trust request") }

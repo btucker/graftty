@@ -174,6 +174,7 @@ final class HostService {
         do {
             try await runtime.restore()
             runtime.startTeamDelivery()
+            runtime.startMaintenance()
             try socket.start()
             try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: configuration.socketPath)
             try admin?.start()

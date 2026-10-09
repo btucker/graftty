@@ -87,8 +87,6 @@ public final class HostAdministrationServer {
                         try channel.pipeline.syncOperations.addHandler(ResponseHandler(response: response))
                     }
                 }.connect(unixDomainSocketPath: socketPath(configuration: configuration)).get()
-            let timeout = group.next().scheduleTask(in: .seconds(35)) { response.fail(HostRuntimeError.invalid("host administration timed out")) }
-            defer { timeout.cancel() }
             var data = try JSONEncoder().encode(request); data.append(10)
             try await channel?.writeAndFlush(channel!.allocator.buffer(bytes: data)).get()
             let result = try await response.futureResult.get()
@@ -130,17 +128,30 @@ public final class HostAdministrationServer {
         typealias InboundIn = ByteBuffer
         private let response: EventLoopPromise<HostAdminResponse>
         private var completed = false
+        private var timeout: Scheduled<Void>?
         init(response: EventLoopPromise<HostAdminResponse>) { self.response = response }
+        func handlerAdded(context: ChannelHandlerContext) {
+            let channel = context.channel
+            timeout = context.eventLoop.scheduleTask(in: .seconds(35)) { [weak self] in
+                guard let self, !self.completed else { return }
+                self.completed = true
+                self.response.fail(HostRuntimeError.invalid("host administration timed out"))
+                channel.close(promise: nil)
+            }
+        }
         func channelRead(context: ChannelHandlerContext, data: NIOAny) {
             guard !completed else { return }
             completed = true
+            timeout?.cancel()
             do { response.succeed(try JSONDecoder().decode(HostAdminResponse.self, from: Data(unwrapInboundIn(data).readableBytesView))) }
             catch { response.fail(error) }
         }
         func channelInactive(context: ChannelHandlerContext) {
+            timeout?.cancel()
             if !completed { completed = true; response.fail(HostRuntimeError.invalid("host closed administration socket")) }
         }
         func errorCaught(context: ChannelHandlerContext, error: Error) {
+            timeout?.cancel()
             if !completed { completed = true; response.fail(error) }
             context.close(promise: nil)
         }

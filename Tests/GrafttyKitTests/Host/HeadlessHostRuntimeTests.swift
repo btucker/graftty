@@ -21,11 +21,26 @@ private final class HostTerminalFake: HostTerminalDriver {
     func detachAll() {}
 }
 
+private actor HostPluginExecutor: CLIExecutor {
+    var commands: [String] = []
+    let missing: Bool
+    init(missing: Bool = false) { self.missing = missing }
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        commands.append(command)
+        if missing { throw CLIError.notFound(command: command) }
+        return CLIOutput(stdout: "", stderr: "", exitCode: 0)
+    }
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory)
+    }
+}
+
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
     private func fixture() throws -> (URL, HostConfiguration, AppState) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rawRoot = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("gh-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
+        let root = URL(fileURLWithPath: CanonicalPath.canonicalize(rawRoot.path), isDirectory: true)
         let configuration = HostConfiguration(stateDirectory: root, runtimeDirectory: root.appendingPathComponent("run"), zmxExecutable: URL(fileURLWithPath: "/bin/true"))
         let state = AppState(repos: [RepoEntry(path: root.path, displayName: "project", worktrees: [WorktreeEntry(path: root.path, branch: "main")])])
         return (root, configuration, state)
@@ -97,7 +112,7 @@ struct HeadlessHostRuntimeTests {
         state.repos[0].worktrees.append(WorktreeEntry(path: peerPath, branch: "peer"))
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
         #expect(await runtime.handle(.teamSend(callerWorktree: root.path, recipient: peerPath, text: "hello peer", priority: .normal)) == .ok)
-        let stored = try TeamInbox(rootDirectory: config.stateDirectory.appendingPathComponent("teams")).messages(teamID: root.path)
+        let stored = try TeamInbox(rootDirectory: config.stateDirectory.appendingPathComponent("team-inbox")).messages(teamID: root.path)
         #expect(stored.map(\.body) == ["hello peer"])
         let recap = AttentionRecap(title: "Host running", completed: "Started panes", next: "Connect viewer", emoji: "🖥️")
         #expect(await runtime.handle(.attentionReport(callerWorktree: root.path, callerAgentID: "codex-test", recap: recap)) == .ok)
@@ -118,7 +133,9 @@ struct HeadlessHostRuntimeTests {
         let second = try await runtime.registerRepository(root.path + "/.")
         #expect(first.id == second.id)
         #expect(runtime.state.repos.count == 1)
-        #expect(try AppState.load(from: root).repos.first?.worktrees.first?.path == root.path)
+        let saved = try AppState.load(from: root)
+        let expectedPath = CanonicalPath.canonicalize(root.path)
+        #expect(saved.repos.first?.worktrees.first?.path == expectedPath)
         await #expect(throws: (any Error).self) {
             try await runtime.createWorktree(repository: root.path, name: "../outside", branch: "bad")
         }
@@ -135,6 +152,110 @@ struct HeadlessHostRuntimeTests {
         #expect(terminals.killed.isEmpty)
         #expect(terminals.live.contains(session))
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.state == .running)
+    }
+
+    @Test("@spec REMOTE-22.8: When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.")
+    func fileAttentionHandoff() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        let recap = AttentionRecap(title: "Host done", completed: "Created host", next: "Review host", emoji: "🖥️")
+        try handoff.stage(recap, worktree: root.path, agentID: "codex-test")
+        #expect(try handoff.stop(worktree: root.path, agentID: "codex-test", runtime: .codex,
+            sessionID: "test", paneSessionName: nil, stopHookActive: false) == .queued)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop?.recap == recap)
+        try handoff.progress(worktree: root.path, agentID: "codex-other", runtime: .codex, sessionID: "other")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop != nil)
+        try handoff.progress(worktree: root.path, agentID: "codex-test", runtime: .codex, sessionID: "test")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop == nil)
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.unseenAgentStop == nil)
+    }
+
+    @Test("@spec REMOTE-22.9: When Git worktree membership or branches change externally, the headless host shall reconcile saved worktrees and publish branch choices for the remote client.")
+    func gitMetadataRefresh() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake())
+        let repo = try await runtime.registerRepository(root.path)
+        _ = try await GitRunner.run(args: ["branch", "feature"], at: repo.path)
+        try await runtime.refreshRepository(repo.path)
+        let info = await runtime.repositoryInfo()
+        #expect(Set(info.first?.branches.map(\.name) ?? []) == ["main", "feature"])
+        _ = try await GitRunner.run(args: ["checkout", "feature"], at: repo.path)
+        try await runtime.refreshRepository(repo.path)
+        #expect(runtime.state.worktree(forPath: repo.path)?.branch == "feature")
+        #expect(runtime.snapshot().first?.displayBranch == "feature")
+    }
+
+    @Test("@spec REMOTE-22.10: When a headless host creates or deletes a linked worktree, the application shall mutate Git, persist registration, and start or terminate its pane sessions.")
+    func worktreeCreationAndDeletion() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        let repo = try await runtime.registerRepository(root.path)
+        let created = try await runtime.createWorktree(repository: repo.path, name: "feature", branch: "feature", command: "echo task")
+        #expect(FileManager.default.fileExists(atPath: created.path))
+        #expect(runtime.state.worktree(forPath: created.path)?.state == .running)
+        #expect(terminals.starts.first?.env["GRAFTTY_INITIAL_COMMAND"] == "echo task")
+        try await runtime.deleteWorktree(created.path)
+        #expect(!FileManager.default.fileExists(atPath: created.path))
+        #expect(runtime.state.worktree(forPath: created.path) == nil)
+        #expect(terminals.killed == [created.session])
+        #expect(try AppState.load(from: root).worktree(forPath: created.path) == nil)
+    }
+
+    @Test("@spec REMOTE-22.11: When the headless host receives an administration request on its private Unix socket, the application shall return the live runtime state.")
+    func administrationSocket() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try config.prepareDirectories()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let server = HostAdministrationServer(configuration: config) { _ in
+            await MainActor.run { .status(HostStatus(running: true, configuration: config,
+                repositoryCount: runtime.state.repos.count, paneCount: runtime.sessions().count)) }
+        }
+        try server.start()
+        defer { server.stop() }
+        let response = try await HostAdministrationServer.request(.status, configuration: config)
+        if case .status(let status) = response { #expect(status.running); #expect(status.repositoryCount == 1) }
+        else { Issue.record("unexpected administration response") }
+        let attributes = try FileManager.default.attributesOfItem(atPath: HostAdministrationServer.socketPath(configuration: config))
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
+
+    @Test("@spec REMOTE-22.12: When a headless host chooses storage and socket paths, the application shall honor absolute state and XDG overrides and keep fallback CLI socket discovery consistent.")
+    func hostPaths() {
+        #expect(HostConfiguration.defaultStateDirectory(environment: ["GRAFTTY_STATE_DIR": "/srv/graftty", "XDG_DATA_HOME": "/data"]).path == "/srv/graftty")
+        #expect(HostConfiguration.defaultStateDirectory(environment: ["XDG_DATA_HOME": "/data"]).path == "/data/graftty")
+        #expect(HostConfiguration.defaultRuntimeDirectory(environment: ["XDG_RUNTIME_DIR": "/run/user/1000"]).path == "/run/user/1000/graftty")
+        #expect(HostConfiguration.defaultRuntimeDirectory(environment: ["GRAFTTY_STATE_DIR": "/srv/graftty"]).path == "/srv/graftty")
+    }
+
+    @Test("@spec REMOTE-22.13: When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.")
+    func providerSetup() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = HostPluginExecutor()
+        try await HostAgentSetup.install(configuration: config, provider: .codex, executor: executor)
+        #expect(Set(await executor.commands) == ["codex"])
+        let missing = HostPluginExecutor(missing: true)
+        do {
+            try await HostAgentSetup.install(configuration: config, provider: .claude, executor: missing)
+            Issue.record("missing provider accepted")
+        } catch {
+            #expect(String(describing: error).contains("Install and authenticate"))
+        }
     }
 
 }

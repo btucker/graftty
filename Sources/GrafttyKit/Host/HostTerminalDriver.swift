@@ -71,7 +71,7 @@ public final class ZmxHostTerminalDriver: HostTerminalDriver {
             let result = try ZmxRunner.captureAll(executable: launcher.executable,
                 args: ["history", session], env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment), timeout: 2)
             guard result.exitCode == 0 else { throw HostRuntimeError.invalid(result.stderr) }
-            return result.stdout.components(separatedBy: "\n").suffix(max(1, min(lines, 10000))).joined(separator: "\n")
+            return ScrollbackTail.tail(result.stdout, lines: lines)
         }.value
     }
 

@@ -2952,6 +2952,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.7** When a headless host shuts down, the application shall detach clients while preserving zmx sessions for restart.
 
+**REMOTE-22.8** When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.
+
+**REMOTE-22.9** When Git worktree membership or branches change externally, the headless host shall reconcile saved worktrees and publish branch choices for the remote client.
+
+**REMOTE-22.10** When a headless host creates or deletes a linked worktree, the application shall mutate Git, persist registration, and start or terminate its pane sessions.
+
+**REMOTE-22.11** When the headless host receives an administration request on its private Unix socket, the application shall return the live runtime state.
+
+**REMOTE-22.12** When a headless host chooses storage and socket paths, the application shall honor absolute state and XDG overrides and keep fallback CLI socket discovery consistent.
+
+**REMOTE-22.13** When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
