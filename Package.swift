@@ -47,7 +47,7 @@ let webRTCDependencies: [Target.Dependency] = [.product(name: "WebRTC", package:
 let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package: "swift-crypto")]
 let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift", "Model/ProjectIconDiscovery.swift",
                           "Ports/PortBindingsModel.swift"]
-let appleTargets: Set<String> = ["Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
+let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
                                "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests"]
 
 let package = Package(
@@ -70,7 +70,7 @@ let package = Package(
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
-    ] as [Product]).filter { !isLinux || !["Graftty", "GrafttyCommandUI", "GrafttyMobileKit"].contains($0.name) },
+    ] as [Product]).filter { !isLinux || !["appcast-updater", "Graftty", "GrafttyCommandUI", "GrafttyMobileKit"].contains($0.name) },
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -190,6 +190,13 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
+            name: "GrafttyTunnelTests",
+            dependencies: ["GrafttyTunnel", .product(name: "NIOCore", package: "swift-nio"),
+                           .product(name: "NIOEmbedded", package: "swift-nio"),
+                           .product(name: "NIOSSH", package: "swift-nio-ssh")],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
             name: "GrafttyProtocolTests",
             dependencies: ["GrafttyProtocol"] + cryptoDependencies,
             exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],
@@ -211,7 +218,10 @@ let package = Package(
         .testTarget(
             name: "GrafttyKitTests",
             dependencies: ["GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
-            sources: isLinux ? ["Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,
+            sources: isLinux ? ["Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift",
+                "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift",
+                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamPresenceStorageTests.swift",
+                "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),

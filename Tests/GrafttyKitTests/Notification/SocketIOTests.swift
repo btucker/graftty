@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("SocketIO.writeAll")
@@ -10,7 +14,7 @@ struct SocketIOTests {
     /// Returns (writer, reader) fds; both must be closed by the caller.
     private func makeSocketPair() -> (Int32, Int32)? {
         var fds: [Int32] = [-1, -1]
-        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else { return nil }
+        guard socketpair(AF_UNIX, GrafttyPOSIX.streamSocket, 0, &fds) == 0 else { return nil }
         return (fds[0], fds[1])
     }
 
@@ -25,7 +29,7 @@ struct SocketIOTests {
         try SocketIO.writeAll(fd: writer, string: message)
 
         var buf = [UInt8](repeating: 0, count: 256)
-        let n = Darwin.read(reader, &buf, buf.count)
+        let n = GrafttyPOSIX.read(reader, &buf, buf.count)
         #expect(n > 0)
         let received = String(bytes: buf[0..<Int(n)], encoding: .utf8)
         #expect(received == message)
@@ -57,7 +61,7 @@ struct SocketIOTests {
             var buf = [UInt8](repeating: 0, count: 4096)
             var total = Data()
             while true {
-                let n = Darwin.read(reader, &buf, buf.count)
+                let n = GrafttyPOSIX.read(reader, &buf, buf.count)
                 if n <= 0 { break }
                 total.append(contentsOf: buf[0..<Int(n)])
                 if total.count >= 16_000 { break }

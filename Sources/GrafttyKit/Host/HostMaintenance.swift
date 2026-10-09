@@ -103,8 +103,7 @@ public extension HeadlessHostRuntime {
     }
 
     func consumeAttentionActivities(handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
-        var changed = false
-        try handoff.consumeActivities { event in
+        try handoff.consumeActivities(acceptingWorktree: { state.worktree(forPath: $0) != nil }) { event in
             switch event {
             case .stop(let stop):
                 guard let index = state.indices(forWorktreePath: stop.worktree) else { return }
@@ -114,14 +113,12 @@ public extension HeadlessHostRuntime {
                     stoppedAt: stop.stoppedAt, recap: stop.recap, paneSlotID: slot?.id.uuidString, providerSessionKey: key))
                 SidebarHostNavigation.adoptReportedEmoji(stop.recap, worktreePath: stop.worktree, in: &state.repos)
                 if let pane = stop.paneSessionName { busyAgents.remove(pane) }
-                changed = true
             case .progress(let progress):
                 guard state.worktree(forPath: progress.worktree) != nil else { return }
                 let key = AgentHookAttentionIdentity.key(runtime: progress.runtime, sessionID: progress.sessionID, callerAgentID: progress.agentID)
                 state.clearAgentStopAttention(worktreePath: progress.worktree, providerSessionKey: key, progressedAt: progress.progressedAt)
-                changed = true
             }
+            try save()
         }
-        if changed { try save() }
     }
 }

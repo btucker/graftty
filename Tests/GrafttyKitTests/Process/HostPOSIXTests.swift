@@ -8,6 +8,13 @@ import Glibc
 #endif
 
 struct HostPOSIXTests {
+    @Test("@spec REMOTE-23.7: While running on Linux, the application shall place the private Attention handoff beneath the system temporary directory.")
+    func attentionHandoffUsesLinuxTemporaryDirectory() {
+        #if os(Linux)
+        #expect(AttentionFileHandoff.defaultRootDirectory.path == "/tmp/graftty-attention-\(geteuid())")
+        #endif
+    }
+
     @Test("@spec REMOTE-23.4: When writing host control data, the application shall support both Unix sockets and regular file descriptors.")
     func writesSocketAndFile() throws {
         var pair: [Int32] = [-1, -1]

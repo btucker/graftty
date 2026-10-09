@@ -55,7 +55,11 @@ public enum AttentionFileHandoffError: Error {
 /// sandboxed agent. Team and worktree commands keep using the control socket.
 public struct AttentionFileHandoff: Sendable {
     public static var defaultRootDirectory: URL {
+        #if os(Linux)
+        URL(fileURLWithPath: "/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        #else
         URL(fileURLWithPath: "/private/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        #endif
     }
 
     public let rootDirectory: URL
@@ -190,13 +194,17 @@ public struct AttentionFileHandoff: Sendable {
     }
 
     @discardableResult
-    public func consumeActivities(_ handle: (AttentionFileActivityEvent) -> Void) throws -> Int {
-        try consumeFiles(includeProgress: true, handle)
+    public func consumeActivities(
+        acceptingWorktree: (String) -> Bool = { _ in true },
+        _ handle: (AttentionFileActivityEvent) throws -> Void
+    ) throws -> Int {
+        try consumeFiles(includeProgress: true, acceptingWorktree: acceptingWorktree, handle)
     }
 
     private func consumeFiles(
         includeProgress: Bool,
-        _ handle: (AttentionFileActivityEvent) -> Void
+        acceptingWorktree: (String) -> Bool = { _ in true },
+        _ handle: (AttentionFileActivityEvent) throws -> Void
     ) throws -> Int {
         try ensureDirectory()
         let files = try FileManager.default.contentsOfDirectory(
@@ -227,6 +235,12 @@ public struct AttentionFileHandoff: Sendable {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
+            let worktree: String
+            switch event {
+            case .stop(let value): worktree = value.worktree
+            case .progress(let value): worktree = value.worktree
+            }
+            guard acceptingWorktree(worktree) else { continue }
             events.append((file, event))
         }
         events.sort { $0.1.occurredAt < $1.1.occurredAt }
@@ -241,7 +255,7 @@ public struct AttentionFileHandoff: Sendable {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
-            handle(event)
+            try handle(event)
             try FileManager.default.removeItem(at: file)
             count += 1
         }

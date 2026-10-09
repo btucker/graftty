@@ -45,7 +45,7 @@ public actor DirectSSHHostConnection {
         do {
             let channel = try await ClientBootstrap(group: group)
                 .connectTimeout(.seconds(10))
-                .channelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+                .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                 .channelInitializer { channel in
                     let handler = SSHClientSetup.makeHandler(clientKey: key, expectedHostFingerprint: fingerprint,
                         allocator: channel.allocator,

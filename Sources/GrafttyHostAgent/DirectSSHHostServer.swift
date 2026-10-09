@@ -89,7 +89,7 @@ public actor DirectSSHHostServer {
         do {
             let channel = try await ServerBootstrap(group: group)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+                .childChannelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                 .childChannelInitializer { channel in
                     guard connections.insert(channel) else {
                         return channel.eventLoop.makeFailedFuture(ChannelError.ioOnClosedChannel)

@@ -166,6 +166,10 @@ public enum PtyProcess {
             throw Error.forkFailed(errno: err)
         }
         if pid == 0 {
+            // The headless host ignores these signals while DispatchSource
+            // handles shutdown. Ignored dispositions otherwise survive exec.
+            _ = signal(SIGINT, SIG_DFL)
+            _ = signal(SIGTERM, SIG_DFL)
             _ = setsid()
             if let cwdCString, chdir(cwdCString) != 0 {
                 _exit(127)

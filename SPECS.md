@@ -2990,6 +2990,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.8** When the host ignores termination signals for its event loop, the application shall restore normal termination signals in spawned terminal processes.
 
+**REMOTE-23.9** When a host consumes Attention events, the application shall retain events for worktrees owned by another host.
+
+**REMOTE-23.10** If an Attention event handler cannot persist its result, then the application shall retain the event for retry.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
