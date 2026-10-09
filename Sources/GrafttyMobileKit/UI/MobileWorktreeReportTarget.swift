@@ -15,18 +15,35 @@ struct MobileWorktreeReportContent: View {
     }
 }
 
+/// A sibling of the terminal tap target so preview never also opens a pane.
+struct MobileWorktreeReportButton: View {
+    let worktreeName: String
+    let onReport: () -> Void
+
+    func activate() { onReport() }
+
+    var body: some View {
+        Button(action: activate) {
+            Image(systemName: "info.circle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show report for \(worktreeName)")
+    }
+}
+
 /// An exclusive gesture keeps a recognized hold from also opening a terminal.
 struct MobileWorktreeReportTarget<Content: View>: View {
     static var holdDuration: Double { 0.5 }
     @Environment(\.editMode) private var editMode
-    @State private var hoverTask: Task<Void, Never>?
     let onOpen: () -> Void
     let onReport: () -> Void
     @ViewBuilder let content: () -> Content
 
     func activate(_ value: ExclusiveGesture<LongPressGesture, TapGesture>.Value) {
-        hoverTask?.cancel()
-        hoverTask = nil
         switch value {
         case .first(true): onReport()
         case .first(false): break
@@ -46,16 +63,6 @@ struct MobileWorktreeReportTarget<Content: View>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onOpen() }
             .accessibilityAction(named: "Show report") { onReport() }
-            .onHover { hovering in
-                hoverTask?.cancel()
-                guard hovering, editMode?.wrappedValue.isEditing != true else { return }
-                hoverTask = Task {
-                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-                    guard !Task.isCancelled else { return }
-                    onReport()
-                }
-            }
-            .onDisappear { hoverTask?.cancel() }
     }
 }
 #endif

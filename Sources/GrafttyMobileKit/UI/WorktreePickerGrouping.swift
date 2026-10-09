@@ -1,9 +1,43 @@
 import GrafttyProtocol
+import GrafttyCommandUI
 
 /// Pure grouping helper for `WorktreePickerView`. Extracted from the
 /// SwiftUI body so the order-preservation contract (IOS-9.9) can be
 /// unit-tested without instantiating any view.
 public enum WorktreePickerGrouping {
+    struct Region: Identifiable, Sendable {
+        enum Kind: Hashable, Sendable { case pinned, tasks, search }
+        let kind: Kind
+        let groups: [Group]
+        var id: Kind { kind }
+        var sidebarSection: SidebarWorktreeSection {
+            switch kind {
+            case .pinned: .pinned
+            case .tasks: .tasks
+            case .search: .all
+            }
+        }
+    }
+
+    /// Match the Mac's membership regions across projects, with one flat
+    /// result list during search. Older hosts remain in the task region.
+    static func regions(_ list: [WorktreePanes], searching: Bool) -> [Region] {
+        let groups = grouped(list)
+        guard !groups.isEmpty else { return [] }
+        if searching { return [Region(kind: .search, groups: groups)] }
+        return [Region.Kind.pinned, .tasks].compactMap { kind in
+            let members = groups.compactMap { group -> Group? in
+                let sections = SidebarWorktreeSections(group.worktrees)
+                let rows = kind == .pinned ? sections.pinned : sections.tasks
+                guard !rows.isEmpty else { return nil }
+                // Keep the complete group so section rendering can recognize
+                // metadata even when only its main checkout lacks a pin flag.
+                return group
+            }
+            return members.isEmpty ? nil : Region(kind: kind, groups: members)
+        }
+    }
+
     public struct Group: Identifiable, Sendable, Equatable {
         public struct ID: Hashable, Sendable {
             public let ownerID: String

@@ -1884,6 +1884,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.43** When GrafttyMobile sends an owner resize, the application shall include the terminal's pixel width and height derived from its cell pixel size so the host PTY reports the phone's real pixel geometry.
 
+**IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -1902,7 +1904,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-5.11** When a mobile transport is suspended while draining output for a grid announcement, the application shall reject that announcement after a replacement transport starts.
 
-**IOS-5.12** While a mobile preview has spare height above a follower's live screen, the application shall display resident scrollback in that space while preserving the source grid.
+**IOS-5.12** While a mobile follower has spare height above its live screen, the application shall display resident scrollback in that space while preserving the source grid.
 
 **IOS-5.13** When a follower receives output after a viewport resize callback, the application shall confirm native parser grid readiness before parsing that output, even if the callback already reports the target dimensions.
 
@@ -2011,6 +2013,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the authenticated panes-state snapshot rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
 **IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
+
+**IOS-9.11** While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.
+
+**IOS-9.12** When a mobile worktree question has no displayed matching pane, the application shall display it beneath the worktree, including empty layouts and non-running worktrees, without acknowledging its request.
+
+**IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
+
+**IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
 
 ### IOS-10.x
 

@@ -105,7 +105,7 @@ struct SessionClientTests {
         #expect(first.receiveCalls == 1)
     }
 
-    @Test("@spec IOS-5.12: While a mobile preview has spare height above a follower's live screen, the application shall display resident scrollback in that space while preserving the source grid.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    @Test("@spec IOS-5.12: While a mobile follower has spare height above its live screen, the application shall display resident scrollback in that space while preserving the source grid.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
     func previewShowsResidentHistoryWithoutChangingSourceGrid() async throws {
         let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac,
             cols: 120, rows: 24)
@@ -146,6 +146,51 @@ struct SessionClientTests {
         #expect(historyFrame.height > 0)
         #expect(historyFrame.maxY <= container.terminalView.frame.minY + 0.5)
         #expect(historyFrame.minY >= 0)
+    }
+
+    @Test(.enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func fullscreenFollowerFitsLeaderWidthAndFillsHeightWithHistory() async throws {
+        let snapshot = try ownershipSnapshot(ownerClientID: DisplayClientID("desktop"), ownerKind: .mac,
+            cols: 120, rows: 24)
+        let lines = (0..<300).map { row in
+            String(format: "LEFT-%03d", row) + String(repeating: ".", count: 103) + String(format: "RIGHT-%03d", row)
+        }
+        let replay = "\u{1b}[2J\u{1b}[H" + lines.joined(separator: "\r\n")
+        let ws = ImmediateReplayWS(frames: [.text(WebControlEnvelope.ownership(snapshot).encoded()), .binary(Data(replay.utf8))])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.authoritativeGrid = client.snapshotCanvasGrid
+        container.snapshotScrollView.showsAdditionalHistory = true
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 11")
+        container.terminalView.configuration = .init(backend: .inMemory(client.session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { client.stop(); container.removeFromSuperview(); window.isHidden = true }
+        try await waitUntil("fullscreen terminal surface", timeout: .seconds(8)) {
+            container.terminalView.surface != nil
+        }
+        client.start()
+        try await waitUntil("both edges of follower replay", timeout: .seconds(8)) {
+            let text = client.session.readViewportText() ?? ""
+            return text.contains("LEFT-299") && text.contains("RIGHT-299")
+        }
+        try await waitUntil("fullscreen resident history") {
+            container.snapshotScrollView.refreshAdditionalHistory()
+            return container.snapshotScrollView.additionalHistoryTextForTesting?.contains("RIGHT-275") == true
+        }
+        #expect(!client.isOwner)
+        #expect(container.terminalGridMetrics?.columns == 120)
+        #expect(container.terminalGridMetrics?.rows == 24)
+        #expect(abs(container.terminalView.frame.width - container.bounds.width) < 0.1)
+        let historyFrame = try #require(container.snapshotScrollView.additionalHistoryFrameForTesting)
+        #expect(historyFrame.maxY <= container.terminalView.frame.minY + 0.5)
+        #expect(historyFrame.minY <= container.snapshotScrollView.bounds.minY + 10,
+                "History \(historyFrame) must reach the visible top \(container.snapshotScrollView.bounds)")
     }
 
     @Test("@spec IOS-5.9: When a mobile preview receives an ownerless ownership snapshot before any display has claimed the session, the application shall wait for the source grid before parsing replay instead of using the preview's echoed hello dimensions.")
@@ -264,8 +309,10 @@ struct SessionClientTests {
         try await waitUntil("terminal surface") { container.terminalView.surface != nil }
         pane.container = container
         let surface = container.terminalView.surface
+        container.onBackRequested = { }
         container.removeFromSuperview()
         pane.detachControls()
+        #expect(container.onBackRequested == nil)
         client.session.receive("output while away")
         try await waitUntil("output on detached surface") {
             client.session.readViewportText()?.contains("output while away") == true

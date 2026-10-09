@@ -30,6 +30,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.hardwareKeyboardCommands = []
         container?.onUserInteraction = nil
         container?.onPasteRequested = nil
+        container?.onBackRequested = nil
         container?.onPhysicalViewportReady = nil
         container?.setStickyControlActivationChangeHandler(nil)
         container?.configureFontSizeObservation(initialFontSize: nil, onChange: nil)
