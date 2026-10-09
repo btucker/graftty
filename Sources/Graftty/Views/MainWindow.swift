@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 private extension WorktreeManagementResponse {
     var errorMessage: String? {
@@ -56,6 +57,8 @@ struct MainWindow: View {
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
     @State private var isShowingAddRemoteMacSheet = false
+    @State private var isShowingLinuxHostSetupSheet = false
+    @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var worktreeHistory = WorktreeNavigationHistory()
@@ -126,6 +129,7 @@ struct MainWindow: View {
                 onAddRemoteWorktree: beginAddRemoteWorktree,
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
+                onSetupLinuxHost: presentLinuxHostSetup,
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
@@ -310,6 +314,21 @@ struct MainWindow: View {
                 onCancel: { isShowingAddRemoteMacSheet = false },
                 onPaired: { isShowingAddRemoteMacSheet = false }
             )
+        }
+        .sheet(isPresented: $isShowingLinuxHostSetupSheet) {
+            if let linuxHostSetupClient {
+                LinuxHostSetupSheet(
+                    client: linuxHostSetupClient,
+                    initialProjects: appState.repos.filter(\.isGitTracked).map { repo in
+                        LinuxHostProject(
+                            localPath: repo.path,
+                            branch: repo.worktrees.first { $0.path == repo.path }?.branch ?? repo.defaultBranchHint ?? "",
+                            directoryName: URL(fileURLWithPath: repo.path).lastPathComponent
+                        )
+                    },
+                    onConnect: completeLinuxHostSetup
+                )
+            }
         }
         .sheet(item: $pendingAddRemoteWorktree) { request in
             AddWorktreeSheet(
@@ -875,6 +894,50 @@ struct MainWindow: View {
         AgentNotificationActivation.open(payload, worktree: appState.worktree(forPath: payload.worktreePath),
             selectWorktree: { selectWorktree($0, acknowledging: true) },
             selectPane: { selectPane($0, $1, acknowledging: true) })
+    }
+
+    @MainActor
+    private func presentLinuxHostSetup() {
+        do {
+            let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
+            let key = try store.loadOrGenerateAndPersist()
+            linuxHostSetupClient = LinuxHostTrustRequest(
+                deviceID: AppServices.localRemoteDeviceID().value,
+                displayName: AppServices.localHostDisplayName(),
+                publicKey: key.publicKey.rawRepresentation.base64EncodedString()
+            )
+            isShowingLinuxHostSetupSheet = true
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not prepare Linux host setup"
+            alert.informativeText = LinuxHostSetupError.message(for: error)
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
+    @MainActor
+    private func completeLinuxHostSetup(_ result: LinuxHostSetupResult) async throws {
+        try Task.checkCancellation()
+        let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
+        let known = remoteMacsModel.savedRemoteMacs.filter {
+            $0.id.value == result.identity.deviceID
+                || ($0.transport == .directSSH && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
+        }.map(RemoteMacIdentity.init)
+        let controller = LinuxHostSetupConnectionController(
+            pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+        )
+        let prepared = try controller.accept(result, kind: .linux, knownRemotes: known)
+        try remoteMacsModel.recordPairingResult(.paired(prepared.host), transport: .directSSH, directEndpoint: endpoint)
+        guard let saved = remoteMacsModel.savedRemoteMacs.first(where: {
+            $0.id == prepared.host.id && $0.fingerprint == prepared.host.fingerprint
+        }) else { throw LinuxHostSetupError.invalidPlan("Could not save the Linux host. Retry setup.") }
+        do {
+            _ = try await remoteMacsModel.connect(to: saved)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            throw LinuxHostSetupError.invalidPlan("The host is installed and paired, but Graftty could not reach \(prepared.hostname):\(prepared.port). Check the firewall and direct network route, then retry.\n\(error.localizedDescription)")
+        }
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {

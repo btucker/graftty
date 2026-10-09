@@ -101,7 +101,7 @@ struct LinuxHostSetupSheet: View {
         .interactiveDismissDisabled(form.isRunning)
         .onAppear {
             projects = initialProjects
-            selectedPaths = Set(initialProjects.map(\.localPath))
+            selectedPaths = []
             form.version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         }
         .onDisappear { task?.cancel() }

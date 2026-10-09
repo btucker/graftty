@@ -2910,13 +2910,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.11** If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.
 
+**REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
+
 ### REMOTE-21.x
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
 
 **REMOTE-21.2** If the destination is not Ubuntu on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
 
-**REMOTE-21.3** When Linux setup imports a project, the application shall transfer committed branch and tag history including unpushed commits and the selected branch while excluding working changes and untracked files.
+**REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
 
 **REMOTE-21.4** When Linux setup retries a repository import, the application shall reuse only its own clean checkout at the imported commit and refuse unrelated, dirty, or advanced destination repositories.
 
@@ -2931,6 +2933,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.9** When a development archive is selected, the application shall transfer that archive over authenticated OpenSSH without fetching a release or transferring private credentials.
 
 **REMOTE-21.10** When Linux setup is cancelled during an OpenSSH command, the application shall terminate the bootstrap process and stop subsequent setup commands before allowing a retry.
+
+**REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
 
 ### REMOTE-22.x
 
@@ -2963,6 +2967,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-23.6** When opening instructions beneath an approved directory, the application shall reject symlinks in every path component and parent-directory traversal.
 
 **REMOTE-23.7** While running on Linux, the application shall place the private Attention handoff beneath the system temporary directory.
+
+**REMOTE-23.8** When the host ignores termination signals for its event loop, the application shall restore normal termination signals in spawned terminal processes.
 
 ## URL — Worktree URL Handler
 

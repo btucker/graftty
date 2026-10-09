@@ -33,7 +33,7 @@ struct LinuxHostSetupTests {
         #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_MISSING:git").localizedDescription.contains("git"))
     }
 
-    @Test("@spec REMOTE-21.3: When Linux setup imports a project, the application shall transfer committed branch and tag history including unpushed commits and the selected branch while excluding working changes and untracked files.")
+    @Test("@spec REMOTE-21.3: When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.")
     func bundleContainsOnlyHistory() async throws {
         let fixture = try await RepositoryFixture.make()
         defer { fixture.remove() }
@@ -91,6 +91,43 @@ struct LinuxHostSetupTests {
         #expect(try await CLIRunner().capture(command: "/bin/sh", args: ["-c", raceScript], at: fixture.root.path).exitCode != 0)
         #expect(try String(contentsOf: raced.appendingPathComponent("sentinel"), encoding: .utf8) == "external")
         #expect(!FileManager.default.fileExists(atPath: raced.appendingPathComponent(".git").path))
+    }
+
+    @Test(.enabled(if: gnuMove != nil, "Requires GNU mv"), arguments: [true, false])
+    func preservesEveryLocalBranch(hasOrigin: Bool) async throws {
+        let fixture = try await RepositoryFixture.make()
+        defer { fixture.remove() }
+        let runner = CLIRunner()
+        _ = try await runner.run(command: "git", args: ["checkout", "-b", "other", "main"], at: fixture.repository.path)
+        _ = try await runner.run(command: "git", args: ["commit", "--allow-empty", "-m", "other unpushed commit"], at: fixture.repository.path)
+        let otherCommit = try await runner.run(command: "git", args: ["rev-parse", "refs/heads/other"], at: fixture.repository.path).stdout
+        if !hasOrigin { _ = try await runner.run(command: "git", args: ["remote", "remove", "origin"], at: fixture.repository.path) }
+        let bundle = fixture.root.appendingPathComponent("all-branches.bundle")
+        let project = LinuxHostProject(localPath: fixture.repository.path, branch: "feature", directoryName: "app")
+        let snapshot = try await LinuxHostSetup.prepareBundle(project: project, output: bundle, executor: runner)
+        let destination = fixture.root.appendingPathComponent("imported")
+        let script = Self.movePrefix + LinuxHostScripts.importRepository(bundle: bundle.path, destination: destination.path, snapshot: snapshot)
+        _ = try await runner.run(command: "/bin/sh", args: ["-c", script], at: fixture.root.path)
+        #expect(try await runner.run(command: "git", args: ["rev-parse", "refs/heads/other"], at: destination.path).stdout == otherCommit)
+        #expect(try await runner.run(command: "git", args: ["rev-parse", "refs/heads/main"], at: destination.path).exitCode == 0)
+    }
+
+    @Test(.enabled(if: gnuMove != nil, "Requires GNU mv"))
+    func corruptStatusMustRefuseRetry() async throws {
+        let fixture = try await RepositoryFixture.make()
+        defer { fixture.remove() }
+        let runner = CLIRunner()
+        let bundle = fixture.root.appendingPathComponent("transfer.bundle")
+        let snapshot = try await LinuxHostSetup.prepareBundle(project: .init(localPath: fixture.repository.path, branch: "feature", directoryName: "app"), output: bundle, executor: runner)
+        let destination = fixture.root.appendingPathComponent("corrupt-index")
+        let script = Self.movePrefix + LinuxHostScripts.importRepository(bundle: bundle.path, destination: destination.path, snapshot: snapshot)
+        _ = try await runner.run(command: "/bin/sh", args: ["-c", script], at: fixture.root.path)
+        try Data("corrupt index".utf8).write(to: destination.appendingPathComponent(".git/index"))
+        try "dirty".write(to: destination.appendingPathComponent("tracked.txt"), atomically: true, encoding: .utf8)
+        let retry = try await runner.capture(command: "/bin/sh", args: ["-c", script], at: fixture.root.path)
+        #expect(retry.exitCode != 0)
+        #expect(retry.stderr.contains("GRAFTTY_REPOSITORY_CONFLICT"))
+        #expect(try String(contentsOf: destination.appendingPathComponent("tracked.txt"), encoding: .utf8) == "dirty")
     }
 
     @Test("@spec REMOTE-21.5: If OpenSSH rejects the host key or authentication, then the application shall explain how to resolve it with system SSH without disabling host-key verification.")

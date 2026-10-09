@@ -78,13 +78,22 @@ enum LinuxHostScripts {
           cmp -s "$stage/expected" "$destination/.git/graftty-import" &&
           test "$(git -C "$destination" rev-parse HEAD)" = \(quote(snapshot.commit)) &&
           test "$(git -C "$destination" symbolic-ref --short HEAD)" = \(quote(snapshot.branch)) &&
-          test -z "$(git -C "$destination" status --porcelain --untracked-files=all --ignored)" || {
+          status=$(git -C "$destination" status --porcelain --untracked-files=all --ignored) &&
+          test -z "$status" || {
             echo "GRAFTTY_REPOSITORY_CONFLICT:$destination" >&2; exit 72;
           }
           exit 0
         fi
         git -c core.hooksPath=/dev/null clone --no-hardlinks --branch \(quote(snapshot.branch)) -- \(quote(bundle)) "$stage/repository"
         test "$(git -C "$stage/repository" rev-parse HEAD)" = \(quote(snapshot.commit))
+        # clone puts nonselected heads under refs/remotes/origin. Materialize
+        # all original local branches before removing or repointing that remote.
+        git bundle list-heads \(quote(bundle)) > "$stage/heads"
+        while IFS=' ' read -r commit ref; do
+          case "$ref" in
+            refs/heads/*) git -C "$stage/repository" update-ref "$ref" "$commit" ;;
+          esac
+        done < "$stage/heads"
         \(originSetup)
         cp "$stage/expected" "$stage/repository/.git/graftty-import"
         mv -T --no-clobber "$stage/repository" "$destination"
