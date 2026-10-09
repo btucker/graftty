@@ -100,18 +100,21 @@ public final class HeadlessHostRuntime {
 
     func openUnlocked(_ path: String, command: String? = nil) async throws -> String {
         let initialIndex = try indices(path)
-        var worktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
+        let initialWorktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
         guard FileManager.default.fileExists(atPath: path) else { throw HostRuntimeError.notFound("worktree directory is missing") }
-        if worktree.state == .running, let slot = worktree.splitTree.allLeaves.first,
-           let session = worktree.paneSessions[slot] { return launcher.sessionName(for: session) }
+        if initialWorktree.state == .running, let slot = initialWorktree.splitTree.allLeaves.first,
+           let session = initialWorktree.paneSessions[slot] { return launcher.sessionName(for: session) }
         let slot = PaneSlotID()
-        let session = worktree.ensurePaneSession(for: slot)
+        let session = PaneSessionID()
+        try await terminals.start(spawn(session: session, path: path, command: command))
+        let index = try indices(path)
+        // Pane startup may accept attention or pin updates while suspended.
+        var worktree = state.repos[index.repo].worktrees[index.worktree]
+        worktree.recordPaneSession(session, for: slot)
         worktree.splitTree = SplitTree(root: .leaf(slot))
         worktree.focusedPaneSlotID = slot
         worktree.primaryPaneSlotID = slot
         worktree.state = .running
-        try await terminals.start(spawn(session: session, path: path, command: command))
-        let index = try indices(path)
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
         state.selectedWorktreePath = path
@@ -127,17 +130,17 @@ public final class HeadlessHostRuntime {
         let (path, slot) = try resolve(target)
         try acquire(path)
         defer { busyPaths.remove(path) }
-        let initialIndex = try indices(path)
-        var worktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
         let newSlot = PaneSlotID()
-        let session = worktree.ensurePaneSession(for: newSlot)
+        let session = PaneSessionID()
+        try await terminals.start(spawn(session: session, path: path, command: command))
+        let index = try indices(path)
+        var worktree = state.repos[index.repo].worktrees[index.worktree]
+        worktree.recordPaneSession(session, for: newSlot)
         let axis: SplitDirection = direction == .left || direction == .right ? .horizontal : .vertical
         worktree.splitTree = direction == .left || direction == .up
             ? worktree.splitTree.insertingBefore(newSlot, at: slot, direction: axis)
             : worktree.splitTree.inserting(newSlot, at: slot, direction: axis)
         worktree.focusedPaneSlotID = newSlot
-        try await terminals.start(spawn(session: session, path: path, command: command))
-        let index = try indices(path)
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
         do { try save() } catch {

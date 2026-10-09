@@ -9,9 +9,11 @@ private final class HostTerminalFake: HostTerminalDriver {
     var starts: [ZmxSpawnConfiguration] = []
     var killed: [String] = []
     var failStart = false
+    var duringStart: (@MainActor () async -> Void)?
     func sessions() async throws -> Set<String> { live }
     func start(_ configuration: ZmxSpawnConfiguration) async throws {
         if failStart { throw CocoaError(.fileReadUnknown) }
+        await duringStart?()
         starts.append(configuration)
         live.insert(configuration.sessionName)
     }
@@ -102,6 +104,38 @@ struct HeadlessHostRuntimeTests {
         await #expect(throws: (any Error).self) { try await runtime.splitPane(target: session, direction: .down) }
         #expect(runtime.sessions().count == 1)
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.splitTree.leafCount == 1)
+    }
+
+    @Test("@spec REMOTE-22.17: When notifications, pin changes, or attention acknowledgements arrive while a headless pane starts, the application shall preserve those updates when publishing the opened or split pane.",
+          arguments: [false, true], ["notify", "pin", "acknowledge"])
+    func paneStartupPreservesConcurrentUpdates(split: Bool, update: String) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
+        let first = split ? try await runtime.openWorktree(root.path) : nil
+        #expect(await runtime.handle(.notify(path: root.path, text: "original")) == .ok)
+        // Deliver requests while the runtime is awaiting terminal startup.
+        terminals.duringStart = {
+            switch update {
+            case "notify":
+                #expect(await runtime.handle(.notify(path: root.path, text: "new")) == .ok)
+            case "pin":
+                #expect(await runtime.handle(.setWorktreePinned(worktreePath: root.path, isPinned: true)) == .ok)
+            default:
+                #expect(await runtime.manage(.acknowledge(worktreeID: root.path, paneID: nil)) == .ok)
+            }
+        }
+        if let first { _ = try await runtime.splitPane(target: first, direction: .right) }
+        else { _ = try await runtime.openWorktree(root.path) }
+        terminals.duringStart = nil
+        for result in [runtime.state, try AppState.load(from: root)] {
+            let worktree = try #require(result.worktree(forPath: root.path))
+            #expect(worktree.state == .running)
+            #expect(worktree.splitTree.leafCount == (split ? 2 : 1))
+            #expect(worktree.isPinned == (update == "pin"))
+            #expect(worktree.attention?.text == (update == "acknowledge" ? nil : update == "notify" ? "new" : "original"))
+        }
     }
     @Test("@spec REMOTE-22.5: When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.")
     func teamAndAttention() async throws {

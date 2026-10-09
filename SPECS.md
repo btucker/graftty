@@ -2980,6 +2980,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.16** If the headless SSH listener cannot bind, then the application shall keep its readiness administration socket unavailable and clean up local control sockets.
 
+**REMOTE-22.17** When notifications, pin changes, or attention acknowledgements arrive while a headless pane starts, the application shall preserve those updates when publishing the opened or split pane.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
