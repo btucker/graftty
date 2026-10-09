@@ -286,11 +286,21 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// REMOTE-9.12: set the attach PTY's grid and pixel size together, so
     /// `zmx attach` forwards the owner's real pixel geometry to the session.
     public func resize(windowSize: PtyProcess.WindowSize) throws {
+        // The ioctls run under stateLock, like the size poller's, so
+        // close() cannot free the fd number for reuse between the
+        // isClosed check and the resize.
         stateLock.lock()
-        let closed = isClosed
-        let fd = spawned?.masterFD
-        stateLock.unlock()
-        guard !closed, let fd else { return }
+        defer { stateLock.unlock() }
+        guard !isClosed, let fd = spawned?.masterFD else { return }
+        // Zero pixels mean unspecified. XNU raises SIGWINCH on any winsize
+        // field change, so a grid-only resize to the current grid (a
+        // takeControl after a pixel-carrying ownerResize) keeps the pixels
+        // rather than bouncing them through zero.
+        if windowSize.xpixel == 0 || windowSize.ypixel == 0,
+           let current = PtyProcess.currentWindowSize(masterFD: fd),
+           current.cols == windowSize.cols, current.rows == windowSize.rows {
+            return
+        }
         try PtyProcess.resize(masterFD: fd, windowSize: windowSize)
     }
 
