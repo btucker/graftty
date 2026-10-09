@@ -28,7 +28,7 @@ struct SidebarReportPreviewTests {
             worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
             groupsPanes: true, theme: .fallback, appState: .constant(AppState(repos: [repo])),
             reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
-            onPaneTargeted: { _ in }, menu: { NSMenu() }
+            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: false, displayName: "Worktree",
                         isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil,

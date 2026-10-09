@@ -25,6 +25,45 @@ struct WorktreeEmojiMenuTests {
         #expect(capture.acceptsFirstResponder)
     }
 
+    @Test("@spec LAYOUT-2.148: When Change Emoji is chosen from a worktree identity menu, the application shall open the native picker after menu tracking ends with the owning window key and its capture responder ready, including on repeated attempts.")
+    @MainActor func paletteWaitsForMenuAndRestoresFocus() async throws {
+        let window = EmojiPaletteTestWindow(contentRect: NSRect(x: -10000, y: -10000, width: 240, height: 160),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let content = try #require(window.contentView)
+        let field = NSTextView(frame: NSRect(x: 30, y: 30, width: 100, height: 40))
+        let anchor = NSView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        content.addSubview(field)
+        content.addSubview(anchor)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        var picked: [String] = []
+        for _ in 0..<2 {
+            window.resignKey()
+            #expect(window.makeFirstResponder(field))
+            var presentations = 0
+            let previousKeyRequests = window.keyRequests
+            var keyRequestsAtPresentation = 0
+            var responderAtPresentation: NSResponder?
+            WorktreeEmojiPaletteCapture.present(anchoredTo: anchor, showPalette: {
+                presentations += 1
+                keyRequestsAtPresentation = window.keyRequests
+                responderAtPresentation = window.firstResponder
+            }, onPick: { picked.append($0) })
+            #expect(presentations == 0, "Wait for the menu action to return before opening the picker")
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(presentations == 1)
+            #expect(keyRequestsAtPresentation == previousKeyRequests + 1)
+            #expect(responderAtPresentation is WorktreeEmojiPaletteCapture)
+            let capture = try #require(window.firstResponder as? WorktreeEmojiPaletteCapture)
+            #expect(capture.inputContext != nil)
+            capture.insertText("🧪", replacementRange: NSRange(location: NSNotFound, length: 0))
+            #expect(capture.superview == nil)
+            #expect(window.firstResponder === field)
+        }
+        #expect(picked == ["🧪", "🧪"])
+    }
+
     @Test("A keystroke after the palette closes releases the capture without delivering a pick")
     @MainActor func keystrokeReleasesCapture() throws {
         var picked: [String] = []
@@ -37,5 +76,16 @@ struct WorktreeEmojiMenuTests {
         capture.keyDown(with: key)
         #expect(picked.isEmpty)
         #expect(capture.superview == nil)
+    }
+}
+
+/// The test runner is not an active GUI application, so record the native
+/// request to make the owner key instead of relying on application activation.
+@MainActor
+private final class EmojiPaletteTestWindow: NSWindow {
+    var keyRequests = 0
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        keyRequests += 1
+        super.makeKeyAndOrderFront(sender)
     }
 }

@@ -19,7 +19,7 @@ struct SidebarWorktreeContextTests {
                                          lastAgentStop: last, agentProgressTimes: progress))
     }
 
-    @Test("@spec LAYOUT-2.125: When a worktree has an unacknowledged agent question, the application shall show the full question inline until it is opened, dismissed, superseded, or its agent resumes, while retaining the recap for preview.")
+    @Test("@spec LAYOUT-2.125: When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.")
     func questionFollowsPendingOccurrence() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "context", defaults: defaults)
@@ -32,7 +32,10 @@ struct SidebarWorktreeContextTests {
         #expect(navigation.worktreeContext(row).question != nil)
         let opening = navigation.beginOpening(initial.item)
         navigation.finishOpening(opening, succeeded: true)
-        #expect(navigation.worktreeContext(row).question == nil)
+        #expect(navigation.worktreeContext(row).question == "Retry silently?")
+        #expect(navigation.worktreeContext(row).pending.count == 1)
+        let restored = SidebarNavigationState(prefix: "context", defaults: defaults)
+        #expect(restored.worktreeContext(row).question == "Retry silently?")
         #expect(navigation.worktreeContext(row).item.agentStop?.recap == stop().recap)
         #expect(navigation.worktreeContext(worktree(unseen: stop(101), last: stop(101))).question != nil)
         #expect(navigation.worktreeContext(worktree(last: stop(), progress: ["agent": 110])).question == nil)
@@ -61,8 +64,8 @@ struct SidebarWorktreeContextTests {
         #expect(context.pending.count == 1)
     }
 
-    @Test("@spec LAYOUT-2.128: When pending-worktree navigation is invoked, the application shall select the next unviewed pending worktree in displayed order within the requested project and wrap at the end.")
-    func pendingNavigationSkipsViewedAndWraps() throws {
+    @Test("@spec LAYOUT-2.128: When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.")
+    func pendingNavigationKeepsStoppedAgentsAndWraps() throws {
         let navigation = SidebarNavigationState(prefix: UUID().uuidString)
         let a = worktree(unseen: stop(), path: "/a")
         let b = worktree(unseen: stop(), path: "/b")
@@ -70,6 +73,9 @@ struct SidebarWorktreeContextTests {
         #expect(navigation.nextPendingWorktree(in: [a,a,b], projectID: "p", after: "/a")?.worktreeID == "/b")
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/b")?.worktreeID == "/a")
         navigation.opened(navigation.worktreeContext(b).item)
+        #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/a")?.worktreeID == "/b")
+        navigation.updateAttentionItems(SidebarProjection.activity([a,b]))
+        navigation.dismissRequest(in: navigation.worktreeContext(b))
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "p", after: "/a")?.worktreeID == "/a")
         #expect(navigation.nextPendingWorktree(in: [a,b], projectID: "other", after: nil) == nil)
     }

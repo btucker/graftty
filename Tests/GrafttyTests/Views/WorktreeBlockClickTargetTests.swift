@@ -12,9 +12,11 @@ import GrafttyCommandUI
 /// overlays whose hit testing the tests exercise.
 @MainActor
 final class WorktreeBlockClickHarness: ObservableObject {
+    @Published var reorderingEnabled = true
     @Published var state: AppState
     @Published var headingFrames: [String: CGRect] = [:]
     @Published var blockFrames: [String: CGRect] = [:]
+    @Published var questionFrames: [String: CGRect] = [:]
     @Published var paneFrames: [PaneSlotID: CGRect] = [:]
     var selections: [String] = []
     var paneSelections: [PaneSlotID] = []
@@ -52,10 +54,10 @@ private struct WorktreeBlockClickColumn: View {
             worktree: worktree, repoID: repo.id, isActive: isActive, isDropTarget: false,
             groupsPanes: groupsPanes, theme: .fallback,
             appState: Binding(get: { harness.state }, set: { harness.state = $0 }),
-            reorderingEnabled: true,
+            reorderingEnabled: harness.reorderingEnabled,
             onSelect: { harness.selections.append(worktree.path) },
             onMovePane: { _, _ in }, onPaneTargeted: { _ in },
-            menu: { NSMenu() }
+            menu: { _ in NSMenu() }
         ) {
             WorktreeRow(entry: worktree, isActive: isActive, displayName: worktree.branch,
                         isMainCheckout: worktree.path == repo.path, theme: .fallback,
@@ -77,12 +79,24 @@ private struct WorktreeBlockClickColumn: View {
                                  isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
                 }
                 .buttonStyle(.plain)
+                .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
                 .draggable(TransferablePaneSlotID(id: terminalID.id))
                 .rightClickMenu { NSMenu() }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                     harness.paneFrames[terminalID] = $0
                 }
                 .onDisappear { harness.paneFrames[terminalID] = nil }
+            }
+            if let stop = worktree.unseenAgentStop {
+                let row = sidebarLocalWorktree(worktree, repo: repo,
+                    owner: .init(deviceID: .init(value: "test"), deviceLabel: "Test", relayDepth: 0),
+                    displayName: worktree.branch, titles: [:], liveness: [:], prBadge: nil)
+                SidebarWorktreeQuestion(context: .init(worktree: row))
+                    .padding(.leading, 33).padding(.trailing, 8)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        harness.questionFrames[worktree.path] = $0
+                    }
+                    .accessibilityLabel(stop.title)
             }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
@@ -180,6 +194,33 @@ struct WorktreeBlockClickTargetTests {
             #expect(outcome.selections == [Self.grownPath], "padding click at \(point) selected \(outcome.selections)")
             #expect(outcome.paneSelections.isEmpty)
         }
+    }
+
+    @Test("@spec LAYOUT-2.145: When the user clicks anywhere in a local macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.", arguments: [false, true])
+    func questionAndSurroundingSpaceSelectWorktree(reorderingEnabled: Bool) async throws {
+        let hosted = try await Hosted.make(rowCount: Self.rowCount)
+        defer { hosted.tearDown() }
+        hosted.harness.reorderingEnabled = reorderingEnabled
+        for index in 0...1 {
+            hosted.harness.state.repos[0].worktrees[index].recordAgentStop(.init(
+                agentName: "Codex", stoppedAt: Date(),
+                recap: .init(title: "Sidebar", completed: "Updated clicks", next: "Review", need: "Try this question?")))
+        }
+        try await hosted.settle()
+        for path in [hosted.harness.repo.path, Self.grownPath] {
+            let frame = try #require(hosted.harness.questionFrames[path])
+            for point in [CGPoint(x: frame.midX, y: frame.midY),
+                          CGPoint(x: frame.minX + 2, y: frame.midY),
+                          CGPoint(x: frame.maxX - 2, y: frame.midY)] {
+                let outcome = try await hosted.click(at: point)
+                #expect(outcome.selections == [path])
+                #expect(outcome.paneSelections.isEmpty)
+            }
+        }
+        let path = Self.grownPath
+        hosted.setPanes(path: path, count: 2)
+        try await hosted.settle()
+        for pane in hosted.harness.paneFrames.keys { try await hosted.expectPaneClickSelects(pane) }
     }
 
     // MARK: - Hosting

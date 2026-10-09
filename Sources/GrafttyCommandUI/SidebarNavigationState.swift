@@ -79,7 +79,9 @@ public final class SidebarNavigationState {
         }
     }
     public func worktreeContext(_ worktree: WorktreePanes) -> SidebarWorktreeContext {
-        SidebarWorktreeContext(worktree: worktree, retained: workspace.items + retainedReports, isViewed: hasViewed)
+        SidebarWorktreeContext(worktree: worktree, retained: workspace.items + retainedReports, isViewed: { item in
+            item.occurrence?.source == .agentStop ? self.workspace.isDismissed(item) : self.hasViewed(item)
+        })
     }
 
     public func hasViewed(_ item: SidebarActivityItem) -> Bool {

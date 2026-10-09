@@ -263,26 +263,32 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return true
     }
 
-    /// The user is now looking at this worktree (sidebar click or
-    /// notification activation): clear ALL attention — worktree-scoped and
-    /// every pane (STATE-2.4). One method so both acknowledgement paths
-    /// can't drift on scope.
+    /// Viewing a worktree clears notifications. Stopped agents still need
+    /// attention until provider progress or explicit occurrence dismissal.
+    public mutating func viewAttention() {
+        if attention?.source != .agentStop { attention = nil }
+        paneAttention = paneAttention.filter { $0.value.source == .agentStop }
+    }
+
+    /// Viewing a pane clears its notification while preserving agent requests.
+    public mutating func viewPaneAttention(_ pane: PaneSlotID) {
+        if paneAttention[pane]?.source != .agentStop { paneAttention[pane] = nil }
+    }
+
+    /// Explicitly acknowledges every request and notification on the worktree.
     public mutating func acknowledgeAttention() {
         unseenAgentStop = nil
         attention = nil
         paneAttention.removeAll()
     }
 
-    /// The user focused one specific pane (clicked its terminal, or its
-    /// sidebar row): clear just that pane's attention (STATE-2.4). The
-    /// worktree-scoped overlay and sibling panes are left alone — the user
-    /// only attended to this one.
+    /// Explicitly acknowledges the stopped turn and the chosen pane's attention.
     public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
         unseenAgentStop = nil
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
     /// Finds attention by its persisted owner rather than re-resolving the
     /// provider's current pane, which may have moved since the prompt began.
     public mutating func clearAgentStopAttention(
@@ -318,14 +324,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
            (stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey) {
             unseenAgentStop = nil
         }
+        // Restored overlays predating session ownership use the same
+        // timestamp-guarded fallback as legacy stopped-turn reports above.
         if attention?.source == .agentStop,
-           attention?.providerSessionKey == providerSessionKey,
+           (attention?.providerSessionKey == nil || attention?.providerSessionKey == providerSessionKey),
            (attention?.timestamp ?? .distantFuture) <= progressedAt {
             attention = nil
         }
         paneAttention = paneAttention.filter { _, attention in
             attention.source != .agentStop
-                || attention.providerSessionKey != providerSessionKey
+                || (attention.providerSessionKey != nil && attention.providerSessionKey != providerSessionKey)
                 || attention.timestamp > progressedAt
         }
     }

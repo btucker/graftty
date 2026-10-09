@@ -36,14 +36,25 @@ final class WorktreeEmojiPaletteCapture: NSView, NSTextInputClient {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     @MainActor
-    static func present(anchoredTo anchor: NSView, onPick: @escaping (String) -> Void) {
+    static func present(anchoredTo anchor: NSView,
+                        showPalette: @escaping @MainActor () -> Void = { NSApp.orderFrontCharacterPalette(nil) },
+                        onPick: @escaping (String) -> Void) {
         guard let window = anchor.window, let content = window.contentView else { return }
-        let capture = WorktreeEmojiPaletteCapture(onPick: onPick)
-        capture.frame = content.convert(anchor.bounds, from: anchor)
-        content.addSubview(capture)
-        capture.previousResponder = window.firstResponder
-        guard window.makeFirstResponder(capture) else { capture.removeFromSuperview(); return }
-        NSApp.orderFrontCharacterPalette(nil)
+        let frame = content.convert(anchor.bounds, from: anchor)
+        // Menu tracking can restore the previous responder after its action
+        // returns. Wait until then to focus the capture and launch the picker.
+        DispatchQueue.main.async { [weak window] in
+            guard let window, window.isVisible, let content = window.contentView else { return }
+            (window.firstResponder as? WorktreeEmojiPaletteCapture)?.finish()
+            window.makeKeyAndOrderFront(nil)
+            let capture = WorktreeEmojiPaletteCapture(onPick: onPick)
+            capture.frame = frame
+            content.addSubview(capture)
+            capture.previousResponder = window.firstResponder
+            guard window.makeFirstResponder(capture) else { capture.removeFromSuperview(); return }
+            capture.inputContext?.invalidateCharacterCoordinates()
+            showPalette()
+        }
     }
 
     private func finish() {

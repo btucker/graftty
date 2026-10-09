@@ -198,7 +198,7 @@ struct MainWindow: View {
                                     if let worktreePath =
                                         selectedRemoteWorktreePath {
                                         Task {
-                                            await remoteMacsModel.acknowledge(
+                                            await remoteMacsModel.acknowledgeViewedAttention(
                                                 on: selectedRemoteMac,
                                                 worktreePath: worktreePath,
                                                 paneSessionName: sessionName
@@ -257,11 +257,9 @@ struct MainWindow: View {
                             // on the next return visit.
                             if let wtPath = appState.selectedWorktreePath {
                                 appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
-                                // STATE-2.4: clicking a pane's terminal to
-                                // focus it acknowledges that pane's attention
-                                // (e.g. the agent-stop "needs input" icon),
-                                // same as clicking its sidebar row.
-                                appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
+                                // STATE-2.4: viewing a pane clears notifications;
+                                // agent requests remain until provider progress.
+                                appState.viewPaneAttention(terminalID, forWorktreePath: wtPath)
                             }
                             terminalManager.setFocus(terminalID)
                         }
@@ -677,7 +675,7 @@ struct MainWindow: View {
             }
             let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-            if let request = SidebarInteractionPolicy.acknowledgement(for: resolvedItem, supportsExactAcknowledgement: supportsExact) {
+            if let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: resolvedItem, supportsExactAcknowledgement: supportsExact) {
                 guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(request) else { return false }
                 if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
             }
@@ -701,7 +699,7 @@ struct MainWindow: View {
         guard appState.selectedWorktreePath == item.worktreeID,
               let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
               !active.splitTree.allLeaves.isEmpty else { return false }
-        if let occurrence = item.occurrence {
+        if let occurrence = item.occurrence, occurrence.source != .agentStop {
             let paneID = item.paneID == nil ? nil : selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
             SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: paneID, occurrence: occurrence)
         }
@@ -832,13 +830,9 @@ struct MainWindow: View {
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path {
-                    // Clicking a worktree dismisses both levels of
-                    // attention — worktree-level (CLI notify) and any
-                    // outstanding per-pane badges — so the user sees a
-                    // clean slate once they're looking at the worktree.
-                    // Same `acknowledgeAttention()` the notification-
-                    // activation path uses, so the two can't drift.
-                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
+                    // STATE-2.4: viewing clears notifications at both scopes
+                    // while preserving stopped-agent requests.
+                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].viewAttention() }
                 }
             }
         }
@@ -999,7 +993,7 @@ struct MainWindow: View {
             }
         }
         if acknowledging { Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: worktreePath
             )
@@ -1134,7 +1128,7 @@ struct MainWindow: View {
             preferredSessionName: sessionName
         )
         if acknowledging { Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: worktreePath,
                 paneSessionName: sessionName
@@ -1955,7 +1949,7 @@ struct MainWindow: View {
         pendingRemoteFocusTarget = target
         focusRemotePane(terminalID, target: target)
         Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: target.worktreePath,
                 paneSessionName: sessionName
@@ -2922,18 +2916,9 @@ struct MainWindow: View {
     /// `appState` synchronously; the FSEvents watcher will also fire
     /// `worktreeMonitorDidDetectDeletion` shortly after, but its update
     /// is idempotent so the eventual callback is harmless.
-    private func deleteWorktreeWithConfirmation(_ worktreePath: String) {
-        guard let host = NSApp.mainWindow else { return }
-        let config = SheetAlert.Configuration(
-            messageText: "Delete Worktree?",
-            informativeText: "This will delete the worktree but not the branch.",
-            style: .warning,
-            primaryButton: "Delete Worktree",
-            secondaryButton: "Cancel"
-        )
-        SheetAlert.present(config, on: host) { response in
-            guard response == .primary else { return }
-            performDeleteWorktree(worktreePath)
+    private func deleteWorktreeWithConfirmation(_ worktreePath: String, on host: NSWindow) {
+        DeleteWorktreeConfirmation.present(worktreePath: worktreePath, on: host) { path, window in
+            performDeleteWorktree(path, on: window)
         }
     }
 
@@ -2986,8 +2971,8 @@ struct MainWindow: View {
     /// the caller confirms deletion. Surfaces failures via an error
     /// alert. `force` is set internally on retry from
     /// the GIT-4.4 dialog; see GIT-4.12.
-    private func performDeleteWorktree(_ worktreePath: String, force: Bool = false) {
-        Task { @MainActor in
+    private func performDeleteWorktree(_ worktreePath: String, on host: NSWindow, force: Bool = false) {
+        Task { @MainActor [weak host] in
             let result = await DeleteWorktreeFlow.delete(
                 worktreePath: worktreePath,
                 force: force,
@@ -3005,15 +2990,15 @@ struct MainWindow: View {
                 // matches the pre-refactor behavior.
                 return
             case .failure(.gitFailedForceable(let stderr, let status)):
-                guard let host = NSApp.mainWindow else { return }
+                guard let host, host.isVisible else { return }
                 let config = ForceDeleteAlert.gitFailedForceableConfiguration(stderr: stderr, status: status)
                 SheetAlert.present(config, on: host) { response in
                     guard response == .secondary else { return }
-                    performDeleteWorktree(worktreePath, force: true)
+                    performDeleteWorktree(worktreePath, on: host, force: true)
                 }
             case .failure(.gitFailedFinal(let msg)):
                 NSLog("[Graftty] performDeleteWorktree: %@", msg)
-                guard let host = NSApp.mainWindow else { return }
+                guard let host, host.isVisible else { return }
                 let config = ForceDeleteAlert.gitFailedFinalConfiguration(message: msg)
                 SheetAlert.present(config, on: host)
             }
