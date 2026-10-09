@@ -125,7 +125,7 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         unlink(socketPath)
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw SocketServerError.socketCreationFailed }
         var sourceOwnsFD = false
         var boundPath = false
@@ -147,7 +147,7 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in GrafttyPOSIX.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         guard bindResult == 0 else {
             throw SocketServerError.bindFailed(errno: errno)
@@ -159,7 +159,7 @@ public final class SocketServer: @unchecked Sendable {
         // start hitting ECONNREFUSED under burst load. The prior backlog
         // of 5 was the historical `listen(2)` default and had effectively
         // no headroom.
-        guard Darwin.listen(fd, Self.listenBacklog) == 0 else {
+        guard GrafttyPOSIX.listen(fd, Self.listenBacklog) == 0 else {
             throw SocketServerError.listenFailed(errno: errno)
         }
 
@@ -198,7 +198,7 @@ public final class SocketServer: @unchecked Sendable {
             // shutdown(2) wakes a worker blocked in read/write without
             // introducing a close/reuse race with that owner's cleanup.
             for fd in clientLeases.fileDescriptors {
-                _ = Darwin.shutdown(fd, Int32(SHUT_RDWR))
+                _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_RDWR))
             }
             // Request handlers run asynchronously after their socket worker
             // returns. Capture those connections so stop can close them now;
@@ -222,7 +222,7 @@ public final class SocketServer: @unchecked Sendable {
     }
 
     private func acceptConnection(listenFD: Int32) {
-        let clientFD = Darwin.accept(listenFD, nil, nil)
+        let clientFD = GrafttyPOSIX.accept(listenFD, nil, nil)
         guard clientFD >= 0 else { return }
 
         let configured = Self.configureAcceptedSocket(
@@ -316,7 +316,7 @@ public final class SocketServer: @unchecked Sendable {
         while buffer.count < cap {
             let remaining = cap - buffer.count
             let toRead = min(chunk.count, remaining)
-            let bytesRead = Darwin.read(fd, &chunk, toRead)
+            let bytesRead = GrafttyPOSIX.read(fd, &chunk, toRead)
             if bytesRead <= 0 { break }
             buffer.append(contentsOf: chunk[0..<bytesRead])
         }
@@ -480,14 +480,7 @@ public final class SocketServer: @unchecked Sendable {
         // A handler may finish after the CLI's shorter read timeout closed its
         // peer. Convert that late response into EPIPE instead of letting the
         // process receive SIGPIPE while SocketIO.writeAll reports the error.
-        var noSigPipe: Int32 = 1
-        let noSigPipeResult = setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSigPipe,
-            socklen_t(MemoryLayout<Int32>.size)
-        )
+        let noSigPipeResult = GrafttyPOSIX.configureNoSigPipe(fd)
         var receiveTimeout = timeval(
             tv_sec: receiveTimeoutSeconds,
             tv_usec: 0
@@ -519,7 +512,7 @@ public final class SocketServer: @unchecked Sendable {
     /// working SO_NOSIGPIPE would risk SIGPIPE.
     private func configureBufferedOneWayFallback(_ fd: Int32) -> Bool {
         var bytes = [UInt8](repeating: 0, count: maxPerClientBytes)
-        let count = Darwin.recv(
+        let count = GrafttyPOSIX.recv(
             fd,
             &bytes,
             bytes.count,

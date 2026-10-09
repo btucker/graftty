@@ -23,12 +23,16 @@ public enum RepoBookmark {
     /// bookmark (permissions, bad filesystem). Callers that want
     /// best-effort behavior should `try?` and store `nil`.
     public static func mint(atPath path: String) throws -> Data {
+        #if os(Linux)
+        throw CocoaError(.featureUnsupported)
+        #else
         let url = URL(fileURLWithPath: path)
         return try url.bookmarkData(
             options: [],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
+        #endif
     }
 
     /// Resolve a bookmark back to a URL. Returns the URL and whether the
@@ -47,6 +51,9 @@ public enum RepoBookmark {
     /// Throws if the bookmark cannot be resolved (referenced folder
     /// deleted, bookmark corrupt, filesystem unavailable).
     public static func resolve(_ bookmark: Data) throws -> Resolved {
+        #if os(Linux)
+        throw CocoaError(.featureUnsupported)
+        #else
         var isStale = false
         let raw = try URL(
             resolvingBookmarkData: bookmark,
@@ -56,5 +63,6 @@ public enum RepoBookmark {
         )
         let canonical = URL(fileURLWithPath: CanonicalPath.canonicalize(raw.path))
         return Resolved(url: canonical, isStale: isStale)
+        #endif
     }
 }

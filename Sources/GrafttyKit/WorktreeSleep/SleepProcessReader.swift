@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Reads kernel counters and stable identity. CPU values returned by
@@ -11,6 +15,9 @@ public enum SleepProcessReader {
     }
 
     public static func sample(pid: Int32) -> SleepProcessSample? {
+        #if os(Linux)
+        return nil
+        #else
         guard pid > 1 else { return nil }
         var bsd = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
@@ -28,6 +35,7 @@ public enum SleepProcessReader {
         return SleepProcessSample(identity: identity, cpuNanoseconds: usage.ri_user_time &+ usage.ri_system_time,
                                   diskBytes: usage.ri_diskio_bytesread &+ usage.ri_diskio_byteswritten,
                                   isStopped: bsd.pbi_status == UInt32(SSTOP))
+        #endif
     }
 
     public static func signal(_ identity: SleepProcessIdentity, stop: Bool) -> Bool {
@@ -37,9 +45,13 @@ public enum SleepProcessReader {
     }
 
     public static func executable(pid: Int32) -> String? {
+        #if os(Linux)
+        return try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/exe")
+        #else
         var bytes = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &bytes, UInt32(bytes.count)) > 0 else { return nil }
         return String(cString: bytes)
+        #endif
     }
 
     /// The socket's kernel peer PID must be the root's direct parent.
@@ -61,24 +73,30 @@ public enum SleepProcessReader {
     }
 
     private static func peerPID(socketURL: URL) -> Int32? {
+        #if os(Linux)
+        return nil
+        #else
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
+        #if !os(Linux)
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        #endif
         let bytes = Array(socketURL.path.utf8) + [0]
         guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return nil }
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         guard withUnsafePointer(to: &address, {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                GrafttyPOSIX.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }) == 0 else { return nil }
         var pid: Int32 = 0
         var length = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, 0, LOCAL_PEERPID, &pid, &length) == 0 else { return nil }
         return pid
+        #endif
     }
 }

@@ -2908,6 +2908,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.10** While a peer is authenticated over direct SSH, the application shall enforce its worktree management and port tunnel capabilities for each channel.
 
+### REMOTE-22.x
+
+**REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
+
+**REMOTE-22.2** When a headless host restarts, the application shall retain saved pane session IDs and reuse surviving zmx sessions without rerunning startup commands.
+
+**REMOTE-22.3** When a headless host splits, resizes, or closes a pane, the application shall persist the layout and terminate only the explicitly closed zmx session.
+
+**REMOTE-22.4** If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.
+
+**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.
+
+**REMOTE-22.6** When a headless host registers a repository, the application shall discover its Git worktrees and persist one canonical registration.
+
+**REMOTE-22.7** When a headless host shuts down, the application shall detach clients while preserving zmx sessions for restart.
+
+### REMOTE-23.x
+
+**REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
+
+**REMOTE-23.2** If Linux process metadata is missing or malformed, then the application shall report no process identity.
+
+**REMOTE-23.3** When querying a running host process, the application shall return a stable start identity, its parent PID, and its current working directory.
+
+**REMOTE-23.4** When writing host control data, the application shall support both Unix sockets and regular file descriptors.
+
+**REMOTE-23.5** When a local host peer connects over a Unix socket, the application shall obtain its operating-system user ID.
+
+**REMOTE-23.6** When opening instructions beneath an approved directory, the application shall reject symlinks in every path component and parent-directory traversal.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

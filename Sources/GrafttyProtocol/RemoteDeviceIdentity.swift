@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 // MARK: - RemoteDeviceID
@@ -23,6 +27,7 @@ public struct RemoteDeviceID: Codable, Sendable, Equatable, Hashable {
 /// without breaking existing JSON payloads.
 public enum RemoteDeviceKind: String, Codable, Sendable, Equatable, Hashable {
     case mac
+    case linux
     case iphone
     case ipad
 }

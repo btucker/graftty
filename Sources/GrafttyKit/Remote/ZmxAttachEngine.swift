@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// PTY-backed `zmx attach` engine shared by the `/ws` WebSocket bridge
 /// (via the `WebSession` adapter) and the SSH-over-WebRTC `terminal`
@@ -257,7 +261,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         let fd = isClosed ? -1 : (spawned.map { fcntl($0.masterFD, F_DUPFD_CLOEXEC, 0) } ?? -1)
         stateLock.unlock()
         guard fd >= 0 else { return }
-        defer { Darwin.close(fd) }
+        defer { GrafttyPOSIX.close(fd) }
         // Track the chunk before we hand it to the PTY so web-session
         // typing state reflects writes even if the PTY consumer reacts
         // immediately.
@@ -369,7 +373,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             // Closing masterFD afterwards unblocks the reader thread's
             // read() — it returns -1/EIO and the thread exits.
             _ = kill(spawned.pid, SIGTERM)
-            Darwin.close(spawned.masterFD)
+            GrafttyPOSIX.close(spawned.masterFD)
             // Bounded nonblocking reap (≤500ms). If waitpid doesn't see
             // the child marked dead in that window, give up and leave it
             // as a zombie rather than block NIO's event loop thread —
@@ -387,7 +391,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         let thread = Thread { [weak self] in
             var buf = [UInt8](repeating: 0, count: 8192)
             while true {
-                let n = buf.withUnsafeMutableBufferPointer { Darwin.read(fd, $0.baseAddress, $0.count) }
+                let n = buf.withUnsafeMutableBufferPointer { GrafttyPOSIX.read(fd, $0.baseAddress, $0.count) }
                 if n <= 0 { break }
                 self?.dispatchPTYData(Data(buf[0..<n]))
             }
@@ -453,7 +457,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
                 guard let self else { break }
                 // Single critical section per iteration: check that the
                 // session hasn't been closed (the `close()` path sets
-                // isClosed=true then Darwin.close(fd)) AND read the last
+                // isClosed=true then GrafttyPOSIX.close(fd)) AND read the last
                 // known size. Doing the ioctl *inside* the lock prevents
                 // the close+fd-reuse race where a freshly-opened fd of
                 // the same integer value would get a spurious TIOCGWINSZ.

@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Dispatch
 import Foundation
 
@@ -752,7 +756,7 @@ private final class CodexAppServerProxyStderrCapture {
     static func make() -> CodexAppServerProxyStderrCapture? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-codex-proxy-stderr-\(UUID().uuidString).log")
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
         guard let fileHandle = try? FileHandle(forWritingTo: url) else {
             try? FileManager.default.removeItem(at: url)
             return nil
@@ -904,7 +908,7 @@ private final class CodexAppServerWebSocketConnection {
     private func readMore(deadline: Date) throws {
         try waitForReadable(deadline: deadline)
         var chunk = [UInt8](repeating: 0, count: 4096)
-        let count = Darwin.read(outputFD, &chunk, chunk.count)
+        let count = GrafttyPOSIX.read(outputFD, &chunk, chunk.count)
         if count > 0 {
             buffer.append(contentsOf: chunk.prefix(count))
         } else if count == 0 {
@@ -949,7 +953,7 @@ private final class CodexAppServerWebSocketConnection {
             while offset < data.count {
                 try waitForWritable(deadline: deadline)
                 let pointer = baseAddress.advanced(by: offset)
-                let count = Darwin.write(inputFD, pointer, data.count - offset)
+                let count = GrafttyPOSIX.write(inputFD, pointer, data.count - offset)
                 if count > 0 {
                     offset += count
                 } else if count == 0 {

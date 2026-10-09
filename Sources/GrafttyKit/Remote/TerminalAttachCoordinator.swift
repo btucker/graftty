@@ -1,6 +1,8 @@
 import Foundation
 import GrafttyProtocol
+#if canImport(os)
 import os
+#endif
 
 public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
     internal final class Registration: @unchecked Sendable {

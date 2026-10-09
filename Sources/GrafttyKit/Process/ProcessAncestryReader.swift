@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Kernel-backed parent and controlling-terminal lookup for one process,
@@ -16,6 +20,22 @@ public enum ProcessAncestryReader {
     }
 
     public static func entry(forPID pid: pid_t) -> Entry? {
+        #if os(Linux)
+        guard let info = LinuxProcessStat.read(pid: pid) else { return nil }
+        // Linux encodes the tty device in stat; /proc/PID/fd/0 can be redirected.
+        let device = info.terminalDevice
+        let major = (device >> 8) & 0xfff
+        let minor = (device & 0xff) | ((device >> 12) & 0xfff00)
+        let tty: String?
+        if (136...143).contains(major) {
+            tty = "/dev/pts/\((major - 136) * 256 + minor)"
+        } else if major == 4 {
+            tty = minor < 64 ? "/dev/tty\(minor)" : "/dev/ttyS\(minor - 64)"
+        } else {
+            tty = nil
+        }
+        return Entry(parentPID: info.parentPID, ttyPath: tty)
+        #else
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
         let rc = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
@@ -29,5 +49,6 @@ public enum ProcessAncestryReader {
             ttyPath = "/dev/" + String(cString: name)
         }
         return Entry(parentPID: pid_t(info.pbi_ppid), ttyPath: ttyPath)
+        #endif
     }
 }

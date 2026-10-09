@@ -81,6 +81,9 @@ mkdir -p "$CACHE_ROOT"
 
 if [[ "$LOCK_HELD" != 1 ]]; then
   echo "→ shared SwiftPM build: $BUILD_DIR" >&2
+  if [[ "$(uname -s)" == Linux ]]; then
+    exec flock "$LOCK_FILE" "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
+  fi
   exec /usr/bin/lockf -k "$LOCK_FILE" \
     "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
 fi

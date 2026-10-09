@@ -1,5 +1,13 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyProtocol
 
@@ -288,7 +296,9 @@ public struct AttentionFileHandoff: Sendable {
 public final class AttentionFileHandoffObserver: @unchecked Sendable {
     private let handoff: AttentionFileHandoff
     private let queue = DispatchQueue(label: "com.graftty.attention-file-handoff", qos: .utility)
+    #if !os(Linux)
     private var source: DispatchSourceFileSystemObject?
+    #endif
     private var timer: DispatchSourceTimer?
 
     public init(handoff: AttentionFileHandoff = AttentionFileHandoff()) {
@@ -299,6 +309,7 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
         try handoff.ensureDirectory()
         queue.sync {
             guard timer == nil else { return }
+            #if !os(Linux)
             let fd = open(handoff.rootDirectory.path, O_EVTONLY)
             if fd >= 0 {
                 let source = DispatchSource.makeFileSystemObjectSource(
@@ -309,6 +320,7 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
                 source.resume()
                 self.source = source
             }
+            #endif
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
             timer.setEventHandler(handler: onChange)
@@ -320,8 +332,10 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
 
     public func stop() {
         queue.sync {
+            #if !os(Linux)
             source?.cancel()
             source = nil
+            #endif
             timer?.cancel()
             timer = nil
         }

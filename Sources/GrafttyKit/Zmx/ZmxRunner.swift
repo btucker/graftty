@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Sync subprocess wrapper for invoking `zmx` (or any other executable
 /// with explicit env). Three flavors mirror `GitRunner`:
@@ -96,7 +100,11 @@ public enum ZmxRunner {
         defer { closeIfOpen(&stderrRead) }
         defer { closeIfOpen(&stderrWrite) }
 
+        #if os(Linux)
+        var actions = posix_spawn_file_actions_t()
+        #else
         var actions: posix_spawn_file_actions_t?
+        #endif
         var rc = posix_spawn_file_actions_init(&actions)
         guard rc == 0 else { throw posixError(rc) }
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -122,7 +130,11 @@ public enum ZmxRunner {
             guard rc == 0 else { throw posixError(rc) }
         }
 
+        #if os(Linux)
+        var attrs = posix_spawnattr_t()
+        #else
         var attrs: posix_spawnattr_t?
+        #endif
         rc = posix_spawnattr_init(&attrs)
         guard rc == 0 else { throw posixError(rc) }
         defer { posix_spawnattr_destroy(&attrs) }
@@ -150,8 +162,8 @@ public enum ZmxRunner {
                         path,
                         &actions,
                         &attrs,
-                        argvBuffer.baseAddress,
-                        envBuffer.baseAddress
+                        argvBuffer.baseAddress!,
+                        envBuffer.baseAddress!
                     )
                 }
             }
@@ -232,7 +244,7 @@ public enum ZmxRunner {
             }
 
             descriptors.withUnsafeMutableBufferPointer { buffer in
-                _ = Darwin.poll(buffer.baseAddress, nfds_t(buffer.count), 20)
+                _ = GrafttyPOSIX.poll(buffer.baseAddress, nfds_t(buffer.count), 20)
             }
         }
     }
@@ -293,7 +305,7 @@ public enum ZmxRunner {
         while drainedBytes < maximumDrainBytesPerPass {
             let bytesToRead = min(buffer.count, maximumDrainBytesPerPass - drainedBytes)
             let count = buffer.withUnsafeMutableBytes {
-                Darwin.read(fd, $0.baseAddress, bytesToRead)
+                GrafttyPOSIX.read(fd, $0.baseAddress, bytesToRead)
             }
             if count > 0 {
                 data.append(contentsOf: buffer.prefix(Int(count)))

@@ -1,7 +1,9 @@
 import Foundation
 import GrafttyProtocol
 import Observation
+#if canImport(os)
 import os
+#endif
 
 /// PR/MR status store. Polls per-repo (one host CLI call per repo
 /// per tick) and distributes the snapshot to every worktree whose

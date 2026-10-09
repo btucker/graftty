@@ -1,6 +1,15 @@
+#if canImport(ImageIO)
 import ArgumentParser
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyKit
 import ImageIO
@@ -33,7 +42,7 @@ struct Image: ParsableCommand {
         guard let ttyPath = InlineImage.findTerminal() else {
             throw CLIEnv.fail("No terminal found in this process tree.")
         }
-        let fd = Darwin.open(ttyPath, O_WRONLY | O_NOCTTY)
+        let fd = GrafttyPOSIX.open(ttyPath, O_WRONLY | O_NOCTTY)
         guard fd >= 0 else {
             throw CLIEnv.fail("Could not open \(ttyPath).")
         }
@@ -252,3 +261,17 @@ enum InlineImage {
         return out
     }
 }
+
+#else
+import ArgumentParser
+
+struct Image: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Draw an image inline in this pane's terminal")
+    @Argument var path: String
+    @Option(name: .long) var width: Int?
+    @Option(name: .long) var pad: Int = 12
+    func run() throws {
+        throw ValidationError("Inline image conversion is unavailable on the Linux host.")
+    }
+}
+#endif

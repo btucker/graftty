@@ -177,7 +177,7 @@ public struct CodexAppServerSessionStorage: Sendable {
         let path = rootDirectory.appendingPathComponent(".codex-app-server-sessions.lock").path
         let permissions = S_IRUSR | S_IWUSR
         #if canImport(Darwin)
-        let fd = Darwin.open(path, O_RDWR | O_CREAT, permissions)
+        let fd = GrafttyPOSIX.open(path, O_RDWR | O_CREAT, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(path, O_RDWR | O_CREAT, mode_t(permissions))
         #else
@@ -187,7 +187,7 @@ public struct CodexAppServerSessionStorage: Sendable {
         defer {
             _ = flock(fd, LOCK_UN)
             #if canImport(Darwin)
-            _ = Darwin.close(fd)
+            _ = GrafttyPOSIX.close(fd)
             #elseif canImport(Glibc)
             _ = Glibc.close(fd)
             #endif

@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 /// Converts a backing-pixel dimension (CGFloat from `NSView.convertToBacking(_:)`)
 /// to the `UInt32` that `ghostty_surface_set_size` expects, safely.

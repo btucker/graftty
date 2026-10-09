@@ -121,7 +121,7 @@ enum SocketClient {
         } catch {
             writeFailure = error
         }
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_WR))
         let read = SocketIO.readCapped(fd: fd, cap: maxResponseBytes)
 
         return try resolveOneWayResult(
@@ -172,7 +172,7 @@ enum SocketClient {
         // Half-close so the server's read-until-EOF loop terminates and
         // it proceeds to compute + write the response. Without this the
         // server would block indefinitely waiting for more bytes.
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_WR))
 
         // `ATTN-3.6`: cap the read at 16 MiB so a misbehaving or
         // compromised server can't OOM the CLI by flooding faster
@@ -243,7 +243,7 @@ enum SocketClient {
         // per ATTN-3.4. A bare fileExists gate would throw .appNotRunning
         // on the missing-file case and never reach the diagnosis.
 
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw CLIError.socketError("Failed to create socket") }
 
         guard configureSocket(
@@ -265,7 +265,7 @@ enum SocketClient {
             }
         }
         let result = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in GrafttyPOSIX.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         guard result == 0 else {
             let savedErrno = errno
@@ -295,14 +295,7 @@ enum SocketClient {
         sendTimeoutSeconds: Int = socketSendTimeoutSeconds,
         receiveTimeoutSeconds: Int = socketTimeoutSeconds
     ) -> Bool {
-        var noSigPipe: Int32 = 1
-        let noSigPipeResult = setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSigPipe,
-            socklen_t(MemoryLayout<Int32>.size)
-        )
+        let noSigPipeResult = GrafttyPOSIX.configureNoSigPipe(fd)
 
         var sendTimeout = timeval(tv_sec: sendTimeoutSeconds, tv_usec: 0)
         let sendResult = setsockopt(

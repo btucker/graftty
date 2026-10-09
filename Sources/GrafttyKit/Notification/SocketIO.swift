@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Loop-and-retry write helper for file descriptors: loops on partial
 /// writes, retries on EINTR, throws on other errors.
@@ -35,7 +39,7 @@ public enum SocketIO {
     ) throws {
         var offset = 0
         while offset < count {
-            let n = Darwin.write(fd, bytes.advanced(by: offset), count - offset)
+            let n = GrafttyPOSIX.write(fd, bytes.advanced(by: offset), count - offset)
             if n < 0 {
                 if errno == EINTR { continue }
                 throw WriteError.writeFailed(errno: errno)
@@ -99,7 +103,7 @@ public enum SocketIO {
         var chunk = [UInt8](repeating: 0, count: 4096)
         while buffer.count < limit {
             let toRead = min(chunk.count, limit - buffer.count)
-            let n = Darwin.read(fd, &chunk, toRead)
+            let n = GrafttyPOSIX.read(fd, &chunk, toRead)
             if n < 0 {
                 if errno == EINTR { continue }
                 return (buffer, errno)

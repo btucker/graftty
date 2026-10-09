@@ -57,7 +57,7 @@ public struct CodexHomeMirror: Sendable {
         defer {
             #if canImport(Darwin)
             _ = flock(lockFD, LOCK_UN)
-            _ = Darwin.close(lockFD)
+            _ = GrafttyPOSIX.close(lockFD)
             #elseif canImport(Glibc)
             _ = flock(lockFD, LOCK_UN)
             _ = Glibc.close(lockFD)
@@ -172,7 +172,7 @@ public struct CodexHomeMirror: Sendable {
         let path = mirrorDirectory.appendingPathComponent(".graftty-mirror.lock").path
         let permissions = S_IRUSR | S_IWUSR
         #if canImport(Darwin)
-        let fd = Darwin.open(path, O_RDWR | O_CREAT, permissions)
+        let fd = GrafttyPOSIX.open(path, O_RDWR | O_CREAT, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(path, O_RDWR | O_CREAT, mode_t(permissions))
         #else
@@ -182,7 +182,7 @@ public struct CodexHomeMirror: Sendable {
         let result = flock(fd, LOCK_EX)
         guard result == 0 else {
             #if canImport(Darwin)
-            _ = Darwin.close(fd)
+            _ = GrafttyPOSIX.close(fd)
             #elseif canImport(Glibc)
             _ = Glibc.close(fd)
             #endif
@@ -261,7 +261,7 @@ public struct CodexHomeMirror: Sendable {
     /// appears after inspection is preserved instead of recursively deleted.
     private func removeNonDirectoryEntry(at url: URL) throws {
         #if canImport(Darwin)
-        let result = url.path.withCString { Darwin.unlink($0) }
+        let result = url.path.withCString { GrafttyPOSIX.unlink($0) }
         #elseif canImport(Glibc)
         let result = url.path.withCString { Glibc.unlink($0) }
         #endif

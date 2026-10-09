@@ -1,9 +1,21 @@
 import Foundation
 import ImageIO
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 import UniformTypeIdentifiers
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 public enum ProjectIconDiscovery {
     /// Samples opaque, colorful pixels; white icon backgrounds do not wash out the rail tint.

@@ -76,7 +76,7 @@ public final class TeamEventLog: @unchecked Sendable {
         // serializes the JSONEncoder; this gives us cross-process safety.
         let permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
         #if canImport(Darwin)
-        let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_APPEND, permissions)
+        let fd = GrafttyPOSIX.open(url.path, O_WRONLY | O_CREAT | O_APPEND, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(url.path, O_WRONLY | O_CREAT | O_APPEND, mode_t(permissions))
         #endif
@@ -89,7 +89,7 @@ public final class TeamEventLog: @unchecked Sendable {
             var offset = 0
             while offset < rawBuffer.count {
                 #if canImport(Darwin)
-                let written = Darwin.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
+                let written = GrafttyPOSIX.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
                 #elseif canImport(Glibc)
                 let written = Glibc.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
                 #endif

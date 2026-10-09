@@ -338,8 +338,19 @@ public struct AppState: Codable, Sendable, Equatable {
     }
 
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #if os(Linux)
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment["GRAFTTY_STATE_DIR"], override.hasPrefix("/") {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        if let data = environment["XDG_DATA_HOME"], data.hasPrefix("/") {
+            return URL(fileURLWithPath: data, isDirectory: true).appendingPathComponent("graftty", isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/graftty", isDirectory: true)
+        #else
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty")
+        #endif
     }
 
     /// Snapshot of every `.running` worktree's split tree, keyed by path.

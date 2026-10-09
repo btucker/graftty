@@ -156,8 +156,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     /// The production default storage directory.
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Graftty")
+        AppState.defaultDirectory
             .appendingPathComponent("Remote")
     }
 

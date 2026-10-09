@@ -29,10 +29,31 @@ let strictWarnings: [SwiftSetting] = [
     .unsafeFlags(["-warnings-as-errors"], .when(configuration: .debug)),
 ] + (localGhosttyPath == nil ? [] : [.define("GRAFTTY_PAGED_HISTORY")])
 
+#if os(Linux)
+let isLinux = true
+let appleDependencies: [Package.Dependency] = []
+let appleKitDependencies: [Target.Dependency] = []
+let webRTCDependencies: [Target.Dependency] = []
+#else
+let isLinux = false
+let appleDependencies: [Package.Dependency] = [
+    ghosttyDependency,
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    .package(url: "https://github.com/stasel/WebRTC.git", from: "137.0.0"),
+]
+let appleKitDependencies: [Target.Dependency] = [.product(name: "Sparkle", package: "Sparkle")]
+let webRTCDependencies: [Target.Dependency] = [.product(name: "WebRTC", package: "WebRTC")]
+#endif
+let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package: "swift-crypto")]
+let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift", "Model/ProjectIconDiscovery.swift",
+                          "Ports/PortBindingsModel.swift"]
+let appleTargets: Set<String> = ["Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
+                               "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests"]
+
 let package = Package(
     name: "Graftty",
     platforms: [.macOS(.v14), .iOS(.v17)],
-    products: [
+    products: ([
         .executable(name: "Graftty", targets: ["Graftty"]),
         // Product name "graftty-cli" (not "graftty") to avoid case-insensitive
         // filesystem collision with the "Graftty" app binary. When the app is
@@ -43,26 +64,27 @@ let package = Package(
         // insensitive volumes. See `BundlePathSanitizer` for the runtime
         // PATH override that protects spawned panes from the same trap.
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
+        .executable(name: "graftty-host", targets: ["GrafttyHost"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
-    ],
+    ] as [Product]).filter { !isLinux || !["Graftty", "GrafttyCommandUI", "GrafttyMobileKit"].contains($0.name) },
     dependencies: [
-        ghosttyDependency,
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
-        .package(url: "https://github.com/stasel/WebRTC.git", from: "137.0.0"),
-    ],
-    targets: [
+    ] + appleDependencies,
+    targets: ([
         .target(
             name: "GrafttyProtocol",
+            dependencies: cryptoDependencies,
+            exclude: isLinux ? ["UI"] : [],
             swiftSettings: strictWarnings
         ),
         .target(
@@ -82,9 +104,9 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
-                .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
-            ],
+            ] + appleKitDependencies + cryptoDependencies,
+            exclude: isLinux ? linuxKitExclusions : [],
             resources: [
                 .copy("Web/Resources"),
                 .copy("AgentPlugins"),
@@ -102,6 +124,7 @@ let package = Package(
             name: "GrafttyTunnel",
             dependencies: [
                 .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
             ],
             swiftSettings: strictWarnings
@@ -115,8 +138,7 @@ let package = Package(
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOExtras", package: "swift-nio-extras"),
-                .product(name: "WebRTC", package: "WebRTC"),
-            ],
+            ] + webRTCDependencies + cryptoDependencies,
             swiftSettings: strictWarnings
         ),
         .target(
@@ -130,8 +152,7 @@ let package = Package(
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
-                .product(name: "WebRTC", package: "WebRTC"),
-            ],
+            ] + webRTCDependencies + cryptoDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(
@@ -146,6 +167,12 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
             ],
+            swiftSettings: strictWarnings
+        ),
+        .executableTarget(
+            name: "GrafttyHost",
+            dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyHostAgent",
+                           .product(name: "ArgumentParser", package: "swift-argument-parser")] + cryptoDependencies,
             swiftSettings: strictWarnings
         ),
         .executableTarget(
@@ -164,7 +191,8 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyProtocolTests",
-            dependencies: ["GrafttyProtocol"],
+            dependencies: ["GrafttyProtocol"] + cryptoDependencies,
+            exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],
             swiftSettings: strictWarnings
         ),
         .testTarget(
@@ -182,7 +210,8 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyKitTests",
-            dependencies: ["GrafttyKit", "GrafttyProtocol"],
+            dependencies: ["GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
+            sources: isLinux ? ["Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),
@@ -214,8 +243,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
-                .product(name: "WebRTC", package: "WebRTC"),
-            ],
+            ] + webRTCDependencies + cryptoDependencies,
             swiftSettings: strictWarnings
         ),
         .testTarget(
@@ -230,5 +258,13 @@ let package = Package(
             exclude: ["README.md"],
             swiftSettings: strictWarnings
         ),
-    ]
+    ] as [Target]).filter { !isLinux || !appleTargets.contains($0.name) } + (isLinux ? [
+        .testTarget(
+            name: "GrafttyDirectSSHTests",
+            dependencies: ["GrafttyHostAgent", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
+            path: "Tests/GrafttyTests/Remote/SSH",
+            sources: ["DirectSSHLoopbackTests.swift"],
+            swiftSettings: strictWarnings
+        ),
+    ] : [])
 )
