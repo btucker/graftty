@@ -66,7 +66,14 @@ final class MobileTerminalInputView: UITerminalView {
         if hasActiveStickyModifiers {
             withSystemEdit { super.deleteBackward() }
             if textContext.markedRange != nil {
-                textContext.deleteBackward()
+                // Native marked edits use their own UTF-16 deletion model.
+                // Mirror the result instead of applying another deletion.
+                let marked = super.markedTextRange
+                let text = marked.flatMap { super.text(in: $0) }
+                let selected = super.selectedTextRange
+                let start = selected.map { super.offset(from: super.beginningOfDocument, to: $0.start) } ?? 0
+                let length = selected.map { super.offset(from: $0.start, to: $0.end) } ?? 0
+                textContext.setMarkedText(text, selectedRange: NSRange(location: start, length: length))
             } else {
                 resetTextContext()
             }
@@ -195,20 +202,25 @@ final class MobileTerminalInputView: UITerminalView {
         return resigned
     }
 
-    func resetTextContext() {
-        textContext = MobileTerminalTextContext()
-        withSystemEdit { super.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0)) }
+    func resetTextContext(notifyingInputSystem: Bool = false) {
+        if notifyingInputSystem {
+            withExternalTextEdit { clearTextContext() }
+        } else {
+            clearTextContext()
+        }
     }
 
     func commitAndResetTextContext() {
-        unmarkText()
-        resetTextContext()
+        withExternalTextEdit {
+            unmarkText()
+            clearTextContext()
+        }
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // Hardware navigation can move the remote cursor outside our software
         // input context. Ghostty still owns all physical-key translation.
-        if textContext.markedRange == nil { resetTextContext() }
+        if textContext.markedRange == nil { resetTextContext(notifyingInputSystem: true) }
         super.pressesBegan(presses, with: event)
     }
 
@@ -260,6 +272,22 @@ final class MobileTerminalInputView: UITerminalView {
         defer { systemEditDepth -= 1 }
         edit()
     }
+
+    private func clearTextContext() {
+        textContext = MobileTerminalTextContext()
+        withSystemEdit { super.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0)) }
+    }
+
+    private func withExternalTextEdit(_ edit: () -> Void) {
+        // External controls invalidate positions cached by UIKit. Capture the
+        // delegate before committing, since control text can clear the context.
+        let delegate = textContext.text.isEmpty ? nil : inputDelegate
+        delegate?.textWillChange(self)
+        delegate?.selectionWillChange(self)
+        edit()
+        delegate?.selectionDidChange(self)
+        delegate?.textDidChange(self)
+    }
 }
 
 private struct MobileTerminalTextContext {
@@ -285,14 +313,24 @@ private struct MobileTerminalTextContext {
         // UIKit can correct an earlier hypothesis while composing the next
         // word. A disjoint replacement must not commit that pending word.
         if let previousMark {
+            let delta = replacement.utf16.count - range.length
+            let newLength = length
+            func revisedPosition(_ index: Int) -> Int {
+                let revised: Int
+                if index < range.location { revised = index }
+                else if index >= NSMaxRange(range) { revised = index + delta }
+                else { revised = range.location + replacement.utf16.count }
+                return min(max(revised, 0), newLength)
+            }
+            let selectedStart = revisedPosition(previousSelection.location)
+            let selectedEnd = revisedPosition(NSMaxRange(previousSelection))
+            let revisedSelection = NSRange(location: selectedStart, length: selectedEnd - selectedStart)
             if NSMaxRange(range) <= previousMark.location {
-                let delta = replacement.utf16.count - range.length
                 markedRange = NSRange(location: previousMark.location + delta, length: previousMark.length)
-                let selectionDelta = previousSelection.location >= NSMaxRange(range) ? delta : 0
-                selection = NSRange(location: previousSelection.location + selectionDelta, length: previousSelection.length)
+                selection = revisedSelection
             } else if range.location >= NSMaxRange(previousMark) {
                 markedRange = previousMark
-                selection = previousSelection
+                selection = revisedSelection
             }
         }
     }

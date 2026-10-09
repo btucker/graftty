@@ -225,7 +225,79 @@ struct TerminalPaneViewTests {
         #expect(view.stickyActivation(for: .ctrl) == .armed)
         #expect(view.markedTextRange == nil)
     }
+
+    @Test("Sticky marked-text deletion retains Ghostty's native text and selection")
+    func stickyMarkedDeletionMatchesNativeContext() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.setMarkedText("👋🏽", selectedRange: NSRange(location: 4, length: 0))
+        view.toggleStickyModifier(.ctrl)
+        view.deleteBackward()
+        let nativeRange = try #require(view.inputHandler.markedTextRange())
+        let nativeText = try #require(view.inputHandler.text(in: nativeRange))
+        #expect(view.text(in: try #require(view.markedTextRange)) == nativeText)
+        let nativeSelection = view.inputHandler.selectedTextRange()
+        #expect(view.offset(from: view.beginningOfDocument, to: try #require(view.selectedTextRange).start) == nativeSelection.location)
+        view.unmarkText()
+        #expect(texts == [nativeText])
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+    }
     #endif
+
+    @Test("Prefix revisions keep a selection inside removed text within the document")
+    func prefixRevisionClampsRemovedSelection() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.insertText("abcdefghij")
+        view.setMarkedText("x", selectedRange: NSRange(location: 1, length: 0))
+        let caret = try #require(view.position(from: view.beginningOfDocument, offset: 5))
+        view.selectedTextRange = view.textRange(from: caret, to: caret)
+        let prefixEnd = try #require(view.position(from: view.beginningOfDocument, offset: 10))
+        view.replace(try #require(view.textRange(from: view.beginningOfDocument, to: prefixEnd)), withText: "")
+        let selected = try #require(view.selectedTextRange)
+        #expect(view.offset(from: view.beginningOfDocument, to: selected.start) == 0)
+        #expect(view.offset(from: view.beginningOfDocument, to: selected.end) <= 1)
+        // Validate the selection before passing it to NSString insertion.
+        try #require(view.offset(from: view.beginningOfDocument, to: selected.end) <= 1)
+        view.unmarkText()
+        view.insertText("y")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == "yx")
+    }
+
+    @Test("External terminal controls notify UIKit when they reset input context")
+    func externalInputContextResetNotifiesUIKit() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        let delegate = NativeInputDelegateSpy()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.inputDelegate = delegate
+        view.insertText("first")
+        #expect(delegate.events.isEmpty)
+        view.commitAndResetTextContext()
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        delegate.events.removeAll()
+        view.commitAndResetTextContext()
+        view.insertText("next")
+        #expect(delegate.events.isEmpty)
+        // Physical input clears context before Ghostty delegates Return.
+        view.pressesBegan([], with: nil)
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        delegate.events.removeAll()
+        view.setMarkedText("pending", selectedRange: NSRange(location: 7, length: 0))
+        #expect(container.terminalView(view, handleHardwareKey: TerminalHardwareKeyEvent(
+            usage: UInt16(UIKeyboardHIDUsage.keyboardA.rawValue), characters: "\u{01}",
+            charactersIgnoringModifiers: "a", modifierFlags: [.control]
+        )))
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        #expect(view.markedTextRange == nil)
+        delegate.events.removeAll()
+        view.setMarkedText("pending\n", selectedRange: NSRange(location: 8, length: 0))
+        view.commitAndResetTextContext()
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+    }
 
     @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
     func terminalPaddingTracksMeasuredRows() {

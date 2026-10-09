@@ -979,7 +979,7 @@ public final class TerminalInputContainerView: UIView,
                   let byte = hardwareControlByte(for: event),
                   let committedInput = storedCommittedSoftwareInput
             else { return false }
-            terminalView.resetTextContext()
+            terminalView.resetTextContext(notifyingInputSystem: true)
             if let insertControlByte = committedInput.insertControlByte {
                 insertControlByte(byte)
             } else {
