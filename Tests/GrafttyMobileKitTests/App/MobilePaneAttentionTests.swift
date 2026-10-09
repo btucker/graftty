@@ -5,6 +5,7 @@ import Testing
 @testable import GrafttyMobileKit
 #if canImport(UIKit)
 import SwiftUI
+import UIKit
 #endif
 
 @Suite("Pane Attention navigation")
@@ -157,6 +158,89 @@ struct SidebarWorktreeReportOrderTests {
 @MainActor
 @Suite("@spec IOS-4.34: When the user taps Back from a mobile terminal, the application shall return to the worktree list regardless of pending work, preserving pending-work navigation as a separate action.")
 struct TerminalBackNavigationTests {
+    @Test("@spec IOS-4.44: When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.", arguments: [false, true])
+    func rightSwipeReturnsToWorktrees(hasPendingWork: Bool) throws {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let current = worktree("current", pending: false)
+        let other = worktree("other", pending: hasPendingWork)
+        let navigation = SidebarNavigationState(prefix: "terminal-swipe.\(UUID())")
+        let project = SidebarProjection.projects([current, other])[0]
+        navigation.showProject(project.id)
+        navigation.query = "keep this search"
+        let step = SessionStep(host: host, worktreePath: current.path, sessionName: "s", title: "Shell", worktreeProject: project)
+        let pickerPath = step.worktreePickerPath(showsProjectRail: true)
+        var path = pickerPath
+        path.append(WorktreeStep(host: host, worktree: current, project: project))
+        path.append(step)
+        let view = SingleSessionView(step: step, navigationPath: Binding(get: { path }, set: { path = $0 }),
+            sidebarNavigation: navigation, attentionWorktrees: [current, other])
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 120, height: 24), measuredGrid: CGSize(width: 120, height: 24),
+            measuredPixels: CGSize(width: 1200, height: 480), cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 1, container: container.bounds.size))
+        container.snapshotScrollView.configure(canvas: canvas, nativeRowHeight: 20, columns: 120)
+        container.onBackRequested = try #require(view.terminalBackSwipeAction)
+        let swipe = try #require(container.gestureRecognizers?.compactMap { $0 as? UISwipeGestureRecognizer }.first)
+        #expect(swipe.direction == .right)
+        #expect(swipe.numberOfTouchesRequired == 1)
+        #expect(swipe.allowedTouchTypes == [NSNumber(value: UITouch.TouchType.direct.rawValue)])
+        #expect(swipe.isEnabled)
+        #expect(container.snapshotScrollView.panGestureRecognizer.isEnabled)
+        let pending = MobilePaneAttention.pendingCount(worktrees: [current, other], currentWorktree: current.path, navigation: navigation)
+        container.handleBackSwipe(TerminalBackSwipeStub())
+        #expect(path == pickerPath)
+        #expect(navigation.query == "keep this search")
+        #expect(MobilePaneAttention.pendingRoute(for: navigation) == nil)
+        #expect(MobilePaneAttention.pendingCount(worktrees: [current, other], currentWorktree: current.path, navigation: navigation) == pending)
+    }
+
+    @Test("Terminal swipe-back leaves selection and zoom gestures in control")
+    func selectionAndZoomDoNotNavigateBack() throws {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let swipe = try #require(container.gestureRecognizers?.compactMap { $0 as? UISwipeGestureRecognizer }.first)
+        #expect(!swipe.isEnabled)
+        var backCount = 0
+        container.onBackRequested = { backCount += 1 }
+        let event = TerminalBackSwipeStub()
+        event.phase = .cancelled
+        container.handleBackSwipe(event)
+        #expect(backCount == 0)
+        event.phase = .ended
+        container.selectionController.beginSelection(at: .zero)
+        container.enterSelectionModeForTesting()
+        #expect(!swipe.isEnabled)
+        container.handleBackSwipe(event)
+        #expect(backCount == 0)
+        container.cancelActiveSelectionIfAny()
+        #expect(swipe.isEnabled)
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 80, height: 24), measuredGrid: CGSize(width: 80, height: 24),
+            measuredPixels: CGSize(width: 800, height: 480), cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 1, container: container.bounds.size))
+        container.snapshotScrollView.configure(canvas: canvas, nativeRowHeight: 20, columns: 80)
+        container.snapshotScrollView.setFollowerZoomScale(2, around: .zero)
+        #expect(!container.gestureRecognizerShouldBegin(swipe))
+        container.handleBackSwipe(event)
+        #expect(backCount == 0)
+        container.snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
+        container.handleBackSwipe(event)
+        #expect(backCount == 1)
+        container.onBackRequested = nil
+        #expect(!swipe.isEnabled)
+        container.handleBackSwipe(event)
+        #expect(backCount == 1)
+    }
+
+    @Test("Embedded terminal panes do not take over rightward drags")
+    func embeddedPaneDoesNotOfferSwipeBack() {
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        let view = SingleSessionView(step: .init(host: host, sessionName: "s", title: "Shell"),
+            navigationPath: .constant(NavigationPath()), isFullScreen: false, isEmbeddedPane: true,
+            onBackToWorktrees: {})
+        #expect(view.terminalBackSwipeAction == nil)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func returnsToProjectWorktrees(hasPendingWork: Bool, throughPaneDetail: Bool) {
         let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
@@ -435,6 +519,15 @@ struct TerminalBackNavigationTests {
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
             sidebar: .init(id: name, projectID: projectID, unseenAgentStop: pending
                 ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100)) : nil))
+    }
+}
+
+@MainActor
+private final class TerminalBackSwipeStub: UISwipeGestureRecognizer {
+    var phase: UIGestureRecognizer.State = .ended
+    override var state: UIGestureRecognizer.State {
+        get { phase }
+        set { phase = newValue }
     }
 }
 #endif

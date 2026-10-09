@@ -1884,6 +1884,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.43** When GrafttyMobile sends an owner resize, the application shall include the terminal's pixel width and height derived from its cell pixel size so the host PTY reports the phone's real pixel geometry.
 
+**IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -1902,7 +1904,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-5.11** When a mobile transport is suspended while draining output for a grid announcement, the application shall reject that announcement after a replacement transport starts.
 
-**IOS-5.12** While a mobile preview has spare height above a follower's live screen, the application shall display resident scrollback in that space while preserving the source grid.
+**IOS-5.12** While a mobile follower has spare height above its live screen, the application shall display resident scrollback in that space while preserving the source grid.
 
 **IOS-5.13** When a follower receives output after a viewport resize callback, the application shall confirm native parser grid readiness before parsing that output, even if the callback already reports the target dimensions.
 

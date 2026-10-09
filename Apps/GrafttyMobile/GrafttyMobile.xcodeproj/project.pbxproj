@@ -56,6 +56,7 @@
 		9CAB4286C051BF25058BBD67 /* MobilePaneAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194EE3FE3BE63175CDFFFD56 /* MobilePaneAttentionTests.swift */; };
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		A15C2184ACE671D1B5A9E657 /* SSHAuthLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */; };
+		A2A8FAB0407FCC81AF649074 /* TerminalPixelSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */; };
 		A77DDE00B4FF88B06FF11917 /* HostBrowserProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5626A070A0C3905C8C2046 /* HostBrowserProxyTests.swift */; };
 		A9B90654E94B1FE3C676A16F /* TerminalChromeViewportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */; };
 		A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */; };
@@ -125,6 +126,7 @@
 		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
 		6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCapTests.swift; sourceTree = "<group>"; };
 		699F43C0FB75C3234C6AC7A2 /* PanePreviewFontSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontSizingTests.swift; sourceTree = "<group>"; };
+		712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPixelSizeTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		79B8AF262726BA932EB21841 /* LocalPairingClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPairingClientTests.swift; sourceTree = "<group>"; };
 		7B611132035C165929688C4F /* SessionWebSocketURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionWebSocketURLTests.swift; sourceTree = "<group>"; };
@@ -401,6 +403,7 @@
 				FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */,
 				FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */,
 				D413CBEB234098C16C875AD8 /* SignalingClientTests.swift */,
+				712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */,
 				E0006D42603096AE4265AD38 /* WakeOnLANClientTests.swift */,
 				AE01FA7EEBCE00234058C4AC /* WorktreePanesStoreTests.swift */,
 				FC7EA399ECADF096350F5971 /* SSH */,
@@ -541,6 +544,7 @@
 				7AFDAA518770492774B2E8EE /* SSHSubsystemReplyWaiterTests.swift in Sources */,
 				CE7895E804A9365622D8D33C /* SSHTerminalLoopbackTests.swift in Sources */,
 				4B38C2405596292D4C4B6686 /* SignalingClientTests.swift in Sources */,
+				A2A8FAB0407FCC81AF649074 /* TerminalPixelSizeTests.swift in Sources */,
 				92ED4CF18B75197386D16245 /* TerminalReceiveBufferTests.swift in Sources */,
 				C7FBCF8C3DA2DB5BA749DAAE /* WakeOnLANClientTests.swift in Sources */,
 				67FA72D35A82F03F6CF62CB3 /* WorktreeManagementRequestLifecycleTests.swift in Sources */,

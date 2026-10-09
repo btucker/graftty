@@ -871,6 +871,7 @@ struct SingleSessionView: View {
             }
             .task(id: dialKey) { await observeAttention() }
             .onDisappear {
+                paneContainerBox.view?.onBackRequested = nil
                 paneContainerBox.view?.resetStickyModifiers()
                 paneContainerBox.view?.terminalView.resignFirstResponder()
                 if let retainedPanes { retainedPanes.cached(retainedPaneKey)?.detachControls() }
@@ -1121,6 +1122,10 @@ struct SingleSessionView: View {
         }
         guard !navigationPath.isEmpty else { return }
         navigationPath = step.worktreePickerPath(showsProjectRail: showsProjectRail)
+    }
+
+    var terminalBackSwipeAction: (() -> Void)? {
+        isFullScreen ? popToParent : nil
     }
 
     @ViewBuilder
@@ -1377,6 +1382,7 @@ struct SingleSessionView: View {
             onPasteRequested: { [weak client] in
                 client?.pasteFromClipboard()
             },
+            onBackRequested: terminalBackSwipeAction,
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
                 retainedPanes?.cached(retainedPaneKey)?.container = view

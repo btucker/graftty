@@ -97,6 +97,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// `RootView` wires this to read `UIPasteboard.general.string` and
     /// forward to `SessionClient.sendPaste(_:)`. (IOS-11.8)
     public let onPasteRequested: (() -> Void)?
+    public let onBackRequested: (() -> Void)?
     /// Captures the live `TerminalInputContainerView` so the SwiftUI
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
@@ -119,6 +120,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onPasteRequested: (() -> Void)? = nil,
+        onBackRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
         retainedContainer: TerminalInputContainerView? = nil
     ) {
@@ -137,6 +139,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onFontSizeChange = onFontSizeChange
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onPasteRequested = onPasteRequested
+        self.onBackRequested = onBackRequested
         self.captureContainer = captureContainer
         self.retainedContainer = retainedContainer
     }
@@ -178,6 +181,7 @@ public struct TerminalPaneView: UIViewRepresentable {
             onChange: onFontSizeChange
         )
         view.onPasteRequested = onPasteRequested
+        view.onBackRequested = onBackRequested
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -199,6 +203,7 @@ public struct TerminalPaneView: UIViewRepresentable {
             onChange: onFontSizeChange
         )
         view.onPasteRequested = onPasteRequested
+        view.onBackRequested = onBackRequested
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }
@@ -397,6 +402,11 @@ public final class TerminalInputContainerView: UIView,
     /// without host output, so a finger on the surface must count as
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
+    /// Only fullscreen routes install this action; retained and embedded panes
+    /// release it so a later drag cannot navigate a stale SwiftUI route.
+    public var onBackRequested: (() -> Void)? {
+        didSet { updateTerminalGestureEnablement() }
+    }
     private var configuredFontSize: Float?
     private var observedFontSize: Float?
     private var observedPinchScale: CGFloat = 1
@@ -555,6 +565,15 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
     private var selectionPanStartedInViewport = false
+    private lazy var backSwipeRecognizer: UISwipeGestureRecognizer = {
+        let recognizer = UISwipeGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
+        recognizer.direction = .right
+        recognizer.numberOfTouchesRequired = 1
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        recognizer.delegate = self
+        recognizer.isEnabled = false
+        return recognizer
+    }()
 
     /// Captures the most-recent long-press location so the menu's
     /// `Select` action can word-select at the original touch point even
@@ -615,6 +634,13 @@ public final class TerminalInputContainerView: UIView,
         addInteraction(selectionMenu)
         addGestureRecognizer(selectionPanRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
+        addGestureRecognizer(backSwipeRecognizer)
+        snapshotScrollView.panGestureRecognizer.require(toFail: backSwipeRecognizer)
+        for pan in terminalView.gestureRecognizers?.compactMap({ $0 as? UIPanGestureRecognizer }) ?? [] {
+            if pan.allowedTouchTypes.contains(NSNumber(value: UITouch.TouchType.direct.rawValue)) {
+                pan.require(toFail: backSwipeRecognizer)
+            }
+        }
         addGestureRecognizer(anyTouchObserver)
     }
 
@@ -762,6 +788,7 @@ public final class TerminalInputContainerView: UIView,
     /// Selection and the checkpoint canvas can both suppress pinch. Restore
     /// each original state only after both restrictions have been released.
     private func updateTerminalGestureEnablement() {
+        backSwipeRecognizer.isEnabled = onBackRequested != nil && !selectionController.isActive
         snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil && !selectionPanRecognizer.isEnabled
         for recognizer in terminalView.gestureRecognizers ?? [] {
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
@@ -1090,6 +1117,18 @@ public final class TerminalInputContainerView: UIView,
         }
     }
 
+    public override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === backSwipeRecognizer else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+        return onBackRequested != nil && !selectionController.isActive
+            && snapshotScrollView.followerZoomScale == 1
+    }
+
+    @objc func handleBackSwipe(_ recognizer: UISwipeGestureRecognizer) {
+        guard recognizer.state == .ended, onBackRequested != nil,
+              !selectionController.isActive, snapshotScrollView.followerZoomScale == 1 else { return }
+        onBackRequested?()
+    }
+
     func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
         let normalizedModifiers = modifierFlags.appCommandModifiers
         guard let command = effectiveHardwareKeyboardCommands.first(where: {
@@ -1110,6 +1149,8 @@ public final class TerminalInputContainerView: UIView,
         ))
     }
 }
+
+extension TerminalInputContainerView: UIGestureRecognizerDelegate { }
 
 extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegate {
     /// @spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
