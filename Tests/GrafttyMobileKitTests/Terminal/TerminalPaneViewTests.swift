@@ -57,6 +57,176 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
+    @Test("@spec IOS-6.27: While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.")
+    func dictationRetainsCommittedTextAndAppliesRevisions() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view: any UITextInput = container.terminalView
+        let delegate = NativeInputDelegateSpy()
+        var output = ""
+        container.committedSoftwareInput = .init(
+            insertText: { output += $0 },
+            deleteBackward: { if !output.isEmpty { output.unicodeScalars.removeLast() } }
+        )
+        view.inputDelegate = delegate
+
+        view.insertText("first")
+        let firstEnd = view.endOfDocument
+        #expect(view.offset(from: view.beginningOfDocument, to: firstEnd) == 5)
+        let first = try #require(view.textRange(from: view.beginningOfDocument, to: firstEnd))
+        #expect(view.text(in: first) == "first")
+        #expect(view.position(from: view.beginningOfDocument, offset: 5) != nil)
+
+        // Dictation may replace its prior hypothesis with a longer phrase.
+        view.replace(first, withText: "first second")
+        view.insertText(" 👋🏽")
+        let whole = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        #expect(view.text(in: whole) == "first second 👋🏽")
+        #expect(output == "first second 👋🏽")
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == output.utf16.count)
+        view.deleteBackward()
+        #expect(output == "first second 👋")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == output)
+        let phrase = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        view.replace(phrase, withText: "first third")
+        #expect(output == "first third")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == output)
+        #expect(delegate.events.isEmpty)
+
+        container.terminalView.resignFirstResponder()
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+    }
+
+    @Test("Native composition retains earlier committed dictation context")
+    func compositionFollowsCommittedDictationText() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view: any UITextInput = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.insertText("first ")
+        view.setMarkedText("second", selectedRange: NSRange(location: 6, length: 0))
+        let marked = try #require(view.markedTextRange)
+        #expect(view.offset(from: view.beginningOfDocument, to: marked.start) == 6)
+        #expect(view.text(in: marked) == "second")
+        #expect(texts == ["first "])
+        view.unmarkText()
+        #expect(view.markedTextRange == nil)
+        #expect(texts == ["first ", "second"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 12)
+        view.insertText(" third")
+        #expect(texts == ["first ", "second", " third"])
+    }
+
+    @Test("Software Return and lost input eligibility clear dictation context")
+    func dictationContextEndsAtTerminalCommandBoundaries() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: { deletes += 1 })
+        view.insertText("first")
+        view.insertText("\n")
+        #expect(texts == ["first", "\n"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        // The remote prompt can contain text outside this local context.
+        view.deleteBackward()
+        #expect(deletes == 1)
+        view.insertText("next")
+        container.committedSoftwareInput = nil
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        view.insertText("ignored")
+        #expect(texts == ["first", "\n", "next"])
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    @Test("Sticky Ctrl replacements and deletes bypass retained dictation text", arguments: [true, false])
+    func stickyControlDoesNotReviseDictationContext(replacing: Bool) throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: { deletes += 1 })
+        view.insertText("abc")
+        view.toggleStickyModifier(.ctrl)
+        if replacing {
+            let range = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+            view.replace(range, withText: "c")
+        } else {
+            view.deleteBackward()
+        }
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        #expect(texts == ["abc"])
+        #expect(deletes == 0)
+        #expect(view.stickyActivation(for: .ctrl) == .inactive)
+    }
+    #endif
+
+    @Test("Correcting committed dictation preserves a separate active composition")
+    func correctingCommittedWordPreservesComposition() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var output = ""
+        container.committedSoftwareInput = .init(
+            insertText: { output += $0 }, deleteBackward: { if !output.isEmpty { output.unicodeScalars.removeLast() } }
+        )
+        view.insertText("first ")
+        view.setMarkedText("secon", selectedRange: NSRange(location: 5, length: 0))
+        let end = try #require(view.position(from: view.beginningOfDocument, offset: 5))
+        let word = try #require(view.textRange(from: view.beginningOfDocument, to: end))
+        view.replace(word, withText: "First")
+        #expect(output == "First ")
+        #expect(view.markedTextRange != nil)
+        view.setMarkedText("second", selectedRange: NSRange(location: 6, length: 0))
+        view.unmarkText()
+        #expect(output == "First second")
+    }
+
+    @Test("Hardware command dispatch clears prior software dictation context")
+    func hardwareReturnEndsDictationContext() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.insertText("first")
+        container.performHardwareKeyboardCommandForTesting(input: "\r", modifierFlags: [])
+        #expect(texts == ["first", "\r"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+    }
+
+    @Test("Menu paste clears dictation context before inserting remote text")
+    func menuPasteEndsDictationContext() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.insertText("first")
+        var contextLengthAtPaste: Int?
+        container.onPasteRequested = {
+            contextLengthAtPaste = view.offset(from: view.beginningOfDocument, to: view.endOfDocument)
+        }
+        container.performPasteForTesting()
+        #expect(contextLengthAtPaste == 0)
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    @Test("Arming Ctrl preserves marked text while selecting and deleting it")
+    func stickyControlDoesNotTransformPendingComposition() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.setMarkedText("abc", selectedRange: NSRange(location: 3, length: 0))
+        view.toggleStickyModifier(.ctrl)
+        let selected = try #require(view.position(from: view.beginningOfDocument, offset: 2))
+        view.selectedTextRange = view.textRange(from: selected, to: selected)
+        view.deleteBackward()
+        #expect(view.text(in: try #require(view.markedTextRange)) == "ac")
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+        view.commitAndResetTextContext()
+        #expect(texts == ["ac"])
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+        #expect(view.markedTextRange == nil)
+    }
+    #endif
+
     @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
     func terminalPaddingTracksMeasuredRows() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

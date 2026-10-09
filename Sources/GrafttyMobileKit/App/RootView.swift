@@ -1437,9 +1437,10 @@ struct SingleSessionView: View {
     /// terminal selection is active first cancels the selection
     /// (IOS-11.7). Every entry in `terminalControlBar` routes its
     /// action through this wrapper.
-    private func controlBarAction(_ body: @escaping () -> Void) -> () -> Void {
+    private func controlBarAction(_ body: @escaping () -> Void, resetsInputContext: Bool = true) -> () -> Void {
         { [paneContainerBox] in
             paneContainerBox.cancelActiveSelectionIfAny()
+            if resetsInputContext { paneContainerBox.view?.terminalView.commitAndResetTextContext() }
             body()
         }
     }
@@ -1467,7 +1468,7 @@ struct SingleSessionView: View {
         activation: TerminalInputContainerView.StickyControlActivation,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, resetsInputContext: false)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(activation == .inactive ? Color.primary : Color.accentColor)
