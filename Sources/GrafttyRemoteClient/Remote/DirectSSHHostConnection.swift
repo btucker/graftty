@@ -1,7 +1,7 @@
 #if canImport(CryptoKit)
 import CryptoKit
 #else
-import Crypto
+@preconcurrency import Crypto
 #endif
 import Foundation
 import GrafttyProtocol
@@ -68,9 +68,9 @@ public actor DirectSSHHostConnection {
             guard !state.isTerminal, channel.isActive else { throw ChannelError.ioOnClosedChannel }
             setState(.connected)
         } catch {
+            setState(.failed(reason: String(describing: error)))
             try? await connectingChannel?.close().get()
             await disposeTransport()
-            setState(.failed(reason: String(describing: error)))
             throw error
         }
     }
@@ -138,6 +138,8 @@ public actor DirectSSHHostConnection {
 
     public func close() async { setState(.closed); await disposeTransport() }
     private func transportClosed() async {
+        // Negotiation owns failure reporting until it has returned successfully.
+        guard state == .connected else { return }
         setState(.closed)
         await disposeTransport()
     }

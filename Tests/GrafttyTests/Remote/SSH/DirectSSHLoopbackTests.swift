@@ -92,6 +92,18 @@ struct DirectSSHLoopbackTests {
         await server.close()
     }
 
+    @Test("@spec REMOTE-20.11: If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.", .timeLimit(.minutes(1)))
+    func negotiationFailureRemainsFailed() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client(fingerprint: RemoteIdentityFingerprint(rawBytes: Data(repeating: 0, count: 32)))
+        await #expect(throws: PinnedHostKeyError.self) { try await client.connect(host: "127.0.0.1", port: port) }
+        if case .failed = await client.state {} else { Issue.record("Negotiation failure became a graceful close") }
+        await client.close(); await server.close()
+    }
+
     @Test("@spec REMOTE-20.7: When a paired peer reconnects over direct SSH, the application shall authenticate a fresh session and prevent stale teardown from closing the replacement.", .timeLimit(.minutes(1)))
     func reconnectReplacesOnlySamePeer() async throws {
         let f = Fixture(); defer { f.cleanup() }

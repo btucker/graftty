@@ -73,6 +73,7 @@ public actor DirectSSHHostServer {
     public func start(host: String = "0.0.0.0", port: Int = defaultPort) async throws -> Int {
         guard listener == nil, !starting else { throw ServerError.alreadyStarted }
         guard (0...65535).contains(port) else { throw ServerError.invalidPort }
+        try Task.checkCancellation()
         starting = true
         generation &+= 1
         let generation = generation
@@ -114,6 +115,7 @@ public actor DirectSSHHostServer {
                         try channel.pipeline.syncOperations.addHandler(DirectSSHErrorHandler())
                     }
                 }.bind(host: host, port: port).get()
+            try Task.checkCancellation()
             guard self.generation == generation else {
                 try? await channel.close().get()
                 throw CancellationError()
