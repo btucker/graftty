@@ -60,6 +60,8 @@ jobs:
           version="${REQUESTED_VERSION#v}"
           if [ -z "$version" ]; then version="ci-${GITHUB_SHA:0:12}"; fi
           scripts/linux/package.sh "$version" "$GITHUB_WORKSPACE/dist"
+          GRAFTTY_LINUX_ARCHIVE="$GITHUB_WORKSPACE/dist/graftty-linux-$version-${{ matrix.arch }}.tar.gz" \
+            swift test --no-parallel --filter LinuxHostPackagingTests
       - uses: actions/upload-artifact@v4
         with:
           name: graftty-linux-${{ matrix.arch }}

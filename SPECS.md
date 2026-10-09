@@ -1366,6 +1366,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.3** When CI or a release builds Linux artifacts, the workflows shall build and verify x86_64 and aarch64 archives on Ubuntu 24.04 before release upload.
 
+**DIST-4.4** If an installed Linux host does not become ready on the requested SSH port, then the installer shall stop the replacement and restore the previously running host before reporting failure.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding

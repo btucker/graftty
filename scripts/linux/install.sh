@@ -36,7 +36,7 @@ http_port=$((10#$http_port))
 source_dir=$(cd "$(dirname "$(readlink -f -- "$0")")" && pwd)
 [[ -n ${HOME:-} && $HOME == /* ]] || { echo 'HOME must be an absolute path' >&2; exit 1; }
 version=$(cat "$source_dir/VERSION")
-[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid archive version' >&2; exit 1; }
+[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || { echo 'Invalid archive version' >&2; exit 1; }
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 [[ $data_home == /* && $config_home == /* ]] || { echo 'XDG directories must be absolute paths' >&2; exit 1; }
@@ -55,12 +55,16 @@ previous_release=""
 release_installed=0
 was_running=0
 completed=0
+replacement_started=0
 commands=(graftty graftty-host zmx)
 old_links=()
 for binary in "${commands[@]}"; do
     old_links+=("$(readlink "$HOME/.local/bin/$binary" 2>/dev/null || true)")
 done
 cleanup() {
+    if ((!completed && replacement_started)); then
+        systemctl --user stop graftty-host.service || true
+    fi
     if ((was_running && !completed)); then
         if ((release_installed)); then
             rm -rf -- "$release"
@@ -126,7 +130,23 @@ if ((start_service)); then
     "$release/bin/graftty-host" setup --json >/dev/null
     systemctl --user daemon-reload
     systemctl --user enable graftty-host.service
+    replacement_started=1
     systemctl --user restart graftty-host.service
+    ready_timeout=${GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS:-30}
+    [[ $ready_timeout =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid readiness timeout' >&2; exit 64; }
+    deadline=$((SECONDS + ready_timeout))
+    ready=0
+    running_pattern='"running"[[:space:]]*:[[:space:]]*true([,}]|[[:space:]])'
+    port_pattern="\"sshPort\"[[:space:]]*:[[:space:]]*$ssh_port([,}]|[[:space:]])"
+    while ((SECONDS < deadline)); do
+        if status=$(timeout --kill-after=1 2 "$release/bin/graftty-host" status --json 2>/dev/null) &&
+           [[ $status =~ $running_pattern && $status =~ $port_pattern ]]; then
+            ready=1
+            break
+        fi
+        sleep 0.1
+    done
+    ((ready)) || { echo 'Graftty host did not become ready on the requested SSH port' >&2; exit 1; }
 fi
 completed=1
 printf 'Installed Graftty %s in %s\n' "$version" "$release"

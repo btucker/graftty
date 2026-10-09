@@ -38,6 +38,17 @@ struct LinuxHostPackagingTests {
         #expect(process.terminationStatus == 0)
     }
 
+    @Test("@spec DIST-4.4: If an installed Linux host does not become ready on the requested SSH port, then the installer shall stop the replacement and restore the previously running host before reporting failure.")
+    func failedStartupRestoresPriorService() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "InstallerTests.test_failed_readiness_stops_replacement_before_restoring_service"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     @Test("@spec DIST-4.3: When CI or a release builds Linux artifacts, the workflows shall build and verify x86_64 and aarch64 archives on Ubuntu 24.04 before release upload.")
     func architectureWorkflowAndReleaseHandoff() throws {
         let workflow = try String(contentsOf: repository.appendingPathComponent(".github/workflows/linux.yml"), encoding: .utf8)

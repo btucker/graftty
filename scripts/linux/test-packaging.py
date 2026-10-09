@@ -21,7 +21,10 @@ class InstallerTests(unittest.TestCase):
             (self.archive / name).mkdir()
         for name in ("graftty", "graftty-host", "zmx"):
             target = self.archive / "bin" / name
-            target.write_text('#!/bin/sh\nexit 0\n')
+            target.write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
+exit 0
+""")
             target.chmod(0o755)
         (self.archive / "VERSION").write_text("0.1.0-test\n")
         shutil.copy(ROOT / "install.sh", self.archive / "install.sh")
@@ -63,6 +66,11 @@ class InstallerTests(unittest.TestCase):
             self.install("--no-start", *args, success=False)
         self.assertFalse((self.home / ".config/systemd/user/graftty-host.service").exists())
 
+    def test_semver_build_metadata_is_supported(self):
+        (self.archive / "VERSION").write_text("1.2.3+build.4\n")
+        self.install("--no-start")
+        self.assertTrue((self.home / ".local/share/graftty/releases/1.2.3+build.4/bin/graftty").exists())
+
     def test_version_cannot_escape_release_directory(self):
         (self.archive / "VERSION").write_text("..\n")
         self.install("--no-start", success=False)
@@ -100,6 +108,41 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(service.read_text(), previous_service)
         self.assertEqual((self.home / ".local/bin/graftty").readlink(), previous_cli)
         self.assertIn("exit 0", (self.home / ".local/bin/graftty-host").read_text())
+
+    def test_failed_readiness_stops_replacement_before_restoring_service(self):
+        self.install("--no-start")
+        previous_service = (self.home / ".config/systemd/user/graftty-host.service").read_text()
+        fake = self.root / "fake-bin"
+        fake.mkdir()
+        log = self.root / "operations.log"
+        systemctl = fake / "systemctl"
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\n')
+        systemctl.chmod(0o755)
+        host = self.archive / "bin/graftty-host"
+        host.write_text("""#!/bin/sh
+if [ "$1" = status ]; then echo '{"running":false,"sshPort":8801}'; fi
+exit 0
+""")
+        self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log),
+                        GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS="1")
+        self.install(success=False)
+        operations = log.read_text().splitlines()
+        restart = operations.index("--user restart graftty-host.service")
+        self.assertEqual(operations[restart + 1], "--user stop graftty-host.service")
+        self.assertEqual(operations[-1], "--user start graftty-host.service")
+        self.assertEqual((self.home / ".config/systemd/user/graftty-host.service").read_text(), previous_service)
+
+    def test_wrong_ssh_port_does_not_complete_installation(self):
+        fake = self.root / "fake-bin"
+        fake.mkdir()
+        systemctl = fake / "systemctl"
+        log = self.root / "operations.log"
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\ncase "$*" in *is-active*) exit 1 ;; esac\n')
+        systemctl.chmod(0o755)
+        self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log),
+                        GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS="1")
+        self.install("--ssh-port", "9001", success=False)
+        self.assertEqual(log.read_text().splitlines()[-1], "--user stop graftty-host.service")
 
     def test_systemd_percent_and_dollar_escaping(self):
         self.home = self.root / 'user $dollar'

@@ -2,7 +2,12 @@
 set -euo pipefail
 archive=${1:?Usage: smoke-test.sh ARCHIVE}
 archive=$(readlink -f -- "$archive")
-docker run --rm -i --mount "type=bind,source=$archive,target=/artifact.tar.gz,readonly" ubuntu:24.04 bash -s <<'SMOKE'
+case "$archive" in
+    *-aarch64.tar.gz) platform=linux/arm64 ;;
+    *-x86_64.tar.gz) platform=linux/amd64 ;;
+    *) echo 'Archive name must include its supported architecture' >&2; exit 64 ;;
+esac
+docker run --platform "$platform" --rm -i --mount "type=bind,source=$archive,target=/artifact.tar.gz,readonly" ubuntu:24.04 bash -s <<'SMOKE'
 set -euo pipefail
 # The stock Ubuntu image has no Swift installation.
 ! command -v swift

@@ -3,20 +3,22 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 version=${1:?Usage: package.sh VERSION [OUTPUT_DIRECTORY]}
 output=${2:-$repo/dist}
-[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid version' >&2; exit 64; }
+[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || { echo 'Invalid version' >&2; exit 64; }
 [[ $(uname -s) == Linux ]] || { echo 'Linux packaging must run on Linux' >&2; exit 1; }
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 64 ;; esac
 cd "$repo"
+build_jobs=${GRAFTTY_LINUX_BUILD_JOBS:-4}
+[[ $build_jobs =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid build job count' >&2; exit 64; }
 # Local builds use the serialized wrapper. CI uses its disposable build tree.
 if [[ ${CI:-} == true ]]; then
-    swift build -c release --product graftty-host
-    swift build -c release --product graftty-cli
-    binary_dir=$(swift build -c release --show-bin-path)
+    swift build --jobs "$build_jobs" -c release --product graftty-host
+    swift build --jobs "$build_jobs" -c release --product graftty-cli
+    binary_dir=$(swift build --jobs "$build_jobs" -c release --show-bin-path)
 else
-    scripts/swiftpm build -c release --product graftty-host
-    scripts/swiftpm build -c release --product graftty-cli
-    binary_dir=$(scripts/swiftpm build -c release --show-bin-path)
+    scripts/swiftpm build --jobs "$build_jobs" -c release --product graftty-host
+    scripts/swiftpm build --jobs "$build_jobs" -c release --product graftty-cli
+    binary_dir=$(scripts/swiftpm build --jobs "$build_jobs" -c release --show-bin-path)
 fi
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
