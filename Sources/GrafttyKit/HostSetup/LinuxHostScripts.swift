@@ -16,7 +16,7 @@ enum LinuxHostScripts {
 
     static let detect = """
     set -eu
-    for tool in git tar systemctl mktemp sha256sum; do
+    for tool in git tar systemctl mktemp sha256sum flock; do
       command -v "$tool" >/dev/null 2>&1 || { echo "GRAFTTY_MISSING:$tool" >&2; exit 70; }
     done
     systemctl --user show-environment >/dev/null 2>&1 || { echo 'GRAFTTY_MISSING:systemd-user-session' >&2; exit 70; }

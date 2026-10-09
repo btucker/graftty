@@ -49,6 +49,28 @@ struct LinuxHostPackagingTests {
         #expect(process.terminationStatus == 0)
     }
 
+    @Test("@spec DIST-4.5: When a local Linux archive uses the shared SwiftPM build directory, the packaging script shall hold its lock until both executables and their resources have been copied into the archive staging directory.")
+    func sharedBuildArtifactsRemainLockedUntilCopied() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "PackagingBuildTests"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
+    @Test("@spec DIST-4.6: When Linux installers run concurrently for the same user, the installer shall serialize release and service changes through completion or rollback so a failed install cannot remove a successful replacement.")
+    func concurrentInstallersDoNotUndoSuccessfulUpgrades() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "InstallerTests.test_concurrent_upgrade_cannot_roll_back_another_install"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     @Test("@spec DIST-4.3: When CI or a release builds Linux artifacts, the workflows shall build and verify x86_64 and aarch64 archives on Ubuntu 24.04 before release upload.")
     func architectureWorkflowAndReleaseHandoff() throws {
         let workflow = try String(contentsOf: repository.appendingPathComponent(".github/workflows/linux.yml"), encoding: .utf8)

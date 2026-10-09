@@ -46,6 +46,10 @@ for path in "$release" "$HOME/.local/bin" "$config_home"; do
     [[ $path != *$'\n'* && $path != *$'\r'* && $path != *'%'* ]] || { echo 'Unsupported install path' >&2; exit 1; }
 done
 mkdir -p "$data_home/graftty/releases" "$HOME/.local/bin" "$config_home/systemd/user"
+# Every install changes this user's command links, even with a custom XDG
+# directory. Keep the lock until EXIT cleanup has completed any rollback.
+exec 9>"$HOME/.local/bin/.graftty-install.lock"
+flock 9
 staging=$(mktemp -d "$data_home/graftty/releases/.install-XXXXXX")
 service_file="$config_home/systemd/user/graftty-host.service"
 service_backup=$(mktemp)

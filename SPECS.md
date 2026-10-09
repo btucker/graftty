@@ -1368,6 +1368,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.4** If an installed Linux host does not become ready on the requested SSH port, then the installer shall stop the replacement and restore the previously running host before reporting failure.
 
+**DIST-4.5** When a local Linux archive uses the shared SwiftPM build directory, the packaging script shall hold its lock until both executables and their resources have been copied into the archive staging directory.
+
+**DIST-4.6** When Linux installers run concurrently for the same user, the installer shall serialize release and service changes through completion or rollback so a failed install cannot remove a successful replacement.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding

@@ -5,10 +5,115 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parent
+
+def write_flock(path):
+    """Use the same flock primitive for portable macOS/Linux shell tests."""
+    path.write_text(f"#!{sys.executable}\n" + """
+import fcntl, subprocess, sys
+args = sys.argv[1:]
+unlock = args[0] == '-u'
+if unlock: args.pop(0)
+if args[0].isdigit():
+    fcntl.flock(int(args[0]), fcntl.LOCK_UN if unlock else fcntl.LOCK_EX)
+else:
+    with open(args[0], 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        sys.exit(subprocess.call(args[1:], pass_fds=(lock.fileno(),)))
+""")
+    path.chmod(0o755)
+
+class PackagingBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="graftty-package-build-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        scripts = self.repo / "scripts/linux"
+        scripts.mkdir(parents=True)
+        for name in ("package.sh", "launcher.sh", "install.sh"):
+            shutil.copy(ROOT / name, scripts / name)
+        shutil.copy(ROOT.parent / "swiftpm", self.repo / "scripts/swiftpm")
+        (self.repo / "scripts/zmx").mkdir()
+        (self.repo / "scripts/zmx/UPSTREAM_COMMIT").write_text("fixture\n")
+        (self.repo / "LICENSE").write_text("fixture\n")
+        for resource in ("ghostty", "terminfo"):
+            (self.repo / "Sources/GrafttyKit/GhosttyResources" / resource).mkdir(parents=True)
+        self.tools = self.repo / "tools"
+        self.tools.mkdir()
+        self.cache = self.repo / "shared cache"
+        self.env = {**os.environ, "PATH": str(self.tools) + os.pathsep + os.environ["PATH"],
+                    "CI": "false", "GRAFTTY_SWIFTPM_SHARED_DIR": str(self.cache),
+                    "GRAFTTY_TEST_REPO": str(self.repo)}
+
+        def executable(path, body):
+            path.write_text(body)
+            path.chmod(0o755)
+
+        python = f"#!{sys.executable}\n"
+        executable(self.tools / "uname", "#!/bin/sh\nif [ \"$1\" = -s ]; then echo Linux; else echo x86_64; fi\n")
+        executable(self.tools / "git", '#!/bin/sh\nprintf "%s\\n" "$GRAFTTY_TEST_REPO"\n')
+        write_flock(self.tools / "flock")
+        executable(self.tools / "swift", python + """
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+build = Path(args[args.index('--scratch-path') + 1]) / 'release'
+build.mkdir(parents=True, exist_ok=True)
+if '--show-bin-path' in args:
+    print(build)
+else:
+    binary = build / args[args.index('--product') + 1]
+    binary.write_text('#!/bin/sh\\n# expected worktree\\nexit 0\\n')
+    binary.chmod(0o755)
+    resource = build / 'Graftty_GrafttyKit.resources'
+    resource.mkdir(exist_ok=True)
+    (resource / 'marker').write_text('expected worktree')
+""")
+        executable(scripts / "build-zmx.sh", '#!/bin/sh\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$2"\nchmod 755 "$2"\n')
+        (scripts / "bundle-libraries.py").write_text("from pathlib import Path\nimport sys\n(Path(sys.argv[1]) / 'libswiftCore.so').touch()\n")
+        # At the first artifact copy, impersonate another worktree build. It
+        # can overwrite the shared products only when packaging lost its lock.
+        native_install = shutil.which("install")
+        executable(self.tools / "install", python + f"""
+import fcntl, os, subprocess, sys
+from pathlib import Path
+cache = Path(os.environ['GRAFTTY_SWIFTPM_SHARED_DIR'])
+with open(cache / 'build.lock', 'a') as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    else:
+        build = cache / 'build/release'
+        for name in ('graftty-host', 'graftty-cli'):
+            (build / name).write_text('#!/bin/sh\\n# other worktree\\nexit 0\\n')
+        (build / 'Graftty_GrafttyKit.resources/marker').write_text('other worktree')
+sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
+""")
+        executable(self.tools / "sha256sum", python + "import hashlib, sys\nfrom pathlib import Path\np = Path(sys.argv[1])\nprint(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + str(p))\n")
+
+    def test_shared_build_is_locked_until_artifacts_are_copied(self):
+        result = subprocess.run(["bash", str(self.repo / "scripts/linux/package.sh"), "test"],
+                                env=self.env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        archive = self.repo / "dist/graftty-linux-test-x86_64.tar.gz"
+        with tarfile.open(archive) as bundle:
+            for name in ("libexec/graftty-host", "libexec/graftty-cli", "libexec/Graftty_GrafttyKit.resources/marker"):
+                self.assertIn(b"expected worktree", bundle.extractfile("./" + name).read(), name)
+
+    def test_relative_shared_cache_is_rejected(self):
+        self.env["GRAFTTY_SWIFTPM_SHARED_DIR"] = "relative-cache"
+        result = subprocess.run(["bash", str(self.repo / "scripts/linux/package.sh"), "test"],
+                                env=self.env, text=True, capture_output=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absolute", result.stderr)
+        self.assertFalse((self.repo / "relative-cache").exists())
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
@@ -33,6 +138,10 @@ exit 0
         self.env = {**os.environ, "HOME": str(self.home)}
         self.env.pop("XDG_CONFIG_HOME", None)
         self.env.pop("XDG_DATA_HOME", None)
+        tools = self.root / "tools"
+        tools.mkdir()
+        write_flock(tools / "flock")
+        self.env["PATH"] = str(tools) + os.pathsep + self.env["PATH"]
 
     def install(self, *args, success=True):
         result = subprocess.run(["bash", str(self.archive / "install.sh"), *args],
@@ -143,6 +252,61 @@ exit 0
                         GRAFTTY_INSTALL_READY_TIMEOUT_SECONDS="1")
         self.install("--ssh-port", "9001", success=False)
         self.assertEqual(log.read_text().splitlines()[-1], "--user stop graftty-host.service")
+
+    def test_concurrent_upgrade_cannot_roll_back_another_install(self):
+        self.install("--no-start")
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        replacement = self.root / "replacement"
+        shutil.copytree(self.archive, replacement)
+        entered = self.root / "setup-entered"
+        release = self.root / "setup-release"
+        running = self.root / "running"
+        running.touch()
+        self.env.update(GRAFTTY_TEST_ENTERED=str(entered), GRAFTTY_TEST_RELEASE=str(release),
+                        GRAFTTY_TEST_RUNNING=str(running))
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('''#!/bin/sh
+case "$*" in
+    *is-active*) test -f "$GRAFTTY_TEST_RUNNING" ;;
+    *stop*) rm -f "$GRAFTTY_TEST_RUNNING" ;;
+    *start*) touch "$GRAFTTY_TEST_RUNNING" ;;
+esac
+''')
+        systemctl.chmod(0o755)
+        (self.archive / "bin/graftty-host").write_text('''#!/bin/sh
+touch "$GRAFTTY_TEST_ENTERED"
+for attempt in $(seq 1 200); do
+    test ! -f "$GRAFTTY_TEST_RELEASE" || exit 42
+    sleep 0.02
+done
+exit 42
+''')
+        first = subprocess.Popen(["bash", str(self.archive / "install.sh")], env=self.env,
+                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        second = None
+        try:
+            deadline = time.monotonic() + 5
+            while not entered.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(entered.exists(), "First installer did not reach setup")
+            second = subprocess.Popen(["bash", str(replacement / "install.sh")], env=self.env,
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # An unlocked installer finishes while the first is paused. A
+            # serialized installer waits until the failed install rolls back.
+            try:
+                second.communicate(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+        finally:
+            release.touch()
+            first.communicate(timeout=10)
+            if second is not None:
+                second_output = second.communicate(timeout=10)
+        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(second.returncode, 0, second_output)
+        installed = self.home / ".local/share/graftty/releases/0.2.0-test/bin/graftty-host"
+        self.assertTrue(installed.exists(), "The failed install removed the successful replacement")
+        self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), installed.resolve())
 
     def test_systemd_percent_and_dollar_escaping(self):
         self.home = self.root / 'user $dollar'
