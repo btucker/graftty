@@ -113,7 +113,9 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     private let ownershipStore: SessionDisplayOwnershipStore
     private let broadcaster: DisplayOwnershipBroadcaster
     private let sendText: @Sendable (String) -> Void
-    private let resize: @Sendable (UInt16, UInt16) -> Void
+    /// REMOTE-9.12: only `ownerResize` carries pixels; every other path
+    /// passes a grid-only size whose zero pixels mean unspecified.
+    private let resize: @Sendable (PtyProcess.WindowSize) -> Void
     private let followDisplayGrid: @Sendable (DisplayOwnershipSnapshot) -> Void
     private let write: @Sendable (Data) -> Void
     private let lock = NSLock()
@@ -141,7 +143,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         ownershipStore: SessionDisplayOwnershipStore,
         broadcaster: DisplayOwnershipBroadcaster,
         sendText: @escaping @Sendable (String) -> Void,
-        resize: @escaping @Sendable (UInt16, UInt16) -> Void,
+        resize: @escaping @Sendable (PtyProcess.WindowSize) -> Void,
         write: @escaping @Sendable (Data) -> Void,
         followDisplayGrid: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void = { _ in },
         supportsImagePaste: Bool = true,
@@ -212,11 +214,11 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             Self.trace.notice("coordinator takeControl \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) accepted=\(result.accepted) epoch=\(result.snapshot.epoch)")
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                resize(PtyProcess.WindowSize(cols: cols, rows: rows))
             }
             broadcaster.broadcast(result.snapshot)
 
-        case let .ownerResize(protocolClientID, epoch, cols, rows):
+        case let .ownerResize(protocolClientID, epoch, cols, rows, xpixel, ypixel):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
             let grid = try! DisplayGrid(cols: cols, rows: rows)
             let result = ownershipStore.ownerResize(
@@ -225,10 +227,15 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 epoch: epoch,
                 grid: grid
             )
-            Self.trace.notice("coordinator ownerResize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) epoch=\(epoch) accepted=\(result.accepted)")
+            Self.trace.notice("coordinator ownerResize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) pixels=\(xpixel)x\(ypixel) epoch=\(epoch) accepted=\(result.accepted)")
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                // A half-specified pixel size is unspecified (TERM-12.29).
+                let pixelsKnown = xpixel > 0 && ypixel > 0
+                resize(PtyProcess.WindowSize(
+                    cols: cols, rows: rows,
+                    xpixel: pixelsKnown ? xpixel : 0, ypixel: pixelsKnown ? ypixel : 0
+                ))
             }
             broadcaster.broadcast(result.snapshot)
 
@@ -397,7 +404,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             )
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                resize(PtyProcess.WindowSize(cols: cols, rows: rows))
             }
             broadcaster.broadcast(result.snapshot)
             return

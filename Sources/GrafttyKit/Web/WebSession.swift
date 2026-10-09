@@ -87,6 +87,11 @@ public final class WebSession {
         engine.resize(cols: cols, rows: rows)
     }
 
+    /// REMOTE-9.12: grid plus the owner's pixel size (zero = unspecified).
+    public func resize(windowSize: PtyProcess.WindowSize) {
+        try? engine.resize(windowSize: windowSize)
+    }
+
     public func close() {
         engine.close()
     }

@@ -161,6 +161,63 @@ struct ZmxAttachEngineTests {
                 "expected 'stty size' to report the resized dimensions; got \(collected.count) bytes: \(String(data: collected, encoding: .utf8) ?? "<non-utf8>")")
     }
 
+    /// Start an engine whose fake zmx prints `rows cols xpixel ypixel` via
+    /// `TIOCGWINSZ` after a short delay (perl ships with macOS; `stty size`
+    /// cannot show pixels), apply `resizes`, and return the reported line.
+    private static func reportedWinsize(
+        after resizes: (TerminalSyncResizing) throws -> Void
+    ) async throws -> String {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        try writeScript("""
+        #!/bin/sh
+        sleep 0.2
+        /usr/bin/perl -e 'my $w = "\\0" x 8; ioctl(STDIN, 0x40087468, $w) or die "ioctl"; printf("ws=%d %d %d %d\\n", unpack("S4", $w));'
+        sleep 1
+        """, to: script)
+        let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+
+        let engine = makeEngine(zmxExecutable: script, zmxDir: zmxDir, sessionName: "pixel-test")
+        try engine.start()
+        defer { engine.close() }
+
+        try resizes(engine)
+
+        var iterator = engine.inboundBytes.makeAsyncIterator()
+        var collected = Data()
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !(String(data: collected, encoding: .utf8) ?? "").contains("\n") {
+            guard let chunk = await iterator.next() else { break }
+            collected.append(chunk)
+        }
+        return String(data: collected, encoding: .utf8) ?? ""
+    }
+
+    /// REMOTE-9.12: an owner resize's pixel size must reach the attach
+    /// PTY's winsize so `zmx attach` forwards it to the session.
+    @Test func windowSizeResizeSetsPixelWinsize() async throws {
+        let output = try await Self.reportedWinsize { engine in
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40, xpixel: 1150, ypixel: 1880))
+        }
+        #expect(output.contains("ws=40 50 1150 1880"), "got \(output)")
+    }
+
+    /// REMOTE-9.12: zero pixels mean unspecified. A grid-only resize to the
+    /// current grid (a takeControl after a pixel-carrying owner resize)
+    /// must keep the pixel size: XNU raises SIGWINCH on any winsize field
+    /// change, so bouncing the pixels through zero would make `zmx attach`
+    /// repaint the session twice for an unchanged grid.
+    @Test func gridOnlyResizeToCurrentGridKeepsPixelWinsize() async throws {
+        let output = try await Self.reportedWinsize { engine in
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40, xpixel: 1150, ypixel: 1880))
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40))
+            engine.resize(cols: 50, rows: 40)
+        }
+        #expect(output.contains("ws=40 50 1150 1880"), "got \(output)")
+    }
+
     // MARK: - Delivery-surface selection (C1 fix): the unselected surface
     // must not buffer.
 

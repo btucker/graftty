@@ -1328,7 +1328,7 @@ private final class TestAttachCoordinator: @unchecked Sendable {
             let result = store.claimOwner(sessionName: sessionName, clientID: clientID, kind: kind, grid: grid)
             broadcaster.broadcast(result.snapshot)
 
-        case let .ownerResize(protocolClientID, epoch, cols, rows):
+        case let .ownerResize(protocolClientID, epoch, cols, rows, _, _):
             guard bindOrVerify(protocolClientID) else { return }
             let grid = try! DisplayGrid(cols: cols, rows: rows)
             let result = store.ownerResize(sessionName: sessionName, clientID: clientID, epoch: epoch, grid: grid)

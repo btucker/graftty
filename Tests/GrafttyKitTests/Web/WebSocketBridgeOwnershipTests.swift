@@ -14,7 +14,7 @@ struct WebSocketBridgeOwnershipTests {
         let follower = TerminalAttachCoordinator(
             sessionName: "main", clientID: DisplayClientID("first"), defaultKind: .ios,
             ownershipStore: store, broadcaster: broadcaster,
-            sendText: { recorder.send($0) }, resize: { _, _ in }, write: { recorder.write($0) },
+            sendText: { recorder.send($0) }, resize: { _ in }, write: { recorder.write($0) },
             followDisplayGrid: { recorder.resize(cols: $0.grid.cols, rows: $0.grid.rows) }
         )
         follower.handleControl(.hello(clientID: DisplayClientID("first"), kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24))
@@ -560,7 +560,7 @@ struct WebSocketBridgeOwnershipTests {
             ownershipStore: store,
             broadcaster: broadcaster,
             sendText: { recorder.send($0) },
-            resize: { cols, rows in recorder.resize(cols: cols, rows: rows) },
+            resize: { recorder.resize(cols: $0.cols, rows: $0.rows) },
             write: { recorder.write($0) }
         )
         return (coordinator, recorder)

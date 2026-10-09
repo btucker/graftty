@@ -1882,6 +1882,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.42** While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.
 
+**IOS-4.43** When GrafttyMobile sends an owner resize, the application shall include the terminal's pixel width and height derived from its cell pixel size so the host PTY reports the phone's real pixel geometry.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2702,6 +2704,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.11** When an SSH terminal's source grid arrives before its ownership hello, the host shall announce that source grid after the hello enables the control carrier.
 
+**REMOTE-9.12** When the host receives an owner resize carrying pixel dimensions, the application shall apply them to the attached PTY together with the grid, and shall treat absent or invalid pixel fields as unspecified so older clients keep grid-only behavior.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -2905,6 +2909,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IMAGE-1.4** If the terminal does not identify as ghostty, then graftty image shall exit nonzero with a message directing the agent to graftty open.
 
 **IMAGE-1.5** When graftty image receives any ImageIO-readable image, the CLI shall re-encode it as PNG at the fitted pixel width before transfer.
+
+**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
 
 ## AGENT — AGENT
 

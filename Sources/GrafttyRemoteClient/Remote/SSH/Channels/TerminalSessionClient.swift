@@ -289,11 +289,24 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     public func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await ownerResize(clientID: clientID, epoch: epoch, cols: cols, rows: rows, pixels: .unspecified)
+    }
+
+    /// IOS-4.43 / REMOTE-9.12: zero pixel fields are omitted on the wire.
+    public func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int,
+        pixels: TerminalPixelSize
+    ) async {
         await sendControlEnvelope(.ownerResize(
             clientID: clientID,
             epoch: epoch,
             cols: Self.gridDimension(cols),
-            rows: Self.gridDimension(rows)
+            rows: Self.gridDimension(rows),
+            xpixel: pixels.width,
+            ypixel: pixels.height
         ))
     }
 
