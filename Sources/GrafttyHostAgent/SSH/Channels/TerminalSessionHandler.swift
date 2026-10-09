@@ -440,7 +440,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                     channel.writeAndFlush(data, promise: nil)
                 }
             },
-            resize: { [weak self] cols, rows in
+            resize: { [weak self] windowSize in
                 // This closure runs synchronously on the channel's event
                 // loop (via `handleControl`, from `channelRead` or
                 // `drainControlFrames`) — the same loop that serializes
@@ -454,12 +454,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 // write, exactly the hazard `ptyWriteContinuation`'s doc
                 // comment describes.
                 guard let self else { return }
+                // REMOTE-9.12: the window size carries the owner's pixel
+                // size (ownerResize only); zero pixels mean unspecified.
                 if let syncResizing = self.stream as? TerminalSyncResizing {
-                    syncResizing.resize(cols: cols, rows: rows)
+                    try? syncResizing.resize(windowSize: windowSize)
                 } else {
                     let snapshot = self.stream
                     Task { [snapshot] in
-                        await snapshot?.resize(cols: Int(cols), rows: Int(rows))
+                        await snapshot?.resize(cols: Int(windowSize.cols), rows: Int(windowSize.rows))
                     }
                 }
             },

@@ -12,6 +12,7 @@ public struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
     /// transitions on the iPad path — both `compactBody`'s
@@ -48,7 +49,8 @@ public struct RootView: View {
         .onChange(of: horizontalSizeClass) { previous, current in
             retainedPanes.stopAll()
             guard previous == .regular, current != .regular else { return }
-            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts)?.path ?? NavigationPath()
+            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
+                                                  showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
         }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
@@ -119,18 +121,24 @@ public struct RootView: View {
                         worktree: step.worktree,
                         coordinator: coordinator
                     ) { sessionName in
-                        Self.applyCompactSession(SessionStep(host: step.host, worktreePath: step.worktree.path,
-                            sessionName: sessionName, title: step.worktree.layout?.title(for: sessionName) ?? sessionName), to: iPadAppState)
-                        navigationPath.append(SessionStep(
+                        let session = SessionStep(
                             host: step.host,
                             worktreePath: step.worktree.path,
                             sessionName: sessionName,
-                            title: step.worktree.layout?.title(for: sessionName) ?? sessionName
-                        ))
+                            title: step.worktree.layout?.title(for: sessionName) ?? sessionName,
+                            worktreeProject: step.project ?? SidebarProjection.projects([step.worktree]).first
+                        )
+                        Self.applyCompactSession(session, to: iPadAppState)
+                        navigationPath.append(session)
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
                     SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator,
+                                      onBackToWorktrees: {
+                                          Self.applyCompactBack(step: step, appState: iPadAppState,
+                                                                navigationPath: &navigationPath,
+                                                                showsProjectRail: showsProjectRail)
+                                      },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
@@ -154,10 +162,11 @@ public struct RootView: View {
                         host: host,
                         worktreePath: wt.path,
                         sessionName: sessionName,
-                        title: title
+                        title: title,
+                        worktreeProject: project ?? SidebarProjection.projects([wt]).first
                     ))
                 case .worktreeDetail:
-                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                    navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
                 }
             },
             onSelectPaneWithWorktree: { worktree, leaf in
@@ -170,7 +179,8 @@ public struct RootView: View {
                         host: host,
                         worktreePath: worktree.path,
                         sessionName: sessionName,
-                        title: title
+                        title: title,
+                        worktreeProject: project ?? SidebarProjection.projects([worktree]).first
                     ))
                 }
             },
@@ -179,7 +189,7 @@ public struct RootView: View {
             onSelectWorktreeDetail: { worktree in
                 iPadAppState.selectedHostId = host.id
                 iPadAppState.selectedWorktreePath = worktree.path
-                navigationPath.append(WorktreeStep(host: host, worktree: worktree))
+                navigationPath.append(WorktreeStep(host: host, worktree: worktree, project: project))
             }
         )
         .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
@@ -193,25 +203,35 @@ public struct RootView: View {
 
     struct CompactSelection: Equatable {
         let host: Host
+        let project: SidebarProject?
         let worktree: WorktreePanes?
         let session: SessionStep?
         var path: NavigationPath {
             var result = NavigationPath()
             result.append(host)
+            if let project { result.append(ProjectStep(host: host, project: project)) }
             if let session { result.append(session) }
-            else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree)) }
+            else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree, project: project)) }
             return result
         }
     }
 
-    static func compactSelection(appState: IPadAppState, hosts: [Host]) -> CompactSelection? {
+    static func compactSelection(appState: IPadAppState, hosts: [Host], showsProjectRail: Bool = true) -> CompactSelection? {
         guard let host = hosts.first(where: { $0.id == appState.selectedHostId }) else { return nil }
         let worktree = appState.latestWorktrees.first { $0.path == appState.selectedWorktreePath }
+        let selectedProjectID = appState.sidebarNavigation.selectedProjectID
+        let pickerProject = SidebarProjection.projects(appState.latestWorktrees).first {
+                $0.id == selectedProjectID
+            }
+            ?? appState.worktreePickerProject.flatMap { $0.id == selectedProjectID ? $0 : nil }
+            ?? worktree.flatMap { SidebarProjection.projects([$0]).first }
+        let project = showsProjectRail ? pickerProject : nil
         let leaf = worktree?.layout?.leaves.first { $0.sessionName == appState.focusedPaneId }
             ?? worktree?.layout?.leaves.first
         let session = leaf.map { SessionStep(host: host, worktreePath: worktree?.path,
-            sessionName: $0.sessionName, title: $0.displayTitle) }
-        return CompactSelection(host: host, worktree: worktree, session: session)
+            sessionName: $0.sessionName, title: $0.displayTitle,
+            worktreeProject: pickerProject) }
+        return CompactSelection(host: host, project: project, worktree: worktree, session: session)
     }
 
     static func applyCompactHost(_ host: Host, to appState: IPadAppState) {
@@ -223,6 +243,22 @@ public struct RootView: View {
         appState.selectedHostId = step.host.id
         appState.selectedWorktreePath = step.worktreePath
         appState.focusedPaneId = step.sessionName
+        appState.worktreePickerProject = step.worktreeProject
+        if let project = step.worktreeProject {
+            // Search can open another project's terminal without losing the picker.
+            appState.sidebarNavigation.selectedProjectID = project.id
+        }
+    }
+
+    static func applyCompactBack(step: SessionStep, appState: IPadAppState,
+                                 navigationPath: inout NavigationPath, showsProjectRail: Bool) {
+        IPadRootLayout.applyBackToWorktrees(appState: appState)
+        appState.worktreePickerProject = step.worktreeProject
+        if let project = step.worktreeProject {
+            appState.sidebarNavigation.selectedProjectID = project.id
+            appState.sidebarNavigation.compactShowsProjects = false
+        }
+        navigationPath = step.worktreePickerPath(showsProjectRail: showsProjectRail)
     }
 
     private var lockOverlay: some View {
@@ -273,6 +309,7 @@ struct ProjectStep: Hashable {
 struct WorktreeStep: Hashable {
     let host: Host
     let worktree: WorktreePanes
+    var project: SidebarProject? = nil
 }
 
 /// Third-level nav: picked a pane, now show its terminal fullscreen.
@@ -281,17 +318,30 @@ struct SessionStep: Hashable {
     let worktreePath: String?
     let sessionName: String
     let title: String
+    /// Retain the originating picker even when a search opens another project.
+    let worktreeProject: SidebarProject?
 
     init(
         host: Host,
         worktreePath: String? = nil,
         sessionName: String,
-        title: String
+        title: String,
+        worktreeProject: SidebarProject? = nil
     ) {
         self.host = host
         self.worktreePath = worktreePath
         self.sessionName = sessionName
         self.title = title
+        self.worktreeProject = worktreeProject
+    }
+
+    func worktreePickerPath(showsProjectRail: Bool) -> NavigationPath {
+        var path = NavigationPath()
+        path.append(host)
+        if showsProjectRail, let project = worktreeProject {
+            path.append(ProjectStep(host: host, project: project))
+        }
+        return path
     }
 }
 
@@ -309,11 +359,20 @@ struct TerminalFloatingGlyphButton: View {
                 .font(.title2)
                 .foregroundStyle(.primary)
                 .padding(10)
+                .frame(minWidth: 44, minHeight: 44)
                 .background(.ultraThinMaterial, in: Circle())
                 .shadow(radius: 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct TerminalFloatingControlPlacement: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, 12)
+            .padding(.top, 12)
     }
 }
 
@@ -381,6 +440,7 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
+    let showsProjectRail: Bool
     /// Injected from `RootView` on BOTH size classes so `openTerminal()`
     /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
     /// SSH-over-WebRTC. `nil` exists only in preview and narrowly scoped
@@ -412,7 +472,6 @@ struct SingleSessionView: View {
     private let sidebarNavigation: SidebarNavigationState?
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     @State private var attentionWorktrees: [WorktreePanes] = []
-    @State private var attentionProjects: [SidebarProject] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -570,6 +629,7 @@ struct SingleSessionView: View {
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
+        showsProjectRail: Bool = true,
         coordinator: RemoteConnectionCoordinator? = nil,
         externalPendingFocusRequests: Int = 0,
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
@@ -580,11 +640,16 @@ struct SingleSessionView: View {
         onBackToWorktrees: (() -> Void)? = nil,
         fontSizeStore: TerminalFontSizeStore = .shared,
         sidebarNavigation: SidebarNavigationState? = nil,
-        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil
+        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil,
+        attentionWorktrees: [WorktreePanes] = [],
+        initialClient: SessionClient? = nil,
+        initialController: TerminalController? = nil,
+        initialKeyboardBottomInset: CGFloat = 0
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
+        self.showsProjectRail = showsProjectRail
         self.coordinator = coordinator
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
@@ -596,15 +661,17 @@ struct SingleSessionView: View {
         self.fontSizeStore = fontSizeStore
         self.sidebarNavigation = sidebarNavigation
         self.retainedPanes = retainedPanes
+        self._attentionWorktrees = State(initialValue: attentionWorktrees)
+        self._client = State(initialValue: initialClient)
+        self._controller = State(initialValue: initialController)
+        self._connection = State(initialValue: initialClient == nil ? .connecting : .live)
+        self._keyboardBottomInset = State(initialValue: initialKeyboardBottomInset)
     }
 
     var body: some View {
         ZStack {
-            // Terminal theme background behind everything — including under the
-            // keyboard, so its rounded corners (and the control-bar row) show
-            // the terminal's color instead of system chrome. Ignores all
-            // safe-area regions (incl. `.keyboard`) so it bleeds the full
-            // screen; the keyboard-padded content sits on top of it.
+            // Terminal theme background also fills keyboard transitions.
+            // Content reserves keyboard clearance independently.
             terminalBackground
             sessionView
         }
@@ -659,8 +726,7 @@ struct SingleSessionView: View {
             .overlay(alignment: .topLeading) {
                 if isFullScreen {
                     backButton
-                        .padding(.leading, 12)
-                        .padding(.top, 12)
+                        .modifier(TerminalFloatingControlPlacement())
                 }
             }
             .overlay(alignment: .top) {
@@ -988,8 +1054,7 @@ struct SingleSessionView: View {
     private var backButton: some View {
         TerminalFloatingGlyphButton(
             systemName: "chevron.left",
-            accessibilityLabel: pendingAttentionCount > 0
-                ? "Next pending worktree, \(pendingAttentionCount) pending worktrees" : "Back",
+            accessibilityLabel: backAccessibilityLabel,
             action: popToParent
         )
         .overlay(alignment: .topTrailing) {
@@ -1006,6 +1071,12 @@ struct SingleSessionView: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    var backAccessibilityLabel: String {
+        let count = pendingAttentionCount
+        guard count > 0 else { return "Back to worktrees" }
+        return "Back to worktrees, \(count) pending \(count == 1 ? "worktree" : "worktrees")"
     }
 
     private var retainedPaneKey: RetainedPaneClientPool<RetainedMobilePane>.Key {
@@ -1035,35 +1106,21 @@ struct SingleSessionView: View {
                 } else { projects = SidebarProjection.projects(rows) }
                 sidebarNavigation.reconcile(worktrees: rows, projects: projects)
                 attentionWorktrees = rows
-                attentionProjects = projects
             } catch {
                 // Do not present a stale count while the host is unreachable.
                 attentionWorktrees = []
-                attentionProjects = []
             }
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
         }
     }
 
-    private func popToParent() {
-        if pendingAttentionCount > 0, let sidebarNavigation,
-           let item = MobilePaneAttention.open(worktrees: attentionWorktrees, projects: attentionProjects,
-                navigation: sidebarNavigation, currentWorktree: step.worktreePath),
-           let project = attentionProjects.first(where: { $0.id == item.projectID }) {
-            // The list owns remote opening, terminal routing, and exact acknowledgement.
-            var path = NavigationPath()
-            path.append(step.host)
-            path.append(ProjectStep(host: step.host, project: project))
-            navigationPath = path
-            return
-        }
+    func popToParent() {
         if let onBackToWorktrees {
             onBackToWorktrees()
             return
         }
-        if !navigationPath.isEmpty {
-            navigationPath.removeLast()
-        }
+        guard !navigationPath.isEmpty else { return }
+        navigationPath = step.worktreePickerPath(showsProjectRail: showsProjectRail)
     }
 
     @ViewBuilder
@@ -1286,7 +1343,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            addsVerticalRowPadding: true,
+            addsVerticalRowPadding: !isFullScreen,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)

@@ -262,13 +262,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.124** While a repository's home checkout identity is displayed or serialized, the application shall use its current project icon and project fallback instead of any stored worktree emoji, including after restoration, while retaining linked worktree identities.
 
-**LAYOUT-2.125** When a worktree has an unacknowledged agent question, the application shall show the full question inline until it is opened, dismissed, superseded, or its agent resumes, while retaining the recap for preview.
+**LAYOUT-2.125** When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.
 
 **LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
 
 **LAYOUT-2.127** When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.
 
-**LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next unviewed pending worktree in displayed order within the requested project and wrap at the end.
+**LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.
 
 **LAYOUT-2.129** When the user activates the information button beside a worktree name, the application shall show a native Mac report popover without selecting the worktree or acknowledging its request, and hovering shall not open it.
 
@@ -293,6 +293,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.143** When mobile pending navigation is invoked, the application shall visit pending worktrees in displayed host order, wrap after the last worktree, and route to its project without entering Attention mode.
 
 **LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
+
+**LAYOUT-2.145** When the user clicks anywhere in a local macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.
+
+**LAYOUT-2.146** When a periodic sidebar snapshot leaves application state unchanged, the application shall avoid writing back the state binding.
+
+**LAYOUT-2.147** While a project's icon bytes remain unchanged, the application shall reuse its derived sidebar color and revision across refreshes and recalculate them when the icon changes.
+
+**LAYOUT-2.148** When Change Emoji is chosen from a worktree identity menu, the application shall open the native picker after menu tracking ends with the owning window key and its capture responder ready, including on repeated attempts.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -354,7 +362,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **STATE-2.3** While a worktree entry has a worktree-scoped attention overlay, the sidebar shall render its text in a red capsule on the worktree's own row (next to the branch label), regardless of the worktree's running state. One worktree-scoped notification produces exactly one visible capsule — pane rows render only their own pane-scoped overlays per STATE-2.2 and do not mirror the worktree-scoped text. A notification set while a worktree is closed therefore remains visible on its row without requiring the user to launch panes first.
 
-**STATE-2.4** When the user clicks a worktree entry that has any attention overlay (worktree-scoped or pane-scoped on any of its panes), the application shall clear all attention overlays on that worktree.
+**STATE-2.4** When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.
 
 **STATE-2.5** When the CLI sends a clear message for a worktree, the application shall clear the worktree-scoped attention overlay. Pane-scoped overlays are not affected by CLI clear messages; they auto-clear on their own timers.
 
@@ -724,6 +732,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
+**GIT-4.20** When Delete Worktree is invoked on an unselected local sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.
+
 ### GIT-5.x — Creating a Worktree
 
 **GIT-5.1** When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
@@ -1043,6 +1053,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-4.7** When Graftty requests dictation access, the packaged application shall explain microphone and speech recognition use to macOS.
 
 **KEY-4.8** While recognition finalizes an utterance, the application shall retain subsequent microphone audio for the next utterance or stop with an error if buffering capacity is exceeded.
+
+**KEY-4.9** When on-device speech recognition completes an utterance before its task ends, the application shall commit that utterance once, preserve it across later previews, and recognize a standalone Send prompt command.
+
+**KEY-4.10** While provisional dictation exceeds the terminal pane width, the application shall wrap its preview within the pane, reflow it on resize, and keep terminal keyboard focus.
 
 ## MOUSE — Keyboard, Clipboard, and Mouse Integration
 
@@ -1800,7 +1814,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
-**IOS-4.8** While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. The user returns to the worktree detail via the system edge-swipe-back gesture rather than an explicit button.
+**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its usable terminal viewport to the top and bottom screen edges, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 
@@ -1852,9 +1866,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.33** When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display its full report in a presentation that fits a compact iPhone width.
 
-**IOS-4.34** While a mobile pane is open, its back button shall badge pending worktrees elsewhere and navigate to the next pending worktree and project when tapped with a nonzero badge.
+**IOS-4.34** When the user taps Back from a mobile terminal, the application shall return to the worktree list regardless of pending work, preserving pending-work navigation as a separate action.
 
-**IOS-4.36** While a mobile worktree report is displayed, the application shall retain its last recap after viewing and identify it as a previous report after the agent resumes.
+**IOS-4.36** When a mobile worktree report is viewed, the application shall preserve its pending question until the agent resumes and retain the recap as a previous report afterward.
 
 **IOS-4.37** When a mobile Attention card is opened, the application shall open the originating pane using its stable slot ID, use a unique title match for legacy stopped cards, and fall back to the worktree picker if the target is missing or ambiguous without changing acknowledgement scope.
 
@@ -1868,11 +1882,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.42** While the owner-transition resize is parked behind the quiet window, the application shall queue input typed by the new owner behind it, so the trailing ownerResize still precedes every byte and bytes queued before promotion stay ahead of bytes typed after it.
 
+**IOS-4.43** When GrafttyMobile sends an owner resize, the application shall include the terminal's pixel width and height derived from its cell pixel size so the host PTY reports the phone's real pixel geometry.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
 
-**IOS-5.5** While a session's terminal is rendered full-screen (navigation bar hidden per the fullscreen layout), the application shall overlay a translucent back-button in the top-left that pops the current session off the `NavigationPath`, returning the user to the worktree detail they drilled in from. The button shall be rendered as a chevron inside an `.ultraThinMaterial` circle at a fixed 44×44pt tap target, padded 12pt from the top and leading edges so it floats above the terminal content without being clipped by the device's notch / rounded corners. The system edge-swipe gesture remains available but is not discoverable, so this overlay is the primary affordance.
+**IOS-5.5** While a terminal is fullscreen, the application shall display a translucent Back control with at least a 44-point tap target within the top and leading safe area, returning to the worktree list.
 
 **IOS-5.6** While the iOS client follows an authoritative terminal grid, the application shall preserve the leader's exact columns and rows on a canvas fitted to the available width, including non-paged streams, so terminal redraws and wrapping match the leader.
 
@@ -1910,7 +1926,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.10** When the iOS client becomes the display owner, the application shall explicitly synchronize the mounted terminal's physical viewport without waiting for keyboard input, preserving the owner's selected font size.
 
-**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
+**IOS-6.11** While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.
 
 **IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
@@ -1938,7 +1954,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
 
-**IOS-6.25** While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
+**IOS-6.25** While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
 
 **IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
 
@@ -2696,6 +2712,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.11** When an SSH terminal's source grid arrives before its ownership hello, the host shall announce that source grid after the hello enables the control carrier.
 
+**REMOTE-9.12** When the host receives an owner resize carrying pixel dimensions, the application shall apply them to the attached PTY together with the grid, and shall treat absent or invalid pixel fields as unspecified so older clients keep grid-only behavior.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
@@ -2900,6 +2918,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.5** When graftty image receives any ImageIO-readable image, the CLI shall re-encode it as PNG at the fitted pixel width before transfer.
 
+**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
+
 ## AGENT — AGENT
 
 ### AGENT-1.x
@@ -2934,7 +2954,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
 
-**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+**AGENT-3.4** When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
 
 **AGENT-3.5** When a top-level provider hook reports a bare turn Stop, the application shall record an unseen stopped turn for the worktree without creating a needs-input prompt or a waiting-for-you notification.
 
@@ -3118,7 +3138,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 

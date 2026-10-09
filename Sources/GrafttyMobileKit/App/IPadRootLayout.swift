@@ -278,6 +278,7 @@ public struct IPadRootLayout: View {
         appState.selectedWorktreePath = nil
         appState.focusedPaneId = nil
         appState.latestWorktrees = []
+        appState.worktreePickerProject = nil
         appState.anyWorktreeHasAttention = false
     }
 

@@ -117,10 +117,17 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
-    /// STATE-2.4: the user focused one pane (clicked its terminal or sidebar
-    /// row) — clear just that pane's attention. Kept separate from
-    /// `setFocusedTerminal` so programmatic focus restores (e.g. TERM-2.3
-    /// after a worktree switch) don't wipe a pending "needs input".
+    /// Viewing a pane clears its notifications without retiring agent requests.
+    public mutating func viewPaneAttention(_ pane: PaneSlotID, forWorktreePath path: String) {
+        for repoIndex in repos.indices {
+            if let worktreeIndex = repos[repoIndex].worktrees.firstIndex(where: { $0.path == path }) {
+                repos[repoIndex].worktrees[worktreeIndex].viewPaneAttention(pane)
+                return
+            }
+        }
+    }
+
+    /// Explicitly acknowledges a pane's attention and the stopped turn.
     public mutating func acknowledgePaneAttention(
         _ pane: PaneSlotID,
         forWorktreePath path: String

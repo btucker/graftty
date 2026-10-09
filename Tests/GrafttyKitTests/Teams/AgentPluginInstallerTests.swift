@@ -270,6 +270,17 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
+    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
+    """)
+    func imageSkillDrawsOnLeadingDeviceIncludingMobile() throws {
+        for skill in try preparedSkillTexts(named: "graftty-image") {
+            #expect(skill.contains("whichever device leads the pane, including Graftty Mobile"))
+            #expect(skill.contains("pixel geometry"))
+            #expect(!skill.contains("Inline images appear only on the Mac"))
+        }
+    }
+
+    @Test("""
     @spec AGENT-6.28: When Graftty installs provider hooks, the application shall subscribe to blocking question or plan-review tool starts for both providers and Claude permission requests, while Codex pre-review permission events and Stop shall not be treated as needs-input signals.
     """)
     func providerHooksCaptureExplicitAttentionSignals() throws {
@@ -481,7 +492,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -493,7 +504,8 @@ struct AgentPluginInstallerTests {
                 "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
             ))
             #expect(skill.contains("\"context\""))
-            #expect(skill.contains("what this worktree is trying to accomplish"))
+            #expect(skill.contains("problem this work addresses"))
+            #expect(skill.contains("why solving it matters"))
             #expect(skill.contains("one sentence"))
             #expect(skill.contains("recent verified progress"))
             #expect(skill.contains("task-specific"))

@@ -864,6 +864,47 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// REMOTE-9.12 transport wiring: an owner resize carrying pixels reaches
+    /// a `TerminalSyncResizing` stream's `resize(windowSize:)` with both the
+    /// grid and the pixel size, so the attach PTY reports the client's real
+    /// pixel geometry.
+    func testOwnerResizePixelsReachSyncResizingStream() async throws {
+        let stream = RecordingWindowSizeStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            deviceID: RemoteDeviceID(value: "device-owner-pixels")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        let phone = DisplayClientID("phone-1")
+        try await sendControlEnvelope(channel, .hello(
+            clientID: phone, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await sendControlEnvelope(channel, .takeControl(clientID: phone, kind: .ios, cols: 80, rows: 24))
+        _ = try await nextOutboundEnvelope(channel)
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+        let epoch = store.snapshot(sessionName: "alpha").epoch
+
+        try await sendControlEnvelope(channel, .ownerResize(
+            clientID: phone, epoch: epoch, cols: 50, rows: 40, xpixel: 1150, ypixel: 1880
+        ))
+        let expected = PtyProcess.WindowSize(cols: 50, rows: 40, xpixel: 1150, ypixel: 1880)
+        try await waitUntil { stream.windowSizes.last == expected }
+        XCTAssertEqual(stream.windowSizes.last, expected)
+
+        _ = try? await channel.finish()
+    }
+
     /// A grid dimension that fits `UInt16` but exceeds
     /// `WebControlEnvelope.maxGridDimension` must be clamped before it
     /// reaches `SessionDisplayOwnershipStore` — `DisplayGrid` itself only
@@ -1566,4 +1607,32 @@ private final class TestPagedStream: PagedTerminalStream, @unchecked Sendable {
     func send(_ bytes: Data) async throws {}
     func resize(cols: Int, rows: Int) async {}
     func close() async { continuation.finish() }
+}
+
+/// Records `TerminalSyncResizing` window sizes (grid plus pixels).
+private final class RecordingWindowSizeStream: TerminalByteStream, TerminalSyncResizing, @unchecked Sendable {
+    private let continuation: AsyncStream<Data>.Continuation
+    let inboundBytes: AsyncStream<Data>
+    private let lock = NIOLock()
+    private var _windowSizes: [PtyProcess.WindowSize] = []
+
+    var windowSizes: [PtyProcess.WindowSize] { lock.withLock { _windowSizes } }
+
+    init() {
+        var cont: AsyncStream<Data>.Continuation!
+        self.inboundBytes = AsyncStream { c in cont = c }
+        self.continuation = cont
+    }
+
+    func send(_ bytes: Data) async throws {}
+    func close() async { continuation.finish() }
+    func resize(cols: Int, rows: Int) async {}
+
+    func resize(cols: UInt16, rows: UInt16) {
+        lock.withLock { _windowSizes.append(PtyProcess.WindowSize(cols: cols, rows: rows)) }
+    }
+
+    func resize(windowSize: PtyProcess.WindowSize) throws {
+        lock.withLock { _windowSizes.append(windowSize) }
+    }
 }

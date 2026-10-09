@@ -28,6 +28,16 @@ public protocol WebSocketClient: AnyObject {
     ) async
     func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async
     func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async
+    /// IOS-4.43: owner resize carrying the terminal's pixel size. The
+    /// default drops the pixels and forwards to the grid-only variant, so
+    /// conformers that predate pixel reporting keep working.
+    func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int,
+        pixels: TerminalPixelSize
+    ) async
 }
 
 public extension WebSocketClient {
@@ -44,6 +54,15 @@ public extension WebSocketClient {
     ) async {}
     func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {}
     func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {}
+    func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int,
+        pixels: TerminalPixelSize
+    ) async {
+        await ownerResize(clientID: clientID, epoch: epoch, cols: cols, rows: rows)
+    }
 }
 
 public final class URLSessionWebSocketClient: WebSocketClient {
@@ -114,11 +133,23 @@ public final class URLSessionWebSocketClient: WebSocketClient {
     }
 
     public func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await ownerResize(clientID: clientID, epoch: epoch, cols: cols, rows: rows, pixels: .unspecified)
+    }
+
+    public func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int,
+        pixels: TerminalPixelSize
+    ) async {
         let payload = WebControlEnvelope.ownerResize(
             clientID: clientID,
             epoch: epoch,
             cols: UInt16(cols),
-            rows: UInt16(rows)
+            rows: UInt16(rows),
+            xpixel: pixels.width,
+            ypixel: pixels.height
         ).encoded()
         try? await send(.text(payload))
     }

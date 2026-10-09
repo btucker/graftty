@@ -69,31 +69,38 @@ struct WorktreeEntryAttentionTests {
         #expect(e.paneAttention[slot] == second)
     }
 
-    @Test func acknowledgePaneClearsOnlyThatPane() {
+    @Test func viewingPanePreservesStoppedAgentAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let focused = PaneSlotID(id: UUID())
         let other = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[focused] = att("needs input", .agentStop)
         e.paneAttention[other] = att("needs input", .agentStop)
-        e.acknowledgePaneAttention(focused)
-        #expect(e.paneAttention[focused] == nil)   // focused pane cleared
+        e.viewPaneAttention(focused)
+        #expect(e.paneAttention[focused] != nil)   // agent still needs input
         #expect(e.paneAttention[other] != nil)      // sibling pane untouched
         #expect(e.attention != nil)                 // worktree-scoped untouched
     }
 
-    @Test func acknowledgeClearsWorktreeAndAllPanes() {
+    @Test("@spec STATE-2.4: When the user views a worktree or pane, the application shall clear its notification overlays while preserving stopped-agent attention until the agent resumes or the request is explicitly dismissed.")
+    func viewingWorktreePreservesStoppedAgents() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID())
         e.attention = att("w", .userNotify)
         e.paneAttention[slot] = att("p", .agentStop)
-        e.acknowledgeAttention()
+        let notification = PaneSlotID(id: UUID())
+        e.paneAttention[notification] = att("done", .commandFinished)
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date())
+        e.recordAgentStop(stop)
+        e.viewAttention()
         #expect(e.attention == nil)
-        #expect(e.paneAttention.isEmpty)
+        #expect(e.paneAttention[slot] != nil)
+        #expect(e.paneAttention[notification] == nil)
+        #expect(e.unseenAgentStop == stop)
     }
 
     @Test("""
-    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+    @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
     """)
     func providerProgressClearsOnlyMatchingSessionAttention() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
@@ -114,6 +121,34 @@ struct WorktreeEntryAttentionTests {
         #expect(e.paneAttention[notify] != nil)
         #expect(e.paneAttention[sibling] != nil)
         #expect(e.unseenAgentStop == nil)
+    }
+
+    @Test("Restored legacy agent attention stays visible until timestamp-eligible provider progress")
+    func legacyAgentAttentionClearsOnProviderProgress() throws {
+        var worktree = WorktreeEntry(path: "/wt", branch: "task")
+        let legacyPane = PaneSlotID(id: UUID())
+        let siblingPane = PaneSlotID(id: UUID())
+        let newerPane = PaneSlotID(id: UUID())
+        let notificationPane = PaneSlotID(id: UUID())
+        let commandPane = PaneSlotID(id: UUID())
+        worktree.attention = att("Choose a branch", .agentStop)
+        worktree.paneAttention[legacyPane] = att("Approve this", .agentStop)
+        worktree.paneAttention[siblingPane] = att("Other agent", .agentStop, providerSessionKey: "claude:other")
+        worktree.paneAttention[newerPane] = Attention(text: "New question", timestamp: Date(timeIntervalSince1970: 20), source: .agentStop)
+        var restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        restored.viewAttention()
+        restored.viewPaneAttention(legacyPane)
+        #expect(restored.attention != nil)
+        #expect(restored.paneAttention[legacyPane] != nil)
+        restored.paneAttention[notificationPane] = att("Review", .userNotify)
+        restored.paneAttention[commandPane] = att("Done", .commandFinished)
+        restored.clearAgentStopAttention(providerSessionKey: "codex:session:one", progressedAt: Date(timeIntervalSince1970: 10))
+        #expect(restored.attention == nil)
+        #expect(restored.paneAttention[legacyPane] == nil)
+        #expect(restored.paneAttention[siblingPane] != nil)
+        #expect(restored.paneAttention[newerPane] != nil)
+        #expect(restored.paneAttention[notificationPane] != nil)
+        #expect(restored.paneAttention[commandPane] != nil)
     }
 
     @Test func missingProviderIdentityDoesNotClearPersistedAttention() {

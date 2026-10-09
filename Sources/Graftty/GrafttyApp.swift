@@ -2411,7 +2411,7 @@ struct GrafttyApp: App {
                 onChange in
                 let snapshot: @MainActor () async -> PanesStateMessage = {
                     let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
-                    let navigation = SidebarHostController.shared.snapshot(state: &appStateBinding.wrappedValue, owner: localWorktreeOrigin, remote: remote.projects,
+                    let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
                         authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
                     let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
                     let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)

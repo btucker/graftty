@@ -57,7 +57,7 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
-    @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
+    @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
     func terminalPaddingTracksMeasuredRows() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         container.addsVerticalRowPadding = true

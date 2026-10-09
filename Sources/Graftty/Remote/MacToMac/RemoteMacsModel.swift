@@ -689,18 +689,22 @@ final class RemoteMacsModel: ObservableObject {
         return response
     }
 
-    func acknowledge(
+    /// Viewing remote content acknowledges only exact notification occurrences.
+    /// Broad legacy acknowledgements would also retire stopped-agent requests.
+    func acknowledgeViewedAttention(
         on remoteMac: RemoteMac,
         worktreePath: String,
         paneSessionName: String? = nil
     ) async {
-        _ = await forwardManagement(
-            identity: RemoteMacIdentity(remoteMac),
-            request: .acknowledge(
-                worktreeID: worktreePath,
-                paneID: paneSessionName
-            )
-        )
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktree = worktreePanesByRemote[identity]?.first(where: { $0.path == worktreePath }),
+              await sidebarSnapshot(for: remoteMac)?.projects
+                .first(where: { $0.id == SidebarProjection.projectID(worktree) })?.supportsWorktreeEditing == true else { return }
+        for item in SidebarProjection.activity([worktree]) {
+            guard paneSessionName == nil || item.paneID == paneSessionName,
+                  let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true) else { continue }
+            _ = await forwardManagement(identity: identity, request: request)
+        }
     }
 
     struct SidebarRelaySnapshot {

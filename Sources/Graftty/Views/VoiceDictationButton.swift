@@ -9,7 +9,7 @@ struct VoiceDictationButton: View {
     let collapsed: Bool
 
     private var hint: String? {
-        controller.errorMessage ?? (controller.isListening ? "Say \"Send prompt\" to send" : nil)
+        controller.errorMessage ?? (controller.isListening ? "Pause, then say \"Send prompt\" to send" : nil)
     }
 
     var body: some View {

@@ -11,6 +11,7 @@ import GrafttyCommandUI
 private final class SidebarScrollHarness: ObservableObject {
     @Published var state: AppState
     var selections: [String] = []
+    var deleteRequests: [(path: String, window: NSWindow)] = []
     let manager = TerminalManager(socketPath: "/tmp/sidebar-test-unused.sock")
     let remotes = RemoteMacsModel(store: RemoteMacStore(storeURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
     let voice = VoiceDictationController()
@@ -50,7 +51,7 @@ private struct HostedSidebarScrollView: View {
                 onSelectPane: { _, _ in }, onSelectRemoteMac: { _ in }, onSelectRemoteWorktree: { _, _ in },
                 onSelectRemotePane: { _, _, _ in }, onAddRemoteWorktree: { _, _ in }, onDeleteRemoteWorktree: { _, _ in },
                 onAddRemoteMac: {}, onAddRepo: {}, onAddPath: { _ in }, onRemoveRepo: { _ in }, onInitializeGit: { _ in },
-                onStopWorktree: { _ in }, onDeleteWorktree: { _ in }, onMovePane: { _, _ in },
+                onStopWorktree: { _ in }, onDeleteWorktree: { harness.deleteRequests.append(($0, $1)) }, onMovePane: { _, _ in },
                 onAddWorktree: { _, _, _ in nil }, pendingAddWorktree: .constant(nil))
                 .environmentObject(harness.web)
                 .environmentObject(PortBindingsModel())
@@ -507,6 +508,33 @@ final class SidebarSortNativeTests: XCTestCase {
             hosted.window.setContentSize(NSSize(width: 740, height: 420))
             try await hosted.settle()
             try await hosted.expectSortOpensAndSelects(.recentActivity)
+        }
+    }
+}
+
+/// Native menu construction uses the XCTest AppKit process for the same
+/// run-loop reason as SidebarSortNativeTests.
+@MainActor
+final class SidebarDeleteMenuNativeTests: XCTestCase {
+    func testUnselectedDeleteTargetsOwningWindow() async throws {
+        for rail in [false, true] {
+            let hosted = try await SidebarScrollLayoutTests.Hosted.make(pinnedCount: 1, rail: rail)
+            defer { hosted.tearDown() }
+            hosted.harness.state.selectedWorktreePath = "/sidebar-test"
+            try await hosted.settle()
+            let row = try hosted.dragView(named: "task-0")
+            let point = row.convert(CGPoint(x: row.bounds.maxX - 12, y: row.bounds.midY), to: nil)
+            let host = try XCTUnwrap(RightClickMenuHostView.innermostHost(at: point, in: hosted.hosting))
+            let event = try NSEvent.syntheticClick(.rightMouseDown, at: point, in: hosted.window)
+            let menu = try XCTUnwrap(host.menu(for: event))
+            let item = try XCTUnwrap(menu.items.first { $0.title == "Delete Worktree" })
+            _ = item.target?.perform(item.action, with: item)
+            let request = try XCTUnwrap(hosted.harness.deleteRequests.first)
+            XCTAssertEqual(hosted.harness.deleteRequests.count, 1)
+            XCTAssertEqual(request.path, "/sidebar-test/.worktrees/task-0")
+            XCTAssertTrue(request.window === hosted.window)
+            XCTAssertEqual(hosted.harness.state.selectedWorktreePath, "/sidebar-test")
+            XCTAssertTrue(hosted.harness.selections.isEmpty)
         }
     }
 }

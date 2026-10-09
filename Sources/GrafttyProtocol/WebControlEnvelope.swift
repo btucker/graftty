@@ -53,7 +53,19 @@ public enum WebControlEnvelope: Equatable {
         rows: UInt16
     )
     case takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: UInt16, rows: UInt16)
-    case ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: UInt16, rows: UInt16)
+    /// REMOTE-9.12: `xpixel`/`ypixel` carry the owner's terminal pixel size
+    /// for the PTY's `ws_xpixel`/`ws_ypixel`. Zero means unspecified: the
+    /// encoder omits zero fields (keeping the pre-pixel wire shape for
+    /// grid-only senders) and the parser maps a missing or invalid field to
+    /// zero instead of failing, so older peers interoperate in both directions.
+    case ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: UInt16,
+        rows: UInt16,
+        xpixel: UInt16 = 0,
+        ypixel: UInt16 = 0
+    )
     case ownership(DisplayOwnershipSnapshot)
     case imagePaste(ImagePasteMessage)
 
@@ -111,7 +123,14 @@ public enum WebControlEnvelope: Equatable {
             let clientID = try parseClientID(dict)
             let epoch = try parseEpoch(dict)
             let grid = try parseGrid(dict)
-            return .ownerResize(clientID: clientID, epoch: epoch, cols: grid.cols, rows: grid.rows)
+            return .ownerResize(
+                clientID: clientID,
+                epoch: epoch,
+                cols: grid.cols,
+                rows: grid.rows,
+                xpixel: parseOptionalPixel(dict["xpixel"]),
+                ypixel: parseOptionalPixel(dict["ypixel"])
+            )
         case "ownership":
             guard let snapshotObject = dict["snapshot"] else { throw ParseError.missingField("snapshot") }
             guard JSONSerialization.isValidJSONObject(snapshotObject) else {
@@ -162,14 +181,17 @@ public enum WebControlEnvelope: Equatable {
                 "rows": rows,
                 "type": "takeControl",
             ])
-        case let .ownerResize(clientID, epoch, cols, rows):
-            return Self.encodeObject([
+        case let .ownerResize(clientID, epoch, cols, rows, xpixel, ypixel):
+            var object: [String: Any] = [
                 "clientID": clientID.rawValue,
                 "cols": cols,
                 "epoch": epoch,
                 "rows": rows,
                 "type": "ownerResize",
-            ])
+            ]
+            if xpixel > 0 { object["xpixel"] = xpixel }
+            if ypixel > 0 { object["ypixel"] = ypixel }
+            return Self.encodeObject(object)
         case let .imagePaste(message):
             let data = try! JSONEncoder().encode(message)
             let object = try! JSONSerialization.jsonObject(with: data)
@@ -205,6 +227,16 @@ public enum WebControlEnvelope: Equatable {
             throw ParseError.invalidDimension
         }
         return try DisplayGrid(cols: UInt16(cols), rows: UInt16(rows))
+    }
+
+    /// REMOTE-9.12: an optional pixel dimension. Anything other than an
+    /// integer in `UInt16`'s range (missing, null, negative, fractional,
+    /// boolean, string, oversized) is unspecified (0), never a parse error.
+    private static func parseOptionalPixel(_ raw: Any?) -> UInt16 {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return 0 }
+        let value = number.doubleValue
+        guard value.rounded() == value, value >= 0, value <= Double(UInt16.max) else { return 0 }
+        return UInt16(value)
     }
 
     private static func parseEpoch(_ dict: [String: Any]) throws -> UInt64 {

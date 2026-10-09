@@ -58,7 +58,7 @@ struct SidebarView: View {
     let onRemoveRepo: (RepoEntry) -> Void
     let onInitializeGit: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
-    let onDeleteWorktree: (String) -> Void
+    let onDeleteWorktree: (String, NSWindow) -> Void
     let onMovePane: (PaneSlotID, String) -> Void
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
@@ -238,7 +238,7 @@ struct SidebarView: View {
     }
     private func refreshNavigation() async {
         let remote = await remoteMacsModel.sidebarRelaySnapshot()
-        let snapshot = iconStore.snapshot(state: &appState, owner: owner, remote: remote.projects,
+        let snapshot = iconStore.snapshot(state: $appState, owner: owner, remote: remote.projects,
             authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(remoteMacsModel.savedRemoteMacs.map(\.id)))
         if projects != snapshot.projects { projects = snapshot.projects }
         let authoritativeProjects = Set(appState.repos.map(localProjectID))
@@ -399,7 +399,7 @@ struct SidebarView: View {
                     ScrollViewReader { proxy in
                         SidebarWorktreeViewport {
                             if navigation.query.isEmpty {
-                                worktreeRows(section: .pinned)
+                                worktreeRows(section: .pinned, activityCounts: counts)
                                     .padding(.horizontal, showsProjectRail ? 6 : 10)
                             }
                         } controls: {
@@ -414,11 +414,11 @@ struct SidebarView: View {
                         } content: {
                             if showsProjectRail {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
-                                    worktreeRows(section: .tasks)
+                                    worktreeRows(section: .tasks, activityCounts: counts)
                                 }
                                 .emptySpaceMenu(selectedProjectEmptySpaceMenu)
                             } else {
-                                List { worktreeRows(section: .tasks) }.listStyle(.sidebar)
+                                List { worktreeRows(section: .tasks, activityCounts: counts) }.listStyle(.sidebar)
                             }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
@@ -568,8 +568,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func worktreeRows(section: SidebarWorktreeSection) -> some View {
-        let counts = activityCounts
+    private func worktreeRows(section: SidebarWorktreeSection, activityCounts counts: SidebarActivityCounts) -> some View {
         if navigation.query.isEmpty {
             let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
             ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
@@ -847,7 +846,7 @@ struct SidebarView: View {
             prBadge: prBadge,
             attentionStyle: attention.worktreeCapsule,
             attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
-            project: project, projectIconData: projectIcons[projectID],
+            project: project, projectIconData: iconStore.iconData(for: repo),
             identityMenu: worktree.path == repo.path ? nil : { anchor in
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                         onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
@@ -889,6 +888,7 @@ struct SidebarView: View {
                 paneRow(terminalID)
             }
             .buttonStyle(.plain)
+            .transformAnchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { $0[.pane(terminalID)] = $1 }
             // PWD-1.4: pane rows are drag sources. The payload
             // is a typed wrapper around the pane's UUID so
             // SwiftUI's Transferable matching keeps unrelated
@@ -912,7 +912,7 @@ struct SidebarView: View {
                 if targeted { dropTargetWorktreeID = worktree.id }
                 else if dropTargetWorktreeID == worktree.id { dropTargetWorktreeID = nil }
             },
-            menu: { buildWorktreeMenu(worktree, repo: repo) }
+            menu: { anchor in buildWorktreeMenu(worktree, repo: repo, window: anchor.window) }
         ) {
             heading
         } panes: {
@@ -934,7 +934,7 @@ struct SidebarView: View {
     /// `.rightClickMenu` documents. Reordering is drag-only and the
     /// emoji identity has its own menu on the identity slot
     /// (LAYOUT-2.96), so neither appears here.
-    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> NSMenu {
+    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry, window: NSWindow?) -> NSMenu {
         let menu = NSMenu()
         // In-flight rows have nothing the menu actions can act on
         // safely — Open-in-Finder, Stop, and Delete-Worktree would all
@@ -997,7 +997,8 @@ struct SidebarView: View {
         if SidebarMenuVisibility.showsDeleteWorktree(worktree: worktree, repo: repo)
             && worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Delete Worktree") { [self] in
-                onDeleteWorktree(worktree.path)
+                guard let window else { return }
+                onDeleteWorktree(worktree.path, window)
             })
         }
         // TEAM-7.2: team-aware items appear when the worktree is in a
