@@ -7,9 +7,14 @@ import UIKit
 /// input system. Sending them during native typing or dictation can interrupt
 /// the keyboard's current input session.
 ///
-/// This adapter can be removed when libghostty-spm observes that distinction.
+/// Retains software input context so UIKit can find and revise dictation's
+/// previously committed hypotheses. Ghostty still renders and sends input.
 final class MobileTerminalInputView: UITerminalView {
     private var systemEditDepth = 0
+    // Ghostty only retains marked text. Dictation also reads back committed
+    // hypotheses; an empty document makes UIKit cancel after the first word.
+    // This is input context, not a copy of the remote terminal's screen.
+    private var textContext = MobileTerminalTextContext()
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
@@ -28,28 +33,238 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     override func insertText(_ text: String) {
-        withSystemEdit { super.insertText(text) }
+        guard isKeyboardInputEnabled else { return }
+        #if !targetEnvironment(macCatalyst)
+        if hasActiveStickyModifiers {
+            withSystemEdit { super.insertText(text) }
+            resetTextContext()
+            return
+        }
+        #endif
+        editTextContext { $0.insert(text) }
     }
 
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
-        withSystemEdit { super.setMarkedText(markedText, selectedRange: selectedRange) }
+        guard isKeyboardInputEnabled else { return }
+        #if !targetEnvironment(macCatalyst)
+        if hasActiveStickyModifiers {
+            withSystemEdit { super.setMarkedText(markedText, selectedRange: selectedRange) }
+            resetTextContext()
+            return
+        }
+        #endif
+        editTextContext { $0.setMarkedText(markedText, selectedRange: selectedRange) }
     }
 
     override func unmarkText() {
-        withSystemEdit { super.unmarkText() }
+        editTextContext { $0.markedRange = nil }
     }
 
     override func deleteBackward() {
-        withSystemEdit { super.deleteBackward() }
+        guard isKeyboardInputEnabled else { return }
+        #if !targetEnvironment(macCatalyst)
+        if hasActiveStickyModifiers {
+            withSystemEdit { super.deleteBackward() }
+            if textContext.markedRange != nil {
+                // Native marked edits use their own UTF-16 deletion model.
+                // Mirror the result instead of applying another deletion.
+                let marked = super.markedTextRange
+                let text = marked.flatMap { super.text(in: $0) }
+                let selected = super.selectedTextRange
+                let start = selected.map { super.offset(from: super.beginningOfDocument, to: $0.start) } ?? 0
+                let length = selected.map { super.offset(from: $0.start, to: $0.end) } ?? 0
+                textContext.setMarkedText(text, selectedRange: NSRange(location: start, length: length))
+            } else {
+                resetTextContext()
+            }
+            return
+        }
+        #endif
+        if textContext.text.isEmpty {
+            withSystemEdit { super.deleteBackward() }
+        } else {
+            editTextContext { $0.deleteBackward() }
+        }
     }
 
     override func replace(_ range: UITextRange, withText text: String) {
-        withSystemEdit { super.replace(range, withText: text) }
+        guard isKeyboardInputEnabled, let range = range as? MobileTerminalTextRange,
+              textContext.contains(range.range) else { return }
+        #if !targetEnvironment(macCatalyst)
+        if hasActiveStickyModifiers {
+            withSystemEdit { super.replace(range, withText: text) }
+            resetTextContext()
+            return
+        }
+        #endif
+        editTextContext { $0.replace(range.range, with: text) }
     }
 
     override var selectedTextRange: UITextRange? {
-        get { super.selectedTextRange }
-        set { withSystemEdit { super.selectedTextRange = newValue } }
+        get { MobileTerminalTextRange(textContext.selection) }
+        set {
+            guard let range = newValue as? MobileTerminalTextRange,
+                  textContext.contains(range.range) else { return }
+            textContext.selection = range.range
+            if textContext.markedRange != nil {
+                withSystemEdit {
+                    super.selectedTextRange = super.textRange(
+                        from: nativePosition(for: range.start),
+                        to: nativePosition(for: range.end)
+                    )
+                }
+            }
+        }
+    }
+
+    override var markedTextRange: UITextRange? {
+        textContext.markedRange.map(MobileTerminalTextRange.init)
+    }
+
+    override var beginningOfDocument: UITextPosition { MobileTerminalTextPosition(0) }
+    override var endOfDocument: UITextPosition { MobileTerminalTextPosition(textContext.length) }
+
+    override func textRange(from: UITextPosition, to: UITextPosition) -> UITextRange? {
+        guard let from = from as? MobileTerminalTextPosition,
+              let to = to as? MobileTerminalTextPosition else { return nil }
+        let range = NSRange(location: min(from.index, to.index), length: abs(to.index - from.index))
+        return textContext.contains(range) ? MobileTerminalTextRange(range) : nil
+    }
+
+    override func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
+        guard let position = position as? MobileTerminalTextPosition else { return nil }
+        let index = position.index + offset
+        guard index >= 0, index <= textContext.length else { return nil }
+        return MobileTerminalTextPosition(index)
+    }
+
+    override func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+        self.position(from: position, offset: direction == .left || direction == .up ? -offset : offset)
+    }
+
+    override func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
+        let difference = offset(from: other, to: position)
+        return difference < 0 ? .orderedAscending : difference > 0 ? .orderedDescending : .orderedSame
+    }
+
+    override func offset(from: UITextPosition, to: UITextPosition) -> Int {
+        guard let from = from as? MobileTerminalTextPosition,
+              let to = to as? MobileTerminalTextPosition else { return 0 }
+        return to.index - from.index
+    }
+
+    override func text(in range: UITextRange) -> String? {
+        guard let range = range as? MobileTerminalTextRange,
+              textContext.contains(range.range) else { return nil }
+        return (textContext.text as NSString).substring(with: range.range)
+    }
+
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        super.caretRect(for: nativePosition(for: position))
+    }
+
+    override func firstRect(for range: UITextRange) -> CGRect {
+        guard let native = super.textRange(from: nativePosition(for: range.start), to: nativePosition(for: range.end))
+        else { return super.caretRect(for: super.beginningOfDocument) }
+        return super.firstRect(for: native)
+    }
+
+    override func closestPosition(to point: CGPoint) -> UITextPosition? {
+        guard let native = super.closestPosition(to: point) else { return nil }
+        let origin = textContext.markedRange?.location ?? textContext.length
+        return MobileTerminalTextPosition(origin + super.offset(from: super.beginningOfDocument, to: native))
+    }
+
+    override func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
+        guard let position = closestPosition(to: point) as? MobileTerminalTextPosition,
+              let range = range as? MobileTerminalTextRange else { return nil }
+        return MobileTerminalTextPosition(min(max(position.index, range.range.location), NSMaxRange(range.range)))
+    }
+
+    override func characterRange(at point: CGPoint) -> UITextRange? {
+        guard let position = closestPosition(to: point) else { return nil }
+        return characterRange(byExtending: position, in: .right)
+    }
+
+    override func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
+        guard let position = position as? MobileTerminalTextPosition else { return nil }
+        let index = direction == .left || direction == .up ? position.index - 1 : position.index
+        guard index >= 0, index < textContext.length else {
+            return textRange(from: position, to: position)
+        }
+        return MobileTerminalTextRange((textContext.text as NSString).rangeOfComposedCharacterSequence(at: index))
+    }
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        resetTextContext()
+        return resigned
+    }
+
+    func resetTextContext(notifyingInputSystem: Bool = false) {
+        if notifyingInputSystem {
+            withExternalTextEdit { clearTextContext() }
+        } else {
+            clearTextContext()
+        }
+    }
+
+    func commitAndResetTextContext() {
+        withExternalTextEdit {
+            unmarkText()
+            clearTextContext()
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // Hardware navigation can move the remote cursor outside our software
+        // input context. Ghostty still owns all physical-key translation.
+        if textContext.markedRange == nil { resetTextContext(notifyingInputSystem: true) }
+        super.pressesBegan(presses, with: event)
+    }
+
+    private func nativePosition(for position: UITextPosition) -> UITextPosition {
+        guard let position = position as? MobileTerminalTextPosition,
+              let marked = textContext.markedRange else { return super.beginningOfDocument }
+        let index = min(max(position.index - marked.location, 0), marked.length)
+        return super.position(from: super.beginningOfDocument, offset: index) ?? super.beginningOfDocument
+    }
+
+    private func editTextContext(_ edit: (inout MobileTerminalTextContext) -> Void) {
+        let previous = textContext.committedText
+        edit(&textContext)
+        let committed = textContext.committedText
+        // Revisions can replace a previous hypothesis. Only rewrite the changed
+        // suffix, counting Unicode scalars for the terminal DEL transport
+        // rather than UTF-16 units or Swift's composed Characters.
+        let commonCount = zip(previous.unicodeScalars, committed.unicodeScalars).prefix { $0 == $1 }.count
+        let removed = previous.unicodeScalars.dropFirst(commonCount)
+        withSystemEdit {
+            if !removed.isEmpty {
+                super.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0))
+            }
+            for _ in removed { super.deleteBackward() }
+            let inserted = String(committed.unicodeScalars.dropFirst(commonCount))
+            if !inserted.isEmpty { super.insertText(inserted) }
+            super.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0))
+        }
+        synchronizeMarkedText()
+        if committed.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) {
+            resetTextContext()
+        }
+    }
+
+    private func synchronizeMarkedText() {
+        withSystemEdit {
+            guard let marked = textContext.markedRange else { return }
+            let text = (textContext.text as NSString).substring(with: marked)
+            let selection = textContext.selection
+            super.setMarkedText(text, selectedRange: NSRange(
+                location: min(max(selection.location - marked.location, 0), marked.length),
+                length: min(selection.length, marked.length)
+            ))
+        }
     }
 
     private func withSystemEdit(_ edit: () -> Void) {
@@ -57,5 +272,112 @@ final class MobileTerminalInputView: UITerminalView {
         defer { systemEditDepth -= 1 }
         edit()
     }
+
+    private func clearTextContext() {
+        textContext = MobileTerminalTextContext()
+        withSystemEdit { super.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0)) }
+    }
+
+    private func withExternalTextEdit(_ edit: () -> Void) {
+        // External controls invalidate positions cached by UIKit. Capture the
+        // delegate before committing, since control text can clear the context.
+        let delegate = textContext.text.isEmpty ? nil : inputDelegate
+        delegate?.textWillChange(self)
+        delegate?.selectionWillChange(self)
+        edit()
+        delegate?.selectionDidChange(self)
+        delegate?.textDidChange(self)
+    }
+}
+
+private struct MobileTerminalTextContext {
+    var text = ""
+    var selection = NSRange(location: 0, length: 0)
+    var markedRange: NSRange?
+    var length: Int { text.utf16.count }
+    var committedText: String {
+        guard let markedRange else { return text }
+        return (text as NSString).replacingCharacters(in: markedRange, with: "")
+    }
+
+    func contains(_ range: NSRange) -> Bool {
+        range.location >= 0 && range.location <= length && range.length >= 0 && range.length <= length - range.location
+    }
+
+    mutating func replace(_ range: NSRange, with replacement: String) {
+        let previousMark = markedRange
+        let previousSelection = selection
+        text = (text as NSString).replacingCharacters(in: range, with: replacement)
+        selection = NSRange(location: range.location + replacement.utf16.count, length: 0)
+        markedRange = nil
+        // UIKit can correct an earlier hypothesis while composing the next
+        // word. A disjoint replacement must not commit that pending word.
+        if let previousMark {
+            let delta = replacement.utf16.count - range.length
+            let newLength = length
+            func revisedPosition(_ index: Int) -> Int {
+                let revised: Int
+                if index < range.location { revised = index }
+                else if index >= NSMaxRange(range) { revised = index + delta }
+                else { revised = range.location + replacement.utf16.count }
+                return min(max(revised, 0), newLength)
+            }
+            let selectedStart = revisedPosition(previousSelection.location)
+            let selectedEnd = revisedPosition(NSMaxRange(previousSelection))
+            let revisedSelection = NSRange(location: selectedStart, length: selectedEnd - selectedStart)
+            if NSMaxRange(range) <= previousMark.location {
+                markedRange = NSRange(location: previousMark.location + delta, length: previousMark.length)
+                selection = revisedSelection
+            } else if range.location >= NSMaxRange(previousMark) {
+                markedRange = previousMark
+                selection = revisedSelection
+            }
+        }
+    }
+
+    mutating func insert(_ text: String) {
+        replace(markedRange ?? selection, with: text)
+    }
+
+    mutating func setMarkedText(_ text: String?, selectedRange: NSRange) {
+        let range = markedRange ?? selection
+        let replacement = text ?? ""
+        replace(range, with: replacement)
+        let length = replacement.utf16.count
+        guard length > 0 else { return }
+        markedRange = NSRange(location: range.location, length: length)
+        let start = min(max(selectedRange.location, 0), length)
+        selection = NSRange(location: range.location + start, length: min(max(selectedRange.length, 0), length - start))
+    }
+
+    mutating func deleteBackward() {
+        var range = selection
+        if range.length == 0 {
+            guard range.location > 0 else { return }
+            let prefix = (text as NSString).substring(to: range.location)
+            guard let scalar = prefix.unicodeScalars.last else { return }
+            let length = String(scalar).utf16.count
+            range = NSRange(location: range.location - length, length: length)
+        }
+        let previousMark = markedRange
+        replace(range, with: "")
+        if let previousMark, range.location >= previousMark.location, NSMaxRange(range) <= NSMaxRange(previousMark) {
+            let remaining = previousMark.length - range.length
+            if remaining > 0 { markedRange = NSRange(location: previousMark.location, length: remaining) }
+        }
+    }
+}
+
+private final class MobileTerminalTextPosition: UITextPosition {
+    let index: Int
+    init(_ index: Int) { self.index = index; super.init() }
+}
+
+private final class MobileTerminalTextRange: UITextRange {
+    let range: NSRange
+    init(_ range: NSRange) { self.range = range; super.init() }
+    override var start: UITextPosition { MobileTerminalTextPosition(range.location) }
+    override var end: UITextPosition { MobileTerminalTextPosition(NSMaxRange(range)) }
+    override var isEmpty: Bool { range.length == 0 }
 }
 #endif
