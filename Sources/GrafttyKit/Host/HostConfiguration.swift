@@ -35,6 +35,7 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
     public var hooksDirectory: URL { stateDirectory.appendingPathComponent("agent-hooks", isDirectory: true) }
 
     public static func defaultStateDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        if let override = environment["GRAFTTY_STATE_DIR"], override.hasPrefix("/") { return URL(fileURLWithPath: override, isDirectory: true) }
         let base = environment["XDG_DATA_HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share").path
         return URL(fileURLWithPath: base).appendingPathComponent("graftty", isDirectory: true)
@@ -43,7 +44,7 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
     public static func defaultRuntimeDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         let base = environment["XDG_RUNTIME_DIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }
         return base.map { URL(fileURLWithPath: $0).appendingPathComponent("graftty", isDirectory: true) }
-            ?? defaultStateDirectory(environment: environment).appendingPathComponent("run", isDirectory: true)
+            ?? defaultStateDirectory(environment: environment)
     }
 
     public static func defaultZmxExecutable() -> URL {

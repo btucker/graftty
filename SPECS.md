@@ -2960,6 +2960,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.6** When opening instructions beneath an approved directory, the application shall reject symlinks in every path component and parent-directory traversal.
 
+**REMOTE-23.7** While running on Linux, the application shall place the private Attention handoff beneath the system temporary directory.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

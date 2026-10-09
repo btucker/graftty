@@ -258,10 +258,8 @@ public final class HeadlessHostRuntime {
                     attentionText: worktree.attention?.text, attentionSource: worktree.attention?.source,
                     attentionTimestamp: worktree.attention?.timestamp,
                     layout: worktree.state == .running ? worktree.splitTree.root.flatMap { layout($0, worktree: worktree) } : nil,
-                    origin: origin, sidebar: SidebarWorktreeMetadata(id: worktree.path, projectID: repo.path,
-                        paneIDs: Dictionary(uniqueKeysWithValues: worktree.paneSessions.map { (launcher.sessionName(for: $0.value), $0.key.id.uuidString) }),
-                        unseenAgentStop: worktree.unseenAgentStop, lastAgentStop: worktree.lastAgentStop,
-                        agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.emoji, isPinned: worktree.isPinned))
+                    origin: origin, sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: repo.path,
+                        folders: [], repositoryPath: repo.path))
             }
         }
     }

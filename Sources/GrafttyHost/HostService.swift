@@ -146,7 +146,7 @@ final class HostService {
             do {
                 let request = RemoteTeamRequest.send(senderWorktree: path, senderAgentID: agent,
                     recipientWorktree: address.worktreePath, recipientSuffix: address.suffix, text: text, priority: priority)
-                let bytes = try await session.request(JSONEncoder().encode(request))
+                let bytes = try await session.send(JSONEncoder().encode(request))
                 let response = try JSONDecoder().decode(RemoteTeamResponse.self, from: bytes)
                 if case .error(let error) = response { return .error(error) }
                 return .ok

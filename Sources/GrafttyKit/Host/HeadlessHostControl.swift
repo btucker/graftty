@@ -56,17 +56,20 @@ public extension HeadlessHostRuntime {
                 } else { state.repos[index.repo].worktrees[index.worktree].acknowledgeAttention() }
                 try save()
             case .acknowledgeOccurrence(let path, let pane, let occurrence):
-                let index = try indices(path)
-                let worktree = state.repos[index.repo].worktrees[index.worktree]
-                if let pane, let slot = worktree.paneSlot(forSessionName: pane) {
-                    let attention = worktree.paneAttention[slot]
-                    if SidebarAttentionOccurrence(timestamp: attention?.timestamp, text: attention?.text ?? "", source: attention?.source) == occurrence {
-                        state.repos[index.repo].worktrees[index.worktree].acknowledgePaneAttention(slot)
-                    }
-                } else if worktree.unseenAgentStop?.occurrence == occurrence {
-                    state.repos[index.repo].worktrees[index.worktree].acknowledgeAttention()
-                }
+                _ = SidebarHostNavigation.acknowledge(in: &state, worktreeID: path, paneID: pane, occurrence: occurrence)
                 try save()
+            case .hostPresentation:
+                return .hostPresentation(RemoteHostPresentation(ghosttyConfig: "", keybindings: .init(bindings: [:])))
+            case .moveWorktree(let repo, let path, let relative, let after):
+                _ = SidebarHostNavigation.moveWorktree(in: &state, repositoryID: repo, worktreeID: path, relativeTo: relative, after: after)
+                try save()
+            case .pullDefaultBranch(let path):
+                guard let repo = state.repos.first(where: { $0.path == path }), let branch = repo.defaultBranchHint else {
+                    throw HostRuntimeError.notFound("repository default branch is unknown")
+                }
+                try acquire(path)
+                defer { busyPaths.remove(path) }
+                try await GitDefaultBranchPull.pull(repoPath: path, branchName: branch)
             case .listRemoteMacConnections: return .remoteMacConnections([])
             case .projectIcon: return .icon(nil)
             default: return .error(code: "unsupported", message: "operation is unavailable on this host", forceAllowed: false, shortStatus: nil)
@@ -245,7 +248,7 @@ public extension HeadlessHostRuntime {
         }
         let presence = presence
         return RemoteTeamService(inbox: inbox, agentRecords: { (try? presence.listAll()) ?? [] },
-            agentReachability: TeamAgentReachability.isReachable)
+            agentReachability: { TeamAgentReachability.isReachable($0) })
             .handle(request, from: deviceID, repos: state.repos, teamsEnabled: true)
     }
 }
@@ -268,6 +271,6 @@ extension HeadlessHostRuntime {
         let presence = presence
         let dispatcher = TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" })
         return TeamInboxRequestHandler(inbox: inbox, dispatcher: dispatcher,
-            agentRecords: { (try? presence.listAll()) ?? [] }, agentReachability: TeamAgentReachability.isReachable)
+            agentRecords: { (try? presence.listAll()) ?? [] }, agentReachability: { TeamAgentReachability.isReachable($0) })
     }
 }
