@@ -36,7 +36,7 @@ http_port=$((10#$http_port))
 source_dir=$(cd "$(dirname "$(readlink -f -- "$0")")" && pwd)
 [[ -n ${HOME:-} && $HOME == /* ]] || { echo 'HOME must be an absolute path' >&2; exit 1; }
 version=$(cat "$source_dir/VERSION")
-[[ $version =~ ^[a-zA-Z0-9._-]+$ ]] || { echo 'Invalid archive version' >&2; exit 1; }
+[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid archive version' >&2; exit 1; }
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 [[ $data_home == /* && $config_home == /* ]] || { echo 'XDG directories must be absolute paths' >&2; exit 1; }
@@ -47,18 +47,56 @@ for path in "$release" "$HOME/.local/bin" "$config_home"; do
 done
 mkdir -p "$data_home/graftty/releases" "$HOME/.local/bin" "$config_home/systemd/user"
 staging=$(mktemp -d "$data_home/graftty/releases/.install-XXXXXX")
-trap '[[ -z ${staging:-} ]] || rm -rf -- "$staging"' EXIT
+service_file="$config_home/systemd/user/graftty-host.service"
+service_backup=$(mktemp)
+had_service=0
+if [[ -f $service_file ]]; then cp "$service_file" "$service_backup"; had_service=1; fi
+previous_release=""
+release_installed=0
+was_running=0
+completed=0
+commands=(graftty graftty-host zmx)
+old_links=()
+for binary in "${commands[@]}"; do
+    old_links+=("$(readlink "$HOME/.local/bin/$binary" 2>/dev/null || true)")
+done
+cleanup() {
+    if ((was_running && !completed)); then
+        if ((release_installed)); then
+            rm -rf -- "$release"
+            if [[ -n $previous_release ]]; then mv -- "$previous_release" "$release"; fi
+        fi
+        if ((had_service)); then cp "$service_backup" "$service_file"; else rm -f -- "$service_file"; fi
+        for index in "${!commands[@]}"; do
+            link="$HOME/.local/bin/${commands[$index]}"
+            if [[ -n ${old_links[$index]} ]]; then ln -sfn "${old_links[$index]}" "$link"
+            elif [[ -L $link ]]; then rm -- "$link"; fi
+        done
+        systemctl --user daemon-reload || true
+        systemctl --user start graftty-host.service || echo 'Could not restore the previous host service' >&2
+    fi
+    [[ -z ${staging:-} ]] || rm -rf -- "$staging"
+    rm -f -- "$service_backup"
+}
+trap cleanup EXIT
 for directory in bin lib libexec share; do
     [[ -d $source_dir/$directory ]] || { echo "Missing archive directory: $directory" >&2; exit 1; }
     cp -a "$source_dir/$directory" "$staging/$directory"
 done
 cp "$source_dir/VERSION" "$staging/VERSION"
+# Release the host state lease before setup. KillMode=process preserves zmx.
+if ((start_service)) && systemctl --user is-active --quiet graftty-host.service; then
+    was_running=1
+    systemctl --user stop graftty-host.service
+fi
 # Replace the directory rather than overwrite executables held by running hosts.
 if [[ -e $release ]]; then
-    mv -- "$release" "$release.previous.$(date +%s).$$"
+    previous_release="$release.previous.$(date +%s).$$"
+    mv -- "$release" "$previous_release"
 fi
 mv -- "$staging" "$release"
 staging=""
+release_installed=1
 for binary in graftty graftty-host zmx; do
     ln -sfn "$release/bin/$binary" "$HOME/.local/bin/$binary"
 done
@@ -90,5 +128,6 @@ if ((start_service)); then
     systemctl --user enable graftty-host.service
     systemctl --user restart graftty-host.service
 fi
+completed=1
 printf 'Installed Graftty %s in %s\n' "$version" "$release"
 printf 'Add %s/.local/bin to PATH.\n' "$HOME"

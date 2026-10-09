@@ -63,16 +63,43 @@ class InstallerTests(unittest.TestCase):
             self.install("--no-start", *args, success=False)
         self.assertFalse((self.home / ".config/systemd/user/graftty-host.service").exists())
 
+    def test_version_cannot_escape_release_directory(self):
+        (self.archive / "VERSION").write_text("..\n")
+        self.install("--no-start", success=False)
+        self.assertFalse((self.home / ".local/share/graftty/releases").exists())
+
     def test_systemctl_invocations_are_user_scoped(self):
         fake = self.root / "fake-bin"
         fake.mkdir()
         systemctl = fake / "systemctl"
         log = self.root / "systemctl.log"
-        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\n')
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\ncase "$*" in *is-active*) exit 1 ;; esac\n')
         systemctl.chmod(0o755)
         self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log))
         self.install()
-        self.assertEqual(log.read_text().splitlines(), ["--user daemon-reload", "--user enable graftty-host.service", "--user restart graftty-host.service"])
+        self.assertEqual(log.read_text().splitlines(), ["--user is-active --quiet graftty-host.service", "--user daemon-reload", "--user enable graftty-host.service", "--user restart graftty-host.service"])
+
+    def test_running_upgrade_stops_before_setup_and_recovers_failure(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        previous_service = service.read_text()
+        previous_cli = (self.home / ".local/bin/graftty").readlink()
+        fake = self.root / "fake-bin"
+        fake.mkdir()
+        log = self.root / "operations.log"
+        systemctl = fake / "systemctl"
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_TEST_LOG"\n')
+        systemctl.chmod(0o755)
+        host = self.archive / "bin/graftty-host"
+        host.write_text('#!/bin/sh\necho setup >> "$SYSTEMCTL_TEST_LOG"\nexit 42\n')
+        self.env.update(PATH=str(fake) + os.pathsep + self.env["PATH"], SYSTEMCTL_TEST_LOG=str(log))
+        self.install(success=False)
+        operations = log.read_text().splitlines()
+        self.assertLess(operations.index("--user stop graftty-host.service"), operations.index("setup"))
+        self.assertIn("--user start graftty-host.service", operations)
+        self.assertEqual(service.read_text(), previous_service)
+        self.assertEqual((self.home / ".local/bin/graftty").readlink(), previous_cli)
+        self.assertIn("exit 0", (self.home / ".local/bin/graftty-host").read_text())
 
     def test_systemd_percent_and_dollar_escaping(self):
         self.home = self.root / 'user $dollar'

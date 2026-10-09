@@ -3,7 +3,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 version=${1:?Usage: package.sh VERSION [OUTPUT_DIRECTORY]}
 output=${2:-$repo/dist}
-[[ $version =~ ^[a-zA-Z0-9._-]+$ ]] || { echo 'Invalid version' >&2; exit 64; }
+[[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo 'Invalid version' >&2; exit 64; }
 [[ $(uname -s) == Linux ]] || { echo 'Linux packaging must run on Linux' >&2; exit 1; }
 arch=$(uname -m)
 case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 64 ;; esac
@@ -25,6 +25,8 @@ bundle="$stage/$name"
 mkdir -p "$bundle/bin" "$bundle/lib" "$bundle/libexec" "$bundle/share"
 install -m 755 "$binary_dir/graftty-host" "$bundle/libexec/graftty-host"
 install -m 755 "$binary_dir/graftty-cli" "$bundle/libexec/graftty-cli"
+# Host agent hooks resolve a sibling CLI; route through its runtime launcher.
+ln -s ../bin/graftty "$bundle/libexec/graftty"
 for command in graftty graftty-host; do
     install -m 755 "$repo/scripts/linux/launcher.sh" "$bundle/bin/$command"
 done
@@ -45,6 +47,6 @@ cp "$repo/LICENSE" "$bundle/LICENSE"
 "$bundle/bin/zmx" version
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
-tar -czf "$output/$name.tar.gz" -C "$stage" "$name"
+tar -czf "$output/$name.tar.gz" -C "$bundle" .
 (cd "$output" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 printf '%s\n' "$output/$name.tar.gz"

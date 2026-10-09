@@ -7,7 +7,7 @@ set -euo pipefail
 # The stock Ubuntu image has no Swift installation.
 ! command -v swift
 mkdir /bundle
-tar -xzf /artifact.tar.gz --strip-components=1 -C /bundle
+tar -xzf /artifact.tar.gz -C /bundle
 export HOME=/tmp/graftty-user
 mkdir -p "$HOME"
 /bundle/install.sh --bind-address 127.0.0.1 --ssh-port 18001 --http-port 18000 --no-start

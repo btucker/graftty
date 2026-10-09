@@ -22,7 +22,8 @@ struct LinuxHostPackagingTests {
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
         let entries = String(decoding: bytes, as: UTF8.self).split(separator: "\n").map(String.init)
-        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-host", "/libexec/graftty-cli", "/lib/libswiftCore.so", "/share/terminfo/ghostty.terminfo"] {
+        #expect(entries.contains("./install.sh"))
+        for suffix in ["/install.sh", "/bin/graftty", "/bin/graftty-host", "/bin/zmx", "/libexec/graftty-host", "/libexec/graftty-cli", "/libexec/graftty", "/lib/libswiftCore.so", "/share/terminfo/78/xterm-ghostty"] {
             #expect(entries.contains { $0.hasSuffix(suffix) }, "Archive missing \(suffix)")
         }
     }
