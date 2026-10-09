@@ -10,6 +10,43 @@ import UIKit
 @Suite("Mobile worktree reports")
 @MainActor
 struct MobileAttentionPaneTests {
+    @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.", arguments: [320.0, 393.0, 540.0])
+    func longNamesDoNotInflateRows(width: Double) {
+        func size(name: String) -> CGSize {
+            let row = WorktreePanes(path: "/repo/feature", displayName: name, repoDisplayName: "graftty",
+                displayBranch: name, state: .closed, isMainCheckout: false,
+                prBadge: .init(number: 405, state: .open, checks: .success,
+                    url: URL(string: "https://github.com/btucker/graftty/pull/405")!),
+                stats: .init(ahead: 12, behind: 25, hasUncommittedChanges: true, baseRef: "main"),
+                attentionText: nil, layout: nil)
+            let hosted = UIHostingController(rootView: WorktreeBlock(worktree: row,
+                theme: nil, isActive: false, isOpening: false, focusedPaneId: nil,
+                projectColumn: true, context: SidebarWorktreeContext(worktree: row),
+                onSelect: {}, onSelectPane: { _ in }, onReport: {}))
+            return hosted.sizeThatFits(in: CGSize(width: width, height: 600))
+        }
+        let short = size(name: "feature")
+        let long = size(name: "merge-recent-activity-attention-and-unified-worktree-reports")
+        #expect(long.width <= width)
+        #expect(long.height == short.height)
+        #expect(long.height >= 44)
+    }
+
+    @Test("@spec IOS-9.13: When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.")
+    func informationButtonOnlyPreviewsReport() {
+        let navigation = SidebarNavigationState(prefix: "mobile-info.\(UUID())")
+        let context = navigation.worktreeContext(worktree())
+        var reportShown = false
+        let button = MobileWorktreeReportButton(worktreeName: "push", onReport: { reportShown = true })
+        button.activate()
+        #expect(reportShown)
+        #expect(!navigation.hasViewed(context.item))
+        #expect(navigation.selectedProjectID == nil)
+        let hosted = UIHostingController(rootView: button)
+        let size = hosted.sizeThatFits(in: CGSize(width: 320, height: 640))
+        #expect(size.width >= 44 && size.height >= 44)
+    }
+
     @Test("@spec IOS-4.33: When a paired Mac sends a stopped-agent recap, GrafttyMobile shall display its full report in a presentation that fits a compact iPhone width.")
     func recapFitsPhoneReport() {
         let context = SidebarNavigationState(prefix: "mobile-report.\(UUID())").worktreeContext(worktree())

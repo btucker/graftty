@@ -1994,6 +1994,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
 
+**IOS-9.11** While the mobile worktree list is not searching, the application shall display pinned agents across projects before temporary worktrees, preserving host order within each region and retaining a flat list for hosts without pin metadata.
+
+**IOS-9.12** When a mobile worktree question has no displayed matching pane, the application shall display it beneath the worktree, including empty layouts and non-running worktrees, without acknowledging its request.
+
+**IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
+
+**IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
+
 ### IOS-10.x
 
 **IOS-10.1** While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. When the scene enters `.background`, the application shall close terminal channels and suspend every paired host connection while keeping live `TerminalPaneView` instances mounted; when the scene becomes active and unlocked, it shall resume transport through the same `SessionClient` and `InMemoryTerminalSession` so foregrounding does not free and remount Ghostty renderers during a QuartzCore transaction.

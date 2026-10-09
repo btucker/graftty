@@ -28,8 +28,11 @@ enum MobilePaneAttention {
     }
 
     static func displayedWorktrees(_ worktrees: [WorktreePanes]) -> [WorktreePanes] {
-        WorktreePickerGrouping.grouped(worktrees).flatMap {
-            SidebarWorktreeReportOrder.displayedWorktrees($0.worktrees)
+        WorktreePickerGrouping.regions(worktrees, searching: false).flatMap { region in
+            region.groups.flatMap {
+                SidebarWorktreeReportOrder.displayedWorktrees($0.worktrees,
+                    section: region.sidebarSection)
+            }
         }
     }
 

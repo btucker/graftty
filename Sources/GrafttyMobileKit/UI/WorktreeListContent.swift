@@ -824,96 +824,107 @@ public struct WorktreeListContent: View {
 
     private func worktreeList(_ worktrees: [WorktreePanes]) -> some View {
         let projects = projects(for: worktrees)
+        let regions = WorktreePickerGrouping.regions(worktrees, searching: !navigation.query.isEmpty)
         let scrollKey = navigation.query.isEmpty ? SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail) : nil
         return ScrollViewReader { proxy in
                     List {
                         if !showsProjectRail { remoteMacConnectionsSection }
-                        ForEach(WorktreePickerGrouping.grouped(worktrees)) { group in
-                            Section {
-                                let projectID = group.worktrees.first.map(SidebarProjection.projectID)
-                                let ownerAllowsEditing = projects
-                                    .first(where: { $0.id == projectID })?.supportsWorktreeEditing == true
-                                SidebarWorktreeRows(worktrees: group.worktrees,
-                                    allowsReordering: listEditMode.isEditing && navigation.query.isEmpty && ownerAllowsEditing && !orderMutationInFlight,
-                                    onMove: { source, target, after in
-                                        guard let repositoryID = source.repositoryID else { return }
-                                        performNavigationMutation(.moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
-                                    }, rowInsets: showsProjectRail && horizontalSizeClass == .regular ? SidebarWorktreeListStyle.projectRowInsets : nil,
-                                    showsSections: navigation.query.isEmpty) { wt in
-                                    WorktreeBlock(
-                                        worktree: wt,
-                                        project: projects.first { $0.id == SidebarProjection.projectID(wt) },
-                                        projectIconData: projectIcons[SidebarProjection.projectID(wt)],
-                                        theme: theme,
-                                        isActive: wt.path == selectedWorktreePath,
-                                        isOpening: openingWorktrees.contains(
-                                            OpeningWorktreeKey(
-                                                hostID: host.id,
-                                                path: wt.path
-                                            )
-                                        ),
-                                        focusedPaneId: focusedPaneId,
-                                        projectColumn: showsProjectRail && horizontalSizeClass == .regular,
-                                        context: navigation.worktreeContext(wt),
-                                        onSelect: {
-                                            beginSelectingWorktree(wt)
-                                        },
-                                        onSelectPane: { leaf in
-                                            rememberWorktree(wt)
-                                            acknowledgeViewedPane(wt, leaf: leaf)
-                                            selectionIntentGeneration &+= 1
-                                            if let onSelectPaneWithWorktree {
-                                                onSelectPaneWithWorktree(wt, leaf)
-                                            } else {
-                                                onSelectPane(leaf)
-                                            }
-                                        },
-                                        onReport: { showReport(wt) }
-                                    )
-                                    .popover(isPresented: Binding(
-                                        get: { reportWorktreeID == wt.path },
-                                        set: { if !$0, reportWorktreeID == wt.path { closeReport() } }
-                                    ), arrowEdge: .leading) {
-                                        MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
-                                            let rows: [WorktreePanes]
-                                            if case .loaded(let live) = state { rows = live } else { rows = worktrees }
-                                            return await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: rows)
-                                        }, onDismiss: {
-                                            let context = navigation.worktreeContext(wt)
-                                            navigation.dismissRequest(in: context)
-                                            closeReport()
-                                        },
-                                        onClose: { if reportWorktreeID == wt.path { closeReport() } })
-                                        .presentationCompactAdaptation(.sheet)
-                                    }
-                                    .id(wt.sidebar?.id ?? wt.path)
-                                    .background(GeometryReader { geometry in
-                                        let frame = geometry.frame(in: .named(worktreeScrollSpace))
-                                        Color.clear.preference(key: SidebarWorktreeViewportPreference.self, value: [
-                                            SidebarWorktreeViewportRow(id: wt.sidebar?.id ?? wt.path,
-                                                minY: frame.minY, maxY: frame.maxY, projectID: SidebarProjection.projectID(wt))
-                                        ])
-                                    })
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                        if let action = WorktreePickerGrouping.swipeAction(for: wt) {
-                                            Button(role: .destructive) {
-                                                pendingDelete = PendingDelete(worktree: wt, action: action)
-                                            } label: {
-                                                Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                        ForEach(regions) { region in
+                            if region.kind == .tasks, regions.contains(where: { $0.kind == .pinned }) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Divider()
+                                    Text("Worktrees").font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+                                }
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                            }
+                            ForEach(region.groups) { group in
+                                Section {
+                                    let projectID = group.worktrees.first.map(SidebarProjection.projectID)
+                                    let ownerAllowsEditing = projects
+                                        .first(where: { $0.id == projectID })?.supportsWorktreeEditing == true
+                                    SidebarWorktreeRows(worktrees: group.worktrees,
+                                        allowsReordering: listEditMode.isEditing && navigation.query.isEmpty && ownerAllowsEditing && !orderMutationInFlight,
+                                        onMove: { source, target, after in
+                                            guard let repositoryID = source.repositoryID else { return }
+                                            performNavigationMutation(.moveWorktree(repositoryID: repositoryID, worktreeID: source.path, relativeTo: target.path, after: after))
+                                        }, rowInsets: SidebarWorktreeListStyle.projectRowInsets,
+                                        showsSections: navigation.query.isEmpty,
+                                        section: region.sidebarSection) { wt in
+                                        WorktreeBlock(
+                                            worktree: wt,
+                                            project: projects.first { $0.id == SidebarProjection.projectID(wt) },
+                                            projectIconData: projectIcons[SidebarProjection.projectID(wt)],
+                                            theme: theme,
+                                            isActive: wt.path == selectedWorktreePath,
+                                            isOpening: openingWorktrees.contains(
+                                                OpeningWorktreeKey(
+                                                    hostID: host.id,
+                                                    path: wt.path
+                                                )
+                                            ),
+                                            focusedPaneId: focusedPaneId,
+                                            projectColumn: true,
+                                            context: navigation.worktreeContext(wt),
+                                            onSelect: {
+                                                beginSelectingWorktree(wt)
+                                            },
+                                            onSelectPane: { leaf in
+                                                rememberWorktree(wt)
+                                                acknowledgeViewedPane(wt, leaf: leaf)
+                                                selectionIntentGeneration &+= 1
+                                                if let onSelectPaneWithWorktree {
+                                                    onSelectPaneWithWorktree(wt, leaf)
+                                                } else {
+                                                    onSelectPane(leaf)
+                                                }
+                                            },
+                                            onReport: { showReport(wt) }
+                                        )
+                                        .popover(isPresented: Binding(
+                                            get: { reportWorktreeID == wt.path },
+                                            set: { if !$0, reportWorktreeID == wt.path { closeReport() } }
+                                        ), arrowEdge: .leading) {
+                                            MobileWorktreeReportContent(context: navigation.worktreeContext(wt), onOpen: {
+                                                let rows: [WorktreePanes]
+                                                if case .loaded(let live) = state { rows = live } else { rows = worktrees }
+                                                return await openReportTarget(MobilePaneAttention.openTarget(for: navigation.worktreeContext(wt)), worktrees: rows)
+                                            }, onDismiss: {
+                                                let context = navigation.worktreeContext(wt)
+                                                navigation.dismissRequest(in: context)
+                                                closeReport()
+                                            },
+                                            onClose: { if reportWorktreeID == wt.path { closeReport() } })
+                                            .presentationCompactAdaptation(.sheet)
+                                        }
+                                        .id(wt.sidebar?.id ?? wt.path)
+                                        .background(GeometryReader { geometry in
+                                            let frame = geometry.frame(in: .named(worktreeScrollSpace))
+                                            Color.clear.preference(key: SidebarWorktreeViewportPreference.self, value: [
+                                                SidebarWorktreeViewportRow(id: wt.sidebar?.id ?? wt.path,
+                                                    minY: frame.minY, maxY: frame.maxY, projectID: SidebarProjection.projectID(wt))
+                                            ])
+                                        })
+                                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                            if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                                                Button(role: .destructive) {
+                                                    pendingDelete = PendingDelete(worktree: wt, action: action)
+                                                } label: {
+                                                    Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                                                }
                                             }
                                         }
                                     }
-                                }
-                            } header: {
-                                if !showsProjectRail || horizontalSizeClass != .regular || !navigation.query.isEmpty {
-                                    Text(group.title).foregroundColor(theme?.sidebarPrimaryText(isActive: false))
+                                } header: {
+                                    if (!showsProjectRail && project == nil) || !navigation.query.isEmpty {
+                                        Text(group.title).foregroundColor(theme?.sidebarPrimaryText(isActive: false))
+                                    }
                                 }
                             }
                         }
                     }
-                    // Mac-parity: `.sidebar` style + transparent scroll
-                    // content lets the enclosing iPad surface show through.
-                    .modifier(SidebarWorktreeListStyle(projectColumn: showsProjectRail && horizontalSizeClass == .regular))
+                    // Use the flat project column on iPhone and iPad.
+                    .modifier(SidebarWorktreeListStyle(projectColumn: true))
                     .scrollContentBackground(.hidden)
                     .refreshable { await refresh() }
                     .toolbar { EditButton() }
@@ -1661,55 +1672,57 @@ struct WorktreeBlock: View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            WorktreeRowContent(
-                worktree: worktree,
-                project: project, projectIconData: projectIconData,
-                theme: theme,
-                isActive: isActive,
-                isOpening: isOpening, attentionCount: context.pending.count
-            )
-            .frame(minHeight: projectColumn ? 44 : 0)
+            HStack(spacing: 0) {
+                rowIdentity
+                DivergenceGutter(stats: worktree.stats, theme: theme)
+            }
         } else {
-            MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
-                WorktreeRowContent(
-                    worktree: worktree,
-                    project: project, projectIconData: projectIconData,
-                    theme: theme,
-                    isActive: isActive,
-                    isOpening: isOpening, attentionCount: context.pending.count
-                )
-                .frame(minHeight: projectColumn ? 44 : 0)
-                .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { rowIdentity }
+                MobileWorktreeReportButton(worktreeName: worktree.displayName, onReport: onReport)
+                    .disabled(editMode?.wrappedValue.isEditing == true)
+                MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
+                    DivergenceGutter(stats: worktree.stats, theme: theme)
+                        .frame(minHeight: 44)
+                }
             }
             .disabled(isOpening)
         }
     }
 
+    private var rowIdentity: some View {
+        WorktreeRowContent(worktree: worktree, project: project, projectIconData: projectIconData,
+            theme: theme, isActive: isActive, isOpening: isOpening,
+            attentionCount: MobileWorktreeRowPresentation(context: context).worktreeAttentionCount)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+    }
+
     @ViewBuilder
     private var paneRows: some View {
-        if let layout = worktree.layout {
-            ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
-                let isQuestionPane = context.question != nil
-                    && (context.questionPaneID == leaf.sessionName || (context.questionPaneID == nil && index == 0))
-                let effective = leaf.attentionText ?? (index == 0 ? worktree.attentionText : nil)
-                let style = isQuestionPane ? nil : effective.map {
-                    AttentionCapsuleStyle.from(text: $0, source: leaf.attentionText != nil ? leaf.attentionSource : worktree.attentionSource)
-                }
-                MobileWorktreeReportTarget(onOpen: { onSelectPane(leaf) }, onReport: onReport) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        PaneTitleRow(leaf: leaf, theme: theme, attentionStyle: style,
-                            isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
-                            attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count)
-                        if isQuestionPane {
-                            SidebarWorktreeQuestion(context: context)
-                                .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
+        let presentation = MobileWorktreeRowPresentation(context: context)
+        ForEach(Array(presentation.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
+            let isQuestionPane = presentation.questionPaneID == leaf.sessionName
+            let effective = leaf.attentionText ?? (index == 0 ? worktree.attentionText : nil)
+            let style = isQuestionPane ? nil : effective.map {
+                AttentionCapsuleStyle.from(text: $0, source: leaf.attentionText != nil ? leaf.attentionSource : worktree.attentionSource)
             }
-        } else if context.question != nil {
+            MobileWorktreeReportTarget(onOpen: { onSelectPane(leaf) }, onReport: onReport) {
+                VStack(alignment: .leading, spacing: 4) {
+                    PaneTitleRow(leaf: leaf, theme: theme, attentionStyle: style,
+                        isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
+                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count)
+                    if isQuestionPane {
+                        SidebarWorktreeQuestion(context: context)
+                            .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        if presentation.showsWorktreeQuestion {
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 SidebarWorktreeQuestion(context: context)
+                    .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
             }
         }
     }
@@ -1725,8 +1738,7 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 
 /// Type icon + optional PR badge + display name (italic for main
 /// checkout, strikethrough when stale), optional secondary branch
-/// label stacked beneath the display name when present (IPAD-1.15),
-/// and a trailing divergence gutter.
+/// label stacked beneath the display name when present (IPAD-1.15).
 private struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
@@ -1742,12 +1754,11 @@ private struct WorktreeRowContent: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if worktree.layout?.leaves.isEmpty != false {
-                SidebarActivityBadge(attentionCount)
-            }
+            SidebarActivityBadge(attentionCount)
             typeIcon
             if let badge = worktree.prBadge {
                 SidebarPRBadge(badge: badge)
+                    .fixedSize()
             }
             // IPAD-1.15: the branch label gets its own line beneath
             // the worktree's display name rather than running inline.
@@ -1756,6 +1767,9 @@ private struct WorktreeRowContent: View {
             // off the trailing edge at narrow sidebar widths.
             VStack(alignment: .leading, spacing: 1) {
                 primaryText
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if let secondary = secondaryBranch {
                     Text(secondary)
                         .font(.caption)
@@ -1767,8 +1781,7 @@ private struct WorktreeRowContent: View {
             // IPAD-1.14: worktree-scoped attentionText is rendered on
             // the first pane row (see WorktreeBlock.paneRows), not
             // here — "needs input" pills always sit on pane rows.
-            Spacer()
-            DivergenceGutter(stats: worktree.stats, theme: theme)
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
