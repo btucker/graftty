@@ -371,6 +371,7 @@ public final class TerminalInputContainerView: UIView,
             } else {
                 if wasEligible {
                     resetStickyModifiers()
+                    terminalView.resetTextContext()
                 }
                 isCommittedSoftwareInputEligible = false
                 terminalView.isKeyboardInputEnabled = false
@@ -529,6 +530,7 @@ public final class TerminalInputContainerView: UIView,
                 modifierFlags: command.modifierFlags,
                 perform: { [weak self] in
                     guard let self, self.isCommittedSoftwareInputEligible else { return }
+                    self.terminalView.commitAndResetTextContext()
                     self.storedCommittedSoftwareInput?.insertText(command.text)
                 }
             )
@@ -823,6 +825,7 @@ public final class TerminalInputContainerView: UIView,
     }
 
     fileprivate func performPaste(for menuGeneration: UInt) {
+        terminalView.commitAndResetTextContext()
         onPasteRequested?()
         guard menuGeneration == longPressMenuGeneration else { return }
         pendingPasteRefocusGeneration = menuGeneration
@@ -976,6 +979,7 @@ public final class TerminalInputContainerView: UIView,
                   let byte = hardwareControlByte(for: event),
                   let committedInput = storedCommittedSoftwareInput
             else { return false }
+            terminalView.resetTextContext(notifyingInputSystem: true)
             if let insertControlByte = committedInput.insertControlByte {
                 insertControlByte(byte)
             } else {
