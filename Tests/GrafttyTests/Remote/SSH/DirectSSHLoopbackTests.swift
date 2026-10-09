@@ -21,12 +21,13 @@ struct DirectSSHLoopbackTests {
         var fingerprint: RemoteIdentityFingerprint {
             get throws { RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)) }
         }
-        func peer(key: Curve25519.Signing.PrivateKey, id: String = "client", allowed: Bool = true) throws -> TrustedPeer {
+        func peer(key: Curve25519.Signing.PrivateKey, id: String = "client", allowed: Bool = true, managementAllowed: Bool = true) throws -> TrustedPeer {
             TrustedPeer(id: RemoteDeviceID(value: id), kind: .mac,
                         publicKey: try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation),
                         displayName: id,
                         capabilities: PairedDeviceCapabilities(terminalControl: allowed ? .allowed : .disabled,
-                            portTunnel: .disabled, screenView: .disabled, screenControl: .disabled),
+                            portTunnel: .disabled, screenView: .disabled, screenControl: .disabled,
+                            worktreeManagement: managementAllowed ? .allowed : .disabled),
                         pairedAt: Date(), lastSeenAt: nil)
         }
         func server() -> DirectSSHHostServer {
@@ -117,7 +118,7 @@ struct DirectSSHLoopbackTests {
     @Test("@spec REMOTE-20.10: While a peer is authenticated over direct SSH, the application shall enforce its worktree management and port tunnel capabilities for each channel.", .timeLimit(.minutes(1)))
     func channelCapabilitiesAreEnforced() async throws {
         let f = Fixture(); defer { f.cleanup() }
-        try f.store.add(f.peer(key: f.clientKey))
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: false))
         let server = f.server()
         let port = try await server.start(host: "127.0.0.1", port: 0)
         let client = try f.client()

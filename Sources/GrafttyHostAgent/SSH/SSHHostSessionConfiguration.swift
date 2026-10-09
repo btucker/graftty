@@ -78,7 +78,7 @@ struct SSHHostSessionConfiguration: Sendable {
                         teamHandler: teamHandler,
                         teamOnConnect: teamOnConnect,
                         teamOnDisconnect: teamOnDisconnect,
-                        teamAllowed: { peerBox.displayKind == .mac },
+                        teamAllowed: { peerBox.teamAllowed },
                         bulkChannels: bulkChannels,
                         isBulkTransport: isBulkTransport
                     ))
@@ -114,6 +114,10 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         default:
             return .mac
         }
+    }
+
+    var teamAllowed: Bool {
+        lock.withLock { _peer?.kind == .mac || _peer?.kind.rawValue == "linux" }
     }
 
     var worktreeManagementAllowed: Bool {
