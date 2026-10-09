@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Swift's Darwin overlay marks `fork()` as `unavailable` with a message
 /// steering callers toward `posix_spawn`. That's the right default advice,
@@ -112,18 +116,17 @@ public enum PtyProcess {
             throw Error.unlockptFailed(errno: err)
         }
 
-        guard let slaveNameCStr = ptsname(master) else {
+        guard let slavePath = GrafttyPOSIX.ptySlavePath(master) else {
             close(master)
             throw Error.ptsnameFailed
         }
-        let slavePath = String(cString: slaveNameCStr)
 
         // Keep the parent's slave fd open across fork. On macOS, when the
         // slave ref count crosses zero the PTY enters an EOF state on the
         // master, and subsequent reads return -1/EIO even after the child
         // opens a fresh slave fd. Holding one fd here until after fork
         // avoids that zero-crossing.
-        let parentSlaveFD = Darwin.open(slavePath, O_RDWR | O_NOCTTY)
+        let parentSlaveFD = GrafttyPOSIX.open(slavePath, O_RDWR | O_NOCTTY)
         if parentSlaveFD < 0 {
             close(master)
             throw Error.ptsnameFailed
@@ -162,11 +165,15 @@ public enum PtyProcess {
             throw Error.forkFailed(errno: err)
         }
         if pid == 0 {
+            // The headless host ignores these signals while DispatchSource
+            // handles shutdown. Ignored dispositions otherwise survive exec.
+            _ = signal(SIGINT, SIG_DFL)
+            _ = signal(SIGTERM, SIG_DFL)
             _ = setsid()
             if let cwdCString, chdir(cwdCString) != 0 {
                 _exit(127)
             }
-            let slave = Darwin.open(slavePath, O_RDWR)
+            let slave = GrafttyPOSIX.open(slavePath, O_RDWR)
             if slave < 0 { _exit(127) }
             // Non-fatal on some kernels; continue regardless of rc.
             _ = ioctl(slave, UInt(TIOCSCTTY), 0)
@@ -189,7 +196,12 @@ public enum PtyProcess {
             // close() calls, which hung our tests indefinitely on the first
             // attempt). The dtable size is typically ≤10k, closing 3..that
             // is a few ms of syscalls.
-            let maxFd = getdtablesize()
+            #if os(Linux)
+            let closedRange = linuxCloseRange(3, UInt32.max, 0) == 0
+            #else
+            let closedRange = false
+            #endif
+            let maxFd = closedRange ? 3 : getdtablesize()
             var fd: Int32 = 3
             while fd < maxFd {
                 close(fd)
@@ -204,6 +216,18 @@ public enum PtyProcess {
             // SETEXEC makes posix_spawn replace the current image
             // rather than fork+exec, so we keep the setsid/TIOCSCTTY
             // setup done above (neither is expressible via spawnattr).
+            #if os(Linux)
+            if resetSignalMask {
+                var mask = sigset_t()
+                sigemptyset(&mask)
+                _ = sigprocmask(SIG_SETMASK, &mask, nil)
+            }
+            _ = argvPointers.withUnsafeMutableBufferPointer { argvBuffer in
+                envPointers.withUnsafeMutableBufferPointer { envBuffer in
+                    execve(argvBuffer[0]!, argvBuffer.baseAddress!, envBuffer.baseAddress!)
+                }
+            }
+            #else
             var spawnAttrs: posix_spawnattr_t?
             guard posix_spawnattr_init(&spawnAttrs) == 0 else { _exit(127) }
 
@@ -229,6 +253,7 @@ public enum PtyProcess {
                     )
                 }
             }
+            #endif
             _exit(127)
         }
 

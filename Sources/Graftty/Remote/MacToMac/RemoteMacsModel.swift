@@ -1265,7 +1265,7 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
-    func recordPairingResult(_ result: RemoteMacPairingSaveResult) throws {
+    func recordPairingResult(_ result: RemoteMacPairingSaveResult, transport: RemoteHostTransport = .webRTC, directEndpoint: DirectSSHEndpoint? = nil) throws {
         guard case .paired(let pinnedHost) = result else { return }
 
         let remoteMac = RemoteMac(
@@ -1274,6 +1274,8 @@ final class RemoteMacsModel: ObservableObject {
             fingerprint: pinnedHost.fingerprint,
             lastKnownBaseURL: pinnedHost.routes.first?.baseURL
                 ?? Self.baseURL(fromPairingURL: pinnedHost.pairingURL),
+            transport: transport,
+            directEndpoint: directEndpoint,
             routes: pinnedHost.routes,
             lastSuccessfulRoute: pinnedHost.lastSuccessfulRoute,
             addedAt: pinnedHost.pinnedAt,

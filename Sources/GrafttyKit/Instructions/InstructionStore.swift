@@ -1,6 +1,12 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 public enum InstructionRoleFileError: LocalizedError {
     case defaultBranchUnavailable
@@ -442,7 +448,7 @@ public enum InstructionStore {
 
     /// Opens the instruction root separately so system symlinks above that
     /// trusted root (notably `/var` -> `/private/var`) remain valid, then uses
-    /// `O_NOFOLLOW_ANY` for the relative path so no symlink beneath the root
+    /// component-by-component `O_NOFOLLOW` for the relative path so no symlink beneath the root
     /// can expose arbitrary local files.
     private static func readMaterializedRegularFile(
         relativePath: String,
@@ -469,11 +475,7 @@ public enum InstructionStore {
         ) == 0,
               isMaterializedRegularFile(beforeOpen) else { return nil }
 
-        let descriptor = openat(
-            directoryDescriptor,
-            relativePath,
-            O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY | O_NONBLOCK
-        )
+        let descriptor = GrafttyPOSIX.openBeneath(directoryFD: directoryDescriptor, relativePath: relativePath)
         guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }
 

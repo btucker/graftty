@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("ZmxRunner")
@@ -165,6 +169,15 @@ struct ZmxRunnerTests {
     }
 
     private static func processExists(_ pid: Int32) -> Bool {
+        #if os(Linux)
+        // Container PID 1 may leave terminated descendants unreaped. A zombie
+        // has exited and cannot keep the timed-out command running.
+        if let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+           let end = stat.lastIndex(of: ")"),
+           stat[stat.index(after: end)...].split(separator: " ").first == "Z" {
+            return false
+        }
+        #endif
         errno = 0
         if kill(pid, 0) == 0 { return true }
         return errno != ESRCH

@@ -53,6 +53,7 @@ struct SidebarView: View {
     let onAddRemoteWorktree: (RemoteMac, RemoteRepositoryInfo) -> Void
     let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
+    var onSetupLinuxHost: (() -> Void)? = nil
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onRemoveRepo: (RepoEntry) -> Void
@@ -332,6 +333,7 @@ struct SidebarView: View {
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
                           onSelectRemotePane: onSelectRemotePane, onAddRemoteWorktree: onAddRemoteWorktree,
                           onDeleteRemoteWorktree: onDeleteRemoteWorktree, onAddRemoteMac: onAddRemoteMac,
+                          onSetupLinuxHost: onSetupLinuxHost,
                           projectFilter: projectFilter, query: query,
                           showsMacHierarchy: !showsProjectRail,
                           showsRepositoryHeaders: !showsProjectRail || !query.isEmpty,
@@ -361,10 +363,15 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Manage Remote Macs")
         .popover(isPresented: $showsRemoteManagement) {
-            RemoteMacConnectionsPopover(model: remoteMacsModel) {
+            RemoteMacConnectionsPopover(model: remoteMacsModel, onAddRemoteMac: {
                 showsRemoteManagement = false
                 onAddRemoteMac()
-            }
+            }, onSetupLinuxHost: onSetupLinuxHost.map { action in
+                {
+                    showsRemoteManagement = false
+                    action()
+                }
+            })
         }
     }
 

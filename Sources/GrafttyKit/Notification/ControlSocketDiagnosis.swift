@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Classifies why a `connect()` to the Graftty control socket failed.
 /// ATTN-3.4: distinguishing "socket file is missing" from "socket file

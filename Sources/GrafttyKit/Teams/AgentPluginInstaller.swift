@@ -1,5 +1,19 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if os(Linux)
+import Glibc
+
+// Declare the GNU directory-exchange extension explicitly for Linux toolchains.
+@_silgen_name("renameat2")
+private func exchangePluginDirectories(
+    _ oldDirectoryFD: Int32, _ oldPath: UnsafePointer<CChar>,
+    _ newDirectoryFD: Int32, _ newPath: UnsafePointer<CChar>, _ flags: UInt32
+) -> Int32
+#endif
 
 public enum AgentPluginProvider: String, CaseIterable, Sendable {
     case codex
@@ -214,10 +228,25 @@ public struct AgentPluginInstaller: Sendable {
                 try contents.write(to: stagedFile)
             }
             if FileManager.default.fileExists(atPath: destination.path) {
+                #if os(Linux)
+                // Foundation replacement cannot overwrite nonempty Linux
+                // directories. Exchange both sibling trees atomically; the
+                // deferred staging cleanup then removes the old snapshot.
+                let result = staging.path.withCString { stagedPath in
+                    destination.path.withCString { installedPath in
+                        exchangePluginDirectories(AT_FDCWD, stagedPath, AT_FDCWD, installedPath, 2) // RENAME_EXCHANGE
+                    }
+                }
+                guard result == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                        userInfo: [NSFilePathErrorKey: destination.path])
+                }
+                #else
                 _ = try FileManager.default.replaceItemAt(
                     destination,
                     withItemAt: staging
                 )
+                #endif
             } else {
                 try FileManager.default.moveItem(at: staging, to: destination)
             }

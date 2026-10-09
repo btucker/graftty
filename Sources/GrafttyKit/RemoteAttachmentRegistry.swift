@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// @spec TERM-11.5
 /// The application shall track the number of remote clients attached to each

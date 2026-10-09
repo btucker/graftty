@@ -27,6 +27,13 @@ indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
 
+## Linux hosts
+
+Run the headless Swift host on Ubuntu 24.04, then connect from the Mac app.
+**Set Up Linux Host…** installs it over SSH and imports selected projects through
+Git bundles, including committed work that has not been pushed.
+See [Set up a Linux host from your Mac](docs/linux-host.md).
+
 ## Remote Macs
 
 Graftty can connect two Macs so you can use one Mac's existing worktrees

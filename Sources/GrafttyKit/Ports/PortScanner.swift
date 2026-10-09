@@ -1,6 +1,8 @@
 // Sources/GrafttyKit/Ports/PortScanner.swift
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// @spec PORTS-1.1: When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
 //

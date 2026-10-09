@@ -7,7 +7,10 @@ import AppKit
 /// underlying Button still receives them) but *receive* right-clicks and
 /// ctrl-clicks (so AppKit dispatches `menu(for:)` to it). The hit-test
 /// decision function gates this; these tests pin its behavior.
+/// Create AppKit events and views on the main actor so the first event cannot
+/// initialize AppKit's event queue on a worker and crash later UI tests.
 @Suite("RightClickMenu hit-test gating")
+@MainActor
 struct RightClickMenuTests {
 
     @Test func passesThroughLeftClicks() {
@@ -51,7 +54,7 @@ struct RightClickMenuTests {
     }
 
     @Test("@spec LAYOUT-2.98: When right-click menus are nested, the application shall open the innermost visible menu under the pointer, excluding hosts clipped out by a scroll viewport.")
-    @MainActor func innermostNestedMenuWins() {
+    func innermostNestedMenuWins() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
         let content = NSView(frame: root.bounds)
         let inner = RightClickMenuHostView(frame: NSRect(x: 10, y: 40, width: 20, height: 20))

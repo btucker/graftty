@@ -4,6 +4,7 @@ import GrafttyKit
 struct RemoteMacConnectionsPopover: View {
     @ObservedObject var model: RemoteMacsModel
     let onAddRemoteMac: () -> Void
+    var onSetupLinuxHost: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -26,6 +27,12 @@ struct RemoteMacConnectionsPopover: View {
                 Label("Add Remote Mac…", systemImage: "plus")
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain).padding(12)
+            if let onSetupLinuxHost {
+                Button(action: onSetupLinuxHost) {
+                    Label("Set Up Linux Host…", systemImage: "server.rack")
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(12)
+            }
         }.frame(width: 340)
     }
 

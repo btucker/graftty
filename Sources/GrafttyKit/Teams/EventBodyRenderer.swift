@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 import Stencil
 
 /// Result of rendering a team-inbox event template. Carries the original

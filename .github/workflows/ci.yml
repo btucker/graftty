@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  linux-build-and-test:
+    uses: ./.github/workflows/linux.yml
+
   verify-web:
     runs-on: ubuntu-latest
     steps:

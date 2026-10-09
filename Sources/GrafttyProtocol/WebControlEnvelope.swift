@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 /// A control event carried on a transport's text-shaped control carrier,
 /// alongside — but multiplexed separately from — raw PTY bytes. Two

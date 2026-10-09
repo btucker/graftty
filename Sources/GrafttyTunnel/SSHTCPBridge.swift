@@ -1,7 +1,9 @@
 import Foundation
-import Network
 import NIOCore
 import NIOSSH
+
+#if canImport(Network)
+import Network
 
 /// Bridges a TCP socket and one SSH direct-tcpip channel. Each direction waits
 /// for its previous write before requesting more bytes.
@@ -144,6 +146,112 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
         channel?.close(promise: nil)
     }
 }
+
+#else
+import NIOPosix
+
+/// Linux TCP forwarding with reads paced by the destination's write completion.
+public enum SSHTCPBridge {
+    private static let capacity = TunnelCapacity()
+    public static func connect(host: String, port: Int, channel: Channel) -> EventLoopFuture<Void> {
+        guard !host.isEmpty, host.utf8.count <= 253, (1...65535).contains(port), capacity.acquire() else {
+            return channel.eventLoop.makeFailedFuture(ChannelError.inappropriateOperationForState)
+        }
+        channel.closeFuture.whenComplete { _ in capacity.release() }
+        return channel.setOption(ChannelOptions.autoRead, value: false).flatMap {
+            ClientBootstrap(group: channel.eventLoop)
+                .connectTimeout(.seconds(10))
+                .channelOption(ChannelOptions.autoRead, value: false)
+                .channelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 48 * 1024))
+                .channelInitializer { tcp in
+                    tcp.pipeline.addHandler(TCPToSSHRelay(ssh: channel))
+                }.connect(host: host, port: port)
+        }.flatMap { tcp in
+            let relay = SSHToTCPRelay(tcp: tcp)
+            channel.closeFuture.whenComplete { _ in relay.inputClosed() }
+            return channel.pipeline.addHandler(relay).flatMapError { error in
+                tcp.close(promise: nil)
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
+    }
+}
+
+final class TCPToSSHRelay: ChannelInboundHandler, Sendable {
+    typealias InboundIn = ByteBuffer
+    let ssh: Channel
+    private let writes: RelayPendingWrites
+    init(ssh: Channel) {
+        self.ssh = ssh
+        writes = RelayPendingWrites(destination: ssh)
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let tcp = context.channel
+        writes.started()
+        ssh.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(unwrapInboundIn(data)))).whenComplete { result in
+            self.writes.completed(result)
+            switch result {
+            case .success: if tcp.isActive { tcp.read() }
+            case .failure: tcp.close(promise: nil)
+            }
+        }
+    }
+    func channelInactive(context: ChannelHandlerContext) { writes.inputClosed(); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+}
+final class SSHToTCPRelay: ChannelInboundHandler, Sendable {
+    typealias InboundIn = SSHChannelData
+    let tcp: Channel
+    private let writes: RelayPendingWrites
+    init(tcp: Channel) {
+        self.tcp = tcp
+        writes = RelayPendingWrites(destination: tcp)
+    }
+    func inputClosed() { writes.inputClosed() }
+    func handlerAdded(context: ChannelHandlerContext) {
+        if context.channel.isActive { context.read(); tcp.read() }
+    }
+    func channelActive(context: ChannelHandlerContext) { context.read(); tcp.read(); context.fireChannelActive() }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let value = unwrapInboundIn(data)
+        guard value.type == .channel, case .byteBuffer(let buffer) = value.data else { context.close(promise: nil); return }
+        let ssh = context.channel
+        writes.started()
+        tcp.writeAndFlush(buffer).whenComplete { result in
+            self.writes.completed(result)
+            switch result {
+            case .success: if ssh.isActive { ssh.read() }
+            case .failure: ssh.close(promise: nil)
+            }
+        }
+    }
+    func channelInactive(context: ChannelHandlerContext) { inputClosed(); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+}
+
+/// Both channels share an event loop. EOF may arrive in the same read cycle as
+/// the final bytes, before their destination write has cleared backpressure.
+private final class RelayPendingWrites: @unchecked Sendable {
+    private let destination: Channel
+    private var pending = 0
+    private var ended = false
+
+    init(destination: Channel) { self.destination = destination }
+    func started() { pending += 1 }
+    func completed(_ result: Result<Void, Error>) {
+        pending -= 1
+        if case .failure = result {
+            destination.close(promise: nil)
+        } else if ended && pending == 0 {
+            destination.close(promise: nil)
+        }
+    }
+    func inputClosed() {
+        ended = true
+        if pending == 0 { destination.close(promise: nil) }
+    }
+}
+#endif
 
 private final class TunnelCapacity: @unchecked Sendable {
     private let lock = NSLock()

@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Uses a stable sidecar inode because atomic journal writes replace theirs.

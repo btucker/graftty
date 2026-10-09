@@ -1358,6 +1358,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-3.4** When a tagged release is built in CI, the release workflow shall sign the bundle with the `Developer ID Application: Quotably, LLC (67APXH3J92)` identity, submit it to `xcrun notarytool` using App Store Connect API key credentials, and on success staple the notarization ticket into the bundle with `xcrun stapler staple` before zipping for distribution.
 
+### DIST-4.x — Linux host distribution
+
+**DIST-4.1** When a Linux host archive is built, the release scripts shall include the host, CLI, pinned zmx, resources, shared runtime libraries, and a root installer for its architecture.
+
+**DIST-4.2** When a Linux archive is installed, the installer shall use the invoking user's directories and systemd service with explicit ports and KillMode=process so zmx sessions survive host restarts.
+
+**DIST-4.3** When CI or a release builds Linux artifacts, the workflows shall build and verify x86_64 and aarch64 archives on Ubuntu 24.04 before release upload.
+
+**DIST-4.4** If an installed Linux host does not become ready on the requested SSH port, then the installer shall stop the replacement and restore the previously running host before reporting failure.
+
+**DIST-4.5** When a local Linux archive uses the shared SwiftPM build directory, the packaging script shall hold its lock until both executables and their resources have been copied into the archive staging directory.
+
+**DIST-4.6** When Linux installers run concurrently for the same user, the installer shall serialize release and service changes through completion or rollback so a failed install cannot remove a successful replacement.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding
@@ -2885,6 +2899,116 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-14.10** When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.
 
 **REMOTE-14.11** When a viewed agent stop is acknowledged remotely, the application shall clear only that stop occurrence and preserve newer stops and unrelated prompts.
+
+### REMOTE-20.x
+
+**REMOTE-20.1** When a saved remote host has no transport field, the application shall use WebRTC.
+
+**REMOTE-20.2** When a remote host uses direct SSH, the application shall persist its explicit Graftty endpoint with default port 8801.
+
+**REMOTE-20.3** When a paired peer connects over direct SSH, the application shall authenticate and dispatch existing Graftty subsystem channels over TCP.
+
+**REMOTE-20.4** If a direct SSH host key is unpinned or a peer lacks trust or terminal control, then the application shall reject the connection.
+
+**REMOTE-20.5** While distinct paired peers use direct SSH, the application shall keep their connections independent and close revoked peers before rejecting fresh authentication.
+
+**REMOTE-20.6** When direct SSH is selected during pairing, the application shall save a separately validated Graftty host and port instead of the pairing or OpenSSH port.
+
+**REMOTE-20.7** When a paired peer reconnects over direct SSH, the application shall authenticate a fresh session and prevent stale teardown from closing the replacement.
+
+**REMOTE-20.8** If direct SSH is selected without an explicit endpoint, then the application shall reject the connection before dialing a transport.
+
+**REMOTE-20.9** When a saved direct SSH host connects or reconnects, the application shall dial its explicit endpoint and build the pane environment without a WebRTC signaling exchange.
+
+**REMOTE-20.10** While a peer is authenticated over direct SSH, the application shall enforce its worktree management and port tunnel capabilities for each channel.
+
+**REMOTE-20.11** If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.
+
+**REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
+
+### REMOTE-21.x
+
+**REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
+
+**REMOTE-21.2** If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+
+**REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
+
+**REMOTE-21.4** When Linux setup retries a repository import, the application shall reuse only its own clean checkout at the imported commit and refuse unrelated, dirty, or advanced destination repositories.
+
+**REMOTE-21.5** If OpenSSH rejects the host key or authentication, then the application shall explain how to resolve it with system SSH without disabling host-key verification.
+
+**REMOTE-21.6** When Linux setup validates a plan, the application shall reject overlapping destination names, relative destination roots, and origins containing private URL credentials.
+
+**REMOTE-21.7** While Linux host setup is running, the application shall display its current step, prevent duplicate starts, and offer cancellation; after failure it shall retain the plan for retry.
+
+**REMOTE-21.8** When Linux setup installs a release, the application shall use an explicit version and architecture archive, verify its SHA-256 checksum, install a user service, and exchange only public identity over authenticated OpenSSH.
+
+**REMOTE-21.9** When a development archive is selected, the application shall transfer that archive over authenticated OpenSSH without fetching a release or transferring private credentials.
+
+**REMOTE-21.10** When Linux setup is cancelled during an OpenSSH command, the application shall terminate the bootstrap process and stop subsequent setup commands before allowing a retry.
+
+**REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
+
+### REMOTE-22.x
+
+**REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
+
+**REMOTE-22.2** When a headless host restarts, the application shall retain saved pane session IDs and reuse surviving zmx sessions without rerunning startup commands.
+
+**REMOTE-22.3** When a headless host splits, resizes, or closes a pane, the application shall persist the layout and terminate only the explicitly closed zmx session.
+
+**REMOTE-22.4** If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.
+
+**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.
+
+**REMOTE-22.6** When a headless host registers a repository, the application shall discover its Git worktrees and persist one canonical registration.
+
+**REMOTE-22.7** When a headless host shuts down, the application shall detach clients while preserving zmx sessions for restart.
+
+**REMOTE-22.8** When a headless host consumes a file-based stopped-turn recap, the application shall persist the recap and clear it only after matching provider progress.
+
+**REMOTE-22.9** When Git worktree membership or branches change externally, the headless host shall reconcile saved worktrees and publish branch choices for the remote client.
+
+**REMOTE-22.10** When a headless host creates or deletes a linked worktree, the application shall mutate Git, persist registration, and start or terminate its pane sessions.
+
+**REMOTE-22.11** When the headless host receives an administration request on its private Unix socket, the application shall return the live runtime state.
+
+**REMOTE-22.12** When a headless host chooses storage and socket paths, the application shall honor absolute state and XDG overrides and keep fallback CLI socket discovery consistent.
+
+**REMOTE-22.13** When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.
+
+**REMOTE-22.14** While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.
+
+**REMOTE-22.15** When the headless host service starts its direct SSH listener, the application shall immediately serve authenticated team roster requests through the configured runtime handler.
+
+**REMOTE-22.16** If the headless SSH listener cannot bind, then the application shall keep its readiness administration socket unavailable and clean up local control sockets.
+
+**REMOTE-22.17** When notifications, pin changes, or attention acknowledgements arrive while a headless pane starts, the application shall preserve those updates when publishing the opened or split pane.
+
+### REMOTE-23.x
+
+**REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
+
+**REMOTE-23.2** If Linux process metadata is missing or malformed, then the application shall report no process identity.
+
+**REMOTE-23.3** When querying a running host process, the application shall return a stable start identity, its parent PID, and its current working directory.
+
+**REMOTE-23.4** When writing host control data, the application shall support both Unix sockets and regular file descriptors.
+
+**REMOTE-23.5** When a local host peer connects over a Unix socket, the application shall obtain its operating-system user ID.
+
+**REMOTE-23.6** When opening instructions beneath an approved directory, the application shall reject symlinks in every path component and parent-directory traversal.
+
+**REMOTE-23.7** While running on Linux, the application shall place the private Attention handoff beneath the system temporary directory.
+
+**REMOTE-23.8** When the host ignores termination signals for its event loop, the application shall restore normal termination signals in spawned terminal processes.
+
+**REMOTE-23.9** When a host consumes Attention events, the application shall retain events for worktrees owned by another host.
+
+**REMOTE-23.10** If an Attention event handler cannot persist its result, then the application shall retain the event for retry.
+
+**REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
 
 ## URL — Worktree URL Handler
 

@@ -121,6 +121,7 @@
     "DIST.1": "Build Bundle",
     "DIST.2": "Release Automation",
     "DIST.3": "Homebrew Cask",
+    "DIST.4": "Linux host distribution",
     "WEB.1": "Binding",
     "WEB.2": "Authorization",
     "WEB.3": "Protocol",

@@ -1,12 +1,23 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GrafttyProtocol
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Exchanges authenticated signaling messages with the host's paired-access
 /// listener.
 public struct SignalingClient: Sendable {
+    #if canImport(OSLog)
     private static let logger = Logger(subsystem: "com.quotably.graftty", category: "signaling-client")
+    #endif
     public struct AuthenticatedExchange: Sendable {
         public let answer: AuthenticatedSignalingAnswer
         public let route: RemoteConnectionRoute
@@ -153,7 +164,9 @@ public struct SignalingClient: Sendable {
                         ))
                     } catch let error as Error {
                         if !Task.isCancelled {
+                            #if canImport(OSLog)
                             Self.logger.warning("offer route \(offerRoute.baseURL.absoluteString, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                            #endif
                         }
                         return .failure(error)
                     } catch {

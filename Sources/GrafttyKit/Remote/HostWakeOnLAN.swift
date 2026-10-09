@@ -1,4 +1,15 @@
+#if os(Linux)
+import GrafttyProtocol
+
+public enum HostWakeOnLAN {
+    public static func targets() -> [WakeOnLANTarget] { [] }
+}
+#else
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyProtocol
 import SystemConfiguration
@@ -82,3 +93,5 @@ public enum HostWakeOnLAN {
         }
     }
 }
+
+#endif

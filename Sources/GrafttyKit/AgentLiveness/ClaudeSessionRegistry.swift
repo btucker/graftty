@@ -1,6 +1,8 @@
 import Foundation
 import Observation
+#if canImport(os)
 import os
+#endif
 
 /// Polls `claude agents --json` (+ a batched `ps eww` to recover each
 /// session's inherited `ZMX_SESSION`) and merges provider hook activity

@@ -1,6 +1,10 @@
 // Sources/GrafttyKit/Ports/ProcessTreeWalker.swift
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 public protocol ProcessTreeWalking: Sendable {
     /// All PIDs in the subtree rooted at `root`, inclusive. Returns
@@ -62,6 +66,13 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
     }
 
     private func parentTable() -> [(pid_t, pid_t)] {
+        #if os(Linux)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? []
+        return names.compactMap { name in
+            guard let pid = Int32(name), let entry = LinuxProcessStat.read(pid: pid) else { return nil }
+            return (pid, entry.parentPID)
+        }
+        #else
         let nbytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         guard nbytes > 0 else { return [] }
         let count = Int(nbytes) / MemoryLayout<pid_t>.size
@@ -78,11 +89,16 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
             guard r == size else { return nil }
             return (pid, pid_t(info.pbi_ppid))
         }
+        #endif
     }
 
     private func isLive(pid: pid_t) -> Bool {
+        #if os(Linux)
+        return LinuxProcessStat.read(pid: pid) != nil
+        #else
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
         return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size
+        #endif
     }
 }

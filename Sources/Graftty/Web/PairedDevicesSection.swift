@@ -10,6 +10,7 @@ extension RemoteDeviceKind {
     var displayLabel: String {
         switch self {
         case .mac: return "Mac"
+        case .linux: return "Linux"
         case .iphone: return "iPhone"
         case .ipad: return "iPad"
         }

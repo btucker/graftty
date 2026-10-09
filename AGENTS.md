@@ -109,7 +109,8 @@ scripts/swiftpm run graftty-cli -- --help
 
 The wrapper stores one shared build tree at
 `~/Library/Caches/Graftty/SwiftPM/build`, serializes complete SwiftPM commands
-across worktrees, and disables the index store. This avoids a multi-gigabyte
+across worktrees, and disables the index store on macOS. Linux test commands
+keep index records because SwiftPM requires them for XCTest discovery. This avoids a multi-gigabyte
 `.build` directory in every agent worktree while ensuring that another
 worktree cannot replace test or run artifacts while a command is executing.
 

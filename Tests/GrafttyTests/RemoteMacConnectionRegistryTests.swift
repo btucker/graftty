@@ -489,12 +489,49 @@ struct RemoteMacConnectionRegistryTests {
         #expect(recorder.snapshots == [liveSnapshot])
     }
 
+    @Test("@spec REMOTE-20.8: If direct SSH is selected without an explicit endpoint, then the application shall reject the connection before dialing a transport.")
+    func directConnectionRequiresEndpoint() async throws {
+        var remote = try makeRemoteMac(baseURL: nil)
+        remote.transport = .directSSH
+        let registry = makeRegistry(signalingTransport: { _, _ in throw URLError(.unsupportedURL) })
+        await #expect(throws: RemoteMacConnectionRegistry.ConnectionError.missingDirectEndpoint(RemoteMacIdentity(remote))) {
+            _ = try await registry.connect(to: remote)
+        }
+    }
+
+    @Test("@spec REMOTE-20.9: When a saved direct SSH host connects or reconnects, the application shall dial its explicit endpoint and build the pane environment without a WebRTC signaling exchange.")
+    func directConnectionBypassesSignalingAndReconnects() async throws {
+        var remote = try makeRemoteMac(baseURL: nil)
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x62, count: 32))
+        remote.fingerprint = RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation))
+        remote.transport = .directSSH
+        remote.directEndpoint = try DirectSSHEndpoint(host: "linux.example", port: 8801)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in Issue.record("Direct SSH used signaling"); throw URLError(.unsupportedURL) },
+            connectionFactory: { _, _ in Issue.record("Direct SSH allocated WebRTC"); return connection },
+            directConnectionFactory: { _, _ in connection }
+        )
+        let first = try await registry.connect(to: remote)
+        #expect(await connection.directEndpoints == [remote.directEndpoint!])
+        #expect(await connection.createOfferCallCount == 0)
+        #expect(registry.activeConnectionCount == 1)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+        let second = try await registry.connect(to: remote, replacingExistingHostConnection: true)
+        #expect(first.id != second.id)
+        #expect(await connection.directEndpoints.count == 2)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
     private func makeRegistry(
         signalingTransport: @escaping SignalingClient.Transport,
         pinnedHostProvider: RemoteMacConnectionRegistry.PinnedHostProvider? = nil,
         pinnedHostUpdater: RemoteMacConnectionRegistry.PinnedHostUpdater? = nil,
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        },
+        directConnectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
+            FakeRemoteMacHostConnection(offerSDP: "unused")
         },
         paneEnvironmentBuilder: @escaping RemoteMacConnectionRegistry.PaneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
             await RemoteMacPaneEnvironment.build(
@@ -587,6 +624,7 @@ struct RemoteMacConnectionRegistryTests {
             pinnedHostUpdater: pinnedHostUpdater,
             signalingClient: SignalingClient(transport: effectiveTransport),
             connectionFactory: connectionFactory,
+            directConnectionFactory: directConnectionFactory,
             paneEnvironmentBuilder: paneEnvironmentBuilder,
             onPaneSnapshot: onPaneSnapshot
         )
@@ -788,6 +826,7 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private let paneCloseEmitter: RemoteMacPaneCloseEmitter?
     private let closePanesDuringDriverCreationReason: String?
     private var createOfferCalls = 0
+    private(set) var directEndpoints: [DirectSSHEndpoint] = []
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
     private var closeCallCount = 0
@@ -831,6 +870,11 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
 
     func setStateWithoutNotification(_ newState: RemoteHostConnection.State) {
         state = newState
+    }
+
+    func connectDirect(endpoint: DirectSSHEndpoint) {
+        directEndpoints.append(endpoint)
+        state = .connected
     }
 
     func createOfferSDP() async throws -> String {

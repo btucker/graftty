@@ -1,6 +1,8 @@
 import Foundation
 import GrafttyProtocol
+#if canImport(os)
 import os
+#endif
 
 public struct SessionDisplayOwnershipResizeResult: Sendable, Equatable {
     public let accepted: Bool

@@ -1,6 +1,10 @@
 import Foundation
 import GrafttyProtocol
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Holds explicit file offers, never a remotely supplied filesystem path.
 /// Bytes are snapshotted so edits on the host cannot corrupt an in-flight preview.
@@ -49,7 +53,7 @@ public actor RemoteOpenStore {
             return offer
         }
         // O_NONBLOCK prevents a named pipe from hanging the request before fstat.
-        let fd = Darwin.open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        let fd = GrafttyPOSIX.open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else { throw Failure.invalidFile }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }
