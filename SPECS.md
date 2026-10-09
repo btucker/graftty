@@ -2950,6 +2950,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
 
+**REMOTE-21.12** When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.

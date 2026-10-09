@@ -36,7 +36,7 @@ public struct LinuxHostSetup: Sendable {
         try Task.checkCancellation()
         let config = try await executor.run(command: "/usr/bin/ssh", args: ["-G", "--", plan.destination.value], at: NSHomeDirectory(), timeout: .seconds(15))
         let resolved = try LinuxHostResolvedSSH.parse(config.stdout)
-        let platform = try LinuxHostPlatform.parse(try await remote(plan.destination, command: LinuxHostScripts.detect).stdout)
+        let platform = try LinuxHostPlatform.parse(try await remote(plan.destination, operation: "Checking SSH destination and Ubuntu dependencies", command: LinuxHostScripts.detect).stdout)
         let root = plan.destinationRoot.hasPrefix("~/")
             ? platform.homeDirectory + String(plan.destinationRoot.dropFirst()) : plan.destinationRoot
         let local = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-linux-setup-\(UUID().uuidString)")
@@ -49,7 +49,7 @@ public struct LinuxHostSetup: Sendable {
             await progress(.init(message: "Preparing committed history for \(project.directoryName)", completed: 1, total: total))
             snapshots.append(try await Self.prepareBundle(project: project, output: local.appendingPathComponent("\(index).bundle"), executor: executor))
         }
-        let staging = try await remote(plan.destination, command: "umask 077; mktemp -d /tmp/graftty-setup.XXXXXXXX").stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let staging = try await remote(plan.destination, operation: "Creating remote staging directory", command: "umask 077; mktemp -d /tmp/graftty-setup.XXXXXXXX").stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard staging.hasPrefix("/tmp/graftty-setup."), !staging.contains("\n"), !staging.contains("/../") else {
             throw LinuxHostSetupError.invalidPlan("The Linux host returned an invalid temporary directory.")
         }
@@ -63,13 +63,13 @@ public struct LinuxHostSetup: Sendable {
         await progress(.init(message: "Installing Linux host and user service", completed: 1, total: total))
         let archiveURL = version.map { URL(string: "https://github.com/btucker/graftty/releases/download/v\($0)/graftty-linux-\($0)-\(platform.architecture).tar.gz")! }
         if case .local(let archive) = plan.archive {
-            _ = try await remote(plan.destination, command: "umask 077; cat > \(LinuxHostScripts.quote(staging + "/archive.tar.gz"))", inputFile: archive)
+            _ = try await remote(plan.destination, operation: "Uploading development archive", command: "umask 077; cat > \(LinuxHostScripts.quote(staging + "/archive.tar.gz"))", inputFile: archive)
         }
-        _ = try await remote(plan.destination, command: LinuxHostScripts.install(staging: staging, archiveURL: archiveURL))
+        _ = try await remote(plan.destination, operation: "Installing Linux host and user service", command: LinuxHostScripts.install(staging: staging, archiveURL: archiveURL))
         await progress(.init(message: "Exchanging Graftty public identities", completed: 2, total: total))
         let trustFile = local.appendingPathComponent("trust.json")
         try JSONEncoder().encode(plan.client).write(to: trustFile, options: .atomic)
-        let response = try await remote(plan.destination, command: "\"$HOME/.local/bin/graftty-host\" trust-client --stdin --json", inputFile: trustFile)
+        let response = try await remote(plan.destination, operation: "Exchanging Graftty public identities", command: "\"$HOME/.local/bin/graftty-host\" trust-client --stdin --json", inputFile: trustFile)
         let identity: LinuxHostIdentity
         do { identity = try JSONDecoder().decode(LinuxHostIdentity.self, from: Data(response.stdout.utf8)) }
         catch { throw LinuxHostSetupError.invalidPlan("The Linux host returned invalid identity JSON. Check that the archive matches the Mac's Graftty version.") }
@@ -79,10 +79,10 @@ public struct LinuxHostSetup: Sendable {
             let path = root + "/" + project.directoryName
             let bundle = staging + "/\(index).bundle"
             await progress(.init(message: "Importing committed history for \(project.directoryName)", completed: 3 + index * 2, total: total))
-            _ = try await remote(plan.destination, command: "umask 077; cat > \(LinuxHostScripts.quote(bundle))", inputFile: local.appendingPathComponent("\(index).bundle"))
-            _ = try await remote(plan.destination, command: LinuxHostScripts.importRepository(bundle: bundle, destination: path, snapshot: snapshots[index]))
+            _ = try await remote(plan.destination, operation: "Uploading committed project history", command: "umask 077; cat > \(LinuxHostScripts.quote(bundle))", inputFile: local.appendingPathComponent("\(index).bundle"))
+            _ = try await remote(plan.destination, operation: "Importing committed project history", command: LinuxHostScripts.importRepository(bundle: bundle, destination: path, snapshot: snapshots[index]))
             await progress(.init(message: "Registering \(project.directoryName)", completed: 4 + index * 2, total: total))
-            _ = try await remote(plan.destination, command: "\"$HOME/.local/bin/graftty-host\" project add \(LinuxHostScripts.quote(path)) --json")
+            _ = try await remote(plan.destination, operation: "Registering project", command: "\"$HOME/.local/bin/graftty-host\" project add \(LinuxHostScripts.quote(path)) --json")
             paths.append(path)
         }
         try Task.checkCancellation()
@@ -90,11 +90,18 @@ public struct LinuxHostSetup: Sendable {
         return LinuxHostSetupResult(identity: identity, openSSH: resolved, destination: plan.destination, projectPaths: paths)
     }
 
-    private func remote(_ destination: LinuxHostDestination, command: String, inputFile: URL? = nil) async throws -> CLIOutput {
+    private func remote(_ destination: LinuxHostDestination, operation: String, command: String, inputFile: URL? = nil) async throws -> CLIOutput {
         try Task.checkCancellation()
         let output = try await ssh.capture(arguments: Self.sshArguments(destination, command: command), inputFile: inputFile)
         try Task.checkCancellation()
-        guard output.exitCode == 0 else { throw LinuxHostSetupError.remoteFailure(output.stderr) }
+        guard output.exitCode == 0 else {
+            let details = [output.stderr, output.stdout]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            let diagnostic = details.isEmpty ? "No output was returned by the remote command." : details
+            throw LinuxHostSetupError.remoteFailure("\(operation) failed (exit status \(output.exitCode)).\n\(diagnostic)")
+        }
         return output
     }
 

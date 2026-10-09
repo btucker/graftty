@@ -72,6 +72,22 @@ struct LinuxHostSetupExecutionTests {
         #expect(calls.first?.arguments.last?.contains("VERSION_ID") == true)
     }
 
+    @Test("@spec REMOTE-21.12: When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.", arguments: ["", "Installer stopped before starting the service"])
+    func remoteFailureDetails(stdout: String) async throws {
+        let ssh = RecordingSetupSSH(installFailure: .init(stdout: stdout, stderr: "", exitCode: 42))
+        let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()))
+        do {
+            _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+            Issue.record("Installation must fail")
+        } catch let error as LinuxHostSetupError {
+            let message = error.localizedDescription
+            #expect(message.contains("Installing Linux host and user service"))
+            #expect(message.contains("exit status 42"))
+            #expect(message.contains(stdout.isEmpty ? "No output was returned" : stdout))
+        }
+        #expect(await ssh.calls.allSatisfy { $0.arguments.last?.contains("trust-client") != true })
+    }
+
     @Test func processTimeout() async throws {
         let runner = LinuxHostSSHRunner(executable: "/bin/sleep", timeout: 0.1)
         await #expect(throws: CLIError.self) { try await runner.capture(arguments: ["10"], inputFile: nil) }
@@ -100,12 +116,17 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
     struct Call: Sendable { let arguments: [String]; let input: Data? }
     private(set) var calls: [Call] = []
     private let ubuntuVersion: String
-    init(ubuntuVersion: String = "24.04") { self.ubuntuVersion = ubuntuVersion }
+    private let installFailure: CLIOutput?
+    init(ubuntuVersion: String = "24.04", installFailure: CLIOutput? = nil) {
+        self.ubuntuVersion = ubuntuVersion
+        self.installFailure = installFailure
+    }
     func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         calls.append(.init(arguments: arguments, input: try inputFile.map { try Data(contentsOf: $0) }))
         let command = arguments.last ?? ""
         if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n", stderr: "", exitCode: 0) }
         if command.contains("mktemp -d /tmp/graftty-setup") { return .init(stdout: "/tmp/graftty-setup.test123\n", stderr: "", exitCode: 0) }
+        if command.contains("unpacked/install.sh"), let installFailure { return installFailure }
         if command.contains("trust-client") {
             let identity = LinuxHostIdentity(deviceID: "linux", displayName: "Ubuntu", publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801)
             return .init(stdout: String(decoding: try JSONEncoder().encode(identity), as: UTF8.self), stderr: "", exitCode: 0)
