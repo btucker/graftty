@@ -27,15 +27,10 @@ final class HostService {
     private var signalSources: [DispatchSourceSignal] = []
     private var pairingTicker: Task<Void, Never>?
 
-    nonisolated static var cliPath: String {
-        URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent().appendingPathComponent("graftty").path
-    }
+    nonisolated static var cliPath: String { HostSetup.cliPath }
 
     nonisolated static func identity(configuration: HostConfiguration) throws -> LinuxHostIdentity {
-        let key = try HostIdentityStore(directory: configuration.identityDirectory).loadOrGenerateAndPersist()
-        let id = try HostDeviceIDStore(directory: configuration.identityDirectory).loadOrGenerateAndPersist()
-        return LinuxHostIdentity(deviceID: id.value, displayName: ProcessInfo.processInfo.hostName,
-            publicKey: key.publicKey.rawRepresentation.base64EncodedString(), port: configuration.sshPort)
+        try HostSetup.identity(configuration: configuration)
     }
 
     nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration) throws {
@@ -171,33 +166,40 @@ final class HostService {
     }
 
     func run() async throws {
+        _ = try await start()
+        await waitForTermination()
+        await stop()
+    }
+
+    @discardableResult
+    func start() async throws -> Int {
         do {
             try await runtime.restore()
             runtime.startTeamDelivery()
             runtime.startMaintenance()
             try socket.start()
             try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: configuration.socketPath)
-            try admin?.start()
-            try http?.start()
-            _ = try await ssh.start(host: configuration.bindAddress, port: configuration.sshPort)
             await ssh.setTeamMessaging(handler: { [runtime] device, bytes in
                 guard let request = try? JSONDecoder().decode(RemoteTeamRequest.self, from: bytes) else { return Data() }
                 let response = await runtime.remoteTeam(request, deviceID: device)
                 return (try? JSONEncoder().encode(response)) ?? Data()
             }, onConnect: { [weak self] device, session in await self?.connected(device, session: session) },
                 onDisconnect: { [weak self] device, id in await self?.disconnected(device, id: id) })
+            let port = try await ssh.start(host: configuration.bindAddress, port: configuration.sshPort)
+            try http?.start()
+            // Publishing this socket makes status.running a readiness signal.
+            try admin?.start()
             pairingTicker = Task { [pairing] in
                 while !Task.isCancelled { try? await Task.sleep(for: .seconds(1)); await pairing.tick() }
             }
-            await waitForTermination()
-            await stop()
+            return port
         } catch { await stop(); throw error }
     }
 
     private func connected(_ device: RemoteDeviceID, session: TeamRPCSession) { peers[device] = session }
     private func disconnected(_ device: RemoteDeviceID, id: UUID) { if peers[device]?.id == id { peers[device] = nil } }
 
-    private func stop() async {
+    func stop() async {
         for source in signalSources { source.cancel() }
         signalSources.removeAll()
         pairingTicker?.cancel(); pairingTicker = nil

@@ -90,7 +90,9 @@ public final class HostAdministrationServer {
             var data = try JSONEncoder().encode(request); data.append(10)
             try await channel?.writeAndFlush(channel!.allocator.buffer(bytes: data)).get()
             let result = try await response.futureResult.get()
-            try await channel?.close().get()
+            // The server closes after writing its response. A peer close
+            // racing cleanup does not invalidate the decoded response.
+            try? await channel?.close().get()
             try await group.shutdownGracefully()
             return result
         } catch {

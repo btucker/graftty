@@ -46,15 +46,14 @@ struct Setup: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Prepare state, agent hooks, and a stable host identity.")
     @OptionGroup var paths: HostOptions
     @Flag var json = false
-    @Flag(help: "Install Graftty lifecycle plugins into available Codex and Claude CLIs.") var installAgentPlugins = false
+    @Flag(help: "Install provider plugins while the host is running, without changing host state.") var installAgentPlugins = false
     mutating func run() async throws {
         let config = try paths.resolved()
-        let lease = try HostProcessLease(configuration: config)
-        defer { withExtendedLifetime(lease) {} }
-        try config.save()
-        _ = try AgentHookInstaller(rootDirectory: config.hooksDirectory, grafttyCLIPath: HostService.cliPath).install()
-        if installAgentPlugins { try await HostAgentSetup.install(configuration: config) }
-        try printJSON(HostService.identity(configuration: config))
+        if let identity = try await HostSetup.prepare(configuration: config, installAgentPlugins: installAgentPlugins) {
+            try printJSON(identity)
+        } else {
+            try printJSON(["installed": true])
+        }
     }
 }
 

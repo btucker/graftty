@@ -2974,6 +2974,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.13** When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.
 
+**REMOTE-22.14** While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.
+
+**REMOTE-22.15** When the headless host service starts its direct SSH listener, the application shall immediately serve authenticated team roster requests through the configured runtime handler.
+
+**REMOTE-22.16** If the headless SSH listener cannot bind, then the application shall keep its readiness administration socket unavailable and clean up local control sockets.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.

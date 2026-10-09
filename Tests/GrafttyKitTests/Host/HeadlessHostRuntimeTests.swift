@@ -227,9 +227,12 @@ struct HeadlessHostRuntimeTests {
         }
         try server.start()
         defer { server.stop() }
-        let response = try await HostAdministrationServer.request(.status, configuration: config)
-        if case .status(let status) = response { #expect(status.running); #expect(status.repositoryCount == 1) }
-        else { Issue.record("unexpected administration response") }
+        // Exercise peer-initiated close racing our post-response cleanup.
+        for _ in 0..<100 {
+            let response = try await HostAdministrationServer.request(.status, configuration: config)
+            if case .status(let status) = response { #expect(status.running); #expect(status.repositoryCount == 1) }
+            else { Issue.record("unexpected administration response") }
+        }
         let attributes = try FileManager.default.attributesOfItem(atPath: HostAdministrationServer.socketPath(configuration: config))
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
@@ -255,6 +258,50 @@ struct HeadlessHostRuntimeTests {
             Issue.record("missing provider accepted")
         } catch {
             #expect(String(describing: error).contains("Install and authenticate"))
+        }
+    }
+
+    @Test("@spec REMOTE-22.14: While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.")
+    func pluginSetupWhileHostIsRunning() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try config.prepareDirectories()
+        try config.save()
+        try state.save(to: root)
+        let configFile = root.appendingPathComponent("host-config.json")
+        let stateFile = root.appendingPathComponent("state.json")
+        let savedConfig = try Data(contentsOf: configFile)
+        let savedState = try Data(contentsOf: stateFile)
+        let holder = Process()
+        let ready = Pipe()
+        let input = Pipe()
+        holder.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        holder.arguments = ["python3", "-c", """
+        import fcntl, os, sys
+        fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.lockf(fd, fcntl.LOCK_EX)
+        sys.stdout.buffer.write(b"1")
+        sys.stdout.flush()
+        sys.stdin.buffer.read(1)
+        """, root.appendingPathComponent("host.lock").path]
+        holder.standardOutput = ready
+        holder.standardInput = input
+        try holder.run()
+        defer {
+            try? input.fileHandleForWriting.close()
+            holder.waitUntilExit()
+        }
+        #expect(try ready.fileHandleForReading.read(upToCount: 1) == Data([49]))
+        let executor = HostPluginExecutor()
+        let identity = try await HostSetup.prepare(configuration: config, installAgentPlugins: true, executor: executor)
+        #expect(identity == nil)
+        #expect(Set(await executor.commands) == ["codex", "claude"])
+        #expect(try Data(contentsOf: configFile) == savedConfig)
+        #expect(try Data(contentsOf: stateFile) == savedState)
+        #expect(!FileManager.default.fileExists(atPath: config.identityDirectory.appendingPathComponent("host-identity.json").path))
+        #expect(!FileManager.default.fileExists(atPath: config.hooksDirectory.path))
+        await #expect(throws: HostRuntimeError.self) {
+            try await HostSetup.prepare(configuration: config, installAgentPlugins: false, executor: executor)
         }
     }
 
