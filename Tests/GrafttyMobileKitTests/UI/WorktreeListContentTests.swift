@@ -16,13 +16,14 @@ struct WorktreeListContentTests {
         let suite = "ipad-project-selection-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: SidebarLayoutPolicy.projectRailSettingKey)
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: collapsed)
         let rows = [sampleWorktree(path: "/repo/first")]
         let controller = UIHostingController(rootView: WorktreeListContent(
             host: sampleHost(), isSidebar: true,
             remoteSnapshotProvider: { _, _ in rows },
             onSelect: { _ in }, onSelectPane: { _ in }, navigation: navigation
-        ).environment(\.horizontalSizeClass, .compact))
+        ).defaultAppStorage(defaults).environment(\.horizontalSizeClass, .compact))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
         window.rootViewController = controller
         window.makeKeyAndVisible()
