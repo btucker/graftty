@@ -56,20 +56,12 @@ struct LinuxHostSetupExecutionTests {
         #expect(started.duration(to: .now) < .seconds(3))
     }
 
-    @Test func rejectsUbuntu2204BeforeRemoteWrites() async throws {
-        let ssh = RecordingSetupSSH(ubuntuVersion: "22.04")
+    @Test(arguments: ["22.04", "26.04"])
+    func permitsOtherUbuntuVersions(ubuntuVersion: String) async throws {
+        let ssh = RecordingSetupSSH(ubuntuVersion: ubuntuVersion)
         let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()))
-        do {
-            _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
-            Issue.record("Ubuntu 22.04 must be refused before installation")
-        } catch let error as LinuxHostSetupError {
-            #expect(error.localizedDescription.contains("Ubuntu 24.04"))
-            #expect(error.localizedDescription.contains("22.04"))
-        }
-        let calls = await ssh.calls
-        #expect(calls.count == 1)
-        #expect(calls.first?.arguments.last?.contains("/etc/os-release") == true)
-        #expect(calls.first?.arguments.last?.contains("VERSION_ID") == true)
+        _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+        #expect(await ssh.calls.contains { $0.arguments.last?.contains("unpacked/install.sh") == true })
     }
 
     @Test("@spec REMOTE-21.12: When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.", arguments: ["", "Installer stopped before starting the service"])
@@ -132,5 +124,43 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
             return .init(stdout: String(decoding: try JSONEncoder().encode(identity), as: UTF8.self), stderr: "", exitCode: 0)
         }
         return .init(stdout: "", stderr: "", exitCode: 0)
+    }
+}
+
+struct LinuxHostCompatibilityTests {
+    @Test("@spec REMOTE-21.13: When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.", arguments: ["none", "graftty-host", "graftty", "zmx"])
+    func checksBinariesBeforeInstallation(failingBinary: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        let staging = root.appendingPathComponent("staging")
+        let tools = root.appendingPathComponent("tools")
+        for directory in [source.appendingPathComponent("bin"), staging, tools] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        func executable(_ path: URL, _ body: String) throws {
+            try Data(("#!/bin/sh\n" + body + "\n").utf8).write(to: path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path.path)
+        }
+        // Only the finite fixture commands run here; timeout's deadline behavior
+        // is provided by coreutils on the destination.
+        try executable(tools.appendingPathComponent("timeout"), "shift 2; exec \"$@\"")
+        for name in ["graftty-host", "graftty", "zmx"] {
+            try executable(source.appendingPathComponent("bin/" + name), name == failingBinary ? "exit 47" : "exit 0")
+        }
+        let marker = root.appendingPathComponent("installed")
+        try executable(source.appendingPathComponent("install.sh"), "touch " + LinuxHostScripts.quote(marker.path))
+        _ = try await CLIRunner().run(command: "/usr/bin/tar", args: ["-czf", staging.appendingPathComponent("archive.tar.gz").path, "-C", source.path, "."], at: root.path)
+        let script = "PATH=" + LinuxHostScripts.quote(tools.path) + ":\"$PATH\"\n" + LinuxHostScripts.install(staging: staging.path, archiveURL: nil)
+        let output = try await CLIRunner().capture(command: "/bin/sh", args: ["-c", script], at: root.path)
+        if failingBinary == "none" {
+            #expect(output.exitCode == 0)
+            #expect(FileManager.default.fileExists(atPath: marker.path))
+        } else {
+            #expect(output.exitCode != 0)
+            #expect(output.stderr.contains("GRAFTTY_INCOMPATIBLE:" + failingBinary))
+            #expect(output.stderr.contains("47"))
+            #expect(!FileManager.default.fileExists(atPath: marker.path))
+        }
     }
 }

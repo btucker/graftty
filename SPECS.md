@@ -2930,7 +2930,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
 
-**REMOTE-21.2** If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+**REMOTE-21.2** If the destination lacks a supported Linux CPU architecture or required capabilities, then the application shall stop setup with an actionable error without rejecting a distribution version alone.
 
 **REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
 
@@ -2951,6 +2951,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
 
 **REMOTE-21.12** When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.
+
+**REMOTE-21.13** When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.
 
 ### REMOTE-22.x
 

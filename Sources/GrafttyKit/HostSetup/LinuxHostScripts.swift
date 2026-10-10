@@ -16,11 +16,16 @@ enum LinuxHostScripts {
 
     static let detect = """
     set -eu
-    for tool in git tar systemctl mktemp sha256sum flock; do
+    test "$(uname -s)" = Linux || { echo 'GRAFTTY_MISSING:Linux kernel' >&2; exit 70; }
+    for tool in git tar systemctl mktemp sha256sum flock bash timeout mv cp readlink awk grep; do
       command -v "$tool" >/dev/null 2>&1 || { echo "GRAFTTY_MISSING:$tool" >&2; exit 70; }
     done
     systemctl --user show-environment >/dev/null 2>&1 || { echo 'GRAFTTY_MISSING:systemd-user-session' >&2; exit 70; }
-    . /etc/os-release
+    mv --version 2>/dev/null | grep -q 'GNU coreutils' || { echo 'GRAFTTY_MISSING:GNU coreutils' >&2; exit 70; }
+    tar --version 2>/dev/null | grep -q 'GNU tar' || { echo 'GRAFTTY_MISSING:GNU tar' >&2; exit 70; }
+    ID=unknown
+    VERSION_ID=unknown
+    if test -r /etc/os-release; then . /etc/os-release; fi
     printf '%s\\n' "$ID" "${VERSION_ID:-unknown}" "$(uname -m)" "$HOME"
     """
 
@@ -50,6 +55,17 @@ enum LinuxHostScripts {
         mkdir unpacked
         tar -xzf archive.tar.gz -C unpacked --no-same-owner
         test -f unpacked/install.sh || { echo 'Linux archive is missing install.sh' >&2; exit 71; }
+        for binary in graftty-host graftty zmx; do
+          if test "$binary" = zmx; then argument=--version; else argument=--help; fi
+          if timeout --kill-after=1 15 "unpacked/bin/$binary" "$argument" > compatibility.log 2>&1; then
+            :
+          else
+            code=$?
+            echo "GRAFTTY_INCOMPATIBLE:$binary (exit status $code)" >&2
+            cat compatibility.log >&2
+            exit 71
+          fi
+        done
         /bin/bash unpacked/install.sh --bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800
         """
     }
