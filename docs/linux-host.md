@@ -64,6 +64,28 @@ To install the available provider plugins explicitly, run:
 Use ordinary Graftty worktree, pane, and team commands inside the remote terminal.
 The host exports its socket and state paths to each pane.
 
+## Open a remote development server
+
+Start the server in a Graftty terminal on the host. Its listening ports appear
+beside that pane in the Mac sidebar. Click a port to open it in your Mac browser.
+Graftty forwards through the existing authenticated connection and chooses an
+unused local port, so different hosts can both run a server on port 3000.
+The TCP forwarder carries HTTP and WebSocket traffic. Mac-to-Mac connections
+reuse the same forwarding code over WebRTC.
+The local listener closes when you disconnect from the host.
+
+Bind the server to localhost or all interfaces. A server bound only to a specific
+LAN address cannot use localhost forwarding. Ports on relayed worktrees require
+a direct connection to the host that owns the worktree.
+
+Linux setup grants the enrolled Mac permission to forward localhost ports.
+For a host enrolled before this feature, update the Mac app and Linux host, then
+run setup again.
+Setup preserves an explicit disabled permission. On a Mac host, choose
+**Settings → Device Pairing → Port forwarding → Allow localhost** for the client.
+Changing this setting disconnects that client's current session; reconnect to
+use the new permission.
+
 ## Inspect or restart the host
 
 Run these commands on Linux:

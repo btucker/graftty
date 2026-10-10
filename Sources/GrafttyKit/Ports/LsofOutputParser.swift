@@ -23,7 +23,7 @@ public enum LsofOutputParser {
         let processName = fields[0]
         guard let nameToken = fields.last(where: { $0.contains(":") }) else { return nil }
         guard let (address, port) = splitAddressPort(nameToken) else { return nil }
-        return Row(processName: processName, pid: pid, address: address, port: port)
+        return Row(processName: processName, pid: pid, address: address == "*" ? (fields[4] == "IPv6" ? "::" : "0.0.0.0") : address, port: port)
     }
 
     static func splitAddressPort(_ token: String) -> (String, UInt16)? {

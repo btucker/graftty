@@ -80,6 +80,16 @@ struct PairedDevicesSection: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                Picker("Port forwarding", selection: Binding(
+                    get: { peer.capabilities.portTunnel },
+                    set: { updatePortPermission(peer, permission: $0) }
+                )) {
+                    Text("Ask through host").tag(PairedDeviceCapabilities.PortTunnel.askEachTime)
+                    Text("Allow localhost").tag(PairedDeviceCapabilities.PortTunnel.allowedLoopback)
+                    Text("Disabled").tag(PairedDeviceCapabilities.PortTunnel.disabled)
+                }
+                .disabled(removingPeerIDs.contains(peer.id))
+                .help("Changing this permission disconnects the device. Reconnect to use the new setting.")
                 Text("Paired \(Self.relativeFormatter.localizedString(for: peer.pairedAt, relativeTo: Date()))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -93,6 +103,30 @@ struct PairedDevicesSection: View {
     }
 
     // MARK: - Actions
+
+    private func updatePortPermission(_ peer: TrustedPeer, permission: PairedDeviceCapabilities.PortTunnel) {
+        guard !removingPeerIDs.contains(peer.id) else { return }
+        removingPeerIDs.insert(peer.id)
+        Task {
+            if let error = await Self.performPortPermissionUpdate(peerID: peer.id, permission: permission,
+                store: trustedPeerStore, revoke: { await sshConnectionRegistry.revoke(deviceID: $0) }) {
+                listError = "Could not change port forwarding: \(error.localizedDescription)"
+            } else { refreshPeers() }
+            removingPeerIDs.remove(peer.id)
+        }
+    }
+
+    static func performPortPermissionUpdate(peerID: RemoteDeviceID,
+        permission: PairedDeviceCapabilities.PortTunnel, store: TrustedPeerStore,
+        revoke: (RemoteDeviceID) async -> Void) async -> Swift.Error? {
+        do {
+            guard var current = try store.get(id: peerID) else { throw TrustedPeerStore.Error.notFound }
+            current.capabilities.portTunnel = permission
+            try store.update(current)
+        } catch { return error }
+        await revoke(peerID)
+        return nil
+    }
 
     private func remove(_ peer: TrustedPeer) {
         guard !removingPeerIDs.contains(peer.id) else { return }

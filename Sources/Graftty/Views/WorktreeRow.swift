@@ -79,6 +79,7 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
+    var onOpenPort: ((PortBinding) -> Void)? = nil
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
     }
@@ -148,7 +149,7 @@ struct PaneTitleRow: View {
                     titleText
                     if shouldRenderPortChips {
                         ForEach(portBindings, id: \.self) { binding in
-                            PortChip(binding: binding, theme: theme)
+                            PortChip(binding: binding, theme: theme, onOpen: onOpenPort.map { action in { action(binding) } })
                         }
                     }
                 }

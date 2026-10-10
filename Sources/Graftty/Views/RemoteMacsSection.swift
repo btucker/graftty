@@ -297,6 +297,7 @@ struct RemoteMacsSection: View {
         )
     }
 
+    @State private var portError: String?
     var projectFilter: String? = nil
     var query: String = ""
     var showsMacHierarchy = true
@@ -346,6 +347,10 @@ struct RemoteMacsSection: View {
             if showsMacHierarchy { remoteMacGroup(remoteMac) }
             else { repositories(for: remoteMac) }
         }
+        .alert("Could not open remote port", isPresented: Binding(
+            get: { portError != nil }, set: { if !$0 { portError = nil } }
+        )) { Button("OK", role: .cancel) { portError = nil } }
+        message: { Text(portError ?? "") }
 
         if showsMacHierarchy && section != .pinned {
             Button(action: onAddRemoteMac) {
@@ -550,9 +555,22 @@ struct RemoteMacsSection: View {
                                     source: leaf.attentionSource
                                 )
                             },
-                            portBindings: [],
+                            portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
-                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
+                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            onOpenPort: { binding in
+                                Task {
+                                    do {
+                                        let url = try await model.forwardedPortURL(on: remoteMac, worktreePath: worktree.path,
+                                            sessionName: leaf.sessionName, binding: binding)
+                                        try Task.checkCancellation()
+                                        NSWorkspace.shared.open(url)
+                                    } catch is CancellationError {
+                                    } catch {
+                                        portError = "\(error.localizedDescription)\nOn a Mac host, check Settings → Device Pairing → Port forwarding. For a Linux host, rerun setup to enable localhost forwarding unless it was explicitly disabled."
+                                    }
+                                }
+                            }
                         )
                     }
                     .buttonStyle(.plain)

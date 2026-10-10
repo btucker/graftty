@@ -6,11 +6,19 @@ final class HostMaintenance: WorktreeMonitorDelegate {
     weak var runtime: HeadlessHostRuntime?
     let monitor = WorktreeMonitor()
     var task: Task<Void, Never>?
+    var portTask: Task<Void, Never>?
     var dirty: Set<String> = []
     init(runtime: HeadlessHostRuntime) { self.runtime = runtime; monitor.delegate = self }
     func start() {
         guard let runtime else { return }
         for repo in runtime.state.repos { monitor.installRepoWatchers(repo: repo); dirty.insert(repo.path) }
+        portTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let runtime = self?.runtime else { return }
+                await runtime.refreshPortBindings()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
         task = Task { [weak self] in
             var iteration = 0
             while !Task.isCancelled {
@@ -30,7 +38,7 @@ final class HostMaintenance: WorktreeMonitorDelegate {
             }
         }
     }
-    func stop() { task?.cancel(); task = nil; monitor.stopAll() }
+    func stop() { task?.cancel(); task = nil; portTask?.cancel(); portTask = nil; monitor.stopAll() }
     nonisolated func worktreeMonitorDidDetectChange(_ monitor: WorktreeMonitor, repoPath: String) {
         Task { @MainActor [weak self] in self?.dirty.insert(repoPath) }
     }

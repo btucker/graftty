@@ -2147,6 +2147,7 @@ struct GrafttyApp: App {
         // `panes-state` SSH channel) MUST produce identical envelopes
         // so the iPad's sidebar renders the same regardless of transport.
         let terminalManager = tm
+        let panesPortBindings = portBindingsModel
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
@@ -2198,7 +2199,11 @@ struct GrafttyApp: App {
                             },
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
+                        portBindings: wt.state == .running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
+                            guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
+                            return (ZmxLauncher.sessionName(for: session), bindings)
+                        }) : nil
                     ))
                 }
             }
