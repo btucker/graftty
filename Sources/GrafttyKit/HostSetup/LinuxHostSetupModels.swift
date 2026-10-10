@@ -36,15 +36,19 @@ public struct LinuxHostResolvedSSH: Sendable, Equatable {
 public struct LinuxHostPlatform: Sendable, Equatable {
     public let architecture: String
     public let homeDirectory: String
+    public let dataDirectory: String
 
     public static func parse(_ output: String) throws -> Self {
         let lines = output.split(separator: "\n").map(String.init)
-        guard lines.count == 4,
-              ["x86_64", "aarch64"].contains(lines[2]), lines[3].hasPrefix("/") else {
+        guard lines.count == 5,
+              ["x86_64", "aarch64"].contains(lines[2]),
+              lines[3...4].allSatisfy({ path in
+                  path.hasPrefix("/") && !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+              }) else {
             let reported = lines.prefix(3).joined(separator: " ")
-            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires x86_64 or ARM64 and an absolute home directory. The destination reported \(reported.isEmpty ? "an unknown platform" : reported). Check the host architecture and home directory before retrying; no installation changes were made.")
+            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires x86_64 or ARM64 and absolute home and data directories. The destination reported \(reported.isEmpty ? "an unknown platform" : reported). Check the host architecture, home directory, and XDG_DATA_HOME before retrying; no installation changes were made.")
         }
-        return Self(architecture: lines[2], homeDirectory: lines[3])
+        return Self(architecture: lines[2], homeDirectory: lines[3], dataDirectory: lines[4])
     }
 }
 

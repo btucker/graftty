@@ -49,8 +49,15 @@ public struct LinuxHostSetup: Sendable {
             await progress(.init(message: "Preparing committed history for \(project.directoryName)", completed: 1, total: total))
             snapshots.append(try await Self.prepareBundle(project: project, output: local.appendingPathComponent("\(index).bundle"), executor: executor))
         }
-        let staging = try await remote(plan.destination, operation: "Creating remote staging directory", command: "umask 077; mktemp -d /tmp/graftty-setup.XXXXXXXX").stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard staging.hasPrefix("/tmp/graftty-setup."), !staging.contains("\n"), !staging.contains("/../") else {
+        // Probe on the install filesystem: /tmp may deliberately be noexec.
+        let releases = platform.dataDirectory.replacingOccurrences(of: #"/+$"#, with: "", options: .regularExpression) + "/graftty/releases"
+        let stagingPrefix = releases + "/.setup-"
+        let stagingCommand = "umask 077; mkdir -p -- " + LinuxHostScripts.quote(releases)
+            + " && mktemp -d " + LinuxHostScripts.quote(stagingPrefix + "XXXXXXXX")
+        let staging = try await remote(plan.destination, operation: "Creating remote staging directory", command: stagingCommand).stdout.trimmingCharacters(in: .newlines)
+        let suffix = staging.dropFirst(stagingPrefix.count)
+        guard staging.hasPrefix(stagingPrefix), suffix.count == 8,
+              suffix.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) }) else {
             throw LinuxHostSetupError.invalidPlan("The Linux host returned an invalid temporary directory.")
         }
         defer {

@@ -80,6 +80,25 @@ struct LinuxHostSetupExecutionTests {
         #expect(await ssh.calls.allSatisfy { $0.arguments.last?.contains("trust-client") != true })
     }
 
+    @Test("@spec REMOTE-21.14: When Linux setup probes an archive, the application shall stage it privately on the configured installation data filesystem and remove only that staging directory after completion.")
+    func stagingUsesInstallationFilesystem() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dataHome = root.appendingPathComponent("custom data 'home")
+        let ssh = RecordingSetupSSH(dataDirectory: dataHome.path, executeStaging: true)
+        let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()))
+        _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+        let path = try #require(await ssh.stagingPath)
+        #expect(path.hasPrefix(dataHome.path + "/graftty/releases/.setup-"))
+        #expect(await ssh.stagingPermissions == 0o700)
+        // Cleanup is detached from cancellation, so wait for its observable result.
+        for _ in 0..<100 where FileManager.default.fileExists(atPath: path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: path))
+        #expect(FileManager.default.fileExists(atPath: dataHome.path))
+    }
+
     @Test func processTimeout() async throws {
         let runner = LinuxHostSSHRunner(executable: "/bin/sleep", timeout: 0.1)
         await #expect(throws: CLIError.self) { try await runner.capture(arguments: ["10"], inputFile: nil) }
@@ -109,15 +128,33 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
     private(set) var calls: [Call] = []
     private let ubuntuVersion: String
     private let installFailure: CLIOutput?
-    init(ubuntuVersion: String = "24.04", installFailure: CLIOutput? = nil) {
+    private let dataDirectory: String
+    private let executeStaging: Bool
+    private(set) var stagingPath: String?
+    private(set) var stagingPermissions: Int?
+    init(ubuntuVersion: String = "24.04", installFailure: CLIOutput? = nil, dataDirectory: String = "/home/developer/.local/share", executeStaging: Bool = false) {
         self.ubuntuVersion = ubuntuVersion
         self.installFailure = installFailure
+        self.dataDirectory = dataDirectory
+        self.executeStaging = executeStaging
     }
     func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         calls.append(.init(arguments: arguments, input: try inputFile.map { try Data(contentsOf: $0) }))
         let command = arguments.last ?? ""
-        if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n", stderr: "", exitCode: 0) }
-        if command.contains("mktemp -d /tmp/graftty-setup") { return .init(stdout: "/tmp/graftty-setup.test123\n", stderr: "", exitCode: 0) }
+        if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n\(dataDirectory)\n", stderr: "", exitCode: 0) }
+        if command.contains("mktemp -d") {
+            if executeStaging {
+                let result = try await CLIRunner().run(command: "/bin/sh", args: ["-c", command], at: NSHomeDirectory())
+                let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                stagingPath = path
+                stagingPermissions = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int
+                return result
+            }
+            return .init(stdout: dataDirectory + "/graftty/releases/.setup-test1234\n", stderr: "", exitCode: 0)
+        }
+        if executeStaging, command.contains("rm -rf --") {
+            return try await CLIRunner().run(command: "/bin/sh", args: ["-c", command], at: NSHomeDirectory())
+        }
         if command.contains("unpacked/install.sh"), let installFailure { return installFailure }
         if command.contains("trust-client") {
             let identity = LinuxHostIdentity(deviceID: "linux", displayName: "Ubuntu", publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801)

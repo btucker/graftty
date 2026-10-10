@@ -26,7 +26,7 @@ enum LinuxHostScripts {
     ID=unknown
     VERSION_ID=unknown
     if test -r /etc/os-release; then . /etc/os-release; fi
-    printf '%s\\n' "$ID" "${VERSION_ID:-unknown}" "$(uname -m)" "$HOME"
+    printf '%s\\n' "$ID" "${VERSION_ID:-unknown}" "$(uname -m)" "$HOME" "${XDG_DATA_HOME:-$HOME/.local/share}"
     """
 
     static func install(staging: String, archiveURL: URL?) -> String {

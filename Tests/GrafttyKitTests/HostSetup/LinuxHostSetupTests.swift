@@ -26,12 +26,14 @@ struct LinuxHostSetupTests {
 
     @Test("@spec REMOTE-21.2: If the destination lacks a supported Linux CPU architecture or required capabilities, then the application shall stop setup with an actionable error without rejecting a distribution version alone.")
     func platformAndDependencies() throws {
-        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\nx86_64\n/home/alice\n").architecture == "x86_64")
-        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\naarch64\n/home/alice\n").architecture == "aarch64")
-        #expect(try LinuxHostPlatform.parse("debian\n24.04\nx86_64\n/home/alice\n").architecture == "x86_64")
-        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n24.04\ns390x\n/home/alice\n") }
-        #expect(try LinuxHostPlatform.parse("ubuntu\n22.04\nx86_64\n/home/alice\n").architecture == "x86_64")
-        #expect(try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n").architecture == "aarch64")
+        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\nx86_64\n/home/alice\n/home/alice/.local/share\n").architecture == "x86_64")
+        #expect(try LinuxHostPlatform.parse("ubuntu\n24.04\naarch64\n/home/alice\n/home/alice/.local/share\n").architecture == "aarch64")
+        #expect(try LinuxHostPlatform.parse("debian\n24.04\nx86_64\n/home/alice\n/home/alice/.local/share\n").architecture == "x86_64")
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n24.04\ns390x\n/home/alice\n/home/alice/.local/share\n") }
+        #expect(try LinuxHostPlatform.parse("ubuntu\n22.04\nx86_64\n/home/alice\n/home/alice/.local/share\n").architecture == "x86_64")
+        #expect(try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n/home/alice/.local/share\n").architecture == "aarch64")
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\nrelative/data\n") }
+        #expect(throws: LinuxHostSetupError.self) { try LinuxHostPlatform.parse("ubuntu\n26.04\naarch64\n/home/alice\n/srv/data\tinvalid\n") }
         #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_INCOMPATIBLE:graftty-host\nPermission denied").localizedDescription.contains("archive cannot run"))
         #expect(LinuxHostSetupError.remoteFailure("GRAFTTY_MISSING:git").localizedDescription.contains("git"))
     }
