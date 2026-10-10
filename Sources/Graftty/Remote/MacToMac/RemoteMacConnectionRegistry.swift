@@ -137,6 +137,16 @@ final class RemoteMacConnectionRegistry {
         case teamMessagingUnavailable
     }
 
+    private struct ForwardKey: Hashable {
+        let connectionID: UUID
+        let host: String
+        let port: Int
+    }
+    private struct ForwardAttempt {
+        let id = UUID()
+        let task: Task<LocalPortForward, Error>
+    }
+    private var portForwards: [ForwardKey: ForwardAttempt] = [:]
     private var entries: [RemoteMacIdentity: Entry] = [:]
     private var teamClients: [UUID: TeamChannelClient] = [:]
     private var reconnectOnTeamClose: Set<UUID> = []
@@ -370,6 +380,29 @@ final class RemoteMacConnectionRegistry {
             throw ConnectionError.notConnected(identity)
         }
         return try await entry.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+    }
+
+    func forwardedURL(identity: RemoteMacIdentity, host: String, port: Int) async throws -> URL {
+        guard let entry = entries[identity] else { throw ConnectionError.notConnected(identity) }
+        let key = ForwardKey(connectionID: entry.id, host: host, port: port)
+        let attempt: ForwardAttempt
+        if let existing = portForwards[key] { attempt = existing }
+        else {
+            attempt = ForwardAttempt(task: Task { try await entry.connection.forwardLocalPort(host: host, port: port) })
+            portForwards[key] = attempt
+        }
+        do {
+            let forward = try await attempt.task.value
+            guard entries[identity]?.id == entry.id else {
+                forward.stop()
+                throw ConnectionError.connectionTerminated(identity)
+            }
+            return URL(string: "http://127.0.0.1:\(forward.localPort)/")!
+        } catch {
+            if portForwards[key]?.id == attempt.id { portForwards[key] = nil }
+            if let forward = try? await attempt.task.value { forward.stop() }
+            throw error
+        }
     }
 
     func sendPaneControl(
@@ -660,6 +693,12 @@ final class RemoteMacConnectionRegistry {
     }
 
     private func close(_ entry: Entry) async {
+        let forwards = portForwards.filter { $0.key.connectionID == entry.id }
+        for (key, attempt) in forwards {
+            portForwards[key] = nil
+            attempt.task.cancel()
+            Task { if let forward = try? await attempt.task.value { forward.stop() } }
+        }
         reconnectOnTeamClose.remove(entry.id)
         teamRouter?.unregister(deviceID: entry.identity.id, connectionID: entry.id)
         teamClients.removeValue(forKey: entry.id)?.close()
@@ -703,6 +742,7 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
     ) async
     func currentState() async -> RemoteHostConnection.State
     func connectDirect(endpoint: DirectSSHEndpoint) async throws
+    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward
     func createOfferSDP() async throws -> String
     func applyAnswerSDP(_ sdp: String) async throws
     func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
@@ -717,6 +757,9 @@ protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
 }
 
 extension RemoteMacHostConnection {
+    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
+        throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport
+    }
     func connectDirect(endpoint: DirectSSHEndpoint) async throws {
         throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport
     }
@@ -807,6 +850,9 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
         try await connection.makeTeamClient(handler: handler, onClose: onClose)
     }
 
+    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
+        try await connection.forwardLocalPort(host: host, port: port)
+    }
     func close() async {
         await connection.close()
     }
@@ -1040,6 +1086,9 @@ private final class LiveDirectSSHMacHostConnection: RemoteMacHostConnection, Sen
     }
     func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
         try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+    }
+    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
+        try await connection.forwardLocalPort(host: host, port: port)
     }
     func close() async { await connection.close() }
 }

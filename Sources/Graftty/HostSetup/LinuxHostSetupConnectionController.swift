@@ -13,10 +13,25 @@ struct LinuxHostPreparedConnection {
 struct LinuxHostSetupConnectionController {
     let pinnedHostStore: PinnedHostStore
 
+    func save(_ result: LinuxHostSetupResult, model: RemoteMacsModel) throws -> RemoteMac {
+        let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
+        let known = model.savedRemoteMacs.filter {
+            $0.id.value == result.identity.deviceID
+                || ($0.transport == .directSSH && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
+        }.map(RemoteMacIdentity.init)
+        let prepared = try accept(result, kind: .linux, knownRemotes: known)
+        try model.recordPairingResult(.paired(prepared.host), transport: .directSSH, directEndpoint: endpoint)
+        guard let saved = model.savedRemoteMacs.first(where: {
+            $0.id == prepared.host.id && $0.fingerprint == prepared.host.fingerprint
+        }) else { throw LinuxHostSetupError.invalidPlan("Could not save the Linux host. Retry setup.") }
+        return saved
+    }
+
     /// `knownRemotes` contains saved identities with either this device ID or
     /// this direct endpoint. Check it even if the separate pin file is missing.
     func accept(_ result: LinuxHostSetupResult, kind: RemoteDeviceKind, knownRemotes: [RemoteMacIdentity]) throws -> LinuxHostPreparedConnection {
         try result.identity.validate()
+        let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
         let id = RemoteDeviceID(value: result.identity.deviceID)
         guard let bytes = Data(base64Encoded: result.identity.publicKey) else {
             throw LinuxHostSetupError.invalidPlan("The Linux host returned an invalid public key.")
@@ -26,7 +41,7 @@ struct LinuxHostSetupConnectionController {
         let pins = try pinnedHostStore.list()
         let endpointPins = pins.filter {
             $0.id == id || ($0.pairingURL.scheme == "ssh"
-                && $0.pairingURL.host?.lowercased() == result.openSSH.hostname.lowercased()
+                && $0.pairingURL.host?.lowercased() == endpoint.host.lowercased()
                 && $0.pairingURL.port == result.identity.port)
         }
         guard knownRemotes.allSatisfy({ $0 == identity }),
@@ -36,7 +51,7 @@ struct LinuxHostSetupConnectionController {
         }
         var url = URLComponents()
         url.scheme = "ssh"
-        url.host = result.openSSH.hostname
+        url.host = endpoint.host
         url.port = result.identity.port
         guard let pairingURL = url.url else {
             throw LinuxHostSetupError.invalidPlan("The resolved SSH hostname cannot be used as a direct Graftty endpoint.")
@@ -51,6 +66,6 @@ struct LinuxHostSetupConnectionController {
         // The normal verification-code ceremony's replacement behavior is never
         // used to approve a changed bootstrap identity implicitly.
         try pinnedHostStore.upsertAfterPairing(host)
-        return LinuxHostPreparedConnection(host: host, hostname: result.openSSH.hostname, port: result.identity.port)
+        return LinuxHostPreparedConnection(host: host, hostname: endpoint.host, port: endpoint.port)
     }
 }

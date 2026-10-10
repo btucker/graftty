@@ -245,7 +245,7 @@ struct WorktreeAdd: ParsableCommand {
             case .serverBusy:
                 CLIEnv.printError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
-            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .teamInbox, .worktreeRemove, .worktreeCreateRetry:
                 CLIEnv.printError("Unexpected response for worktree add")
                 throw ExitCode(1)
@@ -512,7 +512,7 @@ struct WorktreeRemove: ParsableCommand {
             case .serverBusy:
                 CLIEnv.printError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
-            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .teamInbox, .worktreeCreate, .worktreeCreateRetry:
                 CLIEnv.printError("Unexpected response for worktree remove")
                 throw ExitCode(1)

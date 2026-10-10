@@ -2962,6 +2962,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.15** When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.
 
+**REMOTE-21.16** When an agent CLI already exists in the login shell PATH, Linux setup shall verify it without installing or replacing it.
+
+**REMOTE-21.17** When a selected agent CLI is absent, Linux setup shall download its official installer with bounded commands and verify the installed executable before continuing.
+
+**REMOTE-21.18** If agent discovery, download, installation, or verification fails, Linux setup shall report the provider and retry guidance without replacing an existing executable.
+
+**REMOTE-21.19** When agent setup is retried or login profiles print output, Linux setup shall preserve PATH precedence, isolate profile output, and install only executables still missing.
+
+**REMOTE-21.20** When Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.
+
+**REMOTE-21.21** When a Linux host launches panes or provider plugin commands, the application shall retain the configured login shell's provider paths and make user-local native installs available without replacing earlier PATH entries.
+
+**REMOTE-21.22** When graftty remote setup-linux runs, the CLI shall require an explicit release or archive, resolve selected repositories and branches, and reuse Linux setup with the running Mac app's public identity.
+
+**REMOTE-21.23** When the local CLI provisions a Linux host, the socket protocol shall carry only the public client identity and the complete setup result, rejecting invalid SSH destinations.
+
+**REMOTE-21.24** When Linux setup is completed through the CLI or UI, the shared save operation shall persist its direct endpoint and reject changed device or endpoint identities before mutating trust.
+
+**REMOTE-21.25** When CLI Linux setup is cancelled while resolving a project, the application shall stop before subsequent Git probes or remote setup commands.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
@@ -3400,9 +3420,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-3.4** When a pane has an active `AttentionCapsule`, the application shall hide port chips for that pane until the capsule clears.
 
-**PORTS-3.5** When the user clicks a `PortChip`, the application shall open `http://localhost:<port>/` via `NSWorkspace.shared.open`.
+**PORTS-3.5** When the user clicks a local `PortChip`, the application shall open `http://localhost:<port>/` via `NSWorkspace.shared.open`.
 
-**PORTS-3.6** When a `PortChip` is hovered, the application shall display a tooltip reading `Open http://localhost:<port>/`.
+**PORTS-3.6** When a local `PortChip` is hovered, the application shall display a tooltip reading `Open http://localhost:<port>/`.
 
 **PORTS-3.7** When a `PortChip` renders a port number, the application shall display the digits without locale grouping separators (e.g., `:8080`, not `:8,080`).
 
@@ -3417,6 +3437,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
 
 **PORTS-4.5** When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
+
+### PORTS-5.x
+
+**PORTS-5.1** When pane port metadata is sent, the application shall preserve session-scoped bindings and safe loopback targets while decoding older snapshots without port metadata.
+
+**PORTS-5.2** While scanning Linux panes, the application shall discover only TCP listeners owned by the requested process subtree from procfs without requiring lsof, ignoring missing processes and unowned sockets.
+
+**PORTS-5.3** When listener rows are collapsed, the application shall retain a reachable IPv4 or IPv6 loopback target and shall not invent a loopback route for a specific LAN address.
+
+**PORTS-5.4** When a pane is removed or its shell PID changes during port discovery, the application shall discard the old scan rather than publish stale listeners.
+
+**PORTS-5.5** While a headless pane is running, the application shall discover listeners from its current zmx shell subtree, publish them under its session name, retry missing PIDs, and clear bindings when the session closes or its PID disappears.
+
+**PORTS-5.6** When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.
+
+**PORTS-5.7** If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.
+
+**PORTS-5.8** When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.
+
+**PORTS-5.9** When SSH upload writes fail with EOF after response reads, the TCP bridge shall drain the queued response before closing.
+
+**PORTS-5.10** While a TCP bridge drains queued bytes after SSH closes, its tunnel capacity slot shall remain reserved until the TCP connection terminates.
+
+**PORTS-5.11** When opening a remote worktree port, the application shall forward only a currently advertised listener belonging to that pane on the directly connected host.
+
+**PORTS-5.12** When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.
+
+**PORTS-5.13** When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.
+
+**PORTS-5.14** If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.
 
 ## PROJECT — PROJECT
 

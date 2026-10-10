@@ -15,31 +15,59 @@ import GrafttyProtocol
 /// leave a live, authenticated connection open for a peer that's no longer
 /// trusted.
 ///
-/// `registerAuthenticatedConnection` itself can't be driven end-to-end here
-/// without going through `installSSHHandler`, which requires a real
-/// `RTCDataChannel` (native libwebrtc — forbidden in this suite, see
-/// `SignalingHandlerOutcomeTests` for the CI-hang history). The fix is
-/// instead verified at the unit the fix actually lives in:
-/// `shouldCloseAfterRegister(deviceID:)`, the extracted, synchronous,
-/// WebRTC-free trust-store recheck that `registerAuthenticatedConnection`
-/// calls immediately after `register` returns. Constructing a
-/// `WebRTCHostAgent` is safe without native WebRTC — its `factory` is lazy
-/// and untouched until `acceptOffer` runs (see `WebRTCHostAgent.factory`'s
-/// doc comment) — so this suite exercises `shouldCloseAfterRegister`
-/// directly through a real agent instance and a real, file-backed
-/// `TrustedPeerStore`, exactly as production wires them.
+/// The registration seam and trust recheck run without native WebRTC.
+/// Constructing an agent leaves its lazy peer-connection factory untouched.
 @Suite("WebRTCHostAgent re-verifies trust after the register Task-hop (REMOTE-3.1)")
 struct WebRTCHostAgentRevocationTests {
+
+    @Test("@spec PORTS-5.14: If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.",
+          arguments: ["port", "terminal", "key", "kind", "metadata"])
+    func closesWhenAuthenticatedTrustChangesDuringRegistration(change: String) async throws {
+        let directory = Self.tempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TrustedPeerStore(directory: directory)
+        var peer = Self.makePeer(id: RemoteDeviceID.generate())
+        peer.capabilities.portTunnel = .allowedLoopback
+        try store.add(peer)
+        var replacement = peer
+        switch change {
+        case "port": replacement.capabilities.portTunnel = .disabled
+        case "terminal": replacement.capabilities.terminalControl = .disabled
+        case "key", "kind":
+            replacement = TrustedPeer(id: peer.id, kind: change == "kind" ? .mac : peer.kind,
+                publicKey: change == "key" ? Self.makePeer(id: peer.id).publicKey : peer.publicKey,
+                displayName: peer.displayName, capabilities: peer.capabilities,
+                pairedAt: peer.pairedAt, lastSeenAt: peer.lastSeenAt)
+        default:
+            replacement.displayName = "Renamed device"
+            replacement.lastSeenAt = Date()
+        }
+        let updatedPeer = replacement
+        let registry = SSHConnectionRegistry()
+        // Replacing a registry entry awaits its close callback. Change trust
+        // during that suspension, after this connection captured its peer.
+        await registry.register(deviceID: peer.id) {
+            do { try store.update(updatedPeer) }
+            catch { Issue.record("Could not update trust during registration: \(error)") }
+        }
+        let agent = Self.makeHostAgent(trustedPeerStore: store, registry: registry)
+        await agent.beginConnectionLifecycle(clientDeviceID: peer.id)
+        await agent.setStateForTesting(.connected)
+        await agent.registerAuthenticatedConnection(deviceID: peer.id)
+        #expect(await agent.state == (change == "metadata" ? .connected : .closed))
+        await agent.close()
+    }
 
     @Test
     func shouldNotCloseWhenPeerStillTrustedAfterRegister() async throws {
         let store = TrustedPeerStore(directory: Self.tempDir())
         let deviceID = RemoteDeviceID.generate()
-        try store.add(Self.makePeer(id: deviceID))
+        let peer = Self.makePeer(id: deviceID)
+        try store.add(peer)
 
         let agent = Self.makeHostAgent(trustedPeerStore: store)
 
-        #expect(await agent.shouldCloseAfterRegister(deviceID: deviceID) == false)
+        #expect(await agent.shouldCloseAfterRegister(peer: peer) == false)
     }
 
     /// Regression guard protecting REMOTE-3.1's revocation guarantee
@@ -49,7 +77,8 @@ struct WebRTCHostAgentRevocationTests {
     func shouldCloseWhenPeerWasRevokedDuringTheRegisterTaskHop() async throws {
         let store = TrustedPeerStore(directory: Self.tempDir())
         let deviceID = RemoteDeviceID.generate()
-        try store.add(Self.makePeer(id: deviceID))
+        let peer = Self.makePeer(id: deviceID)
+        try store.add(peer)
 
         let agent = Self.makeHostAgent(trustedPeerStore: store)
 
@@ -60,7 +89,7 @@ struct WebRTCHostAgentRevocationTests {
         // the trust store first.
         try store.remove(id: deviceID)
 
-        #expect(await agent.shouldCloseAfterRegister(deviceID: deviceID) == true)
+        #expect(await agent.shouldCloseAfterRegister(peer: peer) == true)
     }
 
     @Test
@@ -70,19 +99,21 @@ struct WebRTCHostAgentRevocationTests {
 
         let agent = Self.makeHostAgent(trustedPeerStore: store)
 
-        #expect(await agent.shouldCloseAfterRegister(deviceID: deviceID) == true)
+        #expect(await agent.shouldCloseAfterRegister(peer: Self.makePeer(id: deviceID)) == true)
     }
 
     // MARK: - Fixtures
 
-    private static func makeHostAgent(trustedPeerStore: TrustedPeerStore) -> WebRTCHostAgent {
+    private static func makeHostAgent(trustedPeerStore: TrustedPeerStore,
+                                      registry: SSHConnectionRegistry = SSHConnectionRegistry()) -> WebRTCHostAgent {
         WebRTCHostAgent(
             hostKey: Curve25519.Signing.PrivateKey(),
             trustedPeerStore: trustedPeerStore,
             streamFactory: { _ in fatalError("not expected: no data channel opens in this test") },
             panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
             paneControlMutator: { _ in fatalError("not expected: no data channel opens in this test") },
-            displayOwnershipStore: SessionDisplayOwnershipStore()
+            displayOwnershipStore: SessionDisplayOwnershipStore(),
+            sshConnectionRegistry: registry
         )
     }
 

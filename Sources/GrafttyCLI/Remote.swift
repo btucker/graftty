@@ -4,8 +4,8 @@ import GrafttyKit
 
 struct Remote: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Manage paired Remote Macs",
-        subcommands: [RemoteReconnect.self, RemoteReconnectClient.self]
+        abstract: "Set up and manage remote hosts",
+        subcommands: [RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
     )
 }
 

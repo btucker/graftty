@@ -168,8 +168,7 @@ private actor DirectSSHSession {
         }
         registration = (peer.id, token)
         // Revocation or capability edits may have raced the async registration.
-        guard let current = try? store.get(id: peer.id), current.publicKey == peer.publicKey,
-              current.capabilities.terminalControl == .allowed else {
+        guard SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store) else {
             await close()
             return
         }

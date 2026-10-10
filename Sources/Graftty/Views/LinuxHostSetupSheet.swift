@@ -42,7 +42,7 @@ struct LinuxHostSetupSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Set Up Linux Host").font(.title2.weight(.semibold))
-            Text("Use an x86_64 or ARM64 Linux host with systemd and OpenSSH access. Archives are tested on Ubuntu 24.04; other systems are untested and checked for compatibility before installation. Graftty connects directly to port 8801.")
+            Text("Use an x86_64 or ARM64 Linux host with systemd and OpenSSH access. Archives are tested on Ubuntu 24.04; other systems are untested and checked for compatibility before installation. Graftty connects directly to port 8801. Missing Claude Code and Codex commands are installed for your Linux user; sign in to each provider after setup.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Form {

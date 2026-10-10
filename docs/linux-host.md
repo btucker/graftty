@@ -48,11 +48,46 @@ Working edits, untracked files, ignored files, stashes, and local Git configurat
 are excluded. Set up repository credentials on Linux separately if you need to
 fetch or push using the restored origin.
 
+## Set up from the Mac CLI
+
+Keep Graftty running on the Mac, then run:
+
+```sh
+graftty remote setup-linux user@host --version 1.2.3 --project ~/projects/app
+```
+
+Use a published version with a Linux archive. For a local build, replace
+`--version 1.2.3` with `--archive /path/to/graftty-linux.tar.gz`.
+Repeat `--project PATH` to import multiple repositories, or omit it to install
+only the host. Each project checks out its current local branch; `--branch NAME`
+selects the same branch in every chosen repository. `--project-root '~/projects'`
+sets the Linux destination directory. Quote `"~/projects"` to preserve the Linux
+home-relative path rather than expanding it in the Mac shell.
+
+Progress is written to stderr. Add `--json` for a machine-readable final result.
+The command installs the host and missing agent CLIs, imports committed history,
+saves the pairing in the Mac app, and requests a connection. A successful return
+acknowledges that request; check the app sidebar for connection status. Ctrl-C
+cancels setup; completed installation and repository imports remain for retry.
+
+The Linux archive includes the same `graftty` CLI for pane control, worktree
+creation/removal, team messaging, hooks, and Attention reports, plus
+`graftty-host` for service administration. Mac GUI operations, enrollment from
+Linux, and managing onward host connections are not supported by the headless
+runtime.
+
 ## Prepare development tools and agents
 
-Install the project's compilers, dependencies, and agent executables on Linux.
-Authenticate Codex or Claude using that provider's Linux CLI. Mac credentials
-and installed tools are not copied during setup.
+Auto-setup checks the Linux user's login shell PATH for `claude` and `codex`.
+It preserves working installations and installs missing commands with the
+[Claude Code installer](https://claude.ai/install.sh) and
+[Codex installer](https://chatgpt.com/codex/install.sh), under `~/.local/bin`.
+The installers need outbound HTTPS access. A failed download or installation
+reports the provider and can be retried without reinstalling working commands.
+
+Install the project's compilers and dependencies separately. Authenticate
+Codex and Claude using their Linux CLIs after setup; Mac credentials are not
+copied.
 
 The host prepares the selected provider's Graftty plugin when launching an agent.
 To install the available provider plugins explicitly, run:
@@ -63,6 +98,28 @@ To install the available provider plugins explicitly, run:
 
 Use ordinary Graftty worktree, pane, and team commands inside the remote terminal.
 The host exports its socket and state paths to each pane.
+
+## Open a remote development server
+
+Start the server in a Graftty terminal on the host. Its listening ports appear
+beside that pane in the Mac sidebar. Click a port to open it in your Mac browser.
+Graftty forwards through the existing authenticated connection and chooses an
+unused local port, so different hosts can both run a server on port 3000.
+The TCP forwarder carries HTTP and WebSocket traffic. Mac-to-Mac connections
+reuse the same forwarding code over WebRTC.
+The local listener closes when you disconnect from the host.
+
+Bind the server to localhost or all interfaces. A server bound only to a specific
+LAN address cannot use localhost forwarding. Ports on relayed worktrees require
+a direct connection to the host that owns the worktree.
+
+Linux setup grants the enrolled Mac permission to forward localhost ports.
+For a host enrolled before this feature, update the Mac app and Linux host, then
+run setup again.
+Setup preserves an explicit disabled permission. On a Mac host, choose
+**Settings → Device Pairing → Port forwarding → Allow localhost** for the client.
+Changing this setting disconnects that client's current session; reconnect to
+use the new permission.
 
 ## Inspect or restart the host
 

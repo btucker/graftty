@@ -411,6 +411,16 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
+    func forwardedPortURL(on remoteMac: RemoteMac, worktreePath: String,
+                          sessionName: String, binding: PortBinding) async throws -> URL {
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktree = worktreePanesByRemote[identity]?.first(where: { $0.path == worktreePath }) else {
+            throw RemoteWorktreePortTarget.Failure.unavailable
+        }
+        let target = try RemoteWorktreePortTarget(worktree: worktree, sessionName: sessionName, binding: binding)
+        return try await connectionRegistry.forwardedURL(identity: identity, host: target.host, port: target.port)
+    }
+
     func sendPaneControl(
         on remoteMac: RemoteMac,
         request: PaneControlRequest

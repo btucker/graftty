@@ -81,6 +81,8 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
+    case linuxSetupIdentity
+    case completeLinuxSetup(LinuxHostSetupResult)
     case offerResource(path: String, target: String, paneSessionName: String? = nil)
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
@@ -188,7 +190,7 @@ public extension NotificationMessage {
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index, lines
-        case target, request
+        case target, request, result
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -221,6 +223,11 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .linuxSetupIdentity:
+            try container.encode("linux_setup_identity", forKey: .type)
+        case .completeLinuxSetup(let result):
+            try container.encode("complete_linux_setup", forKey: .type)
+            try container.encode(result, forKey: .result)
         case let .offerResource(path, target, paneSessionName):
             try container.encode("open_resource", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -413,6 +420,10 @@ extension NotificationMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "linux_setup_identity":
+            self = .linuxSetupIdentity
+        case "complete_linux_setup":
+            self = .completeLinuxSetup(try container.decode(LinuxHostSetupResult.self, forKey: .result))
         case "open_resource":
             self = .offerResource(
                 path: try container.decode(String.self, forKey: .path),
@@ -877,6 +888,7 @@ public enum ResponseMessage: Sendable, Equatable {
     public static let serverBusyMessage =
         "Control socket is busy; retry the command."
 
+    case linuxSetupIdentity(LinuxHostTrustRequest)
     case ok
     case error(String)
     case serverBusy
@@ -892,7 +904,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation
+        case type, code, message, panes, output, messages, text, operation, identity
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -904,6 +916,9 @@ extension ResponseMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .linuxSetupIdentity(let identity):
+            try container.encode("linux_setup_identity", forKey: .type)
+            try container.encode(identity, forKey: .identity)
         case .ok:
             try container.encode("ok", forKey: .type)
         case .error(let message):
@@ -948,6 +963,8 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "linux_setup_identity":
+            self = .linuxSetupIdentity(try container.decode(LinuxHostTrustRequest.self, forKey: .identity))
         case "ok":
             self = .ok
         case "error":

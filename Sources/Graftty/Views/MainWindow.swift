@@ -919,24 +919,17 @@ struct MainWindow: View {
     @MainActor
     private func completeLinuxHostSetup(_ result: LinuxHostSetupResult) async throws {
         try Task.checkCancellation()
-        let endpoint = try DirectSSHEndpoint(host: result.openSSH.hostname, port: result.identity.port)
-        let known = remoteMacsModel.savedRemoteMacs.filter {
-            $0.id.value == result.identity.deviceID
-                || ($0.transport == .directSSH && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
-        }.map(RemoteMacIdentity.init)
+        await remoteMacsModel.loadSavedRemotes()
+        try Task.checkCancellation()
         let controller = LinuxHostSetupConnectionController(
             pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
         )
-        let prepared = try controller.accept(result, kind: .linux, knownRemotes: known)
-        try remoteMacsModel.recordPairingResult(.paired(prepared.host), transport: .directSSH, directEndpoint: endpoint)
-        guard let saved = remoteMacsModel.savedRemoteMacs.first(where: {
-            $0.id == prepared.host.id && $0.fingerprint == prepared.host.fingerprint
-        }) else { throw LinuxHostSetupError.invalidPlan("Could not save the Linux host. Retry setup.") }
+        let saved = try controller.save(result, model: remoteMacsModel)
         do {
             _ = try await remoteMacsModel.connect(to: saved)
         } catch is CancellationError { throw CancellationError() }
         catch {
-            throw LinuxHostSetupError.invalidPlan("The host is installed and paired, but Graftty could not reach \(prepared.hostname):\(prepared.port). Check the firewall and direct network route, then retry.\n\(error.localizedDescription)")
+            throw LinuxHostSetupError.invalidPlan("The host is installed and paired, but Graftty could not reach \(saved.directEndpoint?.host ?? result.openSSH.hostname):\(result.identity.port). Check the firewall and direct network route, then retry.\n\(error.localizedDescription)")
         }
     }
 

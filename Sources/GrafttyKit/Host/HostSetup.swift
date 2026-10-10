@@ -6,7 +6,7 @@ public enum HostSetup {
     public static func prepare(
         configuration: HostConfiguration,
         installAgentPlugins: Bool = false,
-        executor: any CLIExecutor = CLIRunner()
+        executor: (any CLIExecutor)? = nil
     ) async throws -> LinuxHostIdentity? {
         if installAgentPlugins {
             try await HostAgentSetup.install(configuration: configuration, executor: executor)

@@ -126,14 +126,15 @@ public actor DirectSSHHostConnection {
 
     #if canImport(Network)
     public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
-        let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
-        let child = try await openTCPChannel(host: host, port: port) { child in
-            child.setOption(ChannelOptions.autoRead, value: false).flatMap { child.pipeline.addHandler(bridge) }
-        }
-        do {
-            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
-            try await child.eventLoop.submit { bridge.activate() }.get()
-        } catch { child.close(promise: nil); throw error }
+        let (parent, handler) = try connectedTransport()
+        _ = try await SSHSocketTransport(parent: parent, handler: handler.handler)
+            .bridge(socket, host: host, port: port, socksReply: true)
+    }
+
+    public func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
+        let (parent, handler) = try connectedTransport()
+        return try await LocalPortForward.start(transport: SSHSocketTransport(parent: parent, handler: handler.handler),
+                                                host: host, port: port)
     }
     #endif
 

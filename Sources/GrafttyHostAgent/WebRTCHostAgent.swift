@@ -730,7 +730,7 @@ public actor WebRTCHostAgent {
                         if !bulk {
                             Task {
                                 await self?.registerAuthenticatedConnection(
-                                    deviceID: peer.id, generation: generation, transport: transport
+                                    peer: peer, generation: generation, transport: transport
                                 )
                             }
                         }
@@ -801,21 +801,26 @@ public actor WebRTCHostAgent {
     /// shared agent instance, without native WebRTC or NIOSSH — see that
     /// suite's `staleConnectionsCloseClosureDoesNotTearDownALiveReconnectedConnection`.
     internal func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
+        guard let peer = try? trustedPeerStore.get(id: deviceID) else {
+            await close()
+            return
+        }
         await registerAuthenticatedConnection(
-            deviceID: deviceID,
+            peer: peer,
             generation: connectionGeneration,
             transport: nil
         )
     }
 
     private func registerAuthenticatedConnection(
-        deviceID: RemoteDeviceID,
+        peer: TrustedPeer,
         generation: UInt64,
         transport: SSHNIOTransport?
     ) async {
         guard isCurrentLifecycle(generation: generation, transport: transport) else {
             return
         }
+        let deviceID = peer.id
         // The replacement decision trusted the signed signaling identity.
         // Do not let a client finish SSH userauth as a different paired peer
         // after using that identity to evict a connection.
@@ -841,18 +846,10 @@ public actor WebRTCHostAgent {
             return
         }
         authenticatedRegistration = (deviceID, token)
-        // REMOTE-3.1 revocation (W4 finding 3): `await sshConnectionRegistry
-        // .register` above is itself a suspension point (registry's own
-        // replace-await, see `SSHConnectionRegistry.register`), so an admin
-        // revoke can land for this SAME peer during the Task-hop between
-        // `onAuthenticatedPeer` firing and this method resuming here — a window
-        // `revoke(deviceID:)` can't see into, because this connection isn't
-        // registered yet when the revoke runs. Re-checking the trust store
-        // AFTER registration completes closes that window: if the peer was
-        // removed from `trustedPeerStore` while we were registering, close
-        // immediately rather than leaving a live, authenticated connection
-        // for a peer that's no longer trusted.
-        if shouldCloseAfterRegister(deviceID: deviceID) {
+        // Revocation may run before this connection enters the registry.
+        // Compare the peer captured by userauth, including permissions, so a
+        // late registration cannot retain trust that changed during the hop.
+        if shouldCloseAfterRegister(peer: peer) {
             await close(ifGeneration: generation)
         }
     }
@@ -873,8 +870,8 @@ public actor WebRTCHostAgent {
     /// native WebRTC (constructing `RTCPeerConnection`/`RTCPeerConnectionFactory`
     /// hangs headless mac CI — see `factory`'s lazy-init comment). `internal`
     /// so `@testable import GrafttyHostAgent` can reach it directly.
-    internal func shouldCloseAfterRegister(deviceID: RemoteDeviceID) -> Bool {
-        (try? trustedPeerStore.get(id: deviceID)) == nil
+    internal func shouldCloseAfterRegister(peer: TrustedPeer) -> Bool {
+        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore)
     }
 
     private func startAuthenticationDeadline(
