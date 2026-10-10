@@ -32,11 +32,11 @@ public struct LinuxHostSetup: Sendable {
             version = nil
         }
         let total = 4 + plan.projects.count * 2
-        await progress(.init(message: "Checking SSH destination and Ubuntu dependencies", completed: 0, total: total))
+        await progress(.init(message: "Checking SSH destination and Linux dependencies", completed: 0, total: total))
         try Task.checkCancellation()
         let config = try await executor.run(command: "/usr/bin/ssh", args: ["-G", "--", plan.destination.value], at: NSHomeDirectory(), timeout: .seconds(15))
         let resolved = try LinuxHostResolvedSSH.parse(config.stdout)
-        let platform = try LinuxHostPlatform.parse(try await remote(plan.destination, operation: "Checking SSH destination and Ubuntu dependencies", command: LinuxHostScripts.detect).stdout)
+        let platform = try LinuxHostPlatform.parse(try await remote(plan.destination, operation: "Checking SSH destination and Linux dependencies", command: LinuxHostScripts.detect).stdout)
         let root = plan.destinationRoot.hasPrefix("~/")
             ? platform.homeDirectory + String(plan.destinationRoot.dropFirst()) : plan.destinationRoot
         let local = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-linux-setup-\(UUID().uuidString)")
