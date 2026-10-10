@@ -63,22 +63,14 @@ final class HostService {
         let ownership = SessionDisplayOwnershipStore()
         let attachment = RemoteAttachmentRegistry()
         let subscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            let initial = await MainActor.run {
-                PanesStateMessage.snapshot(runtime.snapshot(), sidebar: SidebarSnapshot(projects: runtime.state.repos.map {
-                    SidebarProject(id: $0.path, repositoryID: $0.path, name: $0.displayName, owner: runtime.origin, supportsWorktreeEditing: true)
-                }))
-            }
+            let initial = await runtime.panesMessage()
             await onChange(initial)
             let task = Task {
                 var last = initial
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
                     guard !Task.isCancelled else { return }
-                    let next = await MainActor.run {
-                        PanesStateMessage.snapshot(runtime.snapshot(), sidebar: SidebarSnapshot(projects: runtime.state.repos.map {
-                            SidebarProject(id: $0.path, repositoryID: $0.path, name: $0.displayName, owner: runtime.origin, supportsWorktreeEditing: true)
-                        }))
-                    }
+                    let next = await runtime.panesMessage()
                     if next != last { last = next; await onChange(next) }
                 }
             }

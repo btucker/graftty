@@ -2924,13 +2924,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.11** If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.
 
+**REMOTE-20.12** When a direct SSH hostname resolves to IPv4 and IPv6, the application shall authenticate the successful connection without failed address attempts closing its authentication waiter.
+
 **REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
 
 ### REMOTE-21.x
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
 
-**REMOTE-21.2** If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+**REMOTE-21.2** If the destination lacks a supported Linux CPU architecture or required capabilities, then the application shall stop setup with an actionable error without rejecting a distribution version alone.
 
 **REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
 
@@ -2949,6 +2951,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.10** When Linux setup is cancelled during an OpenSSH command, the application shall terminate the bootstrap process and stop subsequent setup commands before allowing a retry.
 
 **REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
+
+**REMOTE-21.12** When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.
+
+**REMOTE-21.13** When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.
+
+**REMOTE-21.14** When Linux setup probes an archive, the application shall stage it privately on the configured installation data filesystem and remove only that staging directory after completion.
+
+**REMOTE-21.15** When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.
 
 ### REMOTE-22.x
 
@@ -2985,6 +2995,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.16** If the headless SSH listener cannot bind, then the application shall keep its readiness administration socket unavailable and clean up local control sockets.
 
 **REMOTE-22.17** When notifications, pin changes, or attention acknowledgements arrive while a headless pane starts, the application shall preserve those updates when publishing the opened or split pane.
+
+**REMOTE-22.18** When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.
+
+**REMOTE-22.19** When a headless host sends a bounded source image, the application shall verify its revision and cache a thumbnail no larger than 64 pixels while rejecting invalid or oversized images.
 
 ### REMOTE-23.x
 

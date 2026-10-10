@@ -34,18 +34,21 @@ public struct LinuxHostResolvedSSH: Sendable, Equatable {
 }
 
 public struct LinuxHostPlatform: Sendable, Equatable {
-    public static let supportedUbuntuVersion = "24.04"
     public let architecture: String
     public let homeDirectory: String
+    public let dataDirectory: String
 
     public static func parse(_ output: String) throws -> Self {
         let lines = output.split(separator: "\n").map(String.init)
-        guard lines.count == 4, lines[0] == "ubuntu", lines[1] == supportedUbuntuVersion,
-              ["x86_64", "aarch64"].contains(lines[2]), lines[3].hasPrefix("/") else {
-            let reported = lines.prefix(2).joined(separator: " ")
-            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires Ubuntu \(supportedUbuntuVersion) on x86_64 or ARM64. The destination reported \(reported.isEmpty ? "an unknown operating system" : reported). Use a supported Ubuntu host before retrying; no installation changes were made.")
+        guard lines.count == 5,
+              ["x86_64", "aarch64"].contains(lines[2]),
+              lines[3...4].allSatisfy({ path in
+                  path.hasPrefix("/") && !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+              }) else {
+            let reported = lines.prefix(3).joined(separator: " ")
+            throw LinuxHostSetupError.invalidPlan("Linux auto-setup requires x86_64 or ARM64 and absolute home and data directories. The destination reported \(reported.isEmpty ? "an unknown platform" : reported). Check the host architecture, home directory, and XDG_DATA_HOME before retrying; no installation changes were made.")
         }
-        return Self(architecture: lines[2], homeDirectory: lines[3])
+        return Self(architecture: lines[2], homeDirectory: lines[3], dataDirectory: lines[4])
     }
 }
 
@@ -120,6 +123,12 @@ public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {
         switch self {
         case .invalidPlan(let message): return message
         case .remoteFailure(let stderr):
+            if stderr.contains("GRAFTTY_LINGER_REQUIRED:") {
+                return "The Linux user service must stay running after SSH disconnects. Graftty could not enable lingering automatically. Ask the host administrator to run the command below, then retry; the installation was not changed.\n\(stderr)"
+            }
+            if stderr.contains("GRAFTTY_INCOMPATIBLE:") {
+                return "The Linux archive cannot run on this host. Check its CPU architecture and runtime library requirements. The existing installation was not changed.\n\(stderr)"
+            }
             if stderr.contains("Host key verification failed") || stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
                 return "OpenSSH could not verify the host key. Run ssh to this destination in Terminal, verify its fingerprint, and resolve the known_hosts entry before retrying.\n\(stderr)"
             }

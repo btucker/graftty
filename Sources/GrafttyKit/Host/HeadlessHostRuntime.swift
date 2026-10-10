@@ -14,6 +14,9 @@ public final class HeadlessHostRuntime {
     let presence: TeamPresenceStorage
     let recaps = AttentionRecapCoordinator()
     let agentSetup: HostAgentSetup
+    var projectIconRefreshTask: Task<Void, Never>?
+    var projectIcons: [UUID: HostProjectIcon] = [:]
+    var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]

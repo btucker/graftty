@@ -45,7 +45,7 @@ let appleKitDependencies: [Target.Dependency] = [.product(name: "Sparkle", packa
 let webRTCDependencies: [Target.Dependency] = [.product(name: "WebRTC", package: "WebRTC")]
 #endif
 let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package: "swift-crypto")]
-let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift", "Model/ProjectIconDiscovery.swift",
+let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
                           "Ports/PortBindingsModel.swift"]
 let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
                                "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests"]

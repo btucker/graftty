@@ -1,12 +1,12 @@
 # Set up a Linux host from your Mac
 
-Use Graftty on your Mac to install a headless Swift host on Ubuntu 24.04,
+Use Graftty on your Mac to install a headless Swift host on Linux,
 import committed projects, and open persistent remote terminals.
 
 ## Prepare the host
 
-1. Use an Ubuntu 24.04 host with an x86_64 or ARM64 CPU.
-2. Install Git, curl, tar, and the standard checksum tools on the host.
+1. Use a Linux host with an x86_64 or ARM64 CPU and systemd. Archives are built and tested on Ubuntu 24.04. Other distributions and releases are untested, but setup allows them when the required capabilities and binaries work.
+2. Install Git, curl, Bash, GNU tar, GNU coreutils, and flock on the host.
 3. Verify that your Linux account has a working systemd user session:
 
    ```sh
@@ -25,8 +25,10 @@ import committed projects, and open persistent remote terminals.
    An SSH config alias with `ProxyJump` can provision the host, but Graftty's
    terminal connection still needs a direct network route to port 8801.
 
-To keep the user service running after logout, ask the host administrator to
-enable lingering for your account with `loginctl enable-linger USER`.
+Setup checks and enables lingering for your account so the user service keeps
+running after SSH disconnects. It does not request interactive authorization.
+If the host denies this change, setup stops before installing and asks the host
+administrator to run `sudo loginctl enable-linger USER`, then retry.
 
 ## Install and connect
 
@@ -37,7 +39,7 @@ enable lingering for your account with `loginctl enable-linger USER`.
 4. Select the local repositories to import and choose a branch for each.
 5. Choose **Set Up and Connect**.
 
-The setup flow verifies the archive checksum, installs a service for your Linux
+The setup flow verifies release archive checksums and checks that the host, CLI, and terminal binaries can execute before modifying an existing installation. Incompatible runtime libraries or architectures produce an error. It then installs a service for your Linux
 account, and exchanges public identity keys through your existing SSH connection.
 The host then appears among your saved remote connections.
 

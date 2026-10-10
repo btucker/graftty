@@ -42,8 +42,9 @@ struct LinuxHostSetupSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Set Up Linux Host").font(.title2.weight(.semibold))
-            Text("Use an Ubuntu \(LinuxHostPlatform.supportedUbuntuVersion) x86_64 or ARM64 host you can access with OpenSSH keys or ssh-agent. Graftty installs a service for your Linux user and connects directly to port 8801.")
+            Text("Use an x86_64 or ARM64 Linux host with systemd and OpenSSH access. Archives are tested on Ubuntu 24.04; other systems are untested and checked for compatibility before installation. Graftty connects directly to port 8801.")
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Form {
                 TextField("SSH destination", text: $form.destination, prompt: Text("user@host or ~/.ssh/config alias"))
                     .accessibilityIdentifier("linuxSetupDestination")
@@ -74,10 +75,11 @@ struct LinuxHostSetupSheet: View {
                             projectRow(index)
                         }
                     }.padding(2)
-                }.frame(maxHeight: 220).disabled(form.isRunning)
+                }.frame(height: 220).disabled(form.isRunning)
             }
             Text("Only committed branch and tag history is imported, including unpushed commits. Working edits, untracked and ignored files, SSH keys, and local Git configuration stay on this Mac. Existing unrelated or changed Linux repositories are refused.")
                 .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             status
             HStack {
                 if !form.isRunning {
@@ -120,8 +122,12 @@ struct LinuxHostSetupSheet: View {
             }.accessibilityIdentifier("linuxSetupProgress")
         }
         if case .failed(let message) = form.phase {
-            Text(message).font(.callout).foregroundStyle(.red).textSelection(.enabled)
-                .accessibilityIdentifier("linuxSetupError")
+            ScrollView {
+                Text(message).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("linuxSetupError")
+            }.frame(height: 100)
         }
         if form.phase == .cancelled {
             Text("Setup cancelled. Completed installs and imports are kept. Retry checks each destination before continuing.")

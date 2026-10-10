@@ -76,6 +76,23 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
+    @Test("@spec REMOTE-20.12: When a direct SSH hostname resolves to IPv4 and IPv6, the application shall authenticate the successful connection without failed address attempts closing its authentication waiter.", .timeLimit(.minutes(1)))
+    func hostnameFallbackKeepsWinningAuthentication() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "localhost", port: port)
+            let control = try await client.makePaneControlClient()
+            try await control.open()
+            #expect(try await control.send(.equalize(target: "test-pane")) == .ok)
+            control.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
     @Test("@spec REMOTE-20.4: If a direct SSH host key is unpinned or a peer lacks trust or terminal control, then the application shall reject the connection.", .timeLimit(.minutes(1)))
     func rejectsWrongHostAndUnauthorizedPeers() async throws {
         let f = Fixture(); defer { f.cleanup() }

@@ -71,7 +71,10 @@ public extension HeadlessHostRuntime {
                 defer { busyPaths.remove(path) }
                 try await GitDefaultBranchPull.pull(repoPath: path, branchName: branch)
             case .listRemoteMacConnections: return .remoteMacConnections([])
-            case .projectIcon: return .icon(nil)
+            case .projectIcon(let repositoryID, let revision):
+                guard let repo = state.repos.first(where: { $0.path == repositoryID }),
+                      let icon = currentProjectIcon(for: repo), icon.revision == revision else { return .icon(nil) }
+                return .icon(icon.data)
             default: return .error(code: "unsupported", message: "operation is unavailable on this host", forceAllowed: false, shortStatus: nil)
             }
             return .ok
