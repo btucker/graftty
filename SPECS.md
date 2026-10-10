@@ -2156,6 +2156,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
 
+**IPAD-1.22** While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
