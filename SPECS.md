@@ -2962,6 +2962,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.15** When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.
 
+**REMOTE-21.16** When an agent CLI already exists in the login shell PATH, Linux setup shall verify it without installing or replacing it.
+
+**REMOTE-21.17** When a selected agent CLI is absent, Linux setup shall download its official installer with bounded commands and verify the installed executable before continuing.
+
+**REMOTE-21.18** If agent discovery, download, installation, or verification fails, Linux setup shall report the provider and retry guidance without replacing an existing executable.
+
+**REMOTE-21.19** When agent setup is retried or login profiles print output, Linux setup shall preserve PATH precedence, isolate profile output, and install only executables still missing.
+
+**REMOTE-21.20** When Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.
+
+**REMOTE-21.21** When a Linux host launches panes or provider plugin commands, the application shall retain the configured login shell's provider paths and make user-local native installs available without replacing earlier PATH entries.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.

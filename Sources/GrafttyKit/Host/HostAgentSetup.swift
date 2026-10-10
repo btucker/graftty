@@ -21,7 +21,7 @@ public actor HostAgentSetup {
         configured.insert(runtime)
     }
 
-    public static func install(configuration: HostConfiguration, provider: TeamHookRuntime? = nil, executor: any CLIExecutor = CLIRunner()) async throws {
+    public static func install(configuration: HostConfiguration, provider: TeamHookRuntime? = nil, executor: (any CLIExecutor)? = nil) async throws {
         let cli = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
             .deletingLastPathComponent().appendingPathComponent("graftty").path
         let installer = AgentPluginInstaller(grafttyCLIPath: cli)
@@ -31,7 +31,22 @@ public actor HostAgentSetup {
         let selected = AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: plan.installSteps.filter {
             provider == nil || $0.provider.rawValue == provider?.rawValue
         })
-        let report = await installer.install(selected, executor: executor)
+        let resolvedExecutor: any CLIExecutor
+        if let executor {
+            resolvedExecutor = executor
+        } else {
+            #if os(Linux)
+            let home = NSHomeDirectory()
+            let loginPath = try await HostAgentEnvironment.loginPath(shellPath: configuration.shell, home: home)
+            let path = HostAgentEnvironment.path(
+                inheritedPath: ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
+                home: home, loginPath: loginPath)
+            resolvedExecutor = HostAgentEnvironment.executor(path: path, base: CLIRunner())
+            #else
+            resolvedExecutor = CLIRunner()
+            #endif
+        }
+        let report = await installer.install(selected, executor: resolvedExecutor)
         guard report.succeeded else {
             let failures = report.results.filter { !$0.succeeded }.map {
                 "\($0.step.provider.displayName): \($0.errorDescription ?? "plugin install failed")"

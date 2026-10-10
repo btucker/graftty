@@ -31,7 +31,7 @@ public struct LinuxHostSetup: Sendable {
             }
             version = nil
         }
-        let total = 4 + plan.projects.count * 2
+        let total = 6 + plan.projects.count * 2
         await progress(.init(message: "Checking SSH destination and Linux dependencies", completed: 0, total: total))
         try Task.checkCancellation()
         let config = try await executor.run(command: "/usr/bin/ssh", args: ["-G", "--", plan.destination.value], at: NSHomeDirectory(), timeout: .seconds(15))
@@ -73,7 +73,13 @@ public struct LinuxHostSetup: Sendable {
             _ = try await remote(plan.destination, operation: "Uploading development archive", command: "umask 077; cat > \(LinuxHostScripts.quote(staging + "/archive.tar.gz"))", inputFile: archive)
         }
         _ = try await remote(plan.destination, operation: "Installing Linux host and user service", command: LinuxHostScripts.install(staging: staging, archiveURL: archiveURL))
-        await progress(.init(message: "Exchanging Graftty public identities", completed: 2, total: total))
+        let agents: [(TeamHookRuntime, String)] = [(.claude, "Claude Code"), (.codex, "Codex")]
+        for (index, agent) in agents.enumerated() {
+            let operation = "Checking and installing \(agent.1)"
+            await progress(.init(message: operation, completed: 2 + index, total: total))
+            _ = try await remote(plan.destination, operation: operation, command: LinuxHostScripts.ensureAgentCLI(provider: agent.0, staging: staging))
+        }
+        await progress(.init(message: "Exchanging Graftty public identities", completed: 4, total: total))
         let trustFile = local.appendingPathComponent("trust.json")
         try JSONEncoder().encode(plan.client).write(to: trustFile, options: .atomic)
         let response = try await remote(plan.destination, operation: "Exchanging Graftty public identities", command: "\"$HOME/.local/bin/graftty-host\" trust-client --stdin --json", inputFile: trustFile)
@@ -85,10 +91,10 @@ public struct LinuxHostSetup: Sendable {
         for (index, project) in plan.projects.enumerated() {
             let path = root + "/" + project.directoryName
             let bundle = staging + "/\(index).bundle"
-            await progress(.init(message: "Importing committed history for \(project.directoryName)", completed: 3 + index * 2, total: total))
+            await progress(.init(message: "Importing committed history for \(project.directoryName)", completed: 5 + index * 2, total: total))
             _ = try await remote(plan.destination, operation: "Uploading committed project history", command: "umask 077; cat > \(LinuxHostScripts.quote(bundle))", inputFile: local.appendingPathComponent("\(index).bundle"))
             _ = try await remote(plan.destination, operation: "Importing committed project history", command: LinuxHostScripts.importRepository(bundle: bundle, destination: path, snapshot: snapshots[index]))
-            await progress(.init(message: "Registering \(project.directoryName)", completed: 4 + index * 2, total: total))
+            await progress(.init(message: "Registering \(project.directoryName)", completed: 6 + index * 2, total: total))
             _ = try await remote(plan.destination, operation: "Registering project", command: "\"$HOME/.local/bin/graftty-host\" project add \(LinuxHostScripts.quote(path)) --json")
             paths.append(path)
         }

@@ -246,6 +246,10 @@ public final class HeadlessHostRuntime {
     public func spawn(session: PaneSessionID, path: String, command: String? = nil) -> ZmxSpawnConfiguration {
         var environment = ProcessInfo.processInfo.environment
         for key in ZmxLauncher.leakyEnvKeysToStripAtAppLaunch { environment.removeValue(forKey: key) }
+        #if os(Linux)
+        environment["PATH"] = HostAgentEnvironment.path(
+            inheritedPath: environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin", home: NSHomeDirectory())
+        #endif
         environment["SHELL"] = configuration.shell
         environment["GRAFTTY_STATE_DIR"] = configuration.stateDirectory.path
         let config = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,

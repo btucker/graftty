@@ -50,9 +50,16 @@ fetch or push using the restored origin.
 
 ## Prepare development tools and agents
 
-Install the project's compilers, dependencies, and agent executables on Linux.
-Authenticate Codex or Claude using that provider's Linux CLI. Mac credentials
-and installed tools are not copied during setup.
+Auto-setup checks the Linux user's login shell PATH for `claude` and `codex`.
+It preserves working installations and installs missing commands with the
+[Claude Code installer](https://claude.ai/install.sh) and
+[Codex installer](https://chatgpt.com/codex/install.sh), under `~/.local/bin`.
+The installers need outbound HTTPS access. A failed download or installation
+reports the provider and can be retried without reinstalling working commands.
+
+Install the project's compilers and dependencies separately. Authenticate
+Codex and Claude using their Linux CLIs after setup; Mac credentials are not
+copied.
 
 The host prepares the selected provider's Graftty plugin when launching an agent.
 To install the available provider plugins explicitly, run:
