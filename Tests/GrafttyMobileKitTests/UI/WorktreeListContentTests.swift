@@ -3,11 +3,51 @@ import Testing
 import Foundation
 import GrafttyProtocol
 import GrafttyCommandUI
+import SwiftUI
+import UIKit
 @testable import GrafttyMobileKit
 
 @MainActor
 @Suite("WorktreeListContent — extracted picker preserves callbacks + onListChanged")
 struct WorktreeListContentTests {
+
+    @Test("@spec IPAD-1.22: While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.", arguments: [true, false])
+    func splitViewSidebarRetainsProjectSelection(collapsed: Bool) async throws {
+        let suite = "ipad-project-selection-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: collapsed)
+        let rows = [sampleWorktree(path: "/repo/first")]
+        let controller = UIHostingController(rootView: WorktreeListContent(
+            host: sampleHost(), isSidebar: true,
+            remoteSnapshotProvider: { _, _ in rows },
+            onSelect: { _ in }, onSelectPane: { _ in }, navigation: navigation
+        ).environment(\.horizontalSizeClass, .compact))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        var railScrollView: UIScrollView?
+        func findRail(in view: UIView) -> UIScrollView? {
+            if let scroll = view as? UIScrollView,
+               scroll.bounds.width == (collapsed ? 64 : 196) { return scroll }
+            return view.subviews.lazy.compactMap { findRail(in: $0) }.first
+        }
+        // Loading and SwiftUI mounting are asynchronous. Wait for the rail,
+        // without relying on private SwiftUI view names or a fixed delay.
+        for _ in 0..<50 {
+            controller.view.layoutIfNeeded()
+            railScrollView = findRail(in: controller.view)
+            if railScrollView != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(railScrollView != nil)
+        let project = SidebarProjection.projects(rows)[0]
+        var generation: UInt64 = 0
+        WorktreeListContent.applyProjectSelection(project, navigation: navigation, selectionGeneration: &generation)
+        #expect(navigation.selectedProjectID == project.id)
+        #expect(generation == 1)
+    }
 
     @Test("@spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.")
     func projectDestinationHasItsOwnSelection() {
