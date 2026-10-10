@@ -2974,6 +2974,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.21** When a Linux host launches panes or provider plugin commands, the application shall retain the configured login shell's provider paths and make user-local native installs available without replacing earlier PATH entries.
 
+**REMOTE-21.22** When graftty remote setup-linux runs, the CLI shall require an explicit release or archive, resolve selected repositories and branches, and reuse Linux setup with the running Mac app's public identity.
+
+**REMOTE-21.23** When the local CLI provisions a Linux host, the socket protocol shall carry only the public client identity and the complete setup result, rejecting invalid SSH destinations.
+
+**REMOTE-21.24** When Linux setup is completed through the CLI or UI, the shared save operation shall persist its direct endpoint and reject changed device or endpoint identities before mutating trust.
+
+**REMOTE-21.25** When CLI Linux setup is cancelled while resolving a project, the application shall stop before subsequent Git probes or remote setup commands.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.

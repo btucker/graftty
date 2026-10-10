@@ -3971,7 +3971,7 @@ struct GrafttyApp: App {
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
              .worktreePinCapability, .setWorktreePinned,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
-             .attentionReport:
+             .attentionReport, .linuxSetupIdentity, .completeLinuxSetup:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -4005,6 +4005,30 @@ struct GrafttyApp: App {
         default: break
         }
         switch message {
+        case .linuxSetupIdentity:
+            do {
+                let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
+                let key = try store.loadOrGenerateAndPersist()
+                return .linuxSetupIdentity(LinuxHostTrustRequest(
+                    deviceID: AppServices.localRemoteDeviceID().value,
+                    displayName: AppServices.localHostDisplayName(),
+                    publicKey: key.publicKey.rawRepresentation.base64EncodedString()
+                ))
+            } catch { return .error(LinuxHostSetupError.message(for: error)) }
+        case .completeLinuxSetup(let result):
+            do {
+                // Load persisted identities before checking for conflicting pins.
+                await remoteMacsModel.loadSavedRemotes()
+                try Task.checkCancellation()
+                let controller = LinuxHostSetupConnectionController(
+                    pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+                )
+                let saved = try controller.save(result, model: remoteMacsModel)
+                // Socket handlers have a five-second limit. Connection progress
+                // and failures are reflected by the model after acknowledging save.
+                Task { _ = try? await remoteMacsModel.connect(to: saved) }
+                return .ok
+            } catch { return .error(LinuxHostSetupError.message(for: error)) }
         case let .offerResource(path, target, paneSessionName):
             guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
                 return .error("Run graftty open from a tracked worktree.")

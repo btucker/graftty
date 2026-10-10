@@ -48,6 +48,34 @@ Working edits, untracked files, ignored files, stashes, and local Git configurat
 are excluded. Set up repository credentials on Linux separately if you need to
 fetch or push using the restored origin.
 
+## Set up from the Mac CLI
+
+Keep Graftty running on the Mac, then run:
+
+```sh
+graftty remote setup-linux user@host --version 1.2.3 --project ~/projects/app
+```
+
+Use a published version with a Linux archive. For a local build, replace
+`--version 1.2.3` with `--archive /path/to/graftty-linux.tar.gz`.
+Repeat `--project PATH` to import multiple repositories, or omit it to install
+only the host. Each project checks out its current local branch; `--branch NAME`
+selects the same branch in every chosen repository. `--project-root '~/projects'`
+sets the Linux destination directory. Quote `"~/projects"` to preserve the Linux
+home-relative path rather than expanding it in the Mac shell.
+
+Progress is written to stderr. Add `--json` for a machine-readable final result.
+The command installs the host and missing agent CLIs, imports committed history,
+saves the pairing in the Mac app, and requests a connection. A successful return
+acknowledges that request; check the app sidebar for connection status. Ctrl-C
+cancels setup; completed installation and repository imports remain for retry.
+
+The Linux archive includes the same `graftty` CLI for pane control, worktree
+creation/removal, team messaging, hooks, and Attention reports, plus
+`graftty-host` for service administration. Mac GUI operations, enrollment from
+Linux, and managing onward host connections are not supported by the headless
+runtime.
+
 ## Prepare development tools and agents
 
 Auto-setup checks the Linux user's login shell PATH for `claude` and `codex`.

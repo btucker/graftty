@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LinuxHostDestination: Sendable, Equatable {
+public struct LinuxHostDestination: Codable, Sendable, Equatable {
     public let value: String
     public init(_ value: String) throws {
         let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -11,9 +11,17 @@ public struct LinuxHostDestination: Sendable, Equatable {
         }
         self.value = value
     }
+
+    private enum CodingKeys: String, CodingKey { case value }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(container.decode(String.self, forKey: .value))
+    }
+
 }
 
-public struct LinuxHostResolvedSSH: Sendable, Equatable {
+public struct LinuxHostResolvedSSH: Codable, Sendable, Equatable {
     public let hostname: String
     public let user: String
     public let port: Int
@@ -98,7 +106,7 @@ public struct LinuxHostSetupProgress: Sendable, Equatable {
     }
 }
 
-public struct LinuxHostSetupResult: Sendable, Equatable {
+public struct LinuxHostSetupResult: Codable, Sendable, Equatable {
     public let identity: LinuxHostIdentity
     public let openSSH: LinuxHostResolvedSSH
     public let destination: LinuxHostDestination
