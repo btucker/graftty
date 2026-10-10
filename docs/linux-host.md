@@ -25,8 +25,10 @@ import committed projects, and open persistent remote terminals.
    An SSH config alias with `ProxyJump` can provision the host, but Graftty's
    terminal connection still needs a direct network route to port 8801.
 
-To keep the user service running after logout, ask the host administrator to
-enable lingering for your account with `loginctl enable-linger USER`.
+Setup checks and enables lingering for your account so the user service keeps
+running after SSH disconnects. It does not request interactive authorization.
+If the host denies this change, setup stops before installing and asks the host
+administrator to run `sudo loginctl enable-linger USER`, then retry.
 
 ## Install and connect
 

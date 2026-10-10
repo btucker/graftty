@@ -167,6 +167,39 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
 struct LinuxHostCompatibilityTests {
     @Test("@spec REMOTE-21.13: When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.", arguments: ["none", "graftty-host", "graftty", "zmx"])
     func checksBinariesBeforeInstallation(failingBinary: String) async throws {
+        let result = try await runInstallFixture(failingBinary: failingBinary)
+        let output = result.output
+        if failingBinary == "none" {
+            #expect(output.exitCode == 0)
+            #expect(result.installed)
+        } else {
+            #expect(output.exitCode != 0)
+            #expect(output.stderr.contains("GRAFTTY_INCOMPATIBLE:" + failingBinary))
+            #expect(output.stderr.contains("47"))
+            #expect(!result.installed)
+            #expect(result.lingerCalls.isEmpty)
+        }
+    }
+
+    @Test("@spec REMOTE-21.15: When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.", arguments: ["enabled", "enables", "denied", "no-effect"])
+    func ensuresLingeringBeforeInstallation(mode: String) async throws {
+        let result = try await runInstallFixture(lingerMode: mode)
+        #expect(result.output.stdout.isEmpty)
+        #expect(result.lingerCalls.contains("show-user --property=Linger --value -- fixture-user"))
+        if mode == "enabled" || mode == "enables" {
+            #expect(result.output.exitCode == 0)
+            #expect(result.installed)
+        } else {
+            #expect(result.output.exitCode != 0)
+            #expect(!result.installed)
+            #expect(result.output.stderr.contains("GRAFTTY_LINGER_REQUIRED:"))
+            let message = LinuxHostSetupError.remoteFailure(result.output.stderr).localizedDescription
+            #expect(message.contains("sudo loginctl enable-linger fixture-user"))
+        }
+        #expect(result.lingerCalls.contains("--no-ask-password enable-linger -- fixture-user") == (mode != "enabled"))
+    }
+
+    private func runInstallFixture(failingBinary: String = "none", lingerMode: String = "enabled") async throws -> (output: CLIOutput, installed: Bool, lingerCalls: String) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source")
@@ -182,6 +215,23 @@ struct LinuxHostCompatibilityTests {
         // Only the finite fixture commands run here; timeout's deadline behavior
         // is provided by coreutils on the destination.
         try executable(tools.appendingPathComponent("timeout"), "shift 2; exec \"$@\"")
+        try executable(tools.appendingPathComponent("id"), "test \"$*\" = -un || exit 99; echo fixture-user")
+        let calls = LinuxHostScripts.quote(root.appendingPathComponent("linger-calls").path)
+        let state = LinuxHostScripts.quote(root.appendingPathComponent("linger-state").path)
+        try executable(tools.appendingPathComponent("loginctl"), """
+        printf '%s\\n' "$*" >> \(calls)
+        case "$*" in
+          'show-user --property=Linger --value -- fixture-user')
+            if test \(LinuxHostScripts.quote(lingerMode)) = enabled || test -f \(state); then echo yes; else echo no; fi ;;
+          '--no-ask-password enable-linger -- fixture-user')
+            echo 'authorization output must not escape'
+            case \(LinuxHostScripts.quote(lingerMode)) in
+              denied) echo 'Access denied' >&2; exit 1 ;;
+              enables) touch \(state) ;;
+            esac ;;
+          *) exit 99 ;;
+        esac
+        """)
         for name in ["graftty-host", "graftty", "zmx"] {
             try executable(source.appendingPathComponent("bin/" + name), name == failingBinary ? "exit 47" : "exit 0")
         }
@@ -190,14 +240,7 @@ struct LinuxHostCompatibilityTests {
         _ = try await CLIRunner().run(command: "/usr/bin/tar", args: ["-czf", staging.appendingPathComponent("archive.tar.gz").path, "-C", source.path, "."], at: root.path)
         let script = "PATH=" + LinuxHostScripts.quote(tools.path) + ":\"$PATH\"\n" + LinuxHostScripts.install(staging: staging.path, archiveURL: nil)
         let output = try await CLIRunner().capture(command: "/bin/sh", args: ["-c", script], at: root.path)
-        if failingBinary == "none" {
-            #expect(output.exitCode == 0)
-            #expect(FileManager.default.fileExists(atPath: marker.path))
-        } else {
-            #expect(output.exitCode != 0)
-            #expect(output.stderr.contains("GRAFTTY_INCOMPATIBLE:" + failingBinary))
-            #expect(output.stderr.contains("47"))
-            #expect(!FileManager.default.fileExists(atPath: marker.path))
-        }
+        return (output, FileManager.default.fileExists(atPath: marker.path),
+                (try? String(contentsOf: root.appendingPathComponent("linger-calls"), encoding: .utf8)) ?? "")
     }
 }

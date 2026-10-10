@@ -17,7 +17,7 @@ enum LinuxHostScripts {
     static let detect = """
     set -eu
     test "$(uname -s)" = Linux || { echo 'GRAFTTY_MISSING:Linux kernel' >&2; exit 70; }
-    for tool in git tar systemctl mktemp sha256sum flock bash timeout mv cp readlink awk grep; do
+    for tool in git tar systemctl loginctl id mktemp sha256sum flock bash timeout mv cp readlink awk grep; do
       command -v "$tool" >/dev/null 2>&1 || { echo "GRAFTTY_MISSING:$tool" >&2; exit 70; }
     done
     systemctl --user show-environment >/dev/null 2>&1 || { echo 'GRAFTTY_MISSING:systemd-user-session' >&2; exit 70; }
@@ -66,9 +66,30 @@ enum LinuxHostScripts {
             exit 71
           fi
         done
+        \(ensureLinger)
         /bin/bash unpacked/install.sh --bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800
         """
     }
+
+    /// The user manager must survive the provisioning SSH connection closing.
+    /// Never request interactive authorization or change another user's setting.
+    static let ensureLinger = """
+    linger_user=$(id -un)
+    linger_required() {
+      echo "GRAFTTY_LINGER_REQUIRED:$linger_user" >&2
+      echo "Ask the host administrator to run: sudo loginctl enable-linger $linger_user" >&2
+      if test -s linger.log; then cat linger.log >&2; fi
+      exit 74
+    }
+    linger=$(timeout --kill-after=1 5 loginctl show-user --property=Linger --value -- "$linger_user" 2>/dev/null) || linger=no
+    if test "$linger" != yes; then
+      if ! timeout --kill-after=1 15 loginctl --no-ask-password enable-linger -- "$linger_user" > linger.log 2>&1; then
+        linger_required
+      fi
+      linger=$(timeout --kill-after=1 5 loginctl show-user --property=Linger --value -- "$linger_user" 2>/dev/null) || linger=no
+      test "$linger" = yes || linger_required
+    fi
+    """
 
     static func importRepository(bundle: String, destination: String, snapshot: LinuxHostRepositorySnapshot) -> String {
         let marker = "\(snapshot.importKey)\n\(snapshot.commit)\n\(snapshot.branch)\n"

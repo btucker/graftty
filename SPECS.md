@@ -2956,6 +2956,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.14** When Linux setup probes an archive, the application shall stage it privately on the configured installation data filesystem and remove only that staging directory after completion.
 
+**REMOTE-21.15** When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.

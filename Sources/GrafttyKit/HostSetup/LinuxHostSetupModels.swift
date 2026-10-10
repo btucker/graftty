@@ -123,6 +123,9 @@ public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {
         switch self {
         case .invalidPlan(let message): return message
         case .remoteFailure(let stderr):
+            if stderr.contains("GRAFTTY_LINGER_REQUIRED:") {
+                return "The Linux user service must stay running after SSH disconnects. Graftty could not enable lingering automatically. Ask the host administrator to run the command below, then retry; the installation was not changed.\n\(stderr)"
+            }
             if stderr.contains("GRAFTTY_INCOMPATIBLE:") {
                 return "The Linux archive cannot run on this host. Check its CPU architecture and runtime library requirements. The existing installation was not changed.\n\(stderr)"
             }
