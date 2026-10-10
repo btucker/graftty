@@ -756,7 +756,7 @@ final class RemoteMacsModel: ObservableObject {
             let current = await sidebarSnapshot(for: mac)?.projects.first { $0.id == fallback.id } ?? project
             project = current
             if current.iconRevision != revision { continue }
-            if case .icon(let data) = response { return (current, data) }
+            if case .icon(let data) = response { return (current, data.flatMap { PNGThumbnail.projectIcon($0, revision: revision) }) }
             return (current, nil)
         }
         return (project, nil)
