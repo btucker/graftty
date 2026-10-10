@@ -64,6 +64,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private var rowHeight: CGFloat = 0
     private var scrollbar: TerminalScrollbar?
     private var nativeRow: UInt64 = 0
+    private var pendingLocalRow: UInt64?
     private var adjusting = false
     private var viewportHeight: CGFloat = 0
     var showsAdditionalHistory = false {
@@ -127,7 +128,10 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     func configure(canvas: TerminalSnapshotCanvas.Layout?, nativeRowHeight: CGFloat, columns: UInt16 = 0) {
-        if canvas == nil { followerZoomScale = 1 }
+        if canvas == nil {
+            followerZoomScale = 1
+            pendingLocalRow = nil
+        }
         self.nativeRowHeight = nativeRowHeight
         self.canvas = canvas
         let rowHeight = presentation?.rowHeight ?? 0
@@ -142,7 +146,21 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     func updateScrollbar(_ value: TerminalScrollbar) {
+        let geometryChanged = value.total != scrollbar?.total || value.len != scrollbar?.len
+        if canvas != nil, !geometryChanged, let pendingLocalRow {
+            // Native scrollbar updates can lag behind pan events. An echo of
+            // an older request must not move the canvas or interrupt momentum.
+            if value.offset == pendingLocalRow { self.pendingLocalRow = nil }
+            scrollbar = value
+            return
+        }
         guard value != scrollbar else { return }
+        if geometryChanged { pendingLocalRow = nil }
+        if !geometryChanged, value.offset == nativeRow {
+            // Acknowledging our current row needs no contentOffset assignment.
+            scrollbar = value
+            return
+        }
         let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
@@ -293,6 +311,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             : UInt64(min(CGFloat(historyRows), max(0, floor(contentOffset.y / rowHeight))))
         if row != nativeRow {
             nativeRow = row
+            pendingLocalRow = row
             terminalView.surface?.scrollToRow(UInt(row))
         }
         positionCanvas(canvas)

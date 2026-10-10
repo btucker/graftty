@@ -198,6 +198,43 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))
     }
 
+    @Test("@spec TERM-12.30: While a mobile follower scrolls older output, the application shall preserve its latest local row and fractional offset through delayed native scrollbar acknowledgements without repositioning the scroll view.")
+    func delayedScrollbarAcknowledgementsPreserveLocalScrollPosition() throws {
+        let terminal = UITerminalView(frame: .zero)
+        let scroll = TerminalSnapshotScrollView(terminalView: terminal)
+        scroll.frame = CGRect(x: 0, y: 0, width: 600, height: 160)
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 80, height: 24),
+            measuredGrid: CGSize(width: 80, height: 24),
+            measuredPixels: CGSize(width: 807, height: 487),
+            cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 2, container: scroll.bounds.size
+        ))
+        let rowHeight = 10 * canvas.scale
+        scroll.configure(canvas: canvas, nativeRowHeight: 10)
+        scroll.updateScrollbar(.init(total: 124, offset: 100, len: 24))
+
+        // The native renderer can acknowledge a prior row after another pan
+        // event has already requested the next row in either direction.
+        for (olderRow, latestRow) in [(UInt64(8), UInt64(3)), (3, 8)] {
+            scroll.contentOffset = CGPoint(x: 0, y: CGFloat(olderRow) * rowHeight)
+            scroll.contentOffset = CGPoint(x: 0, y: (CGFloat(latestRow) + 0.5) * rowHeight)
+            let offset = scroll.contentOffset
+            let frame = terminal.frame
+            scroll.updateScrollbar(.init(total: 124, offset: olderRow, len: 24))
+            #expect(scroll.contentOffset == offset)
+            #expect(terminal.frame == frame)
+            scroll.updateScrollbar(.init(total: 124, offset: latestRow, len: 24))
+            #expect(scroll.contentOffset == offset)
+            #expect(terminal.frame == frame)
+        }
+
+        // Once the requested row is acknowledged, genuine native navigation
+        // still moves the canvas, retaining the fractional position.
+        scroll.updateScrollbar(.init(total: 124, offset: 20, len: 24))
+        #expect(abs(scroll.contentOffset.y / rowHeight - 20.5) < 0.05)
+    }
+
     @Test("@spec TERM-12.22: While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.", arguments: [390, 834])
     func followerZoomPreservesNativeGridAndAllowsHorizontalScrolling(width: Int) async throws {
         let viewportWidth = CGFloat(width)
