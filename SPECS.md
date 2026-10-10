@@ -2924,6 +2924,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.11** If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.
 
+**REMOTE-20.12** When a direct SSH hostname resolves to IPv4 and IPv6, the application shall authenticate the successful connection without failed address attempts closing its authentication waiter.
+
 **REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
 
 ### REMOTE-21.x
