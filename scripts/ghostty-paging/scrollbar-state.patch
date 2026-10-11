@@ -1,0 +1,28 @@
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -2199,6 +2199,14 @@
+ 
+     export fn ghostty_surface_free_text(_: *Surface, ptr: *Text) void {
+         ptr.deinit();
++    }
++
++    /// Read the current native viewport under the renderer-state mutex.
++    export fn ghostty_surface_read_scrollbar(surface: *Surface, result: *terminal.Scrollbar.C) void {
++        const core = &surface.core_surface;
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        defer core.renderer_state.mutex.unlock(global.io());
++        result.* = core.io.terminal.screens.active.pages.scrollbar().cval();
+     }
+ 
+     /// Read on the UI thread, like inherited configuration and font actions.
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1263,6 +1263,8 @@
+ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
+                                               ghostty_selection_s,
+                                               ghostty_text_s*);
++// Current native scrollbar, read under the renderer-state lock on the UI thread.
++GHOSTTY_API void ghostty_surface_read_scrollbar(ghostty_surface_t, ghostty_action_scrollbar_s*);
+ // Current native font size, including runtime zoom. Call on the UI thread.
+ GHOSTTY_API float ghostty_surface_font_size(ghostty_surface_t);
+ // Read styled history without moving the viewport. offset_len returns row count.

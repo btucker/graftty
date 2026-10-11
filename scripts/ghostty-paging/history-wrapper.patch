@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/Sources/GhosttyTerminal/Surface/TerminalSurface+History.swift
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,35 @@
 +import Foundation
 +import GhosttyKit
 +
@@ -11,6 +11,14 @@
 +}
 +
 +extension TerminalSurface {
++    /// The current native viewport, independent of queued renderer callbacks.
++    public var currentScrollbar: TerminalScrollbar? {
++        guard let surface = rawValue else { return nil }
++        var result = ghostty_action_scrollbar_s()
++        ghostty_surface_read_scrollbar(surface, &result)
++        return TerminalScrollbar(total: result.total, offset: result.offset, len: result.len)
++    }
++
 +    /// The live native font size, including runtime zoom actions.
 +    public var currentFontSize: Float? {
 +        guard let surface = rawValue else { return nil }
