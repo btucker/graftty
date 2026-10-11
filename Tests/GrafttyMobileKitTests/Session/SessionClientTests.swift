@@ -1199,6 +1199,26 @@ struct SessionClientTests {
         #expect(binaryFrames(ws).contains(Data([0x04])))
     }
 
+    @Test("shifted tray navigation reaches the remote session unchanged")
+    func shiftedTrayNavigationSendsExpectedSequences() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
+        client.sendTab(shift: true)
+        client.sendArrow(.up, shift: true)
+        client.sendArrow(.down, shift: true)
+        client.sendArrow(.left, shift: true)
+        client.sendArrow(.right, shift: true)
+        let expected = ["\u{1B}[Z", "\u{1B}[1;2A", "\u{1B}[1;2B", "\u{1B}[1;2D", "\u{1B}[1;2C"]
+            .map { Data($0.utf8) }
+        try await waitUntil("shifted tray keys to reach the WebSocket") {
+            binaryFrames(ws).count == expected.count
+        }
+        #expect(binaryFrames(ws) == expected)
+    }
+
     /// Multi-byte terminal buffers with embedded LFs pass through unchanged.
     @Test
     func multiByteBufferWithEmbeddedLFIsNotTranslated() async throws {
