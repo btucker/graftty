@@ -614,6 +614,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.30** While a mobile follower scrolls older output, the application shall preserve its latest local row and fractional offset through delayed native scrollbar acknowledgements without repositioning the scroll view.
 
+**TERM-12.31** When an older mobile terminal frame completes presentation after a newer frame of the same size, the application shall retain the newer frame without flickering back to the older image.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

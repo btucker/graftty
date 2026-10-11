@@ -86,8 +86,72 @@ import GhosttyTerminal
 import GrafttyProtocol
 import UIKit
 
+#if GRAFTTY_PAGED_HISTORY
+import IOSurface
+
+@_silgen_name("graftty_probe_layer_present")
+private func presentTerminalFrame(_ layer: UnsafeMutableRawPointer, _ surface: UnsafeMutableRawPointer) -> Bool
+
+// The native bridge retains these objects and schedules all layer changes on
+// main. This box only hands their addresses to that thread-safe bridge.
+private final class QueuedTerminalFrame: @unchecked Sendable {
+    let layer: CALayer
+    let surface: IOSurfaceRef
+
+    init(layer: CALayer, surface: IOSurfaceRef) {
+        self.layer = layer
+        self.surface = surface
+    }
+
+    func enqueueAndWait() -> Bool {
+        let queued = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { [self] in
+            _ = presentTerminalFrame(Unmanaged.passUnretained(layer).toOpaque(),
+                                     Unmanaged.passUnretained(surface).toOpaque())
+            queued.signal()
+        }
+        return queued.wait(timeout: .now() + 2) == .success
+    }
+}
+#endif
+
 @MainActor
 struct MountedTerminalSnapshotCanvasTests {
+    #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.31: When an older mobile terminal frame completes presentation after a newer frame of the same size, the application shall retain the newer frame without flickering back to the older image.")
+    func delayedFrameCannotReplaceNewerImage() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let terminal = UITerminalView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        terminal.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        terminal.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(terminal)
+        terminal.layoutIfNeeded()
+        defer { terminal.removeFromSuperview(); window.isHidden = true }
+        let sourceLayer = try #require(terminal.layer.sublayers?.first {
+            NSStringFromClass(type(of: $0)) == "IOSurfaceLayer"
+        })
+        let layer = type(of: sourceLayer).init(layer: sourceLayer)
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        layer.contentsScale = 1
+        layer.contents = nil
+        let properties = [kIOSurfaceWidth: 8, kIOSurfaceHeight: 8, kIOSurfaceBytesPerElement: 4] as CFDictionary
+        let older = try #require(IOSurfaceCreate(properties))
+        let newer = try #require(IOSurfaceCreate(properties))
+        // Queue an older completion on main while main is still presenting a
+        // newer image. Equal dimensions cannot identify this stale frame.
+        #expect(QueuedTerminalFrame(layer: layer, surface: older).enqueueAndWait())
+        #expect(presentTerminalFrame(Unmanaged.passUnretained(layer).toOpaque(),
+                                    Unmanaged.passUnretained(newer).toOpaque()))
+        #expect(layer.contents as AnyObject? === newer)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(layer.contents as AnyObject? === newer)
+    }
+    #endif
+
     @Test("@spec TERM-12.14: While an authoritative canvas is active, the application shall disable native font pinch through selection transitions and restore its prior state when the canvas is released.")
     func canvasAndSelectionPreserveGestureEnablement() throws {
         let container = TerminalInputContainerView(frame: .zero)
