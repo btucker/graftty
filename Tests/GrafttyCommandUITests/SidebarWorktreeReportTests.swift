@@ -7,6 +7,23 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarWorktreeReportTests {
+    @Test("@spec PORTS-5.3: While a worktree report popover is displayed, the application shall show each discovered listening port with its process name and a separate browser action without opening a terminal or acknowledging attention.")
+    func portsFitInNarrowReport() throws {
+        let ports: [WorktreePort] = [.init(port: 3000, scope: .loopback, processName: "vite"),
+                                    .init(port: 8080, scope: .lan, processName: "a-long-process-name")]
+        var opened: [UInt16] = []
+        let content = SidebarWorktreePorts(ports: ports, onOpen: { opened.append($0.port) })
+        let host = NSHostingView(rootView: content.frame(width: 230).fixedSize(horizontal: false, vertical: true))
+        host.setFrameSize(host.fittingSize)
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.width == 230)
+        #expect(host.fittingSize.height > 70)
+        #expect(opened.isEmpty)
+        content.onOpen?(ports[0])
+        #expect(opened == [3000])
+        #expect(content.ports[1].url?.absoluteString == "http://localhost:8080/")
+    }
+
     @Test("@spec LAYOUT-2.133: While an inline worktree question is displayed, the application shall align its accent and text to the leading edge regardless of question length.")
     func questionUsesLeadingEdge() throws {
         for question in ["Set auto-merge?", "Refresh the token so the analytics agent can read the pages and continue its work."] {

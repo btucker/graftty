@@ -809,7 +809,7 @@ struct GrafttyApp: App {
     /// 2s cadence for `portScanner.tick()`. A user starting `npm run
     /// dev` should see the chip appear within a couple seconds without
     /// the chip noticeably flickering on/off across rebuilds.
-    private let portsTicker = PollingTicker(interval: .seconds(2))
+    private let portsTicker = PollingTicker(interval: .seconds(2), pauseWhenInactive: { false })
 
     // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
     // because the WindowGroup content closure reruns; `startup()` is
@@ -1231,7 +1231,7 @@ struct GrafttyApp: App {
 
         // 2s cadence for port-binding scans. Cheap (one batched lsof
         // across all registered shell PIDs per tick) and only meaningful
-        // while the app is up; pause when inactive is the default.
+        // while the app is up, including while a mobile client is using it.
         portsTicker.start { [portScanner] in
             await portScanner.tick()
         }
@@ -2149,6 +2149,8 @@ struct GrafttyApp: App {
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesPortBindings = portBindingsModel
+        let panesPortScanner = portScanner
         let panesClaudeRegistry = services.claudeSessionRegistry
         let localWorktreeOrigin = WorktreeOrigin(
             deviceID: AppServices.localRemoteDeviceID(),
@@ -2198,7 +2200,8 @@ struct GrafttyApp: App {
                             },
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
+                        ports: wt.state == .running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : []
                     ))
                 }
             }
@@ -2698,6 +2701,21 @@ struct GrafttyApp: App {
                         switch request {
                         case .list:
                             return .openResource(.offers(await RemoteOpenStore.shared.list(worktree: worktreeID)))
+                        case .port(let port):
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let listeners = await panesPortScanner.refreshedPorts(for: paneIDs)
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let url = listeners.first(where: { $0.port == port })?.url else {
+                                    return .error(code: "port-unavailable", message: "This port is no longer listening in this worktree.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.url(url))
+                            }
                         case let .read(id, offset):
                             return .openResource(.chunk(try await RemoteOpenStore.shared.read(id: id, worktree: worktreeID, offset: offset)))
                         }

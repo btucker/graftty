@@ -54,7 +54,7 @@ struct SSHHostSessionConfiguration: Sendable {
             },
             inboundChildChannelInitializer: { child, type in
                 if case .directTCPIP(let destination) = type {
-                    guard peerBox.browserTunnelAllowed(host: destination.targetHost) else {
+                    guard peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {
                         return child.eventLoop.makeFailedFuture(SSHHostSessionError.unsupportedChannelType)
                     }
                     return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
@@ -69,7 +69,9 @@ struct SSHHostSessionConfiguration: Sendable {
                         panesStateSubscribe: panesStateSubscribe,
                         panesStateV2Subscribe: panesStateV2Subscribe,
                         paneControlMutator: paneControlMutator,
-                        worktreeManagementMutator: worktreeManagementMutator,
+                        worktreeManagementMutator: { request in
+                            await peerBox.manage(request, using: worktreeManagementMutator)
+                        },
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceIDProvider: { peerBox.deviceID },
@@ -126,14 +128,34 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         return _peer?.capabilities.worktreeManagement == .allowed
     }
 
-    func browserTunnelAllowed(host: String) -> Bool {
+    /// A port tap grants a narrow approval only after the host resolves a live listener.
+    func manage(_ request: WorktreeManagementRequest,
+                using mutator: WorktreeManagementChannelHandler.Mutator,
+                approvals: BrowserTunnelApprovalStore = .shared) async -> WorktreeManagementResponse {
+        guard case .openResource(_, .port(let port)) = request else { return await mutator(request) }
+        guard let peer, peer.capabilities.portTunnel != .disabled else {
+            return .error(code: "port-tunnel-disabled", message: "Port tunnels are disabled for this paired device.", forceAllowed: false, shortStatus: nil)
+        }
+        let response = await mutator(request)
+        if case .openResource(.url(let url)) = response,
+           url.scheme == "http", let host = url.host, url.port == Int(port), port > 0 {
+            guard peer.capabilities.portTunnel != .allowedLoopback
+                || BrowserTunnelAuthorization.allows(capability: .allowedLoopback, host: host, hasUserApproval: false) else {
+                return .error(code: "port-tunnel-loopback-only", message: "This device can only open loopback ports. This listener uses a network interface.", forceAllowed: false, shortStatus: nil)
+            }
+            approvals.approve(deviceID: peer.id, host: host, port: port, until: Date().addingTimeInterval(900))
+        }
+        return response
+    }
+
+    func browserTunnelAllowed(host: String, port: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         guard let peer = _peer else { return false }
         return BrowserTunnelAuthorization.allows(
             capability: peer.capabilities.portTunnel,
             host: host,
-            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved(deviceID: peer.id)
+            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved(deviceID: peer.id, host: host, port: port)
         )
     }
 }
@@ -144,7 +166,7 @@ enum BrowserTunnelAuthorization {
         case .disabled: return false
         case .askEachTime: return hasUserApproval
         case .allowedLoopback:
-            let normalized = host.lowercased()
+            let normalized = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             guard normalized != "localhost", !normalized.hasSuffix(".localhost") else { return true }
             guard let address = try? SocketAddress(ipAddress: normalized, port: 0) else { return false }
             switch address {

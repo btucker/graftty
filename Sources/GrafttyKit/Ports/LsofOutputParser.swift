@@ -7,6 +7,7 @@ public enum LsofOutputParser {
         public let pid: pid_t
         public let address: String
         public let port: UInt16
+        public let isIPv6: Bool
     }
 
     public static func parse(_ output: String) -> [Row] {
@@ -19,11 +20,12 @@ public enum LsofOutputParser {
         if line.hasPrefix("COMMAND") { return nil }
         let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
         guard fields.count >= 9 else { return nil }
+        guard fields.contains("TCP"), fields.last == "(LISTEN)" else { return nil }
         guard let pid = pid_t(fields[1]) else { return nil }
         let processName = fields[0]
         guard let nameToken = fields.last(where: { $0.contains(":") }) else { return nil }
         guard let (address, port) = splitAddressPort(nameToken) else { return nil }
-        return Row(processName: processName, pid: pid, address: address, port: port)
+        return Row(processName: processName, pid: pid, address: address, port: port, isIPv6: fields[4] == "IPv6")
     }
 
     static func splitAddressPort(_ token: String) -> (String, UInt16)? {
@@ -33,13 +35,13 @@ public enum LsofOutputParser {
             let after = token.index(after: bracketEnd)
             guard after < token.endIndex, token[after] == ":" else { return nil }
             let portStr = token[token.index(after: after)...]
-            guard let port = UInt16(portStr) else { return nil }
+            guard let port = UInt16(portStr), port > 0 else { return nil }
             return (address, port)
         }
         guard let colonIdx = token.lastIndex(of: ":") else { return nil }
         let address = String(token[..<colonIdx])
         let portStr = token[token.index(after: colonIdx)...]
-        guard let port = UInt16(portStr) else { return nil }
+        guard let port = UInt16(portStr), port > 0 else { return nil }
         return (address, port)
     }
 }

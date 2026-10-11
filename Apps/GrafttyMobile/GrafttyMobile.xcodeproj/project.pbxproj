@@ -61,6 +61,7 @@
 		A9B90654E94B1FE3C676A16F /* TerminalChromeViewportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */; };
 		A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
+		ABC5BF921DEEF66F510A779F /* WorktreePortClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */; };
 		AE45F85A0C40C5B9135961E1 /* TerminalFontSizeStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145BC9EAEE084FEC37D18D8D /* TerminalFontSizeStoreTests.swift */; };
 		B803FA26B311180F52B5B40D /* HostPickerViewCallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */; };
 		BB7882D5CC303A99F96AA5D9 /* GhosttyKeybindingsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */; };
@@ -151,6 +152,7 @@
 		B4C480112057912027AD9650 /* GrafttyMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GrafttyMobile.entitlements; sourceTree = "<group>"; };
 		B60664EC7D11D766F8995393 /* GhosttyThemeParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyThemeParsingTests.swift; sourceTree = "<group>"; };
 		B654B738DE930881ED5BE5C5 /* PaneControlClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneControlClientTests.swift; sourceTree = "<group>"; };
+		B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePortClientTests.swift; sourceTree = "<group>"; };
 		BC1E7C1FDDDE3B01E21079EA /* PairingFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlowTests.swift; sourceTree = "<group>"; };
 		C87848F72F811BF6F1CB9191 /* NativeFilePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFilePreviewTests.swift; sourceTree = "<group>"; };
 		CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontApplicationTests.swift; sourceTree = "<group>"; };
@@ -246,6 +248,7 @@
 				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
 				9BC9CD23B5D3CA7F71AF6EDC /* SessionRenderPaceTests.swift */,
 				340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */,
+				B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */,
 			);
 			path = Session;
 			sourceTree = "<group>";
@@ -608,6 +611,7 @@
 				79F452007688FF1DC62A7C1B /* WorktreePickerGroupingTests.swift in Sources */,
 				E295FDA42EACEEB0388FA1B6 /* WorktreePickerRefreshContractTests.swift in Sources */,
 				DCF1F771B6F6D69405FC0250 /* WorktreePickerSwipeActionTests.swift in Sources */,
+				ABC5BF921DEEF66F510A779F /* WorktreePortClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

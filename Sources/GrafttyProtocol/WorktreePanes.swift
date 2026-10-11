@@ -162,6 +162,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// Present only for rows relayed through another Mac.
     public let route: WorktreeRoute?
     public let sidebar: SidebarWorktreeMetadata?
+    public let ports: [WorktreePort]
 
     public init(
         path: String,
@@ -179,7 +180,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         layout: PaneLayoutNode?,
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil,
-        sidebar: SidebarWorktreeMetadata? = nil
+        sidebar: SidebarWorktreeMetadata? = nil,
+        ports: [WorktreePort] = []
     ) {
         self.path = path
         self.displayName = displayName
@@ -197,6 +199,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.origin = origin
         self.route = route
         self.sidebar = sidebar
+        self.ports = ports
     }
 
     /// Custom decode preserves readability when an older server
@@ -206,12 +209,13 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
-             attentionTimestamp, layout, origin, route, sidebar
+             attentionTimestamp, layout, origin, route, sidebar, ports
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.sidebar = try c.decodeIfPresent(SidebarWorktreeMetadata.self, forKey: .sidebar)
+        self.ports = try c.decodeIfPresent([WorktreePort].self, forKey: .ports) ?? []
         self.path = try c.decode(String.self, forKey: .path)
         self.displayName = try c.decode(String.self, forKey: .displayName)
         self.repoDisplayName = try c.decode(String.self, forKey: .repoDisplayName)

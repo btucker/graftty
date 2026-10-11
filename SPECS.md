@@ -2656,11 +2656,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-4.x — Port Tunnels
 
-**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL before connecting to the target.
+**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL or a discovered worktree port tap before connecting to the target.
 
 **REMOTE-4.2** While a paired client has loopback-only port-tunnel permission, the host shall reject non-loopback targets before connecting to them.
 
 **REMOTE-4.3** When graftty open offers a URL to a mobile pane, the application shall approve browser tunnels only for the paired device owning that pane until the offer expires.
+
+**REMOTE-4.4** When a paired device opens a discovered worktree port, the application shall approve only that device's connections to the advertised listening endpoint until the approval expires.
 
 ### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
@@ -3358,13 +3360,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PORTS-1.x
 
-**PORTS-1.1** When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
+**PORTS-1.1** While a pane is registered, the application shall scan its process subtree's TCP listening sockets every 2 seconds even when the Mac application is inactive.
 
 **PORTS-1.2** While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
 
 **PORTS-1.3** Tick during in-flight scan is dropped (single-flight invariant)
 
 **PORTS-1.4** Lsof failure leaves snapshot empty
+
+**PORTS-1.5** When scanning worktree ports, the application shall exclude established connections, UDP sockets, regular files, and port zero from the listening port list.
 
 ### PORTS-2.x
 
@@ -3401,6 +3405,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
 
 **PORTS-4.5** When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
+
+**PORTS-4.6** If a pane is unregistered or its shell is replaced during a port scan, then the application shall discard that scan's obsolete bindings and shall not restore the removed registration.
+
+### PORTS-5.x
+
+**PORTS-5.1** When a worktree publishes listening ports, the application shall combine its pane process bindings, deduplicate by port, sort numerically, and exclude bindings from other worktrees.
+
+**PORTS-5.2** When a worktree snapshot includes listening ports, the application shall preserve their process names, bind scopes, and listener addresses on the wire and treat absent ports from older hosts as an empty list.
+
+**PORTS-5.3** While a worktree report popover is displayed, the application shall show each discovered listening port with its process name and a separate browser action without opening a terminal or acknowledging attention.
+
+**PORTS-5.4** When an iPhone or iPad user taps a worktree port, the application shall request approval for that worktree's listener and open the returned URL in the paired host browser through the authenticated connection.
+
+**PORTS-5.5** If a worktree port is stale, denied, or belongs to a relayed Mac without a browser route, then the application shall report the failure and shall not open a URL on the wrong host.
+
+**PORTS-5.6** When a worktree process listens only on a specific host interface, the application shall retain that listener's address for opening the port rather than assume localhost.
+
+**PORTS-5.7** When opening a worktree port, the application shall refresh discovery before resolving the listener and reject ports whose processes stopped after the last published snapshot.
+
+**PORTS-5.8** When different worktrees listen on the same port on separate IPv4 and IPv6 addresses, the application shall preserve each listener's exact address so opening one worktree cannot resolve to the other.
 
 ## PROJECT — PROJECT
 

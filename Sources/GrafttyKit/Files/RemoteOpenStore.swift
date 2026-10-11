@@ -97,8 +97,34 @@ public final class BrowserTunnelApprovalStore: @unchecked Sendable {
     public static let shared = BrowserTunnelApprovalStore()
     private let lock = NSLock()
     private var approvedUntil: [RemoteDeviceID: Date] = [:]
+    private struct Endpoint: Hashable {
+        let host: String
+        let port: UInt16
+    }
+    private var portApprovals: [RemoteDeviceID: [Endpoint: Date]] = [:]
 
     public init() {}
+
+    public func approve(deviceID: RemoteDeviceID, host: String = "localhost", port: UInt16, until expiry: Date) {
+        guard port > 0 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        let endpoint = Endpoint(host: Self.approvalHost(host), port: port)
+        portApprovals[deviceID, default: [:]][endpoint] = max(portApprovals[deviceID]?[endpoint] ?? .distantPast, expiry)
+    }
+
+    public func isApproved(deviceID: RemoteDeviceID, host: String, port: Int, now: Date = Date()) -> Bool {
+        if isApproved(deviceID: deviceID, now: now) { return true }
+        guard let port = UInt16(exactly: port), port > 0 else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        portApprovals[deviceID] = portApprovals[deviceID]?.filter { $0.value > now }
+        return (portApprovals[deviceID]?[Endpoint(host: Self.approvalHost(host), port: port)] ?? .distantPast) > now
+    }
+
+    private static func approvalHost(_ host: String) -> String {
+        host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    }
 
     public func approve(ownerClientID: DisplayClientID, until expiry: Date) -> Bool {
         // TerminalSessionHandler names mobile owners ssh-<device ID>-<session UUID>.

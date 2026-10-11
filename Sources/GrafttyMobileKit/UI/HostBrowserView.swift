@@ -7,9 +7,19 @@ import WebKit
 struct HostBrowserView: View {
     let url: URL
     let host: Host
-    let coordinator: RemoteConnectionCoordinator
+    let connectionProvider: RemoteConnectionProvider
     @Environment(\.dismiss) private var dismiss
     @StateObject private var browser = HostBrowserModel()
+
+    init(url: URL, host: Host, coordinator: RemoteConnectionCoordinator) {
+        self.init(url: url, host: host, connectionProvider: { await coordinator.connection(for: host) })
+    }
+
+    init(url: URL, host: Host, connectionProvider: @escaping RemoteConnectionProvider) {
+        self.url = url
+        self.host = host
+        self.connectionProvider = connectionProvider
+    }
 
     var body: some View {
         NavigationStack {
@@ -40,7 +50,7 @@ struct HostBrowserView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
-        .task { await browser.start(url: url, host: host, coordinator: coordinator) }
+        .task { await browser.start(url: url, host: host, connectionProvider: connectionProvider) }
         .onDisappear { browser.stop() }
     }
 }
@@ -79,10 +89,10 @@ private final class HostBrowserModel: NSObject, ObservableObject, WKNavigationDe
     @Published var error: String?
     private var proxy: BrowserProxy?
 
-    func start(url: URL, host: Host, coordinator: RemoteConnectionCoordinator) async {
+    func start(url: URL, host: Host, connectionProvider: RemoteConnectionProvider) async {
         do {
             guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  let connection = await coordinator.connection(for: host) else {
+                  let connection = await connectionProvider() else {
                 error = "The paired host is unavailable."
                 return
             }

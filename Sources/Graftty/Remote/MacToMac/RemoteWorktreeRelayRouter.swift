@@ -61,7 +61,7 @@ final class RemoteWorktreeRelayRouter {
             attentionText: worktree.attentionText, attentionSource: worktree.attentionSource,
             attentionTimestamp: worktree.attentionTimestamp, layout: worktree.layout,
             origin: worktree.origin ?? WorktreeOrigin(deviceID: ownerID, deviceLabel: ownerLabel, relayDepth: 0),
-            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID))
+            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID), ports: worktree.ports)
     }
 
     func promotedWorktrees(
@@ -148,7 +148,8 @@ final class RemoteWorktreeRelayRouter {
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
-                    sidebar: sidebar
+                    sidebar: sidebar,
+                    ports: worktree.ports
                 ))
             }
         }

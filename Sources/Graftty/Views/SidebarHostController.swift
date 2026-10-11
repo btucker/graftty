@@ -177,7 +177,7 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
 @MainActor
 func sidebarLocalWorktree(_ wt: WorktreeEntry, repo: RepoEntry, owner: WorktreeOrigin,
                           displayName: String, titles: [PaneSlotID: String], liveness: [String: AgentLiveness],
-                          prBadge: PRBadge?, folders: [String] = [], folderIDs: [String]? = nil) -> WorktreePanes {
+                          prBadge: PRBadge?, folders: [String] = [], folderIDs: [String]? = nil, ports: [WorktreePort] = []) -> WorktreePanes {
     let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
     return WorktreePanes(path: wt.path, displayName: displayName, repoDisplayName: repo.displayName,
         repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
@@ -186,5 +186,5 @@ func sidebarLocalWorktree(_ wt: WorktreeEntry, repo: RepoEntry, owner: WorktreeO
         layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles,
                                                        paneAttention: wt.paneAttention, liveness: liveness) },
         origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID, folders: folders,
-                                                               repositoryPath: repo.path, folderIDs: folderIDs))
+                                                               repositoryPath: repo.path, folderIDs: folderIDs), ports: ports)
 }

@@ -19,9 +19,11 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
 public enum RemoteOpenRequest: Codable, Sendable, Equatable {
     case list
     case read(id: UUID, offset: Int)
+    case port(UInt16)
 }
 
 public enum RemoteOpenResponse: Codable, Sendable, Equatable {
     case offers([RemoteOpenOffer])
     case chunk(Data)
+    case url(URL)
 }

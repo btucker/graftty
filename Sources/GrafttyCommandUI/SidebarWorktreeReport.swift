@@ -25,17 +25,20 @@ public struct SidebarWorktreeReport: View {
     public let onOpen: () async -> Bool
     public let onDismiss: () -> Void
     public let onClose: () -> Void
+    public let onOpenPort: ((WorktreePort) -> Void)?
     @State private var opening = false
     @State private var error = false
 
     public init(context: SidebarWorktreeContext, onOpen: @escaping () async -> Bool,
-                onDismiss: @escaping () -> Void, onClose: @escaping () -> Void) {
+                onDismiss: @escaping () -> Void, onClose: @escaping () -> Void,
+                onOpenPort: ((WorktreePort) -> Void)? = nil) {
         self.context = context; self.onOpen = onOpen; self.onDismiss = onDismiss; self.onClose = onClose
+        self.onOpenPort = onOpenPort
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SidebarWorktreeReportContent(context: context, scrolls: true, onClose: onClose)
+            SidebarWorktreeReportContent(context: context, scrolls: true, onClose: onClose, onOpenPort: onOpenPort)
             if error { Text("Couldn't open this worktree. Its request may have changed.").font(.caption).foregroundStyle(.red) }
             Divider()
             HStack {
@@ -65,14 +68,17 @@ public struct SidebarWorktreeReportContent: View {
     private let secondary: Color
     private let scrolls: Bool
     private let onClose: (() -> Void)?
+    private let onOpenPort: ((WorktreePort) -> Void)?
 
     public init(context: SidebarWorktreeContext, foreground: Color = .primary,
-                secondary: Color = .secondary, scrolls: Bool = false, onClose: (() -> Void)? = nil) {
+                secondary: Color = .secondary, scrolls: Bool = false, onClose: (() -> Void)? = nil,
+                onOpenPort: ((WorktreePort) -> Void)? = nil) {
         self.context = context
         self.foreground = foreground
         self.secondary = secondary
         self.scrolls = scrolls
         self.onClose = onClose
+        self.onOpenPort = onOpenPort
     }
 
     public var body: some View {
@@ -134,6 +140,9 @@ public struct SidebarWorktreeReportContent: View {
     private var sections: some View {
         let card = SidebarAttentionCardContent(item: context.item)
         return VStack(alignment: .leading, spacing: 22) {
+            if !context.worktree.ports.isEmpty {
+                SidebarWorktreePorts(ports: context.worktree.ports, onOpen: onOpenPort)
+            }
             Text(context.item.agentStop?.recap == nil ? "No report yet" : card.title)
                 .font(.headline).fontWeight(.semibold)
                 .fixedSize(horizontal: false, vertical: true)
@@ -190,5 +199,39 @@ public struct SidebarWorktreeReportContent: View {
         case .needsYou: context.question == nil ? "Question from report" : "Needs your input"
         case .upNext: "Next"
         }
+    }
+}
+
+/// Port controls belong to the report, independently of terminal selection.
+public struct SidebarWorktreePorts: View {
+    public let ports: [WorktreePort]
+    public let onOpen: ((WorktreePort) -> Void)?
+
+    public init(ports: [WorktreePort], onOpen: ((WorktreePort) -> Void)? = nil) {
+        self.ports = ports
+        self.onOpen = onOpen
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Listening ports").font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            ForEach(ports) { port in
+                Button { onOpen?(port) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: port.scope == .loopback ? "personalhotspot" : "globe")
+                            .frame(width: 16)
+                        Text(":\(String(port.port))").monospacedDigit().fontWeight(.medium)
+                        Text(port.processName).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
+                    }
+                    .font(.callout).padding(.vertical, 8).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(onOpen == nil || port.url == nil)
+                .help(port.url.map { "Open \($0.absoluteString)" } ?? "This port has no browser address")
+                .accessibilityLabel("Open port \(String(port.port)), \(port.processName)")
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
