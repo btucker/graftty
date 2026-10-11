@@ -486,7 +486,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     /// The TCP destination and DNS lookup both live on the paired host.
-    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int,
+                                  handshakeReply: Data = BrowserProxy.socksSuccessReply) async throws {
         await waitBrieflyForBulkTransport()
         guard let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
               let box = bulkHandlerBox ?? sshHandlerBox,
@@ -504,7 +505,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             }
         }
         do {
-            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
+            if !handshakeReply.isEmpty { try await BrowserProxy.send(handshakeReply, to: socket) }
             try await channel.eventLoop.submit { bridge.activate() }.get()
         } catch {
             channel.close(promise: nil)

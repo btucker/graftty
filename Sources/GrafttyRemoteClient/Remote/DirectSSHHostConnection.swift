@@ -125,13 +125,14 @@ public actor DirectSSHHostConnection {
     }
 
     #if canImport(Network)
-    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int,
+                                  handshakeReply: Data = BrowserProxy.socksSuccessReply) async throws {
         let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
         let child = try await openTCPChannel(host: host, port: port) { child in
             child.setOption(ChannelOptions.autoRead, value: false).flatMap { child.pipeline.addHandler(bridge) }
         }
         do {
-            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
+            if !handshakeReply.isEmpty { try await BrowserProxy.send(handshakeReply, to: socket) }
             try await child.eventLoop.submit { bridge.activate() }.get()
         } catch { child.close(promise: nil); throw error }
     }

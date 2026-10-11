@@ -87,42 +87,45 @@ enum HostBrowserProxyConfiguration {
 private final class HostBrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var webView: WKWebView?
     @Published var error: String?
-    private var proxy: BrowserProxy?
+    private let network = HostBrowserNetwork()
+    private var operation: UUID?
 
     func start(url: URL, host: Host, connectionProvider: RemoteConnectionProvider) async {
+        stop()
+        let operation = UUID()
+        self.operation = operation
+        error = nil
         do {
-            guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  let connection = await connectionProvider() else {
+            guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                error = "Only HTTP and HTTPS pages are supported."
+                return
+            }
+            let connection = await connectionProvider()
+            guard self.operation == operation, !Task.isCancelled else { return }
+            guard let connection else {
                 error = "The paired host is unavailable."
                 return
             }
-            let proxy = try BrowserProxy { socket, host, port in
-                try await connection.openBrowserTunnel(socket, host: host, port: port)
+            let configuration = try await network.start(url: url, dataStoreIdentifier: host.id) { socket, host, port, reply in
+                try await connection.openBrowserTunnel(socket, host: host, port: port, handshakeReply: reply)
             }
-            self.proxy = proxy
-            let port = try await proxy.start()
-            guard !Task.isCancelled else { proxy.stop(); return }
-            let configuration = HostBrowserProxyConfiguration.make(
-                proxy: proxy,
-                port: port,
-                dataStoreIdentifier: host.id
-            )
+            guard self.operation == operation, !Task.isCancelled else { return }
             let view = WKWebView(frame: .zero, configuration: configuration)
             view.navigationDelegate = self
             view.uiDelegate = self
             webView = view
             view.load(URLRequest(url: url))
         } catch {
+            guard self.operation == operation, !Task.isCancelled else { return }
             self.error = error.localizedDescription
-            proxy?.stop()
         }
     }
 
     func stop() {
+        operation = nil
         webView?.stopLoading()
         webView = nil
-        proxy?.stop()
-        proxy = nil
+        network.stop()
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

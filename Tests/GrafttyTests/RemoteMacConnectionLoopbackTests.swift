@@ -208,8 +208,25 @@ struct RemoteMacConnectionLoopbackTests {
             let (_, response) = try await browser.data(from: URL(string: "http://host-only.invalid:\(port)/not-a-route")!)
             #expect((response as? HTTPURLResponse)?.statusCode == 404)
             #expect(await destinations.contains("host-only.invalid"))
-
-
+            // WebKit bypasses SOCKS for loopback. The test runs both devices
+            // on this Mac, so reserve a separate local forwarding port.
+            let portProbe = try BrowserProxy { _, _, _ in }
+            let forwardingPort = try await portProbe.start()
+            await portProbe.stopAndWait()
+            let forwarder = try BrowserProxy(forwardingTo: "127.0.0.1", port: forwardingPort) { socket, host, requestedPort in
+                #expect(host == "127.0.0.1")
+                #expect(requestedPort == Int(forwardingPort))
+                try await connection.openBrowserTunnel(socket, host: host, port: port, handshakeReply: Data())
+            }
+            _ = try await forwarder.start()
+            defer { forwarder.stop() }
+            let directConfiguration = URLSessionConfiguration.ephemeral
+            directConfiguration.timeoutIntervalForRequest = 15
+            let loopbackBrowser = URLSession(configuration: directConfiguration)
+            defer { loopbackBrowser.invalidateAndCancel() }
+            let (body, loopbackResponse) = try await loopbackBrowser.data(from: URL(string: "http://127.0.0.1:\(forwardingPort)/not-a-route")!)
+            #expect((loopbackResponse as? HTTPURLResponse)?.statusCode == 404)
+            #expect(!body.isEmpty)
         } catch {
             terminal?.close()
             await connection.close()
