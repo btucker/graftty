@@ -8,6 +8,26 @@ private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
 }
 
+private final class ArrowTestKey: UIKey {
+    var usage: UIKeyboardHIDUsage = .keyboardLeftArrow
+    override var keyCode: UIKeyboardHIDUsage { usage }
+    override var characters: String {
+        switch usage {
+        case .keyboardRightArrow: UIKeyCommand.inputRightArrow
+        case .keyboardUpArrow: UIKeyCommand.inputUpArrow
+        case .keyboardDownArrow: UIKeyCommand.inputDownArrow
+        default: UIKeyCommand.inputLeftArrow
+        }
+    }
+    override var charactersIgnoringModifiers: String { characters }
+    override var modifierFlags: UIKeyModifierFlags { [] }
+}
+
+private final class ArrowTestPress: UIPress {
+    let arrow = ArrowTestKey()
+    override var key: UIKey? { arrow }
+}
+
 @MainActor
 private final class NativeInputDelegateSpy: NSObject, UITextInputDelegate {
     var events: [String] = []
@@ -299,38 +319,66 @@ struct TerminalPaneViewTests {
         #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
     }
 
-    @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
-    func terminalPaddingTracksMeasuredRows() {
+    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
+    func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        var delivered = 0
+        let press = ArrowTestPress()
+        press.arrow.usage = usage
+        container.hardwareKeyboardCommands = [.init(id: "arrow", title: "Arrow",
+            input: press.arrow.characters, modifierFlags: [], perform: { delivered += 1 })]
+        container.terminalView.pressesBegan([press], with: nil)
+        #expect(delivered == 1)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(delivered == 1)
+        try await Task.sleep(for: .milliseconds(550))
+        #expect(delivered > 1)
+        container.terminalView.pressesEnded([press], with: nil)
+        let releasedCount = delivered
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(delivered == releasedCount)
+        container.terminalView.pressesBegan([press], with: nil)
+        container.terminalView.pressesCancelled([press], with: nil)
+        let cancelledCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == cancelledCount)
+        container.terminalView.pressesBegan([press], with: nil)
+        container.committedSoftwareInput = nil
+        let disabledCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == disabledCount)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        container.terminalView.pressesBegan([press], with: nil)
+        _ = container.terminalView.resignFirstResponder()
+        let unfocusedCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == unfocusedCount)
+    }
+
+    @Test("@spec IOS-6.25: While an interactive mobile terminal is displayed, the application shall extend its scroll viewport to the pane edges, inset the first terminal row below top chrome on iPad and iPhone, and exclude that clearance from terminal input and the owner grid without adding bottom padding.")
+    func terminalClearancePreservesFullScrollViewport() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        container.addsVerticalRowPadding = true
+        container.reservesTopChromeSpace = true
         let displayScale = UIScreen.main.scale
         container.terminalView.contentScaleFactor = displayScale
-        for cellHeight: UInt32 in [32, 40] {
-            container.terminalDidResize(TerminalGridMetrics(
-                columns: 40, rows: 12, widthPixels: 640, heightPixels: 480,
-                cellWidthPixels: 16, cellHeightPixels: cellHeight
-            ))
-            container.layoutIfNeeded()
-            let padding = CGFloat(cellHeight) / displayScale
-            #expect(abs(container.snapshotScrollView.frame.minY - padding) < 0.001)
-            #expect(abs(container.snapshotScrollView.frame.maxY - (240 - padding)) < 0.001)
-            #expect(container.snapshotScrollView.frame.width == 320)
-            #expect(container.terminalView.bounds.height == 240 - 2 * padding)
-            #expect(container.hitTest(CGPoint(x: 160, y: padding / 2), with: nil) === container)
-            #expect(container.hitTest(CGPoint(x: 160, y: 240 - padding / 2), with: nil) === container)
-            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding / 2)))
-            #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding + 1)))
-            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: 240 - padding / 2)))
-            #expect(container.backgroundColor == .clear)
-        }
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 40, rows: 12, widthPixels: 640, heightPixels: 480,
+            cellWidthPixels: 16, cellHeightPixels: 40))
+        container.layoutIfNeeded()
+        #expect(container.snapshotScrollView.frame == container.bounds)
+        #expect(abs(container.terminalView.frame.minY - 40 / displayScale) < 0.001)
+        #expect(container.terminalView.frame.maxY == 240)
+        #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: 1)))
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: 40 / displayScale + 1)))
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: 239)))
+        container.onBackRequested = {}
+        container.layoutIfNeeded()
+        #expect(container.terminalView.frame.minY >= 68)
+        #expect(container.terminalView.frame.maxY == 240)
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         container.layoutIfNeeded()
-        // Fitting twice as many columns halves the displayed row height.
-        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 10))
-        #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
-        container.snapshotScrollView.setFollowerZoomScale(2, around: CGPoint(x: 160, y: 100))
-        container.layoutIfNeeded()
-        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 20))
+        #expect(container.snapshotScrollView.frame == container.bounds)
         #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
     }
 

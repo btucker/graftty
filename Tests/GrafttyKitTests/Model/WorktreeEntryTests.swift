@@ -12,6 +12,23 @@ struct WorktreeEntryTests {
         #expect(entry.attention == nil)
     }
 
+    @Test func creationTimeSeedsActivityAndSurvivesRelaunch() throws {
+        let created = Date(timeIntervalSince1970: 500)
+        var entry = WorktreeEntry(path: "/tmp/new", branch: "new", createdAt: created)
+        #expect(entry.lastActivity == created)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(entry))
+        #expect(decoded.createdAt == created)
+        #expect(decoded.lastActivity == created)
+        entry.attention = Attention(text: "Earlier", timestamp: created.addingTimeInterval(-1))
+        #expect(entry.lastActivity == created)
+        entry.agentProgressTimes["codex"] = created.addingTimeInterval(1).timeIntervalSinceReferenceDate
+        #expect(entry.lastActivity == created.addingTimeInterval(1))
+        let legacy = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(
+            WorktreeEntry(path: "/tmp/old", branch: "old")))
+        #expect(legacy.createdAt == nil)
+        #expect(legacy.lastActivity == nil)
+    }
+
     @Test func staleTimestampSurvivesCodableRoundTrip() throws {
         let staleSince = Date(timeIntervalSince1970: 1_000)
         let entry = WorktreeEntry(

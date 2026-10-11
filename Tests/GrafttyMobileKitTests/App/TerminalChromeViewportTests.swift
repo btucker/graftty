@@ -12,7 +12,7 @@ import UIKit
 #endif
 
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)
-@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its usable terminal viewport to the top and bottom screen edges, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
+@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while keeping its first row below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
     @Test("@spec IOS-6.11: While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.", arguments: [CGFloat(0), CGFloat(300)])
@@ -40,9 +40,12 @@ struct RenderedTerminalViewportTests {
                 "Canvas viewport ends at \(canvasFrame.maxY), expected \(expectedBottom)")
         #expect(abs(containerFrame.width - fixture.window.bounds.width) < 1)
         #expect(abs(canvasFrame.width - fixture.window.bounds.width) < 1)
+        let textFrame = container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+        #expect(textFrame.minY >= fixture.host.view.safeAreaInsets.top + 68)
+        #expect(abs(textFrame.maxY - expectedBottom) < 1)
     }
 
-    @Test
+    @Test("@spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.")
     func embeddedCanvasStaysInsideTheIPadDetailColumn() async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         let fixture = makeFixture(client: client, embedded: true)
@@ -55,8 +58,10 @@ struct RenderedTerminalViewportTests {
         #expect(abs(containerFrame.maxX - fixture.window.bounds.maxX) < 1)
         #expect(abs(canvasFrame.minX - containerFrame.minX) < 1)
         #expect(abs(canvasFrame.maxX - containerFrame.maxX) < 1)
-        #expect(canvasFrame.minY > containerFrame.minY)
-        #expect(canvasFrame.maxY < containerFrame.maxY)
+        #expect(abs(containerFrame.minY - fixture.window.bounds.minY) < 1)
+        #expect(abs(containerFrame.maxY - fixture.window.bounds.maxY) < 1)
+        #expect(abs(canvasFrame.minY - containerFrame.minY) < 1)
+        #expect(abs(canvasFrame.maxY - containerFrame.maxY) < 1)
     }
 
     @Test("@spec IOS-5.5: While a terminal is fullscreen, the application shall display a translucent Back control with at least a 44-point tap target within the top and leading safe area, returning to the worktree list.")
@@ -105,8 +110,8 @@ struct RenderedTerminalViewportTests {
         if embedded {
             content = AnyView(HStack(spacing: 0) {
                 Color.gray.frame(width: 320)
-                terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
-            })
+                terminal.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+            }.modifier(IPadTerminalDetailChrome()))
         } else {
             content = AnyView(terminal)
         }
