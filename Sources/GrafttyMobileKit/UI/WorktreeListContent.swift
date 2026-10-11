@@ -55,7 +55,9 @@ public struct WorktreeListContent: View {
     @State private var restoringWorktreeScroll = false
     @State private var restoredWorktreeProjectID: String?
     private var orderMutationInFlight: Bool { orderMutationID != nil }
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // NavigationSplitView gives its narrow sidebar a compact size class even
+    // when RootView chose the iPad layout. Follow the navigation container.
+    private let isSidebar: Bool
     private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
     private var navigationWindowWidth: Double
 
@@ -118,6 +120,7 @@ public struct WorktreeListContent: View {
 
     public init(
         host: Host,
+        isSidebar: Bool = false,
         theme: GhosttyThemeColors? = nil,
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
@@ -135,6 +138,7 @@ public struct WorktreeListContent: View {
         project: SidebarProject? = nil
     ) {
         self.host = host
+        self.isSidebar = isSidebar
         self.project = project
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
@@ -156,6 +160,7 @@ public struct WorktreeListContent: View {
 
     init(
         host: Host,
+        isSidebar: Bool = false,
         theme: GhosttyThemeColors? = nil,
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
@@ -174,6 +179,7 @@ public struct WorktreeListContent: View {
         onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
     ) {
         self.host = host
+        self.isSidebar = isSidebar
         self.project = project
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
@@ -408,7 +414,7 @@ public struct WorktreeListContent: View {
         // redundant title in the sidebar's system nav bar (IPAD-1.2).
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if horizontalSizeClass == .regular, !remoteMacConnections.isEmpty {
+                if isSidebar, !remoteMacConnections.isEmpty {
                     Button { showsRemoteMacManagement = true } label: {
                         Label("Remote Macs", systemImage: "server.rack")
                     }
@@ -508,7 +514,7 @@ public struct WorktreeListContent: View {
     }
 
     private func consumePendingWorktreeRoute() {
-        guard horizontalSizeClass == .regular || !showsProjectRail || project?.id == navigation.selectedProjectID,
+        guard isSidebar || !showsProjectRail || project?.id == navigation.selectedProjectID,
               let item = MobilePaneAttention.pendingRoute(for: navigation),
               case .loaded(let rows) = state,
               rows.contains(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }) else { return }
@@ -569,7 +575,7 @@ public struct WorktreeListContent: View {
         let projects = reportOrder?.orderedProjects(liveProjects) ?? liveProjects
         let activityCounts = SidebarActivityCounts(items: SidebarProjection.activity(live))
         let counts = SidebarActivityCounts(items: live.flatMap { navigation.worktreeContext($0).pending }).attentionByProject
-        if horizontalSizeClass != .regular, let project {
+        if !isSidebar, let project {
             projectDetail(worktrees, projects: projects, projectID: project.id)
         } else if !showsProjectRail {
             VStack(spacing: 0) {
@@ -579,7 +585,7 @@ public struct WorktreeListContent: View {
                     selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail))
                 worktreeList(worktrees.filter { navigation.worktreeContext($0).matches(query: navigation.query) })
             }
-        } else if horizontalSizeClass == .regular {
+        } else if isSidebar {
             HStack(spacing: 0) {
                 ProjectNavigationRail(projects: projects, counts: counts, workingCounts: activityCounts.workingByProject, icons: projectIcons,
                                       selectedID: navigation.selectedProjectID,
@@ -685,7 +691,7 @@ public struct WorktreeListContent: View {
         if let selectedWorktreePath, let previous = worktrees.first(where: { $0.path == selectedWorktreePath }) {
             navigation.rememberedWorktrees[SidebarProjection.projectID(previous)] = previous.path
         }
-        if horizontalSizeClass == .regular, project.isAvailable {
+        if isSidebar, project.isAvailable {
             let available = worktrees.filter { SidebarProjection.projectID($0) == project.id }
             if let target = available.first(where: { $0.path == navigation.rememberedWorktrees[project.id] }) ?? available.first {
                 beginSelectingWorktree(target)
