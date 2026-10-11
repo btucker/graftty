@@ -382,6 +382,26 @@ struct TerminalPaneViewTests {
         #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
     }
 
+    @Test("a tall follower keeps its protected first line visible, including after zoom", arguments: [CGFloat(1), CGFloat(2)])
+    func overflowingFollowerProtectsFirstLine(zoom: CGFloat) {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 160))
+        container.reservesTopChromeSpace = true
+        container.onBackRequested = {}
+        container.terminalView.contentScaleFactor = UIScreen.main.scale
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+            cellWidthPixels: 15, cellHeightPixels: 33))
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
+        container.layoutIfNeeded()
+        container.snapshotScrollView.setFollowerZoomScale(zoom, around: CGPoint(x: 300, y: 80))
+        container.layoutIfNeeded()
+        let firstRow = container.terminalView.convert(CGPoint.zero, to: container)
+        #expect(firstRow.y >= 68)
+        #expect(container.snapshotScrollView.contentOffset.y == 0)
+        #expect(abs(container.snapshotScrollView.contentOffset.x - 300 * (zoom - 1)) < 1)
+        #expect(container.snapshotScrollView.frame == container.bounds)
+    }
+
     @Test("@spec IOS-6.24: When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.")
     func nativeInputDoesNotEchoExternalChangeNotifications() throws {
         let container = TerminalInputContainerView(frame: .zero)

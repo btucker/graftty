@@ -14,6 +14,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private var pinchStartScale: CGFloat = 1
     private var presentationScale: CGFloat { presentation?.scale ?? 1 }
     var topContentInset: CGFloat = 0
+    private var protectsFirstLine: Bool { topContentInset > 0 && historyRows == 0 }
     private var usableViewport: CGSize {
         CGSize(width: bounds.width, height: max(0, bounds.height - topContentInset))
     }
@@ -57,9 +58,11 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         configure(canvas: canvas, nativeRowHeight: nativeRowHeight, columns: columns)
         adjusting = true
         if let presentation {
-            contentOffset = presentation.anchoredOffset(
+            var offset = presentation.anchoredOffset(
                 from: oldFrame, oldOffset: oldOffset, to: terminalView.frame, anchor: point
             )
+            if protectsFirstLine { offset.y = 0 }
+            contentOffset = offset
         }
         adjusting = false
         scrollViewDidScroll(self)
@@ -177,7 +180,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         let overflow = max(0, screenHeight - usableViewport.height)
         contentSize = CGSize(width: presentation.contentSize.width,
                              height: presentation.contentSize.height + topContentInset)
-        let offset = CGFloat(nativeRow) * rowHeight
+        let offset = protectsFirstLine ? 0 : CGFloat(nativeRow) * rowHeight
             + (wasAtBottom && nativeRow == historyRows ? overflow : max(0, withinCanvas))
         contentOffset = CGPoint(x: min(contentOffset.x, max(0, contentSize.width - bounds.width)),
                                 y: min(offset, max(0, contentSize.height - bounds.height)))

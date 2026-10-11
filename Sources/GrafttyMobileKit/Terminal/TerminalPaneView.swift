@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import GrafttyCommandUI
 import SwiftUI
 import UIKit
 
@@ -316,7 +317,9 @@ public final class TerminalInputContainerView: UIView,
             guard case .inMemory(let session) = terminalView.configuration.backend,
                   let text = session.readViewportText() else { return }
             let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            needsClearance = lines.dropFirst().allSatisfy { $0.allSatisfy(\.isWhitespace) }
+            let columns = Int(terminalGridMetrics?.columns ?? UInt16.max)
+            let fitsFirstRow = lines.first.map { TerminalCellWidth.estimate($0) <= columns } ?? true
+            needsClearance = fitsFirstRow && lines.dropFirst().allSatisfy { $0.allSatisfy(\.isWhitespace) }
         }
         guard needsClearance != needsFirstLineClearance else { return }
         needsFirstLineClearance = needsClearance

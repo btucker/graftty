@@ -15,8 +15,8 @@ import UIKit
 @Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
-    @Test("@spec IOS-6.25: If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.", arguments: [true, false])
-    func chromeClearanceTracksFirstLineContent(embedded: Bool) async throws {
+    @Test("@spec IOS-6.25: If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.", arguments: [true, false], ["x", "界", "👩‍💻"])
+    func chromeClearanceTracksFirstLineContent(embedded: Bool, wrappedCharacter: String) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
         client.start()
         defer { client.stop() }
@@ -46,6 +46,14 @@ struct RenderedTerminalViewportTests {
         try await waitForLayout("cleared terminal protects first prompt again") {
             client.session.readViewportText()?.contains("second line") == false
                 && textFrame().minY >= minimumClearance
+        }
+        #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
+
+        let columns = Int(try #require(container.terminalGridMetrics).columns)
+        let repeats = (wrappedCharacter == "x" ? columns : columns / 2) + 5
+        client.session.receive(Data(String(repeating: wrappedCharacter, count: repeats).utf8))
+        try await waitForLayout("soft-wrapped first line removes clearance") {
+            abs(textFrame().minY - fixture.window.bounds.minY) < 1
         }
         #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
 
