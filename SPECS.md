@@ -2894,6 +2894,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.28** When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.
 
+**REMOTE-13.29** When a relayed terminal receives a burst of small output frames within its byte and event limits, the application shall preserve all output in order and shall keep the attachment open until the source ends.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
