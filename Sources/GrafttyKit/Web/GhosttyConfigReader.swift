@@ -38,14 +38,13 @@ public enum GhosttyConfigReader {
                     lines.append(line)
                     continue
                 }
-                var value = parts[1].trimmingCharacters(in: .whitespaces)
+                // FileIterator removes outer quotes before Path.parse sees
+                // the optional marker; Path.parse can then remove inner quotes.
+                var value = unquoted(parts[1].trimmingCharacters(in: .whitespaces))
                 // An empty repeatable config-file value clears earlier includes.
                 guard !value.isEmpty else { includes.removeAll(); continue }
                 if value.hasPrefix("?") { value.removeFirst() }
-                if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
-                    value.removeFirst()
-                    value.removeLast()
-                }
+                value = unquoted(value)
                 guard !value.isEmpty else { continue }
                 value = (value as NSString).expandingTildeInPath
                 let url = value.hasPrefix("/")
@@ -56,6 +55,8 @@ public enum GhosttyConfigReader {
         }
 
         // Ghostty loads all root configs first, then walks the include queue.
+        // Roots are not pre-seeded in the include set: a cycle can reload a
+        // root once before Ghostty rejects an already-loaded include.
         for path in paths { load(path) }
         while !includes.isEmpty {
             let path = includes.removeFirst()
@@ -63,6 +64,11 @@ public enum GhosttyConfigReader {
             load(path)
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func unquoted(_ value: String) -> String {
+        guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return value }
+        return String(value.dropFirst().dropLast())
     }
 
     public static func resolvedConfig() -> String {
