@@ -64,7 +64,6 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private var rowHeight: CGFloat = 0
     private var scrollbar: TerminalScrollbar?
     private var nativeRow: UInt64 = 0
-    private var pendingLocalRow: UInt64?
     private var adjusting = false
     private var viewportHeight: CGFloat = 0
     var showsAdditionalHistory = false {
@@ -128,10 +127,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     func configure(canvas: TerminalSnapshotCanvas.Layout?, nativeRowHeight: CGFloat, columns: UInt16 = 0) {
-        if canvas == nil {
-            followerZoomScale = 1
-            pendingLocalRow = nil
-        }
+        if canvas == nil { followerZoomScale = 1 }
         self.nativeRowHeight = nativeRowHeight
         self.canvas = canvas
         let rowHeight = presentation?.rowHeight ?? 0
@@ -145,17 +141,16 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         reconcile(wasAtBottom: wasAtBottom, withinCanvas: withinCanvas)
     }
 
-    func updateScrollbar(_ value: TerminalScrollbar) {
+    func updateScrollbar(_ reported: TerminalScrollbar) {
+        #if GRAFTTY_PAGED_HISTORY
+        // Callbacks can lag behind scrolling and live output. Sample current
+        // native state once so old callbacks cannot reposition the canvas.
+        let value = terminalView.surface?.currentScrollbar ?? reported
+        #else
+        let value = reported
+        #endif
         let geometryChanged = value.total != scrollbar?.total || value.len != scrollbar?.len
-        if canvas != nil, !geometryChanged, let pendingLocalRow {
-            // Native scrollbar updates can lag behind pan events. An echo of
-            // an older request must not move the canvas or interrupt momentum.
-            if value.offset == pendingLocalRow { self.pendingLocalRow = nil }
-            scrollbar = value
-            return
-        }
-        guard value != scrollbar else { return }
-        if geometryChanged { pendingLocalRow = nil }
+        guard value != scrollbar || value.offset != nativeRow else { return }
         if !geometryChanged, value.offset == nativeRow {
             // Acknowledging our current row needs no contentOffset assignment.
             scrollbar = value
@@ -311,7 +306,6 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             : UInt64(min(CGFloat(historyRows), max(0, floor(contentOffset.y / rowHeight))))
         if row != nativeRow {
             nativeRow = row
-            pendingLocalRow = row
             terminalView.surface?.scrollToRow(UInt(row))
         }
         positionCanvas(canvas)
