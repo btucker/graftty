@@ -296,8 +296,31 @@ public final class TerminalInputContainerView: UIView,
     var reservesTopChromeSpace = false {
         didSet {
             guard reservesTopChromeSpace != oldValue else { return }
+            if reservesTopChromeSpace {
+                snapshotScrollView.onContentUpdate = { [weak self] in self?.refreshFirstLineClearance() }
+                refreshFirstLineClearance()
+            } else {
+                snapshotScrollView.onContentUpdate = nil
+            }
             setNeedsLayout()
         }
+    }
+    private var needsFirstLineClearance = true
+
+    private func refreshFirstLineClearance() {
+        guard reservesTopChromeSpace else { return }
+        let needsClearance: Bool
+        if snapshotScrollView.hasScrollback {
+            needsClearance = false
+        } else {
+            guard case .inMemory(let session) = terminalView.configuration.backend,
+                  let text = session.readViewportText() else { return }
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            needsClearance = lines.dropFirst().allSatisfy { $0.allSatisfy(\.isWhitespace) }
+        }
+        guard needsClearance != needsFirstLineClearance else { return }
+        needsFirstLineClearance = needsClearance
+        setNeedsLayout()
     }
 
     override public func layoutSubviews() {
@@ -334,11 +357,11 @@ public final class TerminalInputContainerView: UIView,
         setNeedsLayout()
     }
 
-    // Keep chrome clearance outside the native grid, but inside the full
-    // scroll viewport. UIKit supplies the portion of top chrome overlapping
-    // each pane, so lower split panes do not reserve the navigation bar again.
+    // Protect a lone first line without leaving a gap above populated terminals.
+    // UIKit supplies the chrome overlapping each pane, so lower split panes
+    // do not reserve the navigation bar again.
     private func topChromeInset(canvas: TerminalSnapshotCanvas.Layout?) -> CGFloat {
-        guard reservesTopChromeSpace else { return 0 }
+        guard reservesTopChromeSpace, needsFirstLineClearance else { return 0 }
         let rowHeight = terminalGridMetrics.map {
             CGFloat($0.cellHeightPixels) / max(1, terminalView.contentScaleFactor)
                 * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
@@ -1174,10 +1197,12 @@ extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegat
 
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     public func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        refreshFirstLineClearance()
         setNeedsLayout()
     }
 
     public func terminalDidDetachSurface() {
+        needsFirstLineClearance = true
         cancelActiveSelectionIfAny()
         longPressURL = nil
         terminalGridMetrics = nil
@@ -1192,6 +1217,7 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
 extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
     public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
         snapshotScrollView.updateScrollbar(scrollbar)
+        refreshFirstLineClearance()
     }
 }
 

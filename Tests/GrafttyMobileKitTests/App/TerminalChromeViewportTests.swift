@@ -12,9 +12,52 @@ import UIKit
 #endif
 
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)
-@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while keeping its first row below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
+@Suite("@spec IOS-4.8: While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.", .serialized)
 @MainActor
 struct RenderedTerminalViewportTests {
+    @Test("@spec IOS-6.25: If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.", arguments: [true, false])
+    func chromeClearanceTracksFirstLineContent(embedded: Bool) async throws {
+        let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let fixture = makeFixture(client: client, embedded: embedded)
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        func textFrame() -> CGRect {
+            fixture.host.view.layoutIfNeeded()
+            container.layoutIfNeeded()
+            return container.terminalView.convert(container.terminalView.bounds, to: fixture.window)
+        }
+        let minimumClearance = fixture.host.view.safeAreaInsets.top + (embedded ? 1 : 68)
+        client.session.receive(Data("prompt".utf8))
+        try await waitForLayout("first prompt") { client.session.readViewportText()?.contains("prompt") == true }
+        #expect(textFrame().minY >= minimumClearance)
+        #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
+
+        client.session.receive(Data("\r\nsecond line".utf8))
+        try await waitForLayout("multiline terminal reaches top edge") {
+            abs(textFrame().minY - fixture.window.bounds.minY) < 1
+        }
+        #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 100, y: 1)))
+
+        client.session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
+        try await waitForLayout("cleared terminal protects first prompt again") {
+            client.session.readViewportText()?.contains("second line") == false
+                && textFrame().minY >= minimumClearance
+        }
+        #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
+
+        let rows = Int(try #require(container.terminalGridMetrics).rows)
+        client.session.receive(Data((String(repeating: "\r\noutput", count: rows * 2)
+                                     + "\u{1b}[2J\u{1b}[Hprompt").utf8))
+        try await waitForLayout("scrollback removes clearance even with one visible line") {
+            abs(textFrame().minY - fixture.window.bounds.minY) < 1
+        }
+        #expect(abs(textFrame().maxY - fixture.window.bounds.maxY) < 1)
+    }
+
     @Test("@spec IOS-6.11: While the software keyboard is visible in a fullscreen mobile terminal, the application shall reserve the measured terminal control-bar height above the keyboard; while the keyboard is hidden, floating controls shall overlay the full usable viewport.", arguments: [CGFloat(0), CGFloat(300)])
     func fullscreenCanvasReachesScreenEdges(keyboardInset: CGFloat) async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })

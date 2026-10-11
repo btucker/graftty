@@ -73,11 +73,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     var showsAdditionalHistory = false {
         didSet {
             guard showsAdditionalHistory != oldValue else { return }
-            #if GRAFTTY_PAGED_HISTORY
-            updateHistoryTimer()
-            #endif
+            updateContentTimer()
         }
     }
+    var onContentUpdate: (() -> Void)? {
+        didSet { updateContentTimer() }
+    }
+    private var contentTimer: Timer?
     private var includesAdditionalHistory: Bool {
         #if GRAFTTY_PAGED_HISTORY
         showsAdditionalHistory
@@ -93,7 +95,6 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private let historySession = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
     private var lastHistory: TerminalHistorySlice?
     private var lastHistoryFittedPixels: CGSize?
-    private var historyTimer: Timer?
     #endif
 
     init(terminalView: UITerminalView) {
@@ -120,6 +121,8 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         guard let scrollbar else { return 0 }
         return scrollbar.total - min(scrollbar.total, scrollbar.len)
     }
+
+    var hasScrollback: Bool { historyRows > 0 }
 
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {
@@ -192,24 +195,27 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         #endif
     }
 
-    #if GRAFTTY_PAGED_HISTORY
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        updateHistoryTimer()
+        updateContentTimer()
     }
 
-    private func updateHistoryTimer() {
-        historyTimer?.invalidate()
-        historyTimer = nil
-        if window != nil && showsAdditionalHistory {
+    private func updateContentTimer() {
+        contentTimer?.invalidate()
+        contentTimer = nil
+        if window != nil && (includesAdditionalHistory || onContentUpdate != nil) {
             let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
+                MainActor.assumeIsolated {
+                    self?.refreshAdditionalHistory()
+                    self?.onContentUpdate?()
+                }
             }
             RunLoop.main.add(timer, forMode: .common)
-            historyTimer = timer
+            contentTimer = timer
         }
     }
 
+    #if GRAFTTY_PAGED_HISTORY
     private func removeHistoryView() {
         historyView?.removeFromSuperview()
         historyView = nil

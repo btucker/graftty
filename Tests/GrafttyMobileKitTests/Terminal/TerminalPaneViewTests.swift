@@ -356,7 +356,7 @@ struct TerminalPaneViewTests {
         #expect(delivered == unfocusedCount)
     }
 
-    @Test("@spec IOS-6.25: While an interactive mobile terminal is displayed, the application shall extend its scroll viewport to the pane edges, inset the first terminal row below top chrome on iPad and iPhone, and exclude that clearance from terminal input and the owner grid without adding bottom padding.")
+    @Test("first-line clearance preserves the full scroll viewport and excludes chrome from terminal input")
     func terminalClearancePreservesFullScrollViewport() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         container.reservesTopChromeSpace = true
