@@ -1348,7 +1348,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            addsVerticalRowPadding: !isFullScreen,
+            reservesTopChromeSpace: true,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
