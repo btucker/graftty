@@ -3,6 +3,7 @@ import Foundation
 import GrafttyRemoteClient
 import Network
 import Testing
+import UIKit
 import WebKit
 @testable import GrafttyMobileKit
 
@@ -26,6 +27,19 @@ struct HostBrowserProxyTests {
         let view = WKWebView(frame: .zero, configuration: configuration)
         let navigation = NavigationProbe()
         view.navigationDelegate = navigation
+        // iOS 26 can defer a detached WebKit view's first navigation. Mount it
+        // as the browser sheet does, and tear down its load before the listener.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let controller = UIViewController()
+        controller.view = view
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer {
+            view.stopLoading()
+            view.navigationDelegate = nil
+            window.isHidden = true
+            window.rootViewController = nil
+        }
         view.load(URLRequest(url: url))
         let deadline = ContinuousClock.now + .seconds(15)
         while !navigation.finished, navigation.failure == nil, ContinuousClock.now < deadline {
