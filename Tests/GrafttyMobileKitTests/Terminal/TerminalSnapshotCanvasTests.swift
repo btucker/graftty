@@ -86,8 +86,154 @@ import GhosttyTerminal
 import GrafttyProtocol
 import UIKit
 
+#if GRAFTTY_PAGED_HISTORY
+import IOSurface
+
+@_silgen_name("graftty_probe_layer_present")
+private func presentTerminalFrame(_ layer: UnsafeMutableRawPointer, _ surface: UnsafeMutableRawPointer) -> Bool
+
+// The native bridge retains these objects and schedules all layer changes on
+// main. This box only hands their addresses to that thread-safe bridge.
+private final class QueuedTerminalFrame: @unchecked Sendable {
+    let layer: CALayer
+    let surface: IOSurfaceRef
+
+    init(layer: CALayer, surface: IOSurfaceRef) {
+        self.layer = layer
+        self.surface = surface
+    }
+
+    func enqueueAndWait() -> Bool {
+        let queued = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { [self] in
+            _ = presentTerminalFrame(Unmanaged.passUnretained(layer).toOpaque(),
+                                     Unmanaged.passUnretained(surface).toOpaque())
+            queued.signal()
+        }
+        return queued.wait(timeout: .now() + 2) == .success
+    }
+}
+
+@MainActor
+private final class TerminalScrollbarRecorder: TerminalSurfaceScrollbarDelegate {
+    var values: [TerminalScrollbar] = []
+    var onUpdate: ((TerminalScrollbar) -> Void)?
+    func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
+        values.append(scrollbar)
+        onUpdate?(scrollbar)
+    }
+}
+#endif
+
 @MainActor
 struct MountedTerminalSnapshotCanvasTests {
+    #if GRAFTTY_PAGED_HISTORY
+    private static func followerRowHeight(_ container: TerminalInputContainerView) throws -> CGFloat {
+        let metrics = try #require(container.terminalGridMetrics)
+        let terminal = container.terminalView
+        return CGFloat(metrics.cellHeightPixels) / terminal.contentScaleFactor * terminal.transform.a
+    }
+
+    private static func mountedFollower() async throws -> (UIWindow, TerminalInputContainerView) {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+        }
+        try await renderer.install(.init(incarnation: 1, id: 1, cols: 80, rows: 24,
+            ready: try #require(Data(base64Encoded: Self.ready)),
+            hasPrimaryHistory: true, hasAlternateHistory: false), generation: 1)
+        for _ in 0..<100 {
+            if container.snapshotScrollView.contentSize.height > 100 * container.terminalView.frame.height / 24 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return (window, container)
+    }
+
+    @Test("@spec TERM-12.32: When native navigation supersedes a pending mobile follower scroll request, the application shall accept the current native row even if the local acknowledgement was coalesced.", arguments: [false, true])
+    func nativeNavigationSupersedesPendingLocalScroll(returnsToCachedRow: Bool) async throws {
+        let (window, container) = try await Self.mountedFollower()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let scroll = container.snapshotScrollView
+        let rowHeight = try Self.followerRowHeight(container)
+        let recorder = TerminalScrollbarRecorder()
+        recorder.onUpdate = { scroll.updateScrollbar($0) }
+        container.terminalView.delegate = recorder
+        scroll.contentOffset.y = 8.5 * rowHeight
+        for _ in 0..<100 {
+            if recorder.values.last?.offset == 8 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(recorder.values.last?.offset == 8)
+        let cached = try #require(recorder.values.last)
+        recorder.values.removeAll()
+        scroll.contentOffset.y = 3.5 * rowHeight
+        // A -> B -> A may coalesce to the last reported row and omit the echo.
+        if returnsToCachedRow { scroll.contentOffset.y = 8.5 * rowHeight }
+        // Native navigation wins before the requested local row is reported.
+        #expect(try #require(container.terminalView.surface).scrollToRow(20))
+        for _ in 0..<100 {
+            if recorder.values.last?.offset == 20 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(recorder.values.last?.offset == 20)
+        #expect(abs(scroll.contentOffset.y / rowHeight - 20.5) < 0.05)
+        let offset = scroll.contentOffset
+        let frame = container.terminalView.frame
+        // Older A/B callbacks must stay stale even after C retires pending state.
+        for row in [UInt64(8), 3] {
+            scroll.updateScrollbar(.init(total: cached.total, offset: row, len: cached.len))
+            #expect(scroll.contentOffset == offset)
+            #expect(container.terminalView.frame == frame)
+        }
+        scroll.updateScrollbar(try #require(recorder.values.last))
+        #expect(scroll.contentOffset == offset)
+    }
+
+    @Test("@spec TERM-12.31: When an older mobile terminal frame completes presentation after a newer frame of the same size, the application shall retain the newer frame without flickering back to the older image.")
+    func delayedFrameCannotReplaceNewerImage() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let terminal = UITerminalView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        terminal.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        terminal.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(terminal)
+        terminal.layoutIfNeeded()
+        defer { terminal.removeFromSuperview(); window.isHidden = true }
+        let sourceLayer = try #require(terminal.layer.sublayers?.first {
+            NSStringFromClass(type(of: $0)) == "IOSurfaceLayer"
+        })
+        let layer = type(of: sourceLayer).init(layer: sourceLayer)
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        layer.contentsScale = 1
+        layer.contents = nil
+        let properties = [kIOSurfaceWidth: 8, kIOSurfaceHeight: 8, kIOSurfaceBytesPerElement: 4] as CFDictionary
+        let older = try #require(IOSurfaceCreate(properties))
+        let newer = try #require(IOSurfaceCreate(properties))
+        // Queue an older completion on main while main is still presenting a
+        // newer image. Equal dimensions cannot identify this stale frame.
+        #expect(QueuedTerminalFrame(layer: layer, surface: older).enqueueAndWait())
+        #expect(presentTerminalFrame(Unmanaged.passUnretained(layer).toOpaque(),
+                                    Unmanaged.passUnretained(newer).toOpaque()))
+        #expect(layer.contents as AnyObject? === newer)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(layer.contents as AnyObject? === newer)
+    }
+    #endif
+
     @Test("@spec TERM-12.14: While an authoritative canvas is active, the application shall disable native font pinch through selection transitions and restore its prior state when the canvas is released.")
     func canvasAndSelectionPreserveGestureEnablement() throws {
         let container = TerminalInputContainerView(frame: .zero)
@@ -196,6 +342,59 @@ struct MountedTerminalSnapshotCanvasTests {
         #expect(!scroll.isScrollEnabled)
         #expect(terminal.transform == .identity)
         #expect(terminal.frame == CGRect(x: 0, y: 0, width: 600, height: 160))
+    }
+
+    #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.30: While a mobile follower scrolls older output, the application shall preserve its latest local row and fractional offset through delayed native scrollbar acknowledgements without repositioning the scroll view.")
+    func delayedScrollbarAcknowledgementsPreserveLocalScrollPosition() async throws {
+        let (window, container) = try await Self.mountedFollower()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let terminal = container.terminalView
+        let scroll = container.snapshotScrollView
+        let rowHeight = try Self.followerRowHeight(container)
+        let surface = try #require(terminal.surface)
+        let initial = try #require(surface.currentScrollbar)
+        for (olderRow, latestRow) in [(UInt64(8), UInt64(3)), (3, 8)] {
+            scroll.contentOffset = CGPoint(x: 0, y: CGFloat(olderRow) * rowHeight)
+            scroll.contentOffset = CGPoint(x: 0, y: (CGFloat(latestRow) + 0.5) * rowHeight)
+            let offset = scroll.contentOffset
+            let frame = terminal.frame
+            // Older rows and geometry are notifications to read current state.
+            for total in [initial.total, initial.total - 1] {
+                scroll.updateScrollbar(.init(total: total, offset: olderRow, len: initial.len))
+                #expect(scroll.contentOffset == offset)
+                #expect(terminal.frame == frame)
+            }
+            scroll.updateScrollbar(.init(total: initial.total, offset: latestRow, len: initial.len))
+            #expect(scroll.contentOffset == offset)
+            #expect(terminal.frame == frame)
+        }
+        #expect(surface.scrollToRow(20))
+        scroll.updateScrollbar(try #require(surface.currentScrollbar))
+        #expect(abs(scroll.contentOffset.y / rowHeight - 20.5) < 0.05)
+    }
+    #endif
+
+    @Test("@spec TERM-12.33: When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.")
+    func missingNativeScrollbarQueryDoesNotBlockNavigation() throws {
+        let terminal = UITerminalView(frame: .zero)
+        let scroll = TerminalSnapshotScrollView(terminalView: terminal)
+        scroll.frame = CGRect(x: 0, y: 0, width: 600, height: 160)
+        let canvas = try #require(TerminalSnapshotCanvas.layout(
+            grid: CGSize(width: 80, height: 24),
+            measuredGrid: CGSize(width: 80, height: 24),
+            measuredPixels: CGSize(width: 807, height: 487),
+            cellPixels: CGSize(width: 10, height: 20),
+            displayScale: 2, container: scroll.bounds.size
+        ))
+        let rowHeight = 10 * canvas.scale
+        scroll.configure(canvas: canvas, nativeRowHeight: 10)
+        scroll.updateScrollbar(.init(total: 124, offset: 8, len: 24))
+
+        scroll.contentOffset.y = 3 * rowHeight
+        scroll.contentOffset.y = 8.5 * rowHeight
+        scroll.updateScrollbar(.init(total: 124, offset: 20, len: 24))
+        #expect(abs(scroll.contentOffset.y / rowHeight - 20.5) < 0.05)
     }
 
     @Test("@spec TERM-12.22: While a mobile terminal follows another display, the application shall allow local canvas zoom and horizontal scrolling without changing the native grid or font, and restore the physical viewport when it becomes leader.", arguments: [390, 834])

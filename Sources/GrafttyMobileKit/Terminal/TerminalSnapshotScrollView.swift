@@ -151,8 +151,21 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         reconcile(wasAtBottom: wasAtBottom, withinCanvas: withinCanvas)
     }
 
-    func updateScrollbar(_ value: TerminalScrollbar) {
-        guard value != scrollbar else { return }
+    func updateScrollbar(_ reported: TerminalScrollbar) {
+        #if GRAFTTY_PAGED_HISTORY
+        // Callbacks can lag behind scrolling and live output. Sample current
+        // native state once so old callbacks cannot reposition the canvas.
+        let value = terminalView.surface?.currentScrollbar ?? reported
+        #else
+        let value = reported
+        #endif
+        let geometryChanged = value.total != scrollbar?.total || value.len != scrollbar?.len
+        guard value != scrollbar || value.offset != nativeRow else { return }
+        if !geometryChanged, value.offset == nativeRow {
+            // Acknowledging our current row needs no contentOffset assignment.
+            scrollbar = value
+            return
+        }
         let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
