@@ -48,6 +48,33 @@ struct HeadlessHostRuntimeTests {
         return (root, configuration, state)
     }
 
+    @Test("@spec REMOTE-22.18: When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.")
+    func servesProjectLogo() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=")!
+        try Data("version https://git-lfs.github.com/spec/v1".utf8).write(to: root.appendingPathComponent("favicon.ico"))
+        try image.write(to: root.appendingPathComponent("favicon.png"))
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        await runtime.refreshProjectIcons()
+        let revision = ProjectIconDiscovery.revision(image)
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.path, revision: revision)) == .icon(image))
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.path, revision: "stale")) == .icon(nil))
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.deletingLastPathComponent().path, revision: revision)) == .icon(nil))
+        guard case .snapshot(_, let sidebar) = runtime.panesMessage() else { Issue.record("Missing snapshot"); return }
+        #expect(sidebar?.projects.first?.iconRevision == revision)
+        runtime.state.repos[0].iconOverride = .initials("AB")
+        guard case .snapshot(_, let initials) = runtime.panesMessage() else { Issue.record("Missing snapshot"); return }
+        #expect(initials?.projects.first?.initials == "AB")
+        #expect(initials?.projects.first?.iconRevision == nil)
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.path, revision: revision)) == .icon(nil))
+        runtime.state.repos[0].iconOverride = .image(image)
+        await runtime.refreshProjectIcons()
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.path, revision: revision)) == .icon(image))
+        runtime.state.repos.removeAll()
+        #expect(await runtime.manage(.projectIcon(repositoryID: root.path, revision: revision)) == .icon(nil))
+    }
+
     @Test("@spec REMOTE-22.1: When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.")
     func opensWithoutViewer() async throws {
         let (root, config, state) = try fixture()

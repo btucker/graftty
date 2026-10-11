@@ -1,4 +1,5 @@
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -6,6 +7,7 @@ import CoreGraphics
 import Foundation
 #endif
 import UniformTypeIdentifiers
+#endif
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -18,6 +20,7 @@ import Glibc
 #endif
 
 public enum ProjectIconDiscovery {
+    #if canImport(ImageIO)
     /// Samples opaque, colorful pixels; white icon backgrounds do not wash out the rail tint.
     public static func accentHex(_ data: Data) -> String? {
         guard data.count <= 65536, let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -48,6 +51,8 @@ public enum ProjectIconDiscovery {
         return String(format: "%02X%02X%02X", Int(min(255, red / weight * 255)),
             Int(min(255, green / weight * 255)), Int(min(255, blue / weight * 255)))
     }
+    #endif
+
     /// Open without following a final symlink or blocking on a FIFO, then
     /// validate the opened descriptor so replacing the path cannot bypass it.
     public static func readImageData(at url: URL) -> Data? {
@@ -64,6 +69,7 @@ public enum ProjectIconDiscovery {
         return data
     }
 
+    #if canImport(ImageIO)
     public static func thumbnail(_ data: Data) -> Data? {
         guard data.count <= 2 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -72,15 +78,40 @@ public enum ProjectIconDiscovery {
         return output
     }
     public static func discover(at root: URL) -> Data? {
+        discover(at: root, transform: thumbnail)
+    }
+    #endif
+
+    /// Headless hosts send bounded original images for the viewing device to decode.
+    public static func discoverSource(at root: URL) -> Data? {
+        discover(at: root, transform: { hasImageSignature($0) ? $0 : nil })
+    }
+
+    // Reject common non-image placeholders without requiring a graphics framework on Linux.
+    private static func hasImageSignature(_ data: Data) -> Bool {
+        let signatures: [[UInt8]] = [
+            [137, 80, 78, 71, 13, 10, 26, 10], // PNG
+            [255, 216, 255], [0, 0, 1, 0], // JPEG, ICO
+            Array("icns".utf8), Array("GIF87a".utf8), Array("GIF89a".utf8),
+            Array("BM".utf8), [73, 73, 42, 0], [77, 77, 0, 42], // BMP, TIFF
+        ]
+        return signatures.contains { data.starts(with: $0) }
+            || (data.starts(with: Array("RIFF".utf8)) && data.count >= 12
+                && data.dropFirst(8).starts(with: Array("WEBP".utf8)))
+    }
+
+    private static func discover(at root: URL, transform: (Data) -> Data?) -> Data? {
         let fm = FileManager.default
         var candidates = [String]()
         for directory in ["", "public/", "static/", "app/", "src/app/"] {
             for ext in ["ico", "png"] { candidates.append(directory + "favicon." + ext) }
         }
         candidates += ["Resources/AppIcon.png", "Resources/AppIcon.icns"]
+        let rootPrefix = root.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         func load(_ url: URL) -> Data? {
-            guard let data = readImageData(at: url) else { return nil }
-            return thumbnail(data)
+            guard url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(rootPrefix),
+                  let data = readImageData(at: url) else { return nil }
+            return transform(data)
         }
         for candidate in candidates { if let image = load(root.appendingPathComponent(candidate)) { return image } }
         // Search a bounded set of directories for nested icons and logos. Never descend

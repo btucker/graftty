@@ -116,6 +116,7 @@ public struct IPadRootLayout: View {
                     if let host = selectedHost {
                         WorktreeListContent(
                             host: host,
+                            isSidebar: true,
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
