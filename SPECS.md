@@ -3454,6 +3454,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.11** While resolving restored pane ports, the application shall share live-session queries across panes and perform those queries off the main actor.
 
+**PORTS-5.12** When a pane's daemon log lacks a shell-spawn record, the application shall resolve its shell PID from the live daemon session listing and discover its listening ports.
+
 ## PROJECT — PROJECT
 
 ### PROJECT-1.x

@@ -9,6 +9,85 @@ import Testing
 @Suite("TerminalManager.evictSurface")
 struct TerminalManagerEvictionTests {
 
+    @Test("@spec PORTS-5.12: When a pane's daemon log lacks a shell-spawn record, the application shall resolve its shell PID from the live daemon session listing and discover its listening ports.", arguments: [false, true])
+    func liveSessionPIDResolvesWithoutSpawnLog(restoring: Bool) async throws {
+        actor Runner: LsofRunner {
+            func run(pids: String) async -> String? {
+                pids == "1234" ? "node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)" : ""
+            }
+        }
+        struct Walker: ProcessTreeWalking {
+            func descendants(of root: pid_t) -> [pid_t] { [root] }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("zmx")
+        let pane = PaneSlotID(), session = PaneSessionID()
+        let name = ZmxLauncher.sessionName(for: session)
+        try "#!/bin/sh\nprintf '→ name=\(name)\\tpid=1234\\tclients=0\\n'\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let manager = TerminalManager(socketPath: "/tmp/graftty-port-live-pid-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: executable, zmxDir: directory)
+        manager.recordPaneSession(session, for: pane)
+        if restoring { manager.markRehydrated(pane) }
+        let scanner = PortScanner(runner: Runner(), walker: Walker())
+        await scanner.setPIDResolver { [weak manager] id in await manager?.lookupShellPIDForPortScan(for: id) }
+        await scanner.registerPanePending(pane)
+        await scanner.tick()
+        #expect(await scanner.bindings(for: pane).map(\.port) == [3000])
+    }
+
+    @Test func resettingPortRegistrationDiscardsCachedLiveListing() async throws {
+        actor Runner: LsofRunner {
+            func run(pids: String) async -> String? { "" }
+        }
+        struct Walker: ProcessTreeWalking {
+            func descendants(of root: pid_t) -> [pid_t] { [root] }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("zmx")
+        let listing = directory.appendingPathComponent("listing")
+        try "#!/bin/sh\n/bin/cat '\(listing.path)'\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let manager = TerminalManager(socketPath: "/tmp/graftty-port-reset-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: executable, zmxDir: directory)
+        manager.portScanner = PortScanner(runner: Runner(), walker: Walker())
+        let first = PaneSlotID(), second = PaneSlotID()
+        let firstSession = PaneSessionID(), secondSession = PaneSessionID()
+        let firstName = ZmxLauncher.sessionName(for: firstSession), secondName = ZmxLauncher.sessionName(for: secondSession)
+        manager.recordPaneSession(firstSession, for: first)
+        manager.recordPaneSession(secondSession, for: second)
+        try "name=\(firstName)\tpid=111\nname=\(secondName)\tpid=222\n".write(to: listing, atomically: true, encoding: .utf8)
+        #expect(await manager.lookupShellPIDForPortScan(for: first) == 111)
+        try "name=\(firstName)\tpid=111\nname=\(secondName)\tpid=333\n".write(to: listing, atomically: true, encoding: .utf8)
+        manager.registerForPortScan(second, resetting: true)
+        #expect(await manager.lookupShellPIDForPortScan(for: second) == 333)
+    }
+
+    @Test func restoredLivePIDOverridesHistoricalLog() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("zmx")
+        let pane = PaneSlotID(), session = PaneSessionID()
+        let name = ZmxLauncher.sessionName(for: session)
+        try "#!/bin/sh\nprintf 'name=\(name)\\tpid=222\\n'\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let launcher = ZmxLauncher(executable: executable, zmxDir: directory)
+        let log = launcher.logFile(forSession: name)
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "pty spawned session=\(name) pid=111\n".write(to: log, atomically: true, encoding: .utf8)
+        let manager = TerminalManager(socketPath: "/tmp/graftty-port-historical-test.sock")
+        manager.zmxLauncher = launcher
+        manager.recordPaneSession(session, for: pane)
+        manager.markRehydrated(pane)
+        #expect(await manager.lookupShellPIDForPortScan(for: pane) == 222)
+    }
+
     @Test("@spec PORTS-4.8: If a pane session changes during asynchronous port registration, then the application shall discard the obsolete session result without restoring a destroyed pane or invalidating a replacement shell.", arguments: [false, true])
     func asynchronousRegistrationDiscardsChangedSessions(replacing: Bool) async throws {
         actor Runner: LsofRunner {
@@ -71,7 +150,7 @@ struct TerminalManagerEvictionTests {
         let calls = directory.appendingPathComponent("calls")
         let first = PaneSlotID(), second = PaneSlotID(), session = PaneSessionID()
         let name = ZmxLauncher.sessionName(for: session)
-        try "#!/bin/sh\n/bin/sleep 0.05\nprintf x >> '\(calls.path)'\nprintf '%s\\n' '\(name)'\n"
+        try "#!/bin/sh\n/bin/sleep 0.05\nprintf x >> '\(calls.path)'\nprintf 'name=\(name)\\tpid=1234\\tclients=0\\n'\n"
             .write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
         let launcher = ZmxLauncher(executable: executable, zmxDir: directory)

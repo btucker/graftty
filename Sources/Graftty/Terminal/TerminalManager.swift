@@ -202,7 +202,7 @@ final class TerminalManager: ObservableObject {
     // Daemon logs outlive their shells. Do not reload a known-dead PID while
     // an asynchronous replacement is starting and has not written its log yet.
     private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
-    private var portScanSessionQuery: (id: UUID, launcher: ZmxLauncher, task: Task<Set<String>?, Never>)?
+    private var portScanSessionQuery: (id: UUID, launcher: ZmxLauncher, task: Task<[String: Int32]?, Never>)?
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -533,38 +533,44 @@ final class TerminalManager: ObservableObject {
         return pid
     }
 
-    /// Restored or evicted panes have no renderer to perform daemon-loss
-    /// detection. Confirm their session before trusting a historical log.
+    /// Confirm restored sessions and resolve missing log records using the
+    /// daemon's live shell PIDs. Share the query and keep it off the main actor.
     func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
-        if rehydratedSurfaces.contains(id), surfaces[id] == nil {
-            guard let launcher = zmxLauncher,
-                  let name = zmxSessionName(for: id) else { return nil }
-            if portScanSessionQuery?.launcher !== launcher {
-                let queryID = UUID()
-                let task = Task.detached(priority: .utility) { try? launcher.listSessions() }
-                portScanSessionQuery = (queryID, launcher, task)
-                Task { @MainActor [weak self] in
-                    _ = await task.value
-                    try? await Task.sleep(for: .seconds(2))
-                    if self?.portScanSessionQuery?.id == queryID {
-                        self?.portScanSessionQuery = nil
-                    }
+        let requiresLiveSession = rehydratedSurfaces.contains(id) && surfaces[id] == nil
+        if !requiresLiveSession, let pid = lookupShellPID(for: id) { return pid }
+        guard let launcher = zmxLauncher,
+              let name = zmxSessionName(for: id) else { return nil }
+        if portScanSessionQuery?.launcher !== launcher {
+            let queryID = UUID()
+            let task = Task.detached(priority: .utility) { try? launcher.listSessionShellPIDs() }
+            portScanSessionQuery = (queryID, launcher, task)
+            Task { @MainActor [weak self] in
+                _ = await task.value
+                try? await Task.sleep(for: .seconds(2))
+                if self?.portScanSessionQuery?.id == queryID {
+                    self?.portScanSessionQuery = nil
                 }
             }
-            guard let query = portScanSessionQuery,
-                  let sessions = await query.task.value,
-                  zmxLauncher === launcher,
-                  zmxSessionName(for: id) == name else { return nil }
-            guard rehydratedSurfaces.contains(id), surfaces[id] == nil else {
-                return lookupShellPID(for: id)
-            }
-            guard sessions.contains(name) else {
-                if let pid = lookupShellPID(for: id) { obsoleteShellPIDs[id] = pid }
-                cachedShellPIDs[id] = nil
-                return nil
-            }
         }
-        return lookupShellPID(for: id)
+        guard let query = portScanSessionQuery,
+              let sessions = await query.task.value,
+              portScanSessionQuery?.id == query.id,
+              zmxLauncher === launcher,
+              zmxSessionName(for: id) == name else { return nil }
+        if requiresLiveSession, !(rehydratedSurfaces.contains(id) && surfaces[id] == nil) {
+            return lookupShellPID(for: id)
+        }
+        guard let pid = sessions[name] else {
+            if requiresLiveSession, let previous = lookupShellPID(for: id) {
+                obsoleteShellPIDs[id] = previous
+            }
+            cachedShellPIDs[id] = nil
+            return nil
+        }
+        guard obsoleteShellPIDs[id] != pid else { return nil }
+        obsoleteShellPIDs[id] = nil
+        cachedShellPIDs[id] = pid
+        return pid
     }
 
     /// Rebuild the keybind bridge from the current config. Call after
@@ -795,6 +801,7 @@ final class TerminalManager: ObservableObject {
     /// the scanner re-attempts resolution on each tick — otherwise the
     /// pane silently never gets scanned and chips never appear.
     func registerForPortScan(_ terminalID: PaneSlotID, resetting: Bool = false) {
+        if resetting { portScanSessionQuery = nil }
         guard let scanner = portScanner else { return }
         Task { @MainActor [weak self] in
             guard let self, let sessionName = self.zmxSessionName(for: terminalID) else { return }

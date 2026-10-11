@@ -131,8 +131,7 @@ struct ZmxLauncherUnitTests {
 
     // MARK: parseListOutput
     //
-    // `zmx list --short` emits one session name per line. (The non-short
-    // form emits tab-separated key=value pairs; we don't parse that.)
+    // `zmx list --short` emits one session name per line.
 
     @Test func parsesEmptyListOutput() throws {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
@@ -165,6 +164,29 @@ struct ZmxLauncherUnitTests {
             launcher.parseListOutput(output) ==
             ["graftty-aaaa1111", "graftty-bbbb2222"]
         )
+    }
+
+    @Test func liveShellPIDsHandleFocusedAndUnfocusedRows() {
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        let output = """
+          name=graftty-aaaa1111\tpid=1234\tclients=0\tcreated=123\tcwd=file:///repo
+        → name=graftty-bbbb2222\tpid=5678\tclients=1\tcreated=456\tcwd=file:///other
+        """
+        #expect(launcher.parseSessionShellPIDs(output) == ["graftty-aaaa1111": 1234, "graftty-bbbb2222": 5678])
+    }
+
+    @Test func liveShellPIDsRejectMissingAndInvalidFields() {
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        let output = """
+        name=missing-pid\tclients=0
+        pid=1234\tclients=0
+        name=\tpid=1234
+        name=zero\tpid=0
+        name=negative\tpid=-1
+        name=overflow\tpid=2147483648
+        name=text\tpid=invalid
+        """
+        #expect(launcher.parseSessionShellPIDs(output).isEmpty)
     }
 
     // MARK: isAvailable
