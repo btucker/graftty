@@ -5,15 +5,65 @@ import Foundation
 ///   1. `$XDG_CONFIG_HOME/ghostty/config` (or `~/.config/ghostty/config`)
 ///   2. `~/Library/Application Support/com.mitchellh.ghostty/config`
 ///
-/// Later files override earlier ones in Ghostty's loader, so the order
-/// here mirrors that layering. `config-file = …` includes are NOT
-/// recursively resolved — the forthcoming iOS client applies the result
-/// through libghostty's parser, which honors `config-file` itself when
-/// present but only relative to the client's filesystem (where the
-/// referenced files don't exist). Users who split their Ghostty config
-/// across multiple files on the Mac won't have their overrides reach the
-/// iOS client until we recurse here. Flagged for a future follow-up.
+/// Later files override earlier ones in Ghostty's loader. `resolvedConfig`
+/// retains raw directives for the legacy HTTP endpoint. `portableConfig`
+/// flattens includes for authenticated host presentation; the host supplies
+/// resolved colors separately so mobile needs no theme files.
 public enum GhosttyConfigReader {
+
+    /// Flatten host includes in Ghostty's load order. Presentation consumers
+    /// cannot access the host filesystem, so omit theme and include directives.
+    /// The host renderer appends the resolved theme colors separately.
+    public static func portableConfig() -> String {
+        portableConfig(paths: candidatePaths())
+    }
+
+    static func portableConfig(paths: [String]) -> String {
+        var lines: [String] = []
+        var includes: [String] = []
+        var loaded: Set<String> = []
+
+        func load(_ path: String) {
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+            for line in text.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let parts = trimmed.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard !trimmed.hasPrefix("#"), parts.count == 2 else {
+                    lines.append(line)
+                    continue
+                }
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                if key == "theme" { continue }
+                guard key == "config-file" else {
+                    lines.append(line)
+                    continue
+                }
+                var value = parts[1].trimmingCharacters(in: .whitespaces)
+                // An empty repeatable config-file value clears earlier includes.
+                guard !value.isEmpty else { includes.removeAll(); continue }
+                if value.hasPrefix("?") { value.removeFirst() }
+                if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
+                    value.removeFirst()
+                    value.removeLast()
+                }
+                guard !value.isEmpty else { continue }
+                value = (value as NSString).expandingTildeInPath
+                let url = value.hasPrefix("/")
+                    ? URL(fileURLWithPath: value)
+                    : URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent(value)
+                includes.append(url.standardizedFileURL.path)
+            }
+        }
+
+        // Ghostty loads all root configs first, then walks the include queue.
+        for path in paths { load(path) }
+        while !includes.isEmpty {
+            let path = includes.removeFirst()
+            guard loaded.insert(path).inserted else { continue }
+            load(path)
+        }
+        return lines.joined(separator: "\n")
+    }
 
     public static func resolvedConfig() -> String {
         var parts: [String] = []
