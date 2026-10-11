@@ -15,6 +15,7 @@ public actor PortScanner {
     private let walker: any ProcessTreeWalking
     private var registrations: [PaneSlotID: pid_t] = [:]
     private var pending: Set<PaneSlotID> = []
+    private var registrationGenerations: [PaneSlotID: UUID] = [:]
     private var snapshots: [PaneSlotID: [PortBinding]] = [:]
     private var inFlight = false
     private var scanWaiters: [CheckedContinuation<Void, Never>] = []
@@ -43,7 +44,9 @@ public actor PortScanner {
     }
 
     public func registerPane(_ id: PaneSlotID, shellPID: pid_t) {
-        if registrations[id] != shellPID { unregisterPane(id) }
+        guard registrations[id] != shellPID else { return }
+        unregisterPane(id)
+        registrationGenerations[id] = UUID()
         pending.remove(id)
         registrations[id] = shellPID
     }
@@ -53,11 +56,13 @@ public actor PortScanner {
     /// The scanner re-attempts resolution via `pidResolver` on each tick
     /// and promotes the pane to a normal registration once it succeeds.
     public func registerPanePending(_ id: PaneSlotID) {
-        guard registrations[id] == nil else { return }
+        guard registrationGenerations[id] == nil else { return }
+        registrationGenerations[id] = UUID()
         pending.insert(id)
     }
 
     public func unregisterPane(_ id: PaneSlotID) {
+        registrationGenerations.removeValue(forKey: id)
         pending.remove(id)
         registrations.removeValue(forKey: id)
         if snapshots.removeValue(forKey: id) != nil {
@@ -91,9 +96,11 @@ public actor PortScanner {
         }
 
         if let resolver = pidResolver, !pending.isEmpty {
+            let pendingGenerations = registrationGenerations
             for id in pending {
                 if let pid = await resolver(id) {
-                    guard pending.contains(id) else { continue }
+                    guard pending.contains(id),
+                          registrationGenerations[id] == pendingGenerations[id] else { continue }
                     pending.remove(id)
                     registrations[id] = pid
                 }
@@ -101,6 +108,7 @@ public actor PortScanner {
         }
 
         let scanRegistrations = registrations
+        let scanGenerations = registrationGenerations
         let roots = Array(scanRegistrations.values)
         let descendantsByRoot = walker.descendants(rootedAt: roots)
         var paneToPIDs: [PaneSlotID: Set<pid_t>] = [:]
@@ -122,7 +130,7 @@ public actor PortScanner {
         }
         let rows = LsofOutputParser.parse(raw)
         for (id, pids) in paneToPIDs {
-            guard registrations[id] == scanRegistrations[id] else { continue }
+            guard registrationGenerations[id] == scanGenerations[id] else { continue }
             let paneRows = rows.filter { pids.contains($0.pid) }
             let bindings = Self.collapse(paneRows)
             updateSnapshot(id: id, bindings: bindings)

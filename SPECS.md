@@ -3378,8 +3378,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-1.1** While a pane is registered, the application shall scan its process subtree's TCP listening sockets every 2 seconds even when the Mac application is inactive.
 
-**PORTS-1.2** While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
-
 **PORTS-1.3** Tick during in-flight scan is dropped (single-flight invariant)
 
 **PORTS-1.4** Lsof failure leaves snapshot empty
@@ -3424,6 +3422,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-4.6** If a pane is unregistered or its shell is replaced during a port scan, then the application shall discard that scan's obsolete bindings and shall not restore the removed registration.
 
+**PORTS-4.7** If a pending pane is unregistered and registered again while its PID is resolving, then the application shall discard the old resolution and resolve the new registration independently.
+
+**PORTS-4.8** If a pane session changes during asynchronous port registration, then the application shall discard the obsolete session result without restoring a destroyed pane or invalidating a replacement shell.
+
 ### PORTS-5.x
 
 **PORTS-5.1** When a worktree publishes listening ports, the application shall combine its pane process bindings, deduplicate by port, sort numerically, and exclude bindings from other worktrees.
@@ -3441,6 +3443,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-5.7** When opening a worktree port, the application shall refresh discovery before resolving the listener and reject ports whose processes stopped after the last published snapshot.
 
 **PORTS-5.8** When different worktrees listen on the same port on separate IPv4 and IPv6 addresses, the application shall preserve each listener's exact address so opening one worktree cannot resolve to the other.
+
+**PORTS-5.9** While a running worktree retains its pane sessions after restoration or surface eviction, the application shall continue discovering its listening ports independently of whether its terminal views are loaded.
+
+**PORTS-5.10** When restoring an unselected worktree whose pane session is absent, the application shall exclude historical shell PIDs from port discovery until a live session is confirmed.
+
+**PORTS-5.11** While resolving restored pane ports, the application shall share live-session queries across panes and perform those queries off the main actor.
 
 ## PROJECT — PROJECT
 

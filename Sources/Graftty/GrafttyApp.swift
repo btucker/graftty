@@ -1225,7 +1225,7 @@ struct GrafttyApp: App {
             // spawned` log line need their PID resolved later.
             // `[weak]` breaks the cycle through TerminalManager.portScanner.
             await portScanner.setPIDResolver { [weak tmRef = tmRef] id in
-                await tmRef?.lookupShellPID(for: id)
+                await tmRef?.lookupShellPIDForPortScan(for: id)
             }
         }
 
@@ -3775,6 +3775,7 @@ struct GrafttyApp: App {
         // so surviving zmx sessions never receive another default command.
         for leafID in worktree.splitTree.allLeaves {
             terminalManager.markRehydrated(leafID)
+            terminalManager.registerForPortScan(leafID)
         }
         // If zmx reports a session missing, createSurfaces clears only that
         // leaf's rehydration marker. Retaining one primary marker lets the

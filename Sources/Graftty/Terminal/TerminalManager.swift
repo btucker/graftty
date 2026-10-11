@@ -202,6 +202,7 @@ final class TerminalManager: ObservableObject {
     // Daemon logs outlive their shells. Do not reload a known-dead PID while
     // an asynchronous replacement is starting and has not written its log yet.
     private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
+    private var portScanSessionQuery: (id: UUID, launcher: ZmxLauncher, task: Task<Set<String>?, Never>)?
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -532,6 +533,40 @@ final class TerminalManager: ObservableObject {
         return pid
     }
 
+    /// Restored or evicted panes have no renderer to perform daemon-loss
+    /// detection. Confirm their session before trusting a historical log.
+    func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
+        if rehydratedSurfaces.contains(id), surfaces[id] == nil {
+            guard let launcher = zmxLauncher,
+                  let name = zmxSessionName(for: id) else { return nil }
+            if portScanSessionQuery?.launcher !== launcher {
+                let queryID = UUID()
+                let task = Task.detached(priority: .utility) { try? launcher.listSessions() }
+                portScanSessionQuery = (queryID, launcher, task)
+                Task { @MainActor [weak self] in
+                    _ = await task.value
+                    try? await Task.sleep(for: .seconds(2))
+                    if self?.portScanSessionQuery?.id == queryID {
+                        self?.portScanSessionQuery = nil
+                    }
+                }
+            }
+            guard let query = portScanSessionQuery,
+                  let sessions = await query.task.value,
+                  zmxLauncher === launcher,
+                  zmxSessionName(for: id) == name else { return nil }
+            guard rehydratedSurfaces.contains(id), surfaces[id] == nil else {
+                return lookupShellPID(for: id)
+            }
+            guard sessions.contains(name) else {
+                if let pid = lookupShellPID(for: id) { obsoleteShellPIDs[id] = pid }
+                cachedShellPIDs[id] = nil
+                return nil
+            }
+        }
+        return lookupShellPID(for: id)
+    }
+
     /// Rebuild the keybind bridge from the current config. Call after
     /// `ghostty_config_*` reload operations so menu shortcuts update to
     /// reflect any changes the user made to their Ghostty config.
@@ -759,12 +794,16 @@ final class TerminalManager: ObservableObject {
     /// can transiently return nil. Register as pending in that case so
     /// the scanner re-attempts resolution on each tick — otherwise the
     /// pane silently never gets scanned and chips never appear.
-    func registerForPortScan(_ terminalID: PaneSlotID) {
+    func registerForPortScan(_ terminalID: PaneSlotID, resetting: Bool = false) {
         guard let scanner = portScanner else { return }
-        if let pid = lookupShellPID(for: terminalID) {
-            Task { await scanner.registerPane(terminalID, shellPID: pid) }
-        } else {
-            Task { await scanner.registerPanePending(terminalID) }
+        Task { @MainActor [weak self] in
+            guard let self, let sessionName = self.zmxSessionName(for: terminalID) else { return }
+            let pid = await self.lookupShellPIDForPortScan(for: terminalID)
+            guard self.zmxSessionName(for: terminalID) == sessionName else { return }
+            if resetting { await scanner.unregisterPane(terminalID) }
+            guard self.zmxSessionName(for: terminalID) == sessionName else { return }
+            if let pid { await scanner.registerPane(terminalID, shellPID: pid) }
+            else { await scanner.registerPanePending(terminalID) }
         }
     }
 
@@ -814,6 +853,7 @@ final class TerminalManager: ObservableObject {
                 obsoleteShellPIDs[terminalID] = previousPID
             }
             cachedShellPIDs[terminalID] = nil
+            registerForPortScan(terminalID, resetting: true)
             shellReadyFired.remove(terminalID)
             clearRehydrated(terminalID)
             titles.removeValue(forKey: terminalID)
@@ -1221,9 +1261,8 @@ final class TerminalManager: ObservableObject {
             else { handle.requestClose() }
         }
         rehydratedSurfaces.insert(terminalID)
-        if let scanner = portScanner {
-            Task { await scanner.unregisterPane(terminalID) }
-        }
+        // The zmx shell and its processes survive renderer eviction.
+        // Keep discovery attached until the pane session is destroyed.
     }
 
     /// Mark a terminal as the primary pane of its worktree.

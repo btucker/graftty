@@ -38,7 +38,7 @@ struct PortScannerTests {
                 continuation = nil
             }
         }
-        for replacement in [false, true] {
+        for replacement in [0, 1, 2] {
             let runner = SuspendedRunner()
             let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
             let id = PaneSlotID()
@@ -48,13 +48,49 @@ struct PortScannerTests {
             await runner.suspend()
             let scan = Task { await scanner.tick() }
             while !(await runner.started) { await Task.yield() }
-            if replacement { await scanner.registerPane(id, shellPID: 2345) }
+            if replacement == 1 { await scanner.registerPane(id, shellPID: 2345) }
+            else if replacement == 2 {
+                await scanner.unregisterPane(id)
+                await scanner.registerPane(id, shellPID: 1234)
+            }
             else { await scanner.unregisterPane(id) }
             #expect(await scanner.bindings(for: id).isEmpty)
             await runner.finish()
             await scan.value
             #expect(await scanner.bindings(for: id).isEmpty)
         }
+    }
+
+    @Test("@spec PORTS-4.7: If a pending pane is unregistered and registered again while its PID is resolving, then the application shall discard the old resolution and resolve the new registration independently.")
+    func replacedPendingRegistrationDiscardsOldResolution() async {
+        actor Resolver {
+            var started = false
+            var continuation: CheckedContinuation<pid_t?, Never>?
+            func resolve() async -> pid_t? {
+                if started { return 2345 }
+                started = true
+                return await withCheckedContinuation { continuation = $0 }
+            }
+            func finish() { continuation?.resume(returning: 1234); continuation = nil }
+        }
+        let resolver = Resolver()
+        let runner = StubLsofRunner(output: """
+            node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)
+            vite 2345 alice 23u IPv4 0x2 0t0 TCP 127.0.0.1:4000 (LISTEN)
+            """)
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        await scanner.setPIDResolver { _ in await resolver.resolve() }
+        let id = PaneSlotID()
+        await scanner.registerPanePending(id)
+        let scan = Task { await scanner.tick() }
+        while !(await resolver.started) { await Task.yield() }
+        await scanner.unregisterPane(id)
+        await scanner.registerPanePending(id)
+        await resolver.finish()
+        await scan.value
+        #expect(await scanner.bindings(for: id).isEmpty)
+        await scanner.tick()
+        #expect(await scanner.bindings(for: id).map(\.port) == [4000])
     }
 
     @Test("@spec PORTS-5.7: When opening a worktree port, the application shall refresh discovery before resolving the listener and reject ports whose processes stopped after the last published snapshot.")
