@@ -1327,6 +1327,15 @@ private struct HostMenu: View {
     }
 }
 
+/// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
+struct IPadTerminalDetailChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
+            .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}
+
 // MARK: - IPadDetailColumn (private)
 
 private struct IPadDetailColumn: View {
@@ -1343,13 +1352,7 @@ private struct IPadDetailColumn: View {
 
     var body: some View {
         content
-            // @spec IPAD-2.8
-            // While the regular-width iPad detail is visible, the application
-            // shall let the terminal tree own the complete detail-column
-            // rectangle beneath transparent navigation chrome, with split
-            // controls floating over the panes instead of shrinking them.
-            .ignoresSafeArea(.container, edges: .top)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole
                 // `ToolbarItem` (not just its body) so iOS doesn't

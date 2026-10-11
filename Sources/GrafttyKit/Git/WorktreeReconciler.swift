@@ -70,7 +70,7 @@ public enum WorktreeReconciler {
 
         let newlyAdded = liveDiscovered
             .filter { !existingPaths.contains($0.path) }
-            .map { WorktreeEntry(path: $0.path, branch: $0.branch) }
+            .map { WorktreeEntry(path: $0.path, branch: $0.branch, createdAt: now) }
 
         merged.append(contentsOf: newlyAdded)
         merged = WorktreeOrdering.staleLast(merged)
