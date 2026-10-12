@@ -12,14 +12,21 @@ changes = [
      """    pub(super) fn open_url_in_browser(&mut self, url: String) {
         if let Some(helper) = std::env::var_os("CODEX_BROWSER_COMMAND").filter(|value| !value.is_empty() && crate::browser_command::is_web_url(&url)) {
             let events = self.app_event_tx.clone();
-            // Enqueue off the TUI loop. This never reports OAuth success.
-            tokio::task::spawn_blocking(move || {
-                if let Err(error) = crate::browser_command::open_url(&url, &helper) {
-                    events.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_error_event(
-                        format!("Failed to hand off browser URL: {error}"),
-                    ))));
+            // Reserve before scheduling: blocking-worker scheduling cannot reorder URLs.
+            match crate::browser_command::reserve_handoff() {
+                Ok(handoff) => {
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(error) = handoff.run(&url, &helper) {
+                            events.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_error_event(
+                                format!("Failed to hand off browser URL: {error}"),
+                            ))));
+                        }
+                    });
                 }
-            });
+                Err(error) => events.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_error_event(
+                    format!("Failed to queue browser URL: {error}"),
+                )))),
+            }
             return;
         }
 """),
