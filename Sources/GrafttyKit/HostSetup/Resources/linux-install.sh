@@ -133,7 +133,20 @@ match = re.search(r'--ssh-port ([0-9]+)(?:\s|$)', text)
 if not match or not 1 <= int(match[1]) <= 65535:
     raise SystemExit('Cannot determine the existing service SSH port')
 lines = text.splitlines(keepends=True)
-pathlib.Path(output).write_text(''.join(line.replace(old + '/', new + '/') if line.startswith('ExecStart=') else line for line in lines))
+assignments = [index for index, line in enumerate(lines) if re.match(r'^\s*ExecStart\s*=', line)]
+if len(assignments) != 1:
+    raise SystemExit('Maintenance requires exactly one service executable assignment')
+index = assignments[0]
+old_executable = old + '/bin/graftty-host'
+command = re.match(r'^\s*ExecStart\s*=\s*(?:"' + re.escape(old_executable) + r'"|' + re.escape(old_executable) + r')(?=\s|$)', lines[index])
+if not command:
+    raise SystemExit('Maintenance requires the existing host as the direct service executable')
+if lines[index].count(old_executable) != 1:
+    raise SystemExit('Cannot replace the existing service executable exactly once')
+lines[index] = lines[index].replace(old + '/', new + '/')
+if (old != new and old_executable in lines[index]) or lines[index].count(new + '/bin/graftty-host') != 1:
+    raise SystemExit('Cannot verify the replacement service executable')
+pathlib.Path(output).write_text(''.join(lines))
 GRAFTTY_PRESERVE_UNIT_049D
     ssh_port=$(python3 -c 'import re,sys; print(re.search(r"--ssh-port ([0-9]+)", open(sys.argv[1]).read())[1])' "$service_file")
 fi

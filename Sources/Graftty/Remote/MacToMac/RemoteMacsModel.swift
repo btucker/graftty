@@ -381,6 +381,7 @@ final class RemoteMacsModel: ObservableObject {
                 to: remoteMac,
                 replacingExistingHostConnection: replacingExistingHostConnection
             )
+            try Task.checkCancellation()
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }

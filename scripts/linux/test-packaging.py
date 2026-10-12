@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -12,6 +13,13 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parent
+
+def reset_fixture_signals():
+    """Swift Testing may ignore/block signals; simulate a normal SSH shell."""
+    signals = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+    for value in signals:
+        signal.signal(value, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, signals)
 
 def write_flock(path):
     """Use the same flock primitive for portable macOS/Linux shell tests."""
@@ -160,7 +168,8 @@ exit 0
 
     def install(self, *args, success=True):
         result = subprocess.run(["bash", str(self.archive / "install.sh"), *args],
-                                env=self.env, text=True, capture_output=True)
+                                env=self.env, text=True, capture_output=True,
+                                preexec_fn=reset_fixture_signals)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
         else:
@@ -192,6 +201,70 @@ exit 0
         after = service.read_text()
         self.assertEqual(after, before.replace("0.1.0-test", "0.2.0-test"))
         self.assertIn("--ssh-port 9001 --http-port 9000", after)
+
+    def test_maintenance_rewrites_execstart_assignment_whitespace(self):
+        host = self.archive / "bin/graftty-host"
+        host.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo 0.1.0-test; fi\n')
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        old_release = str(self.home / ".local/share/graftty/releases/0.1.0-test")
+        new_release = str(self.home / ".local/share/graftty/releases/0.2.0-test")
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        host.write_text('''#!/bin/sh
+if [ "$1" = --version ]; then echo 0.2.0-test; fi
+if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
+''')
+        started_version = self.root / "started-version"
+        self.env["STARTED_VERSION"] = str(started_version)
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text(f"#!{sys.executable}\n" + '''
+import os, pathlib, re, shlex, subprocess, sys
+unit = pathlib.Path(os.environ['HOME']) / '.config/systemd/user/graftty-host.service'
+operation = sys.argv[2]
+if operation == 'show':
+    print(unit if 'FragmentPath' in ' '.join(sys.argv) else 'process')
+elif operation == 'cat':
+    print(unit.read_text())
+elif operation == 'restart':
+    line = re.search(r'^\\s*ExecStart\\s*=\\s*(.*)$', unit.read_text(), re.M)[1]
+    executable = shlex.split(line)[0]
+    version = subprocess.check_output([executable, '--version'], text=True)
+    pathlib.Path(os.environ['STARTED_VERSION']).write_text(version)
+''')
+        systemctl.chmod(0o755)
+        for directive in ("  ExecStart=", "ExecStart =", "\tExecStart = "):
+            with self.subTest(directive=directive):
+                service.write_text(before.replace("ExecStart=", directive) + f"\nEnvironment=ASSET={old_release}/share\n")
+                # Recreate the current command links for this independent unit.
+                for command in ("graftty", "graftty-host", "zmx"):
+                    link = self.home / ".local/bin" / command
+                    link.unlink()
+                    link.symlink_to(Path(old_release) / "bin" / command)
+                self.install("--maintenance")
+                after = service.read_text()
+                executable = next(line for line in after.splitlines() if line.lstrip().startswith("ExecStart"))
+                self.assertIn(new_release + "/bin/graftty-host", executable)
+                self.assertNotIn(old_release + "/bin/graftty-host", executable)
+                self.assertIn(f"Environment=ASSET={old_release}/share", after)
+                self.assertEqual(started_version.read_text().strip(), "0.2.0-test")
+
+    def test_maintenance_rejects_missing_effective_executable_before_mutation(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        previous = (self.home / ".local/bin/graftty-host").resolve()
+        original = service.read_text()
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        for command in ('"/custom/host"', f'"{previous}-custom"', f'"/custom/wrapper" "{previous}"'):
+            with self.subTest(command=command):
+                before = original.replace(f'"{previous}"', command)
+                before += f"\nEnvironment=OLD_HOST={previous}\n"
+                service.write_text(before)
+                result = self.install("--maintenance", "--no-start", success=False)
+                self.assertIn("service executable", result.stderr)
+                self.assertEqual(service.read_text(), before)
+                self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), previous)
+                self.assertFalse((previous.parent.parent.parent / "0.2.0-test").exists())
 
     def test_maintenance_rejects_effective_killmode_override(self):
         self.install("--no-start")

@@ -9,6 +9,18 @@ import Crypto
 @testable import GrafttyKit
 
 struct LinuxHostMaintenanceTests {
+    @Test("@spec REMOTE-22.35: When maintenance updates a valid service with whitespace around its executable assignment, the application shall replace exactly one host executable path before restarting and preserve unrelated settings.")
+    func whitespaceServiceExecutableIsReplaced() throws {
+        var repository = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 { repository.deleteLastPathComponent() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "InstallerTests.test_maintenance_rewrites_execstart_assignment_whitespace",
+                             "InstallerTests.test_maintenance_rejects_missing_effective_executable_before_mutation"]
+        try process.run(); process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
     @Test("@spec REMOTE-22.20: When host maintenance selects a Graftty release, the application shall choose the newest published release with both the host architecture archive and checksum, independently of the Mac bundle version.")
     func publishedAssets() throws {
         let releases = [release("1.0.0", date: "2026-01-01T00:00:00Z"), release("1.1.0", date: "2026-02-01T00:00:00Z", checksum: false), release("1.2.0", date: "2026-03-01T00:00:00Z", draft: true)]

@@ -3044,6 +3044,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.34** If the installed Linux service does not own the inspected paired host's state lease, then the application shall reject Graftty maintenance before stopping or replacing that service.
 
+**REMOTE-22.35** When maintenance updates a valid service with whitespace around its executable assignment, the application shall replace exactly one host executable path before restarting and preserve unrelated settings.
+
+**REMOTE-22.36** When maintenance reconnection is cancelled after dialing begins, the application shall cancel that dial, reject connected publication, and allow a later connection to recover.
+
+**REMOTE-22.37** When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
