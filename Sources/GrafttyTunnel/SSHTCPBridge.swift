@@ -5,44 +5,63 @@ import NIOSSH
 #if canImport(Network)
 import Network
 
-/// Bridges a TCP socket and one SSH direct-tcpip channel. Each direction waits
-/// for its previous write before requesting more bytes.
+/// Bridges a TCP socket and one SSH direct-tcpip channel. Each direction requests
+/// more input after its current write batch completes.
 public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
     public typealias InboundIn = SSHChannelData
     private let connection: NWConnection
     private let startsConnection: Bool
+    private let capacityLease: TunnelCapacity.Lease?
     private let ready: EventLoopPromise<Void>?
     private var readyFinished = false
     private var pendingWrites = 0
     private var pendingBytes = 0
     private var reading = false
     private var closed = false
+    private var inputClosed = false
     private var channel: Channel?
     private static let capacity = TunnelCapacity()
+    // NIOSSH grants a fixed 16 MiB child receive window and delivers its entire
+    // buffered window on close, even with autoRead off. Allow one outstanding
+    // TCP-write batch plus that final window; keep an explicit two-window cap.
+    private static let maximumPendingBytes = 2 * (1 << 24)
     private static let queue = DispatchQueue(label: "graftty.browser.tcp", attributes: .concurrent)
 
-    public init(connection: NWConnection, startsConnection: Bool, ready: EventLoopPromise<Void>? = nil) {
+    public convenience init(connection: NWConnection, startsConnection: Bool, ready: EventLoopPromise<Void>? = nil) {
+        self.init(connection: connection, startsConnection: startsConnection, ready: ready, capacityLease: nil)
+    }
+
+    private init(connection: NWConnection, startsConnection: Bool, ready: EventLoopPromise<Void>?, capacityLease: TunnelCapacity.Lease?) {
+        self.capacityLease = capacityLease
         self.connection = connection
         self.startsConnection = startsConnection
         self.ready = ready
     }
 
     public static func connect(host: String, port: Int, channel: Channel) -> EventLoopFuture<Void> {
+        connect(host: host, port: port, channel: channel, capacity: capacity)
+    }
+
+    static func connect(host: String, port: Int, channel: Channel, capacity: TunnelCapacity) -> EventLoopFuture<Void> {
         guard !host.isEmpty, host.utf8.count <= 253, (1...65535).contains(port),
               let port = NWEndpoint.Port(rawValue: UInt16(port)) else {
             return channel.eventLoop.makeFailedFuture(ChannelError.inappropriateOperationForState)
         }
-        guard capacity.acquire() else {
+        guard let lease = capacity.acquireLease() else {
             return channel.eventLoop.makeFailedFuture(ChannelError.inappropriateOperationForState)
         }
-        channel.closeFuture.whenComplete { _ in capacity.release() }
         let tcp = NWProtocolTCP.Options()
         tcp.connectionTimeout = 10
         let connection = NWConnection(host: NWEndpoint.Host(host), port: port,
                                       using: NWParameters(tls: nil, tcp: tcp))
         let ready = channel.eventLoop.makePromise(of: Void.self)
         return channel.setOption(ChannelOptions.autoRead, value: false).flatMap {
-            channel.pipeline.addHandler(SSHTCPBridge(connection: connection, startsConnection: true, ready: ready))
+            channel.pipeline.addHandler(SSHTCPBridge(connection: connection, startsConnection: true, ready: ready, capacityLease: lease))
+        }.flatMapError { error in
+            // No installed handler owns cancellation if initialization failed.
+            connection.cancel()
+            lease.release()
+            return channel.eventLoop.makeFailedFuture(error)
         }.flatMap { ready.futureResult }
     }
 
@@ -54,7 +73,14 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
                 guard let self, !self.readyFinished else { return }
                 self.close()
             }
-            connection.stateUpdateHandler = { [weak self] state in
+            // SSH closure may leave bounded output draining. Keep its capacity
+            // lease until Network reports actual socket cancellation, including
+            // after the pipeline has released this handler.
+            connection.stateUpdateHandler = { [weak self, weak connection, capacityLease] state in
+                if case .cancelled = state {
+                    capacityLease?.release()
+                    connection?.stateUpdateHandler = nil
+                }
                 channel.eventLoop.execute {
                     guard let self, !self.closed else { return }
                     switch state {
@@ -79,7 +105,7 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
         context.fireChannelActive()
     }
 
-    /// Called on the channel event loop after the local SOCKS handshake reply.
+    /// Called on the channel event loop after any local handshake reply.
     public func activate() {
         guard !reading, !closed, let channel else { return }
         reading = true
@@ -88,13 +114,17 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
     }
 
     private func receive() {
-        guard !closed, let channel else { return }
+        guard !closed, !inputClosed, let channel else { return }
         connection.receive(minimumIncompleteLength: 1, maximumLength: 48 * 1024) { [weak self] data, _, complete, error in
             channel.eventLoop.execute {
-                guard let self, !self.closed else { return }
+                guard let self, !self.closed, !self.inputClosed else { return }
                 if let data, !data.isEmpty {
                     let buffer = channel.allocator.buffer(bytes: data)
                     channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(buffer))).whenComplete { result in
+                        // NIOSSH delivers final response reads, fails pending
+                        // upload writes with EOF, then fires channelInactive.
+                        // Let that final event drain the response already queued.
+                        if case .failure(let failure) = result, failure as? ChannelError == .eof { return }
                         if complete || error != nil { self.close() }
                         else if case .failure = result { self.close() }
                         else { self.receive() }
@@ -106,27 +136,47 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
     }
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard !closed else { return }
         let value = unwrapInboundIn(data)
         guard case .channel = value.type, case .byteBuffer(let buffer) = value.data else { close(); return }
         let bytes = Data(buffer.readableBytesView)
         pendingBytes += bytes.count
-        guard pendingBytes <= 1024 * 1024 else { close(); return }
+        guard pendingBytes <= Self.maximumPendingBytes else { close(); return }
         pendingWrites += 1
         let channel = context.channel
-        connection.send(content: bytes, completion: .contentProcessed { [weak self] error in
-            channel.eventLoop.execute {
-                guard let self, !self.closed else { return }
+        // The pipeline releases handlers when the SSH child closes. Keep this
+        // bridge alive until already-received bytes have reached the TCP socket.
+        connection.send(content: bytes, completion: .contentProcessed { [self] error in
+            channel.eventLoop.execute { [self] in
+                guard !self.closed else { return }
                 self.pendingBytes -= bytes.count
                 self.pendingWrites -= 1
                 if error != nil { self.close() }
-                else if self.pendingWrites == 0 { channel.read() }
+                else if self.pendingWrites == 0 {
+                    if self.inputClosed { self.finishDraining() }
+                    else { channel.read() }
+                }
             }
         })
     }
 
     public func channelInactive(context: ChannelHandlerContext) {
-        close()
+        inputClosed = true
+        finishReady(.failure(ChannelError.ioOnClosedChannel))
+        if pendingWrites == 0 { finishDraining() }
+        else {
+            // A local client that stops reading must not retain a closed SSH
+            // channel and its buffered output indefinitely.
+            context.eventLoop.scheduleTask(in: .seconds(10)) { [weak self] in self?.close() }
+        }
         context.fireChannelInactive()
+    }
+
+    private func finishDraining() {
+        guard !closed else { return }
+        closed = true
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                        completion: .contentProcessed { [connection] _ in connection.cancel() })
     }
 
     public func errorCaught(context: ChannelHandlerContext, error: Error) { close() }
@@ -141,7 +191,6 @@ public final class SSHTCPBridge: ChannelInboundHandler, @unchecked Sendable {
         guard !closed else { return }
         closed = true
         finishReady(.failure(ChannelError.ioOnClosedChannel))
-        if startsConnection { connection.stateUpdateHandler = nil }
         connection.cancel()
         channel?.close(promise: nil)
     }
@@ -253,13 +302,32 @@ private final class RelayPendingWrites: @unchecked Sendable {
 }
 #endif
 
-private final class TunnelCapacity: @unchecked Sendable {
+final class TunnelCapacity: @unchecked Sendable {
     private let lock = NSLock()
     private var active = 0
+    private let limit: Int
+    init(limit: Int = 64) { self.limit = limit }
+    func acquireLease() -> Lease? {
+        acquire() ? Lease(capacity: self) : nil
+    }
+    final class Lease: @unchecked Sendable {
+        private let capacity: TunnelCapacity
+        private let lock = NSLock()
+        private var released = false
+        fileprivate init(capacity: TunnelCapacity) { self.capacity = capacity }
+        func release() {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !released else { return }
+            released = true
+            capacity.release()
+        }
+        deinit { release() }
+    }
     func acquire() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard active < 64 else { return false }
+        guard active < limit else { return false }
         active += 1
         return true
     }

@@ -163,6 +163,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     public let route: WorktreeRoute?
     public let sidebar: SidebarWorktreeMetadata?
     public let ports: [WorktreePort]
+    /// Listening sockets by pane session name. Missing on older hosts.
+    public let portBindings: [String: [PortBinding]]?
 
     public init(
         path: String,
@@ -181,7 +183,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil,
         sidebar: SidebarWorktreeMetadata? = nil,
-        ports: [WorktreePort] = []
+        ports: [WorktreePort] = [],
+        portBindings: [String: [PortBinding]]? = nil
     ) {
         self.path = path
         self.displayName = displayName
@@ -200,6 +203,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.route = route
         self.sidebar = sidebar
         self.ports = ports
+        self.portBindings = portBindings
     }
 
     /// Custom decode preserves readability when an older server
@@ -209,11 +213,12 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
-             attentionTimestamp, layout, origin, route, sidebar, ports
+             attentionTimestamp, layout, origin, route, sidebar, ports, portBindings
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.portBindings = try c.decodeIfPresent([String: [PortBinding]].self, forKey: .portBindings)
         self.sidebar = try c.decodeIfPresent(SidebarWorktreeMetadata.self, forKey: .sidebar)
         self.ports = try c.decodeIfPresent([WorktreePort].self, forKey: .ports) ?? []
         self.path = try c.decode(String.self, forKey: .path)

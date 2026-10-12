@@ -34,7 +34,8 @@ public struct SidebarWorktreeReportOrder {
                 repositoryID: row.repositoryID, displayBranch: row.displayBranch, state: row.state,
                 isMainCheckout: row.isMainCheckout, prBadge: row.prBadge, stats: row.stats,
                 attentionText: row.attentionText, attentionSource: row.attentionSource, attentionTimestamp: row.attentionTimestamp,
-                layout: row.layout, origin: row.origin, route: row.route, sidebar: metadata, ports: row.ports)
+                layout: row.layout, origin: row.origin, route: row.route, sidebar: metadata,
+                ports: row.ports, portBindings: row.portBindings)
         } + live.filter { !frozenKeys.contains(key($0)) }
     }
 

@@ -15,10 +15,12 @@ import GrafttyKit
 struct PortChip: View {
     let binding: PortBinding
     let theme: GhosttyTheme
+    var onOpen: (() -> Void)? = nil
 
     var body: some View {
         Button {
-            if let url = Self.url(for: binding) {
+            if let onOpen { onOpen() }
+            else if let url = Self.url(for: binding) {
                 NSWorkspace.shared.open(url)
             }
         } label: {
@@ -41,7 +43,7 @@ struct PortChip: View {
             )
         }
         .buttonStyle(.plain)
-        .help(Self.tooltip(for: binding))
+        .help(onOpen == nil ? Self.tooltip(for: binding) : "Forward and open remote port \(binding.port)")
         .accessibilityLabel(Self.accessibilityLabel(for: binding))
     }
 

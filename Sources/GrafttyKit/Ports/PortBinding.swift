@@ -1,22 +1,9 @@
-// Sources/GrafttyKit/Ports/PortBinding.swift
-import Foundation
 import GrafttyProtocol
 
-public struct PortBinding: Hashable, Sendable {
-    public let port: UInt16
-    public let scope: BindScope
-    public let processName: String
-    public let pid: pid_t
-    public let host: String
+public typealias PortBinding = GrafttyProtocol.PortBinding
+public typealias BindScope = GrafttyProtocol.BindScope
 
-    public init(port: UInt16, scope: BindScope, processName: String, pid: pid_t, host: String = "localhost") {
-        self.port = port
-        self.scope = scope
-        self.processName = processName
-        self.pid = pid
-        self.host = host
-    }
-
+extension PortBinding {
     public static func worktreePorts(from bindings: [PortBinding]) -> [WorktreePort] {
         var grouped: [UInt16: PortBinding] = [:]
         for binding in bindings where binding.port > 0 {
@@ -34,9 +21,4 @@ public struct PortBinding: Hashable, Sendable {
             WorktreePort(port: $0.port, scope: $0.scope == .lan ? .lan : .loopback, processName: $0.processName, host: $0.host)
         }
     }
-}
-
-public enum BindScope: Sendable, Hashable {
-    case loopback
-    case lan
 }

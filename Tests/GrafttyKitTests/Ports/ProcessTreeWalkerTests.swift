@@ -1,7 +1,11 @@
 // Tests/GrafttyKitTests/Ports/ProcessTreeWalkerTests.swift
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("ProcessTreeWalker")

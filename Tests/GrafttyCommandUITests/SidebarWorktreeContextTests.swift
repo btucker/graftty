@@ -113,21 +113,23 @@ struct SidebarWorktreeContextTests {
         #expect(context.pending.isEmpty)
     }
     @Test func frozenOrderRetainsMembershipAndLiveContent() {
-        func row(_ path: String, pinned: Bool = false, folders: [String] = [], last: SidebarAgentStop? = nil, ports: [WorktreePort] = []) -> WorktreePanes {
+        func row(_ path: String, pinned: Bool = false, folders: [String] = [], last: SidebarAgentStop? = nil, ports: [WorktreePort] = [], portBindings: [String: [PortBinding]]? = nil) -> WorktreePanes {
             .init(path: path, displayName: path, repoDisplayName: "Project", displayBranch: path,
                   state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
-                  sidebar: .init(id: path, projectID: "p", folders: folders, lastAgentStop: last, isPinned: pinned), ports: ports)
+                  sidebar: .init(id: path, projectID: "p", folders: folders, lastAgentStop: last, isPinned: pinned), ports: ports, portBindings: portBindings)
         }
         let a = row("a", folders: ["folder"]), b = row("b"), c = row("c", folders: ["folder"])
         let order = SidebarWorktreeReportOrder(worktrees: [a, b, c])
         let ports = [WorktreePort(port: 3000, scope: .loopback, processName: "vite", host: "127.0.0.1")]
-        let current = row("a", pinned: true, folders: ["moved"], last: stop(120), ports: ports)
+        let bindings = ["session": [PortBinding(port: 3000, scope: .loopback, processName: "vite", pid: 12, targetHost: "127.0.0.1")]]
+        let current = row("a", pinned: true, folders: ["moved"], last: stop(120), ports: ports, portBindings: bindings)
         let frozen = order.orderedWorktrees([b, current, c])
         #expect(frozen.map(\.path) == ["a", "b", "c"])
         #expect(frozen[0].sidebar?.isPinned == false)
         #expect(frozen[0].sidebar?.folders == ["folder"])
         #expect(frozen[0].sidebar?.lastAgentStop == stop(120))
         #expect(frozen[0].ports == ports)
+        #expect(frozen[0].portBindings == bindings)
         #expect(order.orderedWorktrees([a, b, c])[0].ports.isEmpty)
         #expect(SidebarWorktreeReportOrder.displayedWorktrees(frozen).map(\.path) == ["a", "c", "b"])
         #expect(order.orderedWorktrees([b, c]).map(\.path) == ["b", "c"])

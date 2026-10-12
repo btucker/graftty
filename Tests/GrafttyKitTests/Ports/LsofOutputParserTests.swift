@@ -37,7 +37,7 @@ struct LsofOutputParserTests {
         """
         let rows = LsofOutputParser.parse(raw)
         #expect(rows.count == 1)
-        #expect(rows[0].address == "*")
+        #expect(rows[0].address == "::")
         #expect(rows[0].port == 3000)
     }
 

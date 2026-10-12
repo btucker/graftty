@@ -3,6 +3,26 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorktreePortWireTests {
+    @Test("@spec PORTS-5.35: When worktree port metadata crosses a host connection, the application shall preserve both mobile listener addresses and session-scoped forwarding targets, including legacy bindings without a listener address.", arguments: ["127.0.0.2", "::1", "192.0.2.4"])
+    func mobileAndDesktopPortMetadataCoexist(host: String) throws {
+        let target: String? = host == "192.0.2.4" ? nil : host
+        let scope: BindScope = target == nil ? .lan : .loopback
+        let binding = PortBinding(port: 3000, scope: scope, processName: "node", pid: 12,
+                                  host: host, targetHost: target)
+        let port = WorktreePort(port: 3000, scope: target == nil ? .lan : .loopback,
+                                processName: "node", host: host)
+        let row = WorktreePanes(path: "/project", displayName: "main", repoDisplayName: "repo",
+                               displayBranch: "main", state: .running, isMainCheckout: true,
+                               prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                               ports: [port], portBindings: ["session": [binding]])
+        #expect(try JSONDecoder().decode(WorktreePanes.self, from: JSONEncoder().encode(row)) == row)
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(binding)) as? [String: Any])
+        legacy.removeValue(forKey: "host")
+        let decoded = try JSONDecoder().decode(PortBinding.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(decoded.targetHost == target)
+        #expect(decoded.host == (target ?? "localhost"))
+    }
+
     @Test("@spec PORTS-5.2: When a worktree snapshot includes listening ports, the application shall preserve their process names, bind scopes, and listener addresses on the wire and treat absent ports from older hosts as an empty list.")
     func portsRoundTripAndLegacyDefaults() throws {
         let legacy = Data(#"{"path":"/project","displayName":"main","repoDisplayName":"repo"}"#.utf8)

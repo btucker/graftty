@@ -1,9 +1,6 @@
 // Sources/GrafttyKit/Ports/PortScanner.swift
 import Foundation
 import GrafttyProtocol
-#if canImport(os)
-import os
-#endif
 
 /// @spec PORTS-1.1: While a pane is registered, the application shall scan its process subtree's TCP listening sockets every 2 seconds even when the Mac application is inactive.
 //
@@ -11,7 +8,7 @@ import os
 //
 /// @spec PORTS-4.5: When a pane is registered before its shell PID can be resolved, the application shall record it as pending and re-attempt resolution on each scan tick.
 public actor PortScanner {
-    private let runner: LsofRunner
+    private let socketScanner: any PortSocketScanning
     private let walker: any ProcessTreeWalking
     private var registrations: [PaneSlotID: pid_t] = [:]
     private var pending: Set<PaneSlotID> = []
@@ -23,7 +20,6 @@ public actor PortScanner {
     private var snapshots: [PaneSlotID: Snapshot] = [:]
     private var inFlight = false
     private var scanWaiters: [CheckedContinuation<Void, Never>] = []
-    private let log = Logger(subsystem: "com.btucker.graftty", category: "PortScanner")
 
     /// Closure invoked on the main actor whenever a pane's binding set
     /// changes. Wired by `GrafttyApp` to push into `PortBindingsModel`.
@@ -35,8 +31,22 @@ public actor PortScanner {
     private var pidResolver: (@Sendable (PaneSlotID) async -> pid_t?)?
 
     public init(runner: LsofRunner, walker: any ProcessTreeWalking) {
-        self.runner = runner
+        self.socketScanner = LsofPortSocketScanner(runner: runner)
         self.walker = walker
+    }
+
+    public init(socketScanner: any PortSocketScanning, walker: any ProcessTreeWalking = ProcessTreeWalker()) {
+        self.socketScanner = socketScanner
+        self.walker = walker
+    }
+
+    public init() {
+        #if os(Linux)
+        socketScanner = LinuxProcSocketScanner()
+        #else
+        socketScanner = LsofPortSocketScanner()
+        #endif
+        walker = ProcessTreeWalker()
     }
 
     public func setOnChange(_ callback: @escaping @MainActor @Sendable (PaneSlotID, [PortBinding]) -> Void) {
@@ -106,7 +116,7 @@ public actor PortScanner {
         if let resolver = pidResolver, !pending.isEmpty {
             let pendingGenerations = registrationGenerations
             for id in pending {
-                if let pid = await resolver(id) {
+                if let pid = await resolver(id), pid > 0 {
                     guard pending.contains(id),
                           registrationGenerations[id] == pendingGenerations[id] else { continue }
                     pending.remove(id)
@@ -130,15 +140,10 @@ public actor PortScanner {
             applyEmpty()
             return
         }
-        let joined = allPIDs.sorted().map(String.init).joined(separator: ",")
-        guard let raw = await runner.run(pids: joined) else {
-            log.error("lsof failed; treating snapshot as empty")
-            applyEmpty()
-            return
-        }
-        let rows = LsofOutputParser.parse(raw)
+        let rows = await socketScanner.listeningSockets(pids: allPIDs) ?? []
         for (id, pids) in paneToPIDs {
-            guard registrationGenerations[id] == scanGenerations[id] else { continue }
+            guard registrations[id] == scanRegistrations[id],
+                  registrationGenerations[id] == scanGenerations[id] else { continue }
             let paneRows = rows.filter { pids.contains($0.pid) }
             let bindings = Self.collapse(paneRows)
             updateSnapshot(id: id, bindings: bindings, listeners: paneRows.map(Self.listenerBinding))
@@ -168,14 +173,14 @@ public actor PortScanner {
         default: host = row.address
         }
         return PortBinding(port: row.port, scope: scopeFor(address: row.address),
-                           processName: row.processName, pid: row.pid, host: host)
+                           processName: row.processName, pid: row.pid, host: host, targetHost: targetFor(address: row.address))
     }
 
     /// Dedupe rows by `(port, scope)` after broadening scope when *any*
     /// row for that pid+port is non-loopback. Choose lowest PID for ties.
     static func collapse(_ rows: [LsofOutputParser.Row]) -> [PortBinding] {
         struct Key: Hashable { let pid: pid_t; let port: UInt16 }
-        var perPidPort: [Key: (scope: BindScope, name: String, host: String)] = [:]
+        var perPidPort: [Key: (scope: BindScope, name: String, host: String, target: String?)] = [:]
         for row in rows {
             let key = Key(pid: row.pid, port: row.port)
             let scope = scopeFor(address: row.address)
@@ -183,9 +188,10 @@ public actor PortScanner {
             if let existing = perPidPort[key] {
                 let merged: BindScope = (existing.scope == .lan || scope == .lan) ? .lan : .loopback
                 let preferredHost = min(existing.host, host)
-                perPidPort[key] = (merged, existing.name, preferredHost)
+                perPidPort[key] = (merged, existing.name, preferredHost,
+                                   [existing.target, targetFor(address: row.address)].compactMap { $0 }.sorted().first)
             } else {
-                perPidPort[key] = (scope, row.processName, host)
+                perPidPort[key] = (scope, row.processName, host, targetFor(address: row.address))
             }
         }
         struct GKey: Hashable { let port: UInt16; let scope: BindScope }
@@ -197,7 +203,8 @@ public actor PortScanner {
                 scope: value.scope,
                 processName: value.name,
                 pid: key.pid,
-                host: value.host
+                host: value.host,
+                targetHost: value.target
             )
             if let existing = grouped[gk] {
                 if candidate.pid < existing.pid {
@@ -207,13 +214,22 @@ public actor PortScanner {
                 grouped[gk] = candidate
             }
         }
-        return grouped.values.sorted { $0.port < $1.port }
+        return grouped.values.sorted { $0.port == $1.port ? $0.scope.rawValue < $1.scope.rawValue : $0.port < $1.port }
     }
 
     static func scopeFor(address: String) -> BindScope {
-        switch address {
-        case "127.0.0.1", "::1": return .loopback
-        default: return .lan
-        }
+        address == "::1" || isIPv4Loopback(address) ? .loopback : .lan
+    }
+
+    private static func isIPv4Loopback(_ address: String) -> Bool {
+        let parts = address.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts[0] == "127" && parts.allSatisfy { UInt8($0) != nil }
+    }
+
+    private static func targetFor(address: String) -> String? {
+        if address == "::1" || isIPv4Loopback(address) { return address }
+        if address == "::" { return "::1" }
+        if address == "0.0.0.0" || address == "*" { return "127.0.0.1" }
+        return nil
     }
 }
