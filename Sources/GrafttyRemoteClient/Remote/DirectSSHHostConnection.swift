@@ -39,30 +39,31 @@ public actor DirectSSHHostConnection {
         self.group = group
         let key = clientKey
         let fingerprint = expectedHostFingerprint
-        let waiter = SSHReplyWaiter<Void>()
-        let slot = DirectSSHHandlerSlot()
         var connectingChannel: Channel?
         do {
             let channel = try await ClientBootstrap(group: group)
                 .connectTimeout(.seconds(10))
                 .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                 .channelInitializer { channel in
+                    // Happy Eyeballs may initialize several channels. Each attempt
+                    // owns its authentication state; only the winning one is used.
+                    let waiter = SSHReplyWaiter<Void>()
                     let handler = SSHClientSetup.makeHandler(clientKey: key, expectedHostFingerprint: fingerprint,
                         allocator: channel.allocator,
                         onAuthenticationRejected: { waiter.finish(.failure(ConnectionError.authenticationRejected)) })
-                    slot.set(DirectSSHHandlerBox(handler))
                     channel.closeFuture.whenComplete { _ in waiter.finish(.failure(ChannelError.ioOnClosedChannel)) }
                     return channel.eventLoop.makeCompletedFuture {
                         try channel.pipeline.syncOperations.addHandler(handler)
-                        try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter))
+                        try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter, handlerBox: DirectSSHHandlerBox(handler)))
                     }
                 }.connect(host: host, port: port).get()
             connectingChannel = channel
             guard !state.isTerminal else { throw CancellationError() }
             self.channel = channel
-            handlerBox = slot.get()
+            let authentication = try await channel.pipeline.handler(type: DirectSSHAuthenticationHandler.self).get()
+            handlerBox = authentication.handlerBox
             channel.closeFuture.whenComplete { [weak self] _ in Task { await self?.transportClosed() } }
-            try await waiter.wait(timeout: .seconds(10), timeoutError: ConnectionError.timedOut,
+            try await authentication.waiter.wait(timeout: .seconds(10), timeoutError: ConnectionError.timedOut,
                                   onAbort: { channel.close(promise: nil) }, start: {})
             try Task.checkCancellation()
             guard !state.isTerminal, channel.isActive else { throw ChannelError.ioOnClosedChannel }
@@ -163,7 +164,11 @@ public actor DirectSSHHostConnection {
 private final class DirectSSHAuthenticationHandler: ChannelInboundHandler, Sendable {
     typealias InboundIn = ByteBuffer
     let waiter: SSHReplyWaiter<Void>
-    init(waiter: SSHReplyWaiter<Void>) { self.waiter = waiter }
+    let handlerBox: DirectSSHHandlerBox
+    init(waiter: SSHReplyWaiter<Void>, handlerBox: DirectSSHHandlerBox) {
+        self.waiter = waiter
+        self.handlerBox = handlerBox
+    }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if event is UserAuthSuccessEvent { waiter.finish(.success(())) }
         context.fireUserInboundEventTriggered(event)
@@ -175,10 +180,4 @@ private final class DirectSSHAuthenticationHandler: ChannelInboundHandler, Senda
 private final class DirectSSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
-}
-private final class DirectSSHHandlerSlot: @unchecked Sendable {
-    private let lock = NSLock()
-    private var box: DirectSSHHandlerBox?
-    func set(_ box: DirectSSHHandlerBox) { lock.withLock { self.box = box } }
-    func get() -> DirectSSHHandlerBox? { lock.withLock { box } }
 }

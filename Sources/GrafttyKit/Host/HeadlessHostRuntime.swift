@@ -14,6 +14,9 @@ public final class HeadlessHostRuntime {
     let presence: TeamPresenceStorage
     let recaps = AttentionRecapCoordinator()
     let agentSetup: HostAgentSetup
+    var projectIconRefreshTask: Task<Void, Never>?
+    var projectIcons: [UUID: HostProjectIcon] = [:]
+    var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]
@@ -203,7 +206,7 @@ public final class HeadlessHostRuntime {
                 startPoint: existing ? nil : base, startPointResolutionPath: callerPath ?? repo.path)
         } catch { launch.discardPromptFile(); throw error }
         guard let ri = state.repos.firstIndex(where: { $0.path == repo.path }) else { throw HostRuntimeError.notFound("repository removed during creation") }
-        state.repos[ri].worktrees.append(WorktreeEntry(path: path, branch: branch))
+        state.repos[ri].worktrees.append(WorktreeEntry(path: path, branch: branch, createdAt: Date()))
         try save() // Retain successful Git creation even if shell startup fails.
         if let agent {
             try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: agent, repo: repo,

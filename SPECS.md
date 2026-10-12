@@ -202,7 +202,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -301,6 +301,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.147** While a project's icon bytes remain unchanged, the application shall reuse its derived sidebar color and revision across refreshes and recalculate them when the icon changes.
 
 **LAYOUT-2.148** When Change Emoji is chosen from a worktree identity menu, the application shall open the native picker after menu tracking ends with the owning window key and its capture responder ready, including on repeated attempts.
+
+**LAYOUT-2.149** When a worktree is added while recent activity order is selected, the application shall place its creating row first among temporary worktrees, retain its creation time across completion and relaunch, and allow later activity to move other worktrees above it.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -613,6 +615,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
 
 **TERM-12.29** When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.
+
+**TERM-12.30** While a mobile follower scrolls older output, the application shall preserve its latest local row and fractional offset through delayed native scrollbar acknowledgements without repositioning the scroll view.
+
+**TERM-12.31** When an older mobile terminal frame completes presentation after a newer frame of the same size, the application shall retain the newer frame without flickering back to the older image.
+
+**TERM-12.32** When native navigation supersedes a pending mobile follower scroll request, the application shall accept the current native row even if the local acknowledgement was coalesced.
+
+**TERM-12.33** When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1830,7 +1840,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
-**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its usable terminal viewport to the top and bottom screen edges, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
+**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 
@@ -1972,11 +1982,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
 
-**IOS-6.25** While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
+**IOS-6.25** If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.
 
 **IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
 
 **IOS-6.27** While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.
+
+**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.
 
 ### IOS-7.x — Lifecycle
 
@@ -2158,6 +2170,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
 
+**IPAD-1.22** While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -2174,7 +2188,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.7** When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
 
-**IPAD-2.8** While the regular-width iPad detail is visible, the application shall let the terminal tree own the complete detail-column rectangle beneath transparent navigation chrome, with split controls floating over the panes instead of shrinking them.
+**IPAD-2.8** While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
 
@@ -2926,13 +2940,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.11** If direct SSH negotiation fails, then the application shall report the original connection error and retain a failed state until teardown is requested.
 
+**REMOTE-20.12** When a direct SSH hostname resolves to IPv4 and IPv6, the application shall authenticate the successful connection without failed address attempts closing its authentication waiter.
+
 **REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
 
 ### REMOTE-21.x
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
 
-**REMOTE-21.2** If the destination is not Ubuntu 24.04 on x86_64 or ARM64 or lacks required dependencies, then the application shall stop setup with an actionable error.
+**REMOTE-21.2** If the destination lacks a supported Linux CPU architecture or required capabilities, then the application shall stop setup with an actionable error without rejecting a distribution version alone.
 
 **REMOTE-21.3** When Linux setup imports a project, the application shall preserve all local branch and tag history including unpushed commits, check out the selected branch, and exclude working changes, untracked files, and ignored files.
 
@@ -2951,6 +2967,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-21.10** When Linux setup is cancelled during an OpenSSH command, the application shall terminate the bootstrap process and stop subsequent setup commands before allowing a retry.
 
 **REMOTE-21.11** When Linux setup completes, the application shall pin the public identity obtained over authenticated OpenSSH and use the resolved hostname with the Graftty SSH port; if that identity conflicts with a saved device or endpoint, then the application shall reject it without replacing trust.
+
+**REMOTE-21.12** When a remote setup command fails, the application shall identify the operation and exit status, preserve available output, and explicitly report when no output was returned.
+
+**REMOTE-21.13** When Linux setup stages an archive, the application shall verify its host, CLI, and terminal binaries can execute before invoking the installer, and report incompatible binaries without changing the installed service.
+
+**REMOTE-21.14** When Linux setup probes an archive, the application shall stage it privately on the configured installation data filesystem and remove only that staging directory after completion.
+
+**REMOTE-21.15** When Linux setup installs a user service, the application shall enable and verify lingering for the authenticated user without interactive authorization, or stop before installation with an actionable administrator command.
 
 ### REMOTE-22.x
 
@@ -2987,6 +3011,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.16** If the headless SSH listener cannot bind, then the application shall keep its readiness administration socket unavailable and clean up local control sockets.
 
 **REMOTE-22.17** When notifications, pin changes, or attention acknowledgements arrive while a headless pane starts, the application shall preserve those updates when publishing the opened or split pane.
+
+**REMOTE-22.18** When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.
+
+**REMOTE-22.19** When a headless host sends a bounded source image, the application shall verify its revision and cache a thumbnail no larger than 64 pixels while rejecting invalid or oversized images.
 
 ### REMOTE-23.x
 

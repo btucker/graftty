@@ -90,6 +90,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var autoTrackEnabled: Bool = false
     /// Suppresses retries against the same upstream after an app restart.
     public var autoTrackLastAttempt: GitAutoTracking.Target?
+    /// Initial activity for a newly added worktree. Legacy entries have no creation time.
+    public var createdAt: Date?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -128,10 +130,11 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// launches, and zmx restarts.
     public var primaryPaneSlotID: PaneSlotID?
 
-    /// Most recent attention, agent progress, or agent stop time. Drives
+    /// Most recent creation, attention, agent progress, or agent stop time. Drives
     /// the sidebar's recent-activity worktree order.
     public var lastActivity: Date? {
         var times = paneAttention.values.map(\.timestamp)
+        if let createdAt { times.append(createdAt) }
         if let attention { times.append(attention.timestamp) }
         times += agentProgressTimes.values.map(Date.init(timeIntervalSinceReferenceDate:))
         times += [unseenAgentStop, lastAgentStop].compactMap { $0 }.map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
@@ -142,6 +145,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         path: String,
         branch: String,
         state: WorktreeState = .closed,
+        createdAt: Date? = nil,
         staleSince: Date? = nil,
         attention: Attention? = nil,
         splitTree: SplitTree = SplitTree(root: nil)
@@ -151,6 +155,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = branch
         self.emoji = nil
         self.emojiSource = nil
+        self.createdAt = createdAt
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -171,7 +176,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -186,6 +191,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
         self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
