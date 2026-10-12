@@ -67,7 +67,8 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         } else if let version { source = .release(version: version) }
         else { throw ValidationError("Specify --version or --archive.") }
         return LinuxHostSetupPlan(destination: try .init(destination), destinationRoot: projectRoot,
-                                  projects: selected, archive: source, client: client)
+                                  projects: selected, archive: source, client: client,
+                                  agentTools: [.claude, .codex], requireAgentTools: true)
     }
 
     func run() async throws {
@@ -93,7 +94,7 @@ struct RemoteSetupLinux: AsyncParsableCommand {
                 encoder.outputFormatting = [.sortedKeys]
                 print(String(decoding: try encoder.encode(SetupOutput(host: result, connectionRequested: true)), as: UTF8.self))
             } else {
-                print("Installed and paired \(result.identity.displayName). Connection requested in Graftty; check the Remote Macs sidebar for status.")
+                print("Installed and paired \(result.identity.displayName). Connection requested in Graftty; check the Remote Hosts sidebar for status.")
             }
         } catch is CancellationError { throw ExitCode(130) }
         catch let error as LinuxHostSetupError { throw ValidationError(error.localizedDescription) }
@@ -113,9 +114,9 @@ struct RemoteSetupLinux: AsyncParsableCommand {
         default: throw ValidationError("The running Graftty app does not support Linux CLI setup. Update and relaunch it, then retry.")
         }
         let plan = try await makePlan(client: client)
-        let result = try await LinuxHostSetup().run(plan: plan) { step in
+        let result = try await LinuxHostSetup().run(plan: plan, progress: { step in
             FileHandle.standardError.write(Data("[\(step.completed + 1)/\(step.total)] \(step.message)\n".utf8))
-        }
+        })
         try Task.checkCancellation()
         try CLIEnv.expectOk(CLIEnv.sendRequest(.completeLinuxSetup(result)))
         return result

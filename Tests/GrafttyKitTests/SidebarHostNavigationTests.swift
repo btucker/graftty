@@ -229,7 +229,7 @@ struct SidebarHostNavigationTests {
         #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["main", "b", "a", "gone"])
     }
 
-    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.")
+    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.")
     func recentActivityOrdering() throws {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main")

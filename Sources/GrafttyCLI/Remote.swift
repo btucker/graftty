@@ -37,7 +37,7 @@ struct RemoteReconnectClient: ParsableCommand {
 
     func run() throws {
         try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteClient(target: target)))
-        print("Reconnect requested from \(target). Check that Mac's Remote Macs sidebar for status.")
+        print("Reconnect requested from \(target). Check that Mac's Remote Hosts sidebar for status.")
     }
 }
 
@@ -46,10 +46,10 @@ struct RemoteReconnect: ParsableCommand {
         commandName: "reconnect",
         abstract: "Request a reconnect to a paired Remote Mac",
         discussion: """
-        Use the exact saved name shown in the Remote Macs sidebar or a device ID.
+        Use the exact saved name shown in the Remote Hosts sidebar or a device ID.
         Quote names containing spaces. Graftty must be running on this Mac.
         This command works outside a worktree and returns once the request is
-        accepted. Check the Remote Macs sidebar for connection status.
+        accepted. Check the Remote Hosts sidebar for connection status.
 
         Example:
           graftty remote reconnect "Studio Mac"
@@ -67,6 +67,6 @@ struct RemoteReconnect: ParsableCommand {
 
     func run() throws {
         try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)))
-        print("Reconnect requested for \(target). Check the Remote Macs sidebar for status.")
+        print("Reconnect requested for \(target). Check the Remote Hosts sidebar for status.")
     }
 }

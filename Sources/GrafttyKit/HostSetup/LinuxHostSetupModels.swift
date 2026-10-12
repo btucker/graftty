@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LinuxHostDestination: Codable, Sendable, Equatable {
+public struct LinuxHostDestination: Codable, Sendable, Hashable {
     public let value: String
     public init(_ value: String) throws {
         let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12,13 +12,13 @@ public struct LinuxHostDestination: Codable, Sendable, Equatable {
         self.value = value
     }
 
-    private enum CodingKeys: String, CodingKey { case value }
-
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(container.decode(String.self, forKey: .value))
+        try self.init(decoder.singleValueContainer().decode(String.self))
     }
-
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
+    }
 }
 
 public struct LinuxHostResolvedSSH: Codable, Sendable, Equatable {
@@ -84,13 +84,17 @@ public struct LinuxHostSetupPlan: Sendable, Equatable {
     public let projects: [LinuxHostProject]
     public let archive: LinuxHostArchive
     public let client: LinuxHostTrustRequest
+    public let agentTools: [LinuxHostComponent]
+    public let requireAgentTools: Bool
 
-    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest) {
+    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest, agentTools: [LinuxHostComponent] = [], requireAgentTools: Bool = false) {
         self.destination = destination
         self.destinationRoot = destinationRoot
         self.projects = projects
         self.archive = archive
         self.client = client
+        self.agentTools = agentTools.filter { $0 != .graftty }
+        self.requireAgentTools = requireAgentTools
     }
 }
 
@@ -111,6 +115,7 @@ public struct LinuxHostSetupResult: Codable, Sendable, Equatable {
     public let openSSH: LinuxHostResolvedSSH
     public let destination: LinuxHostDestination
     public let projectPaths: [String]
+    public var toolOutcomes: [LinuxHostComponentOutcome] = []
 }
 
 public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {

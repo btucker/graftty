@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import GrafttyCommandUI
 import SwiftUI
 import UIKit
 
@@ -59,9 +60,9 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// The leader's grid, from ownership or a paged checkpoint. The canvas preserves
     /// both dimensions while its presentation fits the available container.
     public let authoritativeGrid: SessionClient.GridSize?
-    /// Reserves one rendered row above and below interactive panes. Preview
-    /// tiles leave this disabled because their background is presentation UI.
-    public let addsVerticalRowPadding: Bool
+    /// Keeps the first row below top chrome while the scroll viewport fills
+    /// the pane. Preview tiles do not reserve interactive chrome space.
+    public let reservesTopChromeSpace: Bool
     public let showsAdditionalHistory: Bool
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
@@ -108,7 +109,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         session: InMemoryTerminalSession,
         controller: TerminalController,
         authoritativeGrid: SessionClient.GridSize? = nil,
-        addsVerticalRowPadding: Bool = false,
+        reservesTopChromeSpace: Bool = false,
         showsAdditionalHistory: Bool = false,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
@@ -127,7 +128,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.session = session
         self.controller = controller
         self.authoritativeGrid = authoritativeGrid
-        self.addsVerticalRowPadding = addsVerticalRowPadding
+        self.reservesTopChromeSpace = reservesTopChromeSpace
         self.showsAdditionalHistory = showsAdditionalHistory
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
@@ -167,7 +168,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = retainedContainer ?? TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
-        view.addsVerticalRowPadding = addsVerticalRowPadding
+        view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
@@ -190,7 +191,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
-        view.addsVerticalRowPadding = addsVerticalRowPadding
+        view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
@@ -293,17 +294,43 @@ public final class TerminalInputContainerView: UIView,
             setNeedsLayout()
         }
     }
-    var addsVerticalRowPadding = false {
+    var reservesTopChromeSpace = false {
         didSet {
-            guard addsVerticalRowPadding != oldValue else { return }
+            guard reservesTopChromeSpace != oldValue else { return }
+            if reservesTopChromeSpace {
+                snapshotScrollView.onContentUpdate = { [weak self] in self?.refreshFirstLineClearance() }
+                refreshFirstLineClearance()
+            } else {
+                snapshotScrollView.onContentUpdate = nil
+            }
             setNeedsLayout()
         }
+    }
+    private var needsFirstLineClearance = true
+
+    private func refreshFirstLineClearance() {
+        guard reservesTopChromeSpace else { return }
+        let needsClearance: Bool
+        if snapshotScrollView.hasScrollback {
+            needsClearance = false
+        } else {
+            guard case .inMemory(let session) = terminalView.configuration.backend,
+                  let text = session.readViewportText() else { return }
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            let columns = Int(terminalGridMetrics?.columns ?? UInt16.max)
+            let fitsFirstRow = lines.first.map { TerminalCellWidth.estimate($0) <= columns } ?? true
+            needsClearance = fitsFirstRow && lines.dropFirst().allSatisfy { $0.allSatisfy(\.isWhitespace) }
+        }
+        guard needsClearance != needsFirstLineClearance else { return }
+        needsFirstLineClearance = needsClearance
+        setNeedsLayout()
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
         let canvas = snapshotCanvas
-        snapshotScrollView.frame = paddedViewport(canvas: canvas)
+        snapshotScrollView.frame = bounds
+        snapshotScrollView.topContentInset = topChromeInset(canvas: canvas)
         guard let grid = authoritativeGrid, let metrics = terminalGridMetrics, let canvas else {
             snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
             confirmPhysicalViewportIfReady()
@@ -328,15 +355,23 @@ public final class TerminalInputContainerView: UIView,
         )
     }
 
-    // Keep the margins outside the native surface so they cannot become
-    // terminal cells. The clear container exposes the configured theme behind it.
-    private func paddedViewport(canvas: TerminalSnapshotCanvas.Layout?) -> CGRect {
-        guard addsVerticalRowPadding, let metrics = terminalGridMetrics,
-              terminalView.contentScaleFactor > 0 else { return bounds }
-        let rowHeight = CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor
-            * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
-        let inset = min(rowHeight, max(0, bounds.height / 2))
-        return bounds.insetBy(dx: 0, dy: inset)
+    override public func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        setNeedsLayout()
+    }
+
+    // Protect a lone first line without leaving a gap above populated terminals.
+    // UIKit supplies the chrome overlapping each pane, so lower split panes
+    // do not reserve the navigation bar again.
+    private func topChromeInset(canvas: TerminalSnapshotCanvas.Layout?) -> CGFloat {
+        guard reservesTopChromeSpace, needsFirstLineClearance else { return 0 }
+        let rowHeight = terminalGridMetrics.map {
+            CGFloat($0.cellHeightPixels) / max(1, terminalView.contentScaleFactor)
+                * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
+        } ?? 0
+        // Fullscreen Back occupies 44pt, with 12pt above and below it.
+        let clearance = onBackRequested == nil ? rowHeight : max(rowHeight, 68)
+        return min(safeAreaInsets.top + clearance, max(0, bounds.height - 1))
     }
 
     private func confirmPhysicalViewportIfReady() {
@@ -345,9 +380,8 @@ public final class TerminalInputContainerView: UIView,
         // Pixel comparison also covers fractional point changes that Ghostty
         // deduplicates without another resize notification.
         let scale = terminalView.contentScaleFactor
-        let viewport = paddedViewport(canvas: nil)
-        let widthPixels = (viewport.width * scale).rounded(.down)
-        let heightPixels = (viewport.height * scale).rounded(.down)
+        let widthPixels = (bounds.width * scale).rounded(.down)
+        let heightPixels = ((bounds.height - topChromeInset(canvas: nil)) * scale).rounded(.down)
         guard awaitingPhysicalViewport, authoritativeGrid == nil,
               widthPixels > 0, heightPixels > 0,
               let metrics = terminalGridMetrics,
@@ -380,6 +414,7 @@ public final class TerminalInputContainerView: UIView,
                 }
                 isCommittedSoftwareInputEligible = false
                 terminalView.isKeyboardInputEnabled = false
+                terminalView.stopHardwareArrowRepeat()
                 storedCommittedSoftwareInput = nil
             }
             guard wasEligible != isCommittedSoftwareInputEligible else { return }
@@ -405,7 +440,10 @@ public final class TerminalInputContainerView: UIView,
     /// Only fullscreen routes install this action; retained and embedded panes
     /// release it so a later drag cannot navigate a stale SwiftUI route.
     public var onBackRequested: (() -> Void)? {
-        didSet { updateTerminalGestureEnablement() }
+        didSet {
+            updateTerminalGestureEnablement()
+            if (oldValue == nil) != (onBackRequested == nil) { setNeedsLayout() }
+        }
     }
     private var configuredFontSize: Float?
     private var observedFontSize: Float?
@@ -447,9 +485,24 @@ public final class TerminalInputContainerView: UIView,
     }
 
     public func resetStickyModifiers() {
+        setTrayShiftSelected(false)
         #if !targetEnvironment(macCatalyst)
         terminalView.resetStickyModifiers()
         #endif
+    }
+
+    public private(set) var isTrayShiftSelected = false
+    var onTrayShiftSelectionChange: ((Bool) -> Void)?
+
+    public func toggleTrayShift() {
+        guard isCommittedSoftwareInputEligible else { return }
+        setTrayShiftSelected(!isTrayShiftSelected)
+    }
+
+    private func setTrayShiftSelected(_ selected: Bool) {
+        guard isTrayShiftSelected != selected else { return }
+        isTrayShiftSelected = selected
+        onTrayShiftSelectionChange?(selected)
     }
 
     public func setStickyControlActivationChangeHandler(
@@ -714,6 +767,7 @@ public final class TerminalInputContainerView: UIView,
 
     func acceptsTerminalInput(at point: CGPoint) -> Bool {
         snapshotScrollView.frame.contains(point)
+            && point.y >= snapshotScrollView.frame.minY + snapshotScrollView.topContentInset
     }
 
     @discardableResult
@@ -1161,10 +1215,12 @@ extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegat
 
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     public func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        refreshFirstLineClearance()
         setNeedsLayout()
     }
 
     public func terminalDidDetachSurface() {
+        needsFirstLineClearance = true
         cancelActiveSelectionIfAny()
         longPressURL = nil
         terminalGridMetrics = nil
@@ -1179,6 +1235,7 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
 extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
     public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
         snapshotScrollView.updateScrollbar(scrollbar)
+        refreshFirstLineClearance()
     }
 }
 

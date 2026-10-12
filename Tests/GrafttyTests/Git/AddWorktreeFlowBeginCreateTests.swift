@@ -44,6 +44,26 @@ struct AddWorktreeFlowBeginCreateTests {
         }
     }
 
+    @Test("@spec LAYOUT-2.149: When a worktree is added while recent activity order is selected, the application shall place its creating row first among temporary worktrees, retain its creation time across completion and relaunch, and allow later activity to move other worktrees above it.")
+    func newWorktreeStartsAboveExistingActivity() throws {
+        var active = WorktreeEntry(path: "/r/.worktrees/active", branch: "active")
+        active.attention = Attention(text: "Done", timestamp: Date().addingTimeInterval(-60))
+        var repo = RepoEntry(path: "/r", displayName: "r", worktrees: [active])
+        repo.worktreeOrderMode = .recentActivity
+        var state = AppState(repos: [repo])
+        let binding = Binding<AppState>(get: { state }, set: { state = $0 })
+        #expect(AddWorktreeFlow.beginCreate(repoPath: "/r", worktreeName: "new",
+            branch: .createNew(name: "new"), appState: binding) == .success("/r/.worktrees/new"))
+        #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).first?.branch == "new")
+        let created = try #require(state.repos[0].worktrees.last?.lastActivity)
+        state.repos[0].worktrees[1].state = .running
+        let restored = try JSONDecoder().decode(RepoEntry.self, from: JSONEncoder().encode(state.repos[0]))
+        #expect(restored.worktrees[1].lastActivity == created)
+        #expect(SidebarHostNavigation.displayedWorktrees(in: restored).first?.branch == "new")
+        state.repos[0].worktrees[0].attention = Attention(text: "Later", timestamp: created.addingTimeInterval(1))
+        #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).first?.branch == "active")
+    }
+
     @Test("Raw clients cannot escape the repository's .worktrees directory")
     func traversalNameRejected() {
         var state = AppState(repos: [

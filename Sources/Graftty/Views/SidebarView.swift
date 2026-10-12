@@ -20,7 +20,7 @@ private struct SleepingWorktreeIndicator: View {
     }
 }
 
-/// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
+/// @spec LAYOUT-2.62: When the project rail setting changes, the application shall place Add Repository beside Manage Remote Hosts in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 /// @spec LAYOUT-2.64: When the pointer rests over a repository or remote Mac footer icon, the application shall display a tooltip describing the button's action.
 struct SidebarView: View {
@@ -54,6 +54,7 @@ struct SidebarView: View {
     let onDeleteRemoteWorktree: (RemoteMac, WorktreePanes) -> Void
     let onAddRemoteMac: () -> Void
     var onSetupLinuxHost: (() -> Void)? = nil
+    var onUpdateHost: ((RemoteMac) -> Void)? = nil
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onRemoveRepo: (RepoEntry) -> Void
@@ -275,7 +276,7 @@ struct SidebarView: View {
         rememberSelection(appState.selectedWorktreePath)
         rememberRemoteSelection()
         navigation.showProject(project.id); navigationError = nil
-        guard project.isAvailable else { navigationError = "The owning Mac is offline. Use Manage Remote Macs to reconnect."; return }
+        guard project.isAvailable else { navigationError = "The owning host is offline. Use Manage Remote Hosts to reconnect."; return }
         if let index = appState.repos.firstIndex(where: { localProjectID($0) == project.id }) {
             appState.repos[index].isCollapsed = false
             let repo = appState.repos[index]
@@ -358,10 +359,10 @@ struct SidebarView: View {
         Button { showsRemoteManagement.toggle() } label: {
             Image(systemName: "desktopcomputer")
                 .frame(minWidth: 28, minHeight: 32).contentShape(Rectangle())
-                .help("View and manage remote Mac connections")
+                .help("View and manage remote host connections")
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Manage Remote Macs")
+        .accessibilityLabel("Manage Remote Hosts")
         .popover(isPresented: $showsRemoteManagement) {
             RemoteMacConnectionsPopover(model: remoteMacsModel, onAddRemoteMac: {
                 showsRemoteManagement = false
@@ -371,6 +372,8 @@ struct SidebarView: View {
                     showsRemoteManagement = false
                     action()
                 }
+            }, onUpdateHost: onUpdateHost.map { action in
+                { host in showsRemoteManagement = false; action(host) }
             })
         }
     }

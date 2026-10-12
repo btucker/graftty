@@ -33,6 +33,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.onBackRequested = nil
         container?.onPhysicalViewportReady = nil
         container?.setStickyControlActivationChangeHandler(nil)
+        container?.onTrayShiftSelectionChange = nil
         container?.configureFontSizeObservation(initialFontSize: nil, onChange: nil)
     }
 

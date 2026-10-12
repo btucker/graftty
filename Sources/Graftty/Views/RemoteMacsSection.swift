@@ -163,7 +163,7 @@ struct RemoteMacsSidebarProjection: Equatable {
             return rows
         }
         return RemoteMacsSidebarProjection(
-            title: "Remote Macs",
+            title: "Remote Hosts",
             rows: rows,
             addAction: .addRemoteMac
         )

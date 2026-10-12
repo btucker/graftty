@@ -17,6 +17,9 @@ final class RemoteMacsModel: ObservableObject {
         case unexpectedManagementResponse
     }
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
+    @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
+    private let maintenancePins: PinnedHostStore
+    private var linuxPinGeneration: UInt64 = 0
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
     @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
     @Published private(set) var repositoriesByRemote:
@@ -74,9 +77,11 @@ final class RemoteMacsModel: ObservableObject {
     init(
         store: RemoteMacStore? = nil,
         connectionRegistry: RemoteMacConnectionRegistry? = nil,
-        relayRouter: RemoteWorktreeRelayRouter? = nil
+        relayRouter: RemoteWorktreeRelayRouter? = nil,
+        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
     ) {
         self.store = store ?? RemoteMacStore()
+        self.maintenancePins = maintenancePins
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
         self.relayRouter = relayRouter ?? RemoteWorktreeRelayRouter()
@@ -140,6 +145,13 @@ final class RemoteMacsModel: ObservableObject {
 
     func loadSavedRemotes() async {
         await store.loadIfNeeded()
+        let pins = maintenancePins
+        let pinGeneration = linuxPinGeneration
+        let hosts = await Task.detached { (try? pins.list()) ?? [] }.value
+        if linuxPinGeneration == pinGeneration {
+            trustedLinuxHosts = Dictionary(hosts.filter { $0.kind == .linux }.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            linuxPinGeneration &+= 1
+        }
         savedRemoteMacs = store.remoteMacs
         for remoteMac in savedRemoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
@@ -193,7 +205,7 @@ final class RemoteMacsModel: ObservableObject {
             : idMatches
         guard !matches.isEmpty else {
             return .error(
-                "Unknown Remote Mac '\(target)'. Use a saved name or device ID from the Remote Macs sidebar."
+                "Unknown Remote Host '\(target)'. Use a saved name or device ID from the Remote Hosts sidebar."
             )
         }
         guard matches.count == 1 else {
@@ -269,6 +281,20 @@ final class RemoteMacsModel: ObservableObject {
         try await connectionTask(to: remoteMac).value
     }
 
+    func reconnectAfterMaintenance(_ remote: RemoteMac) async throws {
+        let identity = RemoteMacIdentity(remote)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }),
+              connectionState(for: identity) != .needsPairing else {
+            throw LinuxHostSetupError.invalidPlan("This host's saved pairing changed during maintenance.")
+        }
+        prepareForExplicitReconnect(identity: identity)
+        let attempt = connectionTask(to: remote, intent: .forcedReconnect)
+        _ = try await withTaskCancellationHandler {
+            try await attempt.value
+        } onCancel: { attempt.cancel() }
+        try Task.checkCancellation()
+    }
+
     @discardableResult
     func connectFromUserSelection(
         to remoteMac: RemoteMac
@@ -299,23 +325,34 @@ final class RemoteMacsModel: ObservableObject {
         let attemptToSupersede = supersededAttempt
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
-            if let attemptToSupersede {
-                attemptToSupersede.task.cancel()
+            do {
+                if let attemptToSupersede {
+                    attemptToSupersede.task.cancel()
+                }
+                if intent.disconnectsLocalConnection {
+                    await registry.disconnectAndWait(identity: identity)
+                }
+                try Task.checkCancellation()
+                guard self.connectAttemptIDs[identity] == attemptID else {
+                    throw CancellationError()
+                }
+                return try await self.performConnect(
+                    to: remoteMac,
+                    identity: identity,
+                    attemptID: attemptID,
+                    replacingExistingHostConnection:
+                        intent.replacesExistingHostConnection
+                )
+            } catch {
+                // Teardown can suspend and be cancelled before performConnect
+                // owns cleanup. Clear only this attempt, never its successor.
+                if self.connectAttemptIDs[identity] == attemptID {
+                    self.connectAttemptIDs[identity] = nil
+                    if self.connectAttempts[identity]?.id == attemptID { self.connectAttempts[identity] = nil }
+                    self.connectionStates[identity] = error is CancellationError ? .offline : .failed
+                }
+                throw error
             }
-            if intent.disconnectsLocalConnection {
-                await registry.disconnectAndWait(identity: identity)
-            }
-            try Task.checkCancellation()
-            guard self.connectAttemptIDs[identity] == attemptID else {
-                throw CancellationError()
-            }
-            return try await self.performConnect(
-                to: remoteMac,
-                identity: identity,
-                attemptID: attemptID,
-                replacingExistingHostConnection:
-                    intent.replacesExistingHostConnection
-            )
         }
         connectAttempts[identity] = ConnectAttempt(
             id: attemptID,
@@ -344,6 +381,7 @@ final class RemoteMacsModel: ObservableObject {
                 to: remoteMac,
                 replacingExistingHostConnection: replacingExistingHostConnection
             )
+            try Task.checkCancellation()
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }
@@ -1275,7 +1313,26 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
-    func recordPairingResult(_ result: RemoteMacPairingSaveResult, transport: RemoteHostTransport = .webRTC, directEndpoint: DirectSSHEndpoint? = nil) throws {
+    func maintenanceHost(for remote: RemoteMac) -> PinnedHost? {
+        let host = trustedLinuxHosts[remote.id]
+        return Self.canMaintain(remote, state: connectionState(for: RemoteMacIdentity(remote)), pinned: host) ? host : nil
+    }
+
+    static func canMaintain(_ remote: RemoteMac, state: RemoteMacConnectionState, pinned: PinnedHost?) -> Bool {
+        state == .connected && remote.directEndpoint != nil && pinned?.kind == .linux
+            && pinned?.id == remote.id && pinned?.fingerprint == remote.fingerprint
+    }
+
+    func saveMaintenanceDestination(_ destination: LinuxHostDestination, for identity: RemoteMacIdentity) throws {
+        guard var remote = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else {
+            throw LinuxHostSetupError.invalidPlan("This host is no longer saved.")
+        }
+        remote.maintenanceDestination = destination
+        try store.update(remote)
+        savedRemoteMacs = store.remoteMacs
+    }
+
+    func recordPairingResult(_ result: RemoteMacPairingSaveResult, transport: RemoteHostTransport = .webRTC, directEndpoint: DirectSSHEndpoint? = nil, maintenanceDestination: LinuxHostDestination? = nil) throws {
         guard case .paired(let pinnedHost) = result else { return }
 
         let remoteMac = RemoteMac(
@@ -1286,6 +1343,7 @@ final class RemoteMacsModel: ObservableObject {
                 ?? Self.baseURL(fromPairingURL: pinnedHost.pairingURL),
             transport: transport,
             directEndpoint: directEndpoint,
+            maintenanceDestination: maintenanceDestination,
             routes: pinnedHost.routes,
             lastSuccessfulRoute: pinnedHost.lastSuccessfulRoute,
             addedAt: pinnedHost.pinnedAt,
@@ -1294,6 +1352,8 @@ final class RemoteMacsModel: ObservableObject {
         )
         try store.add(remoteMac)
         savedRemoteMacs = store.remoteMacs
+        trustedLinuxHosts[pinnedHost.id] = pinnedHost.kind == .linux ? pinnedHost : nil
+        linuxPinGeneration &+= 1
         connectionStates[RemoteMacIdentity(remoteMac)] = .offline
     }
 

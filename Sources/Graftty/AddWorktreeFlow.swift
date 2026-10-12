@@ -146,7 +146,7 @@ enum AddWorktreeFlow {
             return .failure(.branchAlreadyMounted(at: existing))
         }
 
-        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName)
+        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName, createdAt: Date())
         placeholder.state = .creating
         appState.wrappedValue.repos[repoIdx].worktrees.append(placeholder)
         return .success(worktreePath)
@@ -247,7 +247,7 @@ enum AddWorktreeFlow {
         )]
         for d in discovered where !knownPaths.contains(d.path) {
             appState.wrappedValue.repos[repoIdx].worktrees
-                .append(WorktreeEntry(path: d.path, branch: d.branch))
+                .append(WorktreeEntry(path: d.path, branch: d.branch, createdAt: Date()))
             pathsToWire.append((d.path, d.branch))
         }
 

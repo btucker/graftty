@@ -16,6 +16,10 @@ final class MobileTerminalInputView: UITerminalView {
     // This is input context, not a copy of the remote terminal's screen.
     private var textContext = MobileTerminalTextContext()
 
+    private var heldArrowPress: UIPress?
+    private var arrowRepeatTimer: Timer?
+    private var observesApplicationActivity = false
+
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
         if gestureRecognizer is UIPanGestureRecognizer {
@@ -197,6 +201,7 @@ final class MobileTerminalInputView: UITerminalView {
 
     @discardableResult
     override func resignFirstResponder() -> Bool {
+        stopHardwareArrowRepeat()
         let resigned = super.resignFirstResponder()
         resetTextContext()
         return resigned
@@ -222,6 +227,62 @@ final class MobileTerminalInputView: UITerminalView {
         // input context. Ghostty still owns all physical-key translation.
         if textContext.markedRange == nil { resetTextContext(notifyingInputSystem: true) }
         super.pressesBegan(presses, with: event)
+        guard isKeyboardInputEnabled, textContext.markedRange == nil else { return }
+        for press in presses {
+            guard let key = press.key, !key.modifierFlags.contains(.command),
+                  [.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow]
+                    .contains(key.keyCode) else { continue }
+            startHardwareArrowRepeat(press)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let heldArrowPress, presses.contains(heldArrowPress) { stopHardwareArrowRepeat() }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let heldArrowPress, presses.contains(heldArrowPress) { stopHardwareArrowRepeat() }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { stopHardwareArrowRepeat() }
+    }
+
+    private func startHardwareArrowRepeat(_ press: UIPress) {
+        stopHardwareArrowRepeat()
+        heldArrowPress = press
+        if !observesApplicationActivity {
+            NotificationCenter.default.addObserver(self, selector: #selector(stopHardwareArrowRepeat),
+                name: UIApplication.willResignActiveNotification, object: nil)
+            observesApplicationActivity = true
+        }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                self.repeatHardwareArrow()
+            }
+        }
+        timer.fireDate = Date().addingTimeInterval(0.4)
+        arrowRepeatTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func repeatHardwareArrow() {
+        guard isKeyboardInputEnabled, textContext.markedRange == nil, let heldArrowPress else {
+            stopHardwareArrowRepeat()
+            return
+        }
+        // Reuse Ghostty's translation, including modifiers and terminal modes.
+        super.pressesBegan([heldArrowPress], with: nil)
+    }
+
+    @objc func stopHardwareArrowRepeat() {
+        arrowRepeatTimer?.invalidate()
+        arrowRepeatTimer = nil
+        heldArrowPress = nil
     }
 
     private func nativePosition(for position: UITextPosition) -> UITextPosition {

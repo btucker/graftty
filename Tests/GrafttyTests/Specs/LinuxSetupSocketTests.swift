@@ -9,7 +9,8 @@ import GrafttyRemoteClient
 struct LinuxSetupSocketTests {
     @Test("@spec REMOTE-21.23: When the local CLI provisions a Linux host, the socket protocol shall carry only the public client identity and the complete setup result, rejecting invalid SSH destinations.")
     func wireRoundTripsPublicIdentityAndResult() throws {
-        let result = try result()
+        var result = try result()
+        result.toolOutcomes = [.init(component: .codex, status: .failed, message: "Download failed")]
         for request in [NotificationMessage.linuxSetupIdentity, .completeLinuxSetup(result)] {
             #expect(request.expectsResponse)
             let bytes = try JSONEncoder().encode(request)
@@ -36,6 +37,7 @@ struct LinuxSetupSocketTests {
         #expect(saved.transport == .directSSH)
         #expect(saved.directEndpoint?.host == "192.0.2.2")
         #expect(saved.directEndpoint?.port == 8801)
+        #expect(saved.maintenanceDestination?.value == "linux-alias")
         #expect(try pins.get(id: saved.id)?.kind == .linux)
         let oldPins = try pins.list()
         for changed in [try result(key: 2), try result(device: "replacement", key: 2)] {

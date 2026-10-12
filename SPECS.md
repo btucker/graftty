@@ -132,11 +132,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
-**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.
+**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Hosts grouping from the worktree column.
 
 **LAYOUT-2.54** While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.
 
-**LAYOUT-2.55** While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
+**LAYOUT-2.55** While the Remote Hosts menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
@@ -148,7 +148,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.61** When a remote worktree is dropped onto another worktree, the application shall reject the reorder if the source and destination belong to different Mac identities, including matching paths.
 
-**LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
+**LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Hosts in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 **LAYOUT-2.63** While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
 
@@ -202,7 +202,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
 
-**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
+**LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
 **LAYOUT-2.96** When a user right-clicks a linked worktree's emoji identity, the application shall offer Change Emoji and, while an emoji is set, Clear Emoji there instead of in the worktree row menu.
 
@@ -301,6 +301,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.147** While a project's icon bytes remain unchanged, the application shall reuse its derived sidebar color and revision across refreshes and recalculate them when the icon changes.
 
 **LAYOUT-2.148** When Change Emoji is chosen from a worktree identity menu, the application shall open the native picker after menu tracking ends with the owning window key and its capture responder ready, including on repeated attempts.
+
+**LAYOUT-2.149** When a worktree is added while recent activity order is selected, the application shall place its creating row first among temporary worktrees, retain its creation time across completion and relaunch, and allow later activity to move other worktrees above it.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -453,6 +455,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-5.12** When the user retries a failed terminal attachment, the application shall preserve the pane identity and session mapping, and ignore failure or close callbacks from its replaced surface.
 
 **TERM-5.13** When attachment recovery confirms that the previous daemon is gone, the application shall reset shell readiness and exclude the previous shell PID until a replacement shell is observed.
+
+**TERM-5.14** When a terminal surface is torn down with output blocked on the app mailbox, the application shall invalidate queued output, drain the mailbox until active output finishes, suppress callbacks to the retiring view, and keep the native surface alive until then.
 
 ### TERM-6.x — Stopping a Worktree
 
@@ -611,6 +615,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.28** When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.
 
 **TERM-12.29** When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.
+
+**TERM-12.30** While a mobile follower scrolls older output, the application shall preserve its latest local row and fractional offset through delayed native scrollbar acknowledgements without repositioning the scroll view.
+
+**TERM-12.31** When an older mobile terminal frame completes presentation after a newer frame of the same size, the application shall retain the newer frame without flickering back to the older image.
+
+**TERM-12.32** When native navigation supersedes a pending mobile follower scroll request, the application shall accept the current native row even if the local acknowledgement was coalesced.
+
+**TERM-12.33** When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1828,7 +1840,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.7** When the user selects a paired Mac, the application shall request `hostPresentation` over the authenticated worktree-management channel and pass a non-empty Ghostty config to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting a `TerminalPaneView`. A missing or empty config is non-fatal and falls back to `libghostty-spm` defaults. The response also carries the Mac's resolved keybindings so terminals mirror desktop presentation without Web Access.
 
-**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its usable terminal viewport to the top and bottom screen edges, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
+**IOS-4.8** While a mobile terminal is displayed fullscreen, the application shall extend its scroll viewport to the top and bottom screen edges while protecting a lone first line below top chrome, keep floating controls within the safe area, and reserve only the keyboard and its control bar when the keyboard is visible.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 
@@ -1900,6 +1912,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
 
+**IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -1924,7 +1938,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-6.x — Input
 
-**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl state.
+**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
 
 **IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the listed transport corrections in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 
@@ -1970,11 +1984,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.24** When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.
 
-**IOS-6.25** While an interactive mobile terminal pane is displayed within an iPad detail column, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.
+**IOS-6.25** If an interactive mobile terminal has only its first line and no scrollback, then the application shall inset that line below top chrome on iPad and iPhone; otherwise, the application shall remove the clearance so terminal content can reach the pane's top and bottom edges.
 
 **IOS-6.26** When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.
 
 **IOS-6.27** While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.
+
+**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.
+
+**IOS-6.29** While the terminal tray's Shift toggle is selected, the application shall send shifted arrow escape sequences and Shift-Tab as back-tab; while Shift is off, it shall send the unmodified arrow and Tab bytes.
+
+**IOS-6.30** When the user toggles tray Shift, the application shall retain its selection across tray key presses until toggled off, and clear it when terminal input becomes ineligible or sticky modifiers are reset.
 
 ### IOS-7.x — Lifecycle
 
@@ -2174,7 +2194,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.7** When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
 
-**IPAD-2.8** While the regular-width iPad detail is visible, the application shall let the terminal tree own the complete detail-column rectangle beneath transparent navigation chrome, with split controls floating over the panes instead of shrinking them.
+**IPAD-2.8** While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
 
@@ -2970,7 +2990,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.19** When agent setup is retried or login profiles print output, Linux setup shall preserve PATH precedence, isolate profile output, and install only executables still missing.
 
-**REMOTE-21.20** When Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.
+**REMOTE-21.20** When CLI Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.
 
 **REMOTE-21.21** When a Linux host launches panes or provider plugin commands, the application shall retain the configured login shell's provider paths and make user-local native installs available without replacing earlier PATH entries.
 
@@ -3021,6 +3041,42 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.18** When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.
 
 **REMOTE-22.19** When a headless host sends a bounded source image, the application shall verify its revision and cache a thumbnail no larger than 64 pixels while rejecting invalid or oversized images.
+
+**REMOTE-22.20** When host maintenance selects a Graftty release, the application shall choose the newest published release with both the host architecture archive and checksum, independently of the Mac bundle version.
+
+**REMOTE-22.21** When an older saved remote host lacks maintenance metadata, the application shall preserve its pairing and leave the system SSH destination unset rather than reuse the Graftty listener.
+
+**REMOTE-22.22** If maintenance discovers a different Graftty identity at the system SSH destination, then the application shall reject it before changing tools, service, pairing, or repositories.
+
+**REMOTE-22.23** When a selected maintenance component fails, the application shall retain other component outcomes and report partial failure without claiming every component succeeded.
+
+**REMOTE-22.24** When maintenance is cancelled, the application shall stop subsequent components and describe an interrupted component's remote outcome as unknown.
+
+**REMOTE-22.25** When selected agent tools are installed on Linux, the application shall use bounded official native installers, verify their executable versions in the user's local bin directory, and keep authentication separate.
+
+**REMOTE-22.26** While a trusted Linux host is connected, the application shall offer Update Host; direct SSH transport alone shall not identify a host as Linux.
+
+**REMOTE-22.27** When Linux host maintenance restarts Graftty, the installer shall preserve the existing service options and require effective KillMode=process without rerunning setup or importing projects.
+
+**REMOTE-22.28** When rediscovery or repeat pairing saves an existing host without maintenance metadata, the application shall preserve its validated system SSH destination; an explicit update shall allow clearing it.
+
+**REMOTE-22.29** When maintenance verifies an existing Linux identity, the application shall compare its exact public key and device ID without transferring private identity data or interpreting identity text as executable code.
+
+**REMOTE-22.30** If the installed Graftty build is newer than the available release or cannot be compared with it, then the application shall require explicit replacement selection before installing that release.
+
+**REMOTE-22.31** When maintenance reconnection is cancelled during teardown, the application shall clear the cancelled connection attempt so a later Connect can recover.
+
+**REMOTE-22.32** When maintenance installs Graftty before agent tools, the application shall verify the reviewed identity and version under the installer lock and continue later components against the installed release without repeating pairing or imports.
+
+**REMOTE-22.33** When fresh Linux setup installs selected missing agent tools, the application shall report each tool outcome before later identity or project setup failures, preserving existing installations and keeping sign-in separate.
+
+**REMOTE-22.34** If the installed Linux service does not own the inspected paired host's state lease, then the application shall reject Graftty maintenance before stopping or replacing that service.
+
+**REMOTE-22.35** When maintenance updates a valid service with whitespace around its executable assignment, the application shall replace exactly one host executable path before restarting and preserve unrelated settings.
+
+**REMOTE-22.36** When maintenance reconnection is cancelled after dialing begins, the application shall cancel that dial, reject connected publication, and allow a later connection to recover.
+
+**REMOTE-22.37** When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
 
 ### REMOTE-23.x
 

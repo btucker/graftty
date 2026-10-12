@@ -58,6 +58,7 @@ struct MainWindow: View {
     @State private var pendingAddWorktree: AddWorktreeRequest?
     @State private var isShowingAddRemoteMacSheet = false
     @State private var isShowingLinuxHostSetupSheet = false
+    @State private var pendingHostMaintenance: LinuxHostMaintenanceRequest?
     @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
@@ -130,6 +131,11 @@ struct MainWindow: View {
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
                 onSetupLinuxHost: presentLinuxHostSetup,
+                onUpdateHost: { remote in
+                    if let pin = remoteMacsModel.maintenanceHost(for: remote) {
+                        pendingHostMaintenance = .init(remote: remote, pinnedHost: pin)
+                    }
+                },
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
@@ -329,6 +335,15 @@ struct MainWindow: View {
                     onConnect: completeLinuxHostSetup
                 )
             }
+        }
+        .sheet(item: $pendingHostMaintenance) { request in
+            LinuxHostMaintenanceSheet(remote: request.remote, pinnedHost: request.pinnedHost,
+                onValidated: { destination in
+                    try remoteMacsModel.saveMaintenanceDestination(destination, for: RemoteMacIdentity(request.remote))
+                }, onReconnect: {
+                    do { try await remoteMacsModel.reconnectAfterMaintenance(request.remote); return true }
+                    catch { return false }
+                })
         }
         .sheet(item: $pendingAddRemoteWorktree) { request in
             AddWorktreeSheet(

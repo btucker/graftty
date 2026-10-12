@@ -1012,23 +1012,23 @@ public final class SessionClient {
         sendInput(Data([0x1B]))
     }
 
-    public func sendTab() {
-        sendInput(Data([0x09]))
+    public func sendTab(shift: Bool = false) {
+        sendInput(TerminalTrayKey.tab.data(shift: shift))
     }
 
-    public func sendArrow(_ direction: ArrowDirection) {
-        let sequence: String
+    public func sendArrow(_ direction: ArrowDirection, shift: Bool = false) {
+        let key: TerminalTrayKey
         switch direction {
         case .up:
-            sequence = "\u{1B}[A"
+            key = .up
         case .down:
-            sequence = "\u{1B}[B"
+            key = .down
         case .left:
-            sequence = "\u{1B}[D"
+            key = .left
         case .right:
-            sequence = "\u{1B}[C"
+            key = .right
         }
-        sendInput(Data(sequence.utf8))
+        sendInput(key.data(shift: shift))
     }
 
     public func sendControl(_ character: ControlCharacter) {

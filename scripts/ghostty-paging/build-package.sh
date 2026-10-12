@@ -31,8 +31,8 @@ zig_bin=$(cd "$(dirname "$zig_bin")" && pwd)/$(basename "$zig_bin")
 xcrun metal --version >/dev/null
 
 renderer_pin=8af6897c0afc63037a8a3efee4162a380e3a4572
-wrapper_pin=52a84d611b1442dbeffa972b37022346a8a32ec6
-renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport)
+wrapper_pin=7dbb9b915fde5a6e2bdd9deefd75d3b60bbe2d6a
+renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state)
 mkdir -p "$cache" "$(dirname "$output")"
 cache=$(cd "$cache" && pwd)
 output=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")

@@ -256,6 +256,7 @@ final class RemoteMacConnectionRegistry {
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
             let state = await existing.connection.currentState()
+            try Task.checkCancellation()
             guard entries[identity]?.id == existing.id else {
                 return try await connect(
                     to: remoteMac,
@@ -279,6 +280,7 @@ final class RemoteMacConnectionRegistry {
                 supersededAttempt = pending
             } else {
                 let completed = try await pending.task.value
+                try Task.checkCancellation()
                 guard var current = entries[identity],
                       current.id == completed.id else {
                     throw CancellationError()
@@ -315,20 +317,16 @@ final class RemoteMacConnectionRegistry {
             }
             do {
                 try ensureCurrentAttempt(attemptID, identity: identity)
+                let state = await entry.connection.currentState()
+                try ensureCurrentAttempt(attemptID, identity: identity)
+                guard !state.isTerminal else {
+                    throw ConnectionError.connectionTerminated(identity)
+                }
             } catch {
                 await close(entry)
                 throw error
             }
             entries[identity] = entry
-
-            let state = await entry.connection.currentState()
-            guard !state.isTerminal else {
-                if entries[identity]?.id == entry.id {
-                    entries[identity] = nil
-                }
-                await close(entry)
-                throw ConnectionError.connectionTerminated(identity)
-            }
             Task { await self.openTeamChannel(for: entry) }
             return entry
         }
@@ -338,9 +336,23 @@ final class RemoteMacConnectionRegistry {
             task: task
         )
         do {
-            let entry = try await task.value
+            let entry = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            if Task.isCancelled {
+                if entries[identity]?.id == entry.id {
+                    entries[identity] = nil
+                    await close(entry)
+                }
+                throw CancellationError()
+            }
             if inFlight[identity]?.id == attemptID {
                 inFlight[identity] = nil
+            }
+            guard entries[identity]?.id == entry.id else {
+                throw CancellationError()
             }
             return entry
         } catch {
@@ -651,7 +663,7 @@ final class RemoteMacConnectionRegistry {
                 reconnectOnTeamClose.insert(entry.id)
                 response = .ok
             } else {
-                response = .error("This host connection is no longer ready to reconnect; check the Remote Macs sidebar")
+                response = .error("This host connection is no longer ready to reconnect; check the Remote Hosts sidebar")
             }
             return (try? JSONEncoder().encode(response)) ?? Data()
         }

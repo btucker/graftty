@@ -20,7 +20,8 @@ struct LinuxHostSetupConnectionController {
                 || ($0.transport == .directSSH && $0.directEndpoint?.host.lowercased() == endpoint.host.lowercased() && $0.directEndpoint?.port == endpoint.port)
         }.map(RemoteMacIdentity.init)
         let prepared = try accept(result, kind: .linux, knownRemotes: known)
-        try model.recordPairingResult(.paired(prepared.host), transport: .directSSH, directEndpoint: endpoint)
+        try model.recordPairingResult(.paired(prepared.host), transport: .directSSH,
+                                      directEndpoint: endpoint, maintenanceDestination: result.destination)
         guard let saved = model.savedRemoteMacs.first(where: {
             $0.id == prepared.host.id && $0.fingerprint == prepared.host.fingerprint
         }) else { throw LinuxHostSetupError.invalidPlan("Could not save the Linux host. Retry setup.") }

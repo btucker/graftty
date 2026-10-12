@@ -13,9 +13,14 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private var nativeRowHeight: CGFloat = 0
     private var pinchStartScale: CGFloat = 1
     private var presentationScale: CGFloat { presentation?.scale ?? 1 }
+    var topContentInset: CGFloat = 0
+    private var protectsFirstLine: Bool { topContentInset > 0 && historyRows == 0 }
+    private var usableViewport: CGSize {
+        CGSize(width: bounds.width, height: max(0, bounds.height - topContentInset))
+    }
     private var presentation: TerminalSnapshotCanvas.Presentation? {
         canvas?.presentation(
-            viewport: bounds.size, nativeRowHeight: nativeRowHeight,
+            viewport: usableViewport, nativeRowHeight: nativeRowHeight,
             historyRows: historyRows, zoomScale: followerZoomScale,
             fillsSpareHeightWithHistory: includesAdditionalHistory
         )
@@ -53,9 +58,11 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         configure(canvas: canvas, nativeRowHeight: nativeRowHeight, columns: columns)
         adjusting = true
         if let presentation {
-            contentOffset = presentation.anchoredOffset(
+            var offset = presentation.anchoredOffset(
                 from: oldFrame, oldOffset: oldOffset, to: terminalView.frame, anchor: point
             )
+            if protectsFirstLine { offset.y = 0 }
+            contentOffset = offset
         }
         adjusting = false
         scrollViewDidScroll(self)
@@ -69,11 +76,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     var showsAdditionalHistory = false {
         didSet {
             guard showsAdditionalHistory != oldValue else { return }
-            #if GRAFTTY_PAGED_HISTORY
-            updateHistoryTimer()
-            #endif
+            updateContentTimer()
         }
     }
+    var onContentUpdate: (() -> Void)? {
+        didSet { updateContentTimer() }
+    }
+    private var contentTimer: Timer?
     private var includesAdditionalHistory: Bool {
         #if GRAFTTY_PAGED_HISTORY
         showsAdditionalHistory
@@ -89,7 +98,6 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private let historySession = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
     private var lastHistory: TerminalHistorySlice?
     private var lastHistoryFittedPixels: CGSize?
-    private var historyTimer: Timer?
     #endif
 
     init(terminalView: UITerminalView) {
@@ -117,11 +125,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         return scrollbar.total - min(scrollbar.total, scrollbar.len)
     }
 
+    var hasScrollback: Bool { historyRows > 0 }
+
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {
         guard window != nil, includesAdditionalHistory, let canvas else { return 0 }
         return TerminalSnapshotCanvas.additionalHistoryRows(
-            containerHeight: bounds.height, screenHeight: canvas.size.height * presentationScale,
+            containerHeight: usableViewport.height, screenHeight: canvas.size.height * presentationScale,
             rowHeight: rowHeight, columns: columns, precedingRows: .max
         )
     }
@@ -141,8 +151,21 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         reconcile(wasAtBottom: wasAtBottom, withinCanvas: withinCanvas)
     }
 
-    func updateScrollbar(_ value: TerminalScrollbar) {
-        guard value != scrollbar else { return }
+    func updateScrollbar(_ reported: TerminalScrollbar) {
+        #if GRAFTTY_PAGED_HISTORY
+        // Callbacks can lag behind scrolling and live output. Sample current
+        // native state once so old callbacks cannot reposition the canvas.
+        let value = terminalView.surface?.currentScrollbar ?? reported
+        #else
+        let value = reported
+        #endif
+        let geometryChanged = value.total != scrollbar?.total || value.len != scrollbar?.len
+        guard value != scrollbar || value.offset != nativeRow else { return }
+        if !geometryChanged, value.offset == nativeRow {
+            // Acknowledging our current row needs no contentOffset assignment.
+            scrollbar = value
+            return
+        }
         let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
@@ -159,16 +182,18 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             contentSize = bounds.size
             contentOffset = .zero
             terminalView.transform = .identity
-            terminalView.frame = CGRect(origin: .zero, size: bounds.size)
+            terminalView.frame = CGRect(x: 0, y: topContentInset,
+                                        width: usableViewport.width, height: usableViewport.height)
             #if GRAFTTY_PAGED_HISTORY
             removeHistoryView()
             #endif
             return
         }
         let screenHeight = canvas.size.height * presentationScale
-        let overflow = max(0, screenHeight - bounds.height)
-        contentSize = presentation.contentSize
-        let offset = CGFloat(nativeRow) * rowHeight
+        let overflow = max(0, screenHeight - usableViewport.height)
+        contentSize = CGSize(width: presentation.contentSize.width,
+                             height: presentation.contentSize.height + topContentInset)
+        let offset = protectsFirstLine ? 0 : CGFloat(nativeRow) * rowHeight
             + (wasAtBottom && nativeRow == historyRows ? overflow : max(0, withinCanvas))
         contentOffset = CGPoint(x: min(contentOffset.x, max(0, contentSize.width - bounds.width)),
                                 y: min(offset, max(0, contentSize.height - bounds.height)))
@@ -177,7 +202,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
 
     private func positionCanvas(_ canvas: TerminalSnapshotCanvas.Layout) {
         guard let presentation else { return }
-        let frame = presentation.screenFrame(at: nativeRow)
+        let frame = presentation.screenFrame(at: nativeRow).offsetBy(dx: 0, dy: topContentInset)
         terminalView.bounds = CGRect(origin: .zero, size: canvas.size)
         terminalView.center = CGPoint(x: frame.midX, y: frame.midY)
         terminalView.transform = CGAffineTransform(scaleX: presentationScale, y: presentationScale)
@@ -186,24 +211,27 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         #endif
     }
 
-    #if GRAFTTY_PAGED_HISTORY
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        updateHistoryTimer()
+        updateContentTimer()
     }
 
-    private func updateHistoryTimer() {
-        historyTimer?.invalidate()
-        historyTimer = nil
-        if window != nil && showsAdditionalHistory {
+    private func updateContentTimer() {
+        contentTimer?.invalidate()
+        contentTimer = nil
+        if window != nil && (includesAdditionalHistory || onContentUpdate != nil) {
             let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
+                MainActor.assumeIsolated {
+                    self?.refreshAdditionalHistory()
+                    self?.onContentUpdate?()
+                }
             }
             RunLoop.main.add(timer, forMode: .common)
-            historyTimer = timer
+            contentTimer = timer
         }
     }
 
+    #if GRAFTTY_PAGED_HISTORY
     private func removeHistoryView() {
         historyView?.removeFromSuperview()
         historyView = nil
@@ -220,7 +248,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             return
         }
         let rows = TerminalSnapshotCanvas.additionalHistoryRows(
-            containerHeight: bounds.height, screenHeight: canvas.size.height * presentationScale,
+            containerHeight: usableViewport.height, screenHeight: canvas.size.height * presentationScale,
             rowHeight: rowHeight, columns: columns, precedingRows: nativeRow
         )
         guard rows > 0, let source = terminalView.surface,

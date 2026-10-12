@@ -3,6 +3,19 @@ import Testing
 @testable import GrafttyKit
 
 struct LinuxHostSetupExecutionTests {
+    @Test("@spec REMOTE-22.33: When fresh Linux setup installs selected missing agent tools, the application shall report each tool outcome before later identity or project setup failures, preserving existing installations and keeping sign-in separate.")
+    func reportsToolsBeforeLaterSetupFailure() async throws {
+        let ssh = RecordingSetupSSH(trustFailure: true, toolFailure: true)
+        let outcomes = SetupToolOutcomes()
+        let client = LinuxHostTrustRequest(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 3, count: 32).base64EncodedString())
+        let plan = LinuxHostSetupPlan(destination: try .init("alias"), destinationRoot: "~/projects", projects: [], archive: .release(version: "1.0.0"), client: client, agentTools: [.codex, .claude])
+        await #expect(throws: LinuxHostSetupError.self) {
+            try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan, toolOutcome: { await outcomes.append($0) })
+        }
+        #expect(await outcomes.values.map(\.status) == [.failed, .succeeded])
+        let toolCommand = try #require(await ssh.calls.first { $0.arguments.last?.contains("chatgpt.com/codex") == true })
+        #expect(toolCommand.arguments.last?.contains("if command -v codex") == true)
+    }
     @Test("@spec REMOTE-21.8: When Linux setup installs a release, the application shall use an explicit version and architecture archive, verify its SHA-256 checksum, install a user service, and exchange only public identity over authenticated OpenSSH.")
     func releaseAndPublicTrust() async throws {
         let ssh = RecordingSetupSSH()
@@ -28,11 +41,11 @@ struct LinuxHostSetupExecutionTests {
         #expect(Set(keys.keys) == Set(["deviceID", "displayName", "publicKey"]))
     }
 
-    @Test("@spec REMOTE-21.20: When Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.")
+    @Test("@spec REMOTE-21.20: When CLI Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.")
     func agentsBeforePairing() async throws {
         for failedProvider in ["", "claude", "codex"] {
             let ssh = RecordingSetupSSH(agentFailure: failedProvider)
-            let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()))
+            let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()), agentTools: [.claude, .codex], requireAgentTools: true)
             do {
                 _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
                 #expect(failedProvider.isEmpty)
@@ -160,20 +173,24 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
     private let agentFailure: String
     private let dataDirectory: String
     private let executeStaging: Bool
+    private let trustFailure: Bool
+    private let toolFailure: Bool
     private(set) var stagingPath: String?
     private(set) var stagingPermissions: Int?
-    init(ubuntuVersion: String = "24.04", agentFailure: String = "", installFailure: CLIOutput? = nil, dataDirectory: String = "/home/developer/.local/share", executeStaging: Bool = false) {
+    init(ubuntuVersion: String = "24.04", agentFailure: String = "", installFailure: CLIOutput? = nil, dataDirectory: String = "/home/developer/.local/share", executeStaging: Bool = false, trustFailure: Bool = false, toolFailure: Bool = false) {
         self.ubuntuVersion = ubuntuVersion
         self.agentFailure = agentFailure
         self.installFailure = installFailure
         self.dataDirectory = dataDirectory
         self.executeStaging = executeStaging
+        self.trustFailure = trustFailure
+        self.toolFailure = toolFailure
     }
     func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         calls.append(.init(arguments: arguments, input: try inputFile.map { try Data(contentsOf: $0) }))
         let command = arguments.last ?? ""
         if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n\(dataDirectory)\n", stderr: "", exitCode: 0) }
-        if command.contains("umask 077; mkdir -p --") {
+        if command.contains("mktemp -d"), command.contains(".setup-") {
             if executeStaging {
                 let result = try await CLIRunner().run(command: "/bin/sh", args: ["-c", command], at: NSHomeDirectory())
                 let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -190,12 +207,19 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
         if !agentFailure.isEmpty, command.contains(agentFailure == "claude" ? "https://claude.ai/install.sh" : "https://chatgpt.com/codex/install.sh") {
             return .init(stdout: "", stderr: "Installer failed", exitCode: 43)
         }
+        if command.contains("chatgpt.com/codex"), toolFailure { return .init(stdout: "", stderr: "Codex download failed", exitCode: 42) }
         if command.contains("trust-client") {
+            if trustFailure { return .init(stdout: "invalid identity JSON", stderr: "", exitCode: 0) }
             let identity = LinuxHostIdentity(deviceID: "linux", displayName: "Ubuntu", publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801)
             return .init(stdout: String(decoding: try JSONEncoder().encode(identity), as: UTF8.self), stderr: "", exitCode: 0)
         }
         return .init(stdout: "", stderr: "", exitCode: 0)
     }
+}
+
+private actor SetupToolOutcomes {
+    private(set) var values: [LinuxHostComponentOutcome] = []
+    func append(_ value: LinuxHostComponentOutcome) { values.append(value) }
 }
 
 struct LinuxHostCompatibilityTests {

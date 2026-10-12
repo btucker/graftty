@@ -17,6 +17,8 @@ struct RemoteSetupLinuxCLITests {
         #expect(plan.destinationRoot == "~/code")
         #expect(plan.archive == .release(version: "1.2.3"))
         #expect(plan.projects == [.init(localPath: "/canonical/project", branch: "feature", directoryName: "project")])
+        #expect(plan.agentTools == [.claude, .codex])
+        #expect(plan.requireAgentTools)
         #expect(command.json)
     }
 

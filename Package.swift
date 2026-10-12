@@ -17,7 +17,7 @@ let ghosttyDependency: Package.Dependency = {
     if let path = localGhosttyPath {
         return .package(name: "libghostty-spm", path: path)
     }
-    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "52a84d611b1442dbeffa972b37022346a8a32ec6")
+    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "7dbb9b915fde5a6e2bdd9deefd75d3b60bbe2d6a")
 }()
 
 // CI runs `swift build` / `swift test` which default to the debug
@@ -110,6 +110,7 @@ let package = Package(
             resources: [
                 .copy("Web/Resources"),
                 .copy("AgentPlugins"),
+                .copy("HostSetup/Resources/linux-install.sh"),
                 // Vendored ghostty runtime resources (CONFIG-2.5) — see
                 // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
                 // `terminfo` land at the bundle root as siblings, mirroring
@@ -223,7 +224,7 @@ let package = Package(
         .testTarget(
             name: "GrafttyKitTests",
             dependencies: ["GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
-            sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift",
+            sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift",
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,
