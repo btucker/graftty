@@ -321,6 +321,18 @@ struct RemoteTerminalSurfaceBackendTests {
             client.ownerResizes().isEmpty,
             "an ownership snapshot already carrying the live grid must not start a resize/broadcast loop"
         )
+        let loss = AsyncStream<Void>.makeStream()
+        backend.bindOwnershipLoss { loss.continuation.yield(()) }
+        let replacementOwner = try DisplayOwnershipSnapshot(sessionName: "main",
+            ownerClientID: DisplayClientID("other-client"), ownerKind: .ios,
+            grid: DisplayGrid(cols: 80, rows: 24), epoch: 3, revision: 3)
+        client.deliver(.text(WebControlEnvelope.ownership(replacementOwner).encoded()))
+        var losses = loss.stream.makeAsyncIterator()
+        _ = await losses.next()
+        try backend.write(Data("stale completion literal".utf8), claimEngagement: false)
+        #expect(client.sentFrames() == [.binary(Data("queued".utf8))])
+        #expect(client.takeControlCount() == 1)
+        loss.continuation.finish()
     }
 
     @Test("""
@@ -727,6 +739,10 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
 
     func ownerResizes() -> [RecordedOwnerResize] {
         lock.withLock { recordedOwnerResizes }
+    }
+
+    func takeControlCount() -> Int {
+        lock.withLock { recordedTakeControls.count }
     }
 
     func waitForControlCounts(

@@ -140,6 +140,7 @@ extension SurfaceNSView {
     }
 
     @objc func pasteToTerminal(_ sender: Any?) {
+        agentCompletion.invalidateBoundary()
         bindingAction("paste_from_clipboard")
     }
 
@@ -182,6 +183,7 @@ extension SurfaceNSView {
     }
 
     @objc func toggleReadonly(_ sender: Any?) {
+        agentCompletion.invalidateBoundary()
         bindingAction("toggle_readonly")
         // Flip our local flag so the next menu open has the right
         // checkmark. libghostty owns the authoritative state; this is
@@ -203,13 +205,7 @@ extension SurfaceNSView {
     /// NUL-required but must be sized in UTF-8 bytes, matching upstream.
     fileprivate func bindingAction(_ action: String) {
         guard let s = self.surface else { return }
-        _ = action.withCString { cstr in
-            ghostty_surface_binding_action(
-                s,
-                cstr,
-                UInt(action.lengthOfBytes(using: .utf8))
-            )
-        }
+        _ = surfaceOperations.bindingAction(s, action)
     }
 }
 

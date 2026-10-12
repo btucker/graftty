@@ -1049,6 +1049,41 @@ struct RemoteMacsModelTests {
         ])
     }
 
+    @Test("@spec TEAM-15.9: When a relayed terminal requests agent completion, the application shall fetch the terminal-owning host's catalog, preserve its routing addresses, and map the current worktree to the viewer's opaque ID for project priority.")
+    func relayedAgentCompletionUsesTerminalOwner() async throws {
+        let path = "/repos/app/.worktrees/feature"
+        let candidate = AgentCompletionCandidate(address: path + "#codex", projectPath: "/repos/app",
+            projectName: "app", worktreePath: path, worktreeName: "feature", hostName: "This Mac", runtime: "codex")
+        let recorder = RemoteMacsModelManagementRecorder(response: .agentCompletions([candidate]))
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac,
+                createdAt: Date(), connection: RemoteMacsModelRecordingConnection(managementRecorder: recorder),
+                paneEnvironment: RemoteMacPaneEnvironment(worktreePanesStore: nil, paneControlClient: nil))
+        })
+        let remote = try remoteMac()
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        try store.add(remote)
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        registry.onPaneSnapshot(RemoteMacIdentity(remote), [
+            WorktreePanes(path: path, displayName: "feature", repoDisplayName: "app", repositoryID: "/repos/app",
+                displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil,
+                origin: WorktreeOrigin(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
+        ])
+        let promoted = try #require(model.promotedWorktreesForRelay().first)
+        let response = await model.sendRelayedWorktreeManagement(.worktreeAgentCompletions(worktreeID: promoted.path))
+        guard case .agentCompletions(let candidates) = response else {
+            Issue.record("Expected destination catalog")
+            return
+        }
+        #expect(candidates.first?.address == path + "#codex")
+        #expect(candidates.first?.projectPath == "/repos/app")
+        #expect(candidates.first?.worktreePath == promoted.path)
+        #expect(await recorder.requests() == [.worktreeAgentCompletions(worktreeID: path)])
+    }
+
     @Test("direct and relayed layout commands forward opaque targets")
     func directAndRelayedOpenAndLayoutCommandsForwardOpaqueTargets()
         async throws {
@@ -2029,6 +2064,9 @@ private actor RemoteMacsModelPaneControlRecorder:
 private actor RemoteMacsModelManagementRecorder:
     WorktreeManagementChannelDriver {
     private var recordedRequests: [WorktreeManagementRequest] = []
+    private let response: WorktreeManagementResponse
+
+    init(response: WorktreeManagementResponse = .ok) { self.response = response }
 
     func open() async throws {}
     nonisolated func close() {}
@@ -2037,7 +2075,7 @@ private actor RemoteMacsModelManagementRecorder:
         _ request: WorktreeManagementRequest
     ) async throws -> WorktreeManagementResponse {
         recordedRequests.append(request)
-        return .ok
+        return response
     }
 
     func requests() -> [WorktreeManagementRequest] {

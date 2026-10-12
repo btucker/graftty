@@ -700,11 +700,14 @@ struct SingleSessionView: View {
                     VStack(spacing: 0) {
                         terminalContent
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        if agentCompletion.isActive, isPaneFocused {
-                            AgentCompletionPicker(model: agentCompletion)
-                                .frame(maxHeight: 240)
-                                .padding(.horizontal, 8)
-                        }
+                            .overlay(alignment: .bottom) {
+                                if agentCompletion.isActive, isPaneFocused {
+                                    AgentCompletionPicker(model: agentCompletion)
+                                        .frame(maxHeight: 240)
+                                        .padding(.horizontal, 8)
+                                        .padding(.bottom, 8)
+                                }
+                            }
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
