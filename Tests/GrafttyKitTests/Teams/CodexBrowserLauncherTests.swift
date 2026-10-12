@@ -4,6 +4,27 @@ import Testing
 
 #if os(macOS)
 struct CodexBrowserLauncherTests {
+    @Test("@spec PORTS-5.44: When browser-hook Codex builds share a cache directory or output directory, the application shall serialize access to shared build artifacts and published executables.")
+    func concurrentBuildsProtectSharedCacheAndOutput() throws {
+        try runBrowserFixture("test-build-lock.py")
+    }
+
+    @Test("@spec PORTS-5.45: When an already patched Codex source tree is supplied, the patch tool shall reject repeated application without modifying source and preserve successful patch validation.")
+    func repeatedPatchPreservesSourceAndValidation() throws {
+        try runBrowserFixture("test-apply.py")
+    }
+
+    private func runBrowserFixture(_ script: String) throws {
+        var repository = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 { repository.deleteLastPathComponent() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/codex-browser/\(script)").path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     @Test("@spec PORTS-5.42: When a wrapper-managed browser-hook Codex TUI offers an authorization URL, the application shall send the unchanged URL and pane session through Graftty open while its app-server continues to run the original native Codex binary.")
     func fullWrapperKeepsBackendAndRoutesBrowserOffer() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-browser-launch-\(UUID().uuidString)")
@@ -70,7 +91,7 @@ struct CodexBrowserLauncherTests {
         #expect(tuiArguments.suffix(2) == ["resume", "thread-fixture"])
     }
 
-    @Test("@spec PORTS-5.41: When a Mac pane launches a wrapper-managed Codex TUI and an installed browser-hook TUI matches its native Codex version, the application shall route TUI browser URLs through the pane's Graftty helper, retain the original app-server binary, and use the original TUI outside a pane or after a version mismatch.")
+    @Test("@spec PORTS-5.41: When a Mac pane launches a wrapper-managed Codex TUI and an installed browser-hook TUI matches its native Codex version, the application shall route HTTP(S) TUI browser URLs through the pane's Graftty helper, retain the original app-server binary, and use the original TUI outside a pane or after a version mismatch.")
     func selectsMatchingTUIOnlyInsidePane() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-browser-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

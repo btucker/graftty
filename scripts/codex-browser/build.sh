@@ -23,6 +23,11 @@ if [[ ${GRAFTTY_CODEX_BUILD_LOCK_HELD:-} != "$output" ]]; then
 fi
 fingerprint=$({ printf '%s\n' "$pin" "$version"; cat "$patch_dir/browser_command.rs" "$patch_dir/apply.py" "$patch_dir/build.sh"; } | shasum -a 256 | awk '{print $1}')
 work="$cache/$fingerprint"
+if [[ ${GRAFTTY_CODEX_CACHE_LOCK_HELD:-} != "$work" ]]; then
+  # Distinct output directories can still share this checkout and build tree.
+  exec /usr/bin/lockf -k "$cache/$fingerprint.lock" env GRAFTTY_CODEX_CACHE_LOCK_HELD="$work" \
+    /bin/bash "$patch_dir/build.sh" "$cache" "$output"
+fi
 source="$work/source"
 mkdir -p "$work"
 if [[ ! -f "$work/patched" ]]; then
