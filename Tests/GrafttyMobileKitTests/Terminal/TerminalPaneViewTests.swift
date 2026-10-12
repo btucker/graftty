@@ -319,7 +319,7 @@ struct TerminalPaneViewTests {
         #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
     }
 
-    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
+    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
     func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
         let container = TerminalInputContainerView(frame: .zero)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
@@ -1568,7 +1568,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the listed transport corrections in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
+@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands, the listed transport corrections in `IOS-6.19`, and active agent completion in `IOS-6.32`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 """)
     func eligibleTerminalBecomesFirstResponderInWindow() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -1590,7 +1590,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.18: When a hardware press does not match an enabled application command or a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+@spec IOS-6.18: When a hardware press does not match an enabled application command, a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, or active agent completion in `IOS-6.32`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape shall use active agent completion under `IOS-6.34` or otherwise remain a `SessionClient.sendEscape()` command under `IOS-6.1`.
 """)
     func containerPublishesNoGeneralTerminalKeyCommands() {
         let container = TerminalInputContainerView(frame: .zero)
