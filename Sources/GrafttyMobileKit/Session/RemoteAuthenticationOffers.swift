@@ -1,6 +1,15 @@
 import Foundation
 import GrafttyProtocol
 
+enum RemoteOpenPresentation {
+    static func directBrowserOffer(in offers: [RemoteOpenOffer]) -> RemoteOpenOffer? {
+        guard offers.count == 1, let offer = offers.first,
+              let scheme = offer.url?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return offer
+    }
+}
+
 /// Retained by the host connection coordinator, across pane navigation and focus changes.
 struct RemoteAuthenticationOffers {
     private var seen: [UUID: Date] = [:]

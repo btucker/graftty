@@ -3602,6 +3602,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.42** When a wrapper-managed browser-hook Codex TUI offers an authorization URL, the application shall send the unchanged URL and pane session through Graftty open while its app-server continues to run the original native Codex binary.
 
+**PORTS-5.43** When the mobile Open control has one HTTP or HTTPS resource offer, the application shall open that offer directly, and shall retain the resource menu for files or multiple offers.
+
 ## PROJECT — PROJECT
 
 ### PROJECT-1.x
