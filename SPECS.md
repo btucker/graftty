@@ -3656,6 +3656,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.45** When an already patched Codex source tree is supplied, the patch tool shall reject repeated application without modifying source and preserve successful patch validation.
 
+**PORTS-5.46** When successive TUI browser handoffs overlap, the application shall enqueue them without blocking the TUI and preserve submission order even when the first helper stalls.
+
 ## PROJECT — PROJECT
 
 ### PROJECT-1.x

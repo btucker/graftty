@@ -17,7 +17,7 @@ The build records source commit, patch fingerprint, binary hash, and dependency 
 
 The wrapper selects the managed TUI only for its own pane sessions and only when its version matches the installed native Codex. Explicit `--remote` commands, administration commands, and launches outside a pane retain the original TUI. After an upstream Codex update, a version mismatch prints a warning and uses the original TUI. Update the source pin and verify the hook before building for another version.
 
-The configured helper receives the original URL as one argument and enqueues a Graftty offer. A successful handoff does not indicate OAuth success. A failed handoff produces a TUI error and does not open the Mac browser. Handoff work runs off the TUI event loop with an eight-second timeout. Quitting during a stalled handoff can wait for that timeout.
+The configured helper receives the original URL as one argument and enqueues a Graftty offer. A successful handoff does not indicate OAuth success. A failed handoff produces a TUI error and does not open the Mac browser. Handoffs run in submission order on blocking workers, with an eight-second timeout per helper and room for eight waiting URLs. A full queue reports an error immediately. Queuing does not block the TUI event loop. Shutdown waits for accepted handoffs to finish or time out. The optional Rust-backed Swift regression runs when the pinned Rust toolchain is available; hook builds always run the Rust tests.
 
 To disable the hook for future sessions, remove the managed `codex-browser/codex` executable. Existing Codex processes retain their current executable until restarted.
 

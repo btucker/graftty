@@ -4,6 +4,38 @@ import Testing
 
 #if os(macOS)
 struct CodexBrowserLauncherTests {
+    private static var rustCompiler: String? {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["rustup", "which", "--toolchain", "1.95.0", "rustc"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let path = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        process.waitUntilExit()
+        return process.terminationStatus == 0 && FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }
+
+    @Test("@spec PORTS-5.46: When successive TUI browser handoffs overlap, the application shall enqueue them without blocking the TUI and preserve submission order even when the first helper stalls.", .enabled(if: rustCompiler != nil))
+    func browserHandoffsPreserveSubmissionOrder() throws {
+        var repository = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 { repository.deleteLastPathComponent() }
+        let binary = URL.temporaryDirectory.appendingPathComponent("graftty-handoff-tests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: binary) }
+        func run(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = arguments
+            try process.run()
+            process.waitUntilExit()
+            try #require(process.terminationStatus == 0)
+        }
+        try run([try #require(Self.rustCompiler), "--test", repository.appendingPathComponent("scripts/codex-browser/browser_command.rs").path, "-o", binary.path])
+        try run([binary.path, "delayed_first_handoff_preserves_submission_order"])
+    }
+
     @Test("@spec PORTS-5.44: When browser-hook Codex builds share a cache directory or output directory, the application shall serialize access to shared build artifacts and published executables.")
     func concurrentBuildsProtectSharedCacheAndOutput() throws {
         try runBrowserFixture("test-build-lock.py")
