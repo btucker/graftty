@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LinuxHostDestination: Sendable, Equatable {
+public struct LinuxHostDestination: Codable, Sendable, Hashable {
     public let value: String
     public init(_ value: String) throws {
         let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -10,6 +10,14 @@ public struct LinuxHostDestination: Sendable, Equatable {
             throw LinuxHostSetupError.invalidPlan("Enter an SSH config alias, hostname, or user@hostname, without SSH options.")
         }
         self.value = value
+    }
+
+    public init(from decoder: Decoder) throws {
+        try self.init(decoder.singleValueContainer().decode(String.self))
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
     }
 }
 
@@ -76,13 +84,15 @@ public struct LinuxHostSetupPlan: Sendable, Equatable {
     public let projects: [LinuxHostProject]
     public let archive: LinuxHostArchive
     public let client: LinuxHostTrustRequest
+    public let agentTools: [LinuxHostComponent]
 
-    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest) {
+    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest, agentTools: [LinuxHostComponent] = []) {
         self.destination = destination
         self.destinationRoot = destinationRoot
         self.projects = projects
         self.archive = archive
         self.client = client
+        self.agentTools = agentTools.filter { $0 != .graftty }
     }
 }
 
@@ -103,6 +113,7 @@ public struct LinuxHostSetupResult: Sendable, Equatable {
     public let openSSH: LinuxHostResolvedSSH
     public let destination: LinuxHostDestination
     public let projectPaths: [String]
+    public var toolOutcomes: [LinuxHostComponentOutcome] = []
 }
 
 public enum LinuxHostSetupError: Error, LocalizedError, Sendable, Equatable {

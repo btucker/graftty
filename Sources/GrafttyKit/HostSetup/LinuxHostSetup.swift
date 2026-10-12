@@ -16,6 +16,7 @@ public struct LinuxHostSetup: Sendable {
 
     public func run(
         plan: LinuxHostSetupPlan,
+        toolOutcome: @escaping @Sendable (LinuxHostComponentOutcome) async -> Void = { _ in },
         progress: @escaping @Sendable (LinuxHostSetupProgress) async -> Void = { _ in }
     ) async throws -> LinuxHostSetupResult {
         try plan.client.validate()
@@ -73,6 +74,16 @@ public struct LinuxHostSetup: Sendable {
             _ = try await remote(plan.destination, operation: "Uploading development archive", command: "umask 077; cat > \(LinuxHostScripts.quote(staging + "/archive.tar.gz"))", inputFile: archive)
         }
         _ = try await remote(plan.destination, operation: "Installing Linux host and user service", command: LinuxHostScripts.install(staging: staging, archiveURL: archiveURL))
+        var toolOutcomes: [LinuxHostComponentOutcome] = []
+        for tool in plan.agentTools {
+            await progress(.init(message: "Installing missing \(tool.title)", completed: 2, total: total))
+            do {
+                let output = try await remote(plan.destination, operation: "Installing missing \(tool.title)", command: LinuxHostToolScripts.install(tool, onlyIfMissing: true))
+                toolOutcomes.append(.init(component: tool, status: .succeeded, message: output.stdout))
+            } catch is CancellationError { throw CancellationError() }
+            catch { toolOutcomes.append(.init(component: tool, status: .failed, message: error.localizedDescription)) }
+            if let outcome = toolOutcomes.last { await toolOutcome(outcome) }
+        }
         await progress(.init(message: "Exchanging Graftty public identities", completed: 2, total: total))
         let trustFile = local.appendingPathComponent("trust.json")
         try JSONEncoder().encode(plan.client).write(to: trustFile, options: .atomic)
@@ -94,7 +105,7 @@ public struct LinuxHostSetup: Sendable {
         }
         try Task.checkCancellation()
         await progress(.init(message: "Connecting to Linux Graftty", completed: total - 1, total: total))
-        return LinuxHostSetupResult(identity: identity, openSSH: resolved, destination: plan.destination, projectPaths: paths)
+        return LinuxHostSetupResult(identity: identity, openSSH: resolved, destination: plan.destination, projectPaths: paths, toolOutcomes: toolOutcomes)
     }
 
     private func remote(_ destination: LinuxHostDestination, operation: String, command: String, inputFile: URL? = nil) async throws -> CLIOutput {

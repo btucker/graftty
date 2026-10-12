@@ -210,7 +210,7 @@ struct SidebarNavigationTests {
         #expect(SidebarActivityCounts(items: []).attentionByProject.isEmpty)
     }
 
-    @Test("@spec LAYOUT-2.53: While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.")
+    @Test("@spec LAYOUT-2.53: While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Hosts grouping from the worktree column.")
     func projectOwnerContext() {
         let local = RemoteDeviceID(value: "local")
         let remote = RemoteDeviceID(value: "remote")

@@ -32,12 +32,13 @@ administrator to run `sudo loginctl enable-linger USER`, then retry.
 
 ## Install and connect
 
-1. In Graftty's remote connections menu, choose **Set Up Linux Host…**.
+1. In Graftty's **Remote Hosts** menu, choose **Set Up Linux Host…**.
 2. Enter the SSH destination and Linux project root.
 3. Select a release version that includes Linux archives. For a local build,
    choose **Choose Development Archive…** and select the archive for the host's CPU.
-4. Select the local repositories to import and choose a branch for each.
-5. Choose **Set Up and Connect**.
+4. Review **Install Codex if missing** and **Install Claude Code if missing**. Both are selected by default. Existing installations are preserved.
+5. Select the local repositories to import and choose a branch for each.
+6. Choose **Set Up and Connect**.
 
 The setup flow verifies release archive checksums and checks that the host, CLI, and terminal binaries can execute before modifying an existing installation. Incompatible runtime libraries or architectures produce an error. It then installs a service for your Linux
 account, and exchanges public identity keys through your existing SSH connection.
@@ -50,7 +51,10 @@ fetch or push using the restored origin.
 
 ## Prepare development tools and agents
 
-Install the project's compilers, dependencies, and agent executables on Linux.
+Install the project's compilers and dependencies on Linux. The Mac setup wizard
+can install missing Codex and Claude executables using their official native
+installers. Installing an archive manually with `install.sh` does not install
+agent tools; install them separately or use **Update Host…** after connecting.
 Authenticate Codex or Claude using that provider's Linux CLI. Mac credentials
 and installed tools are not copied during setup.
 
@@ -63,6 +67,41 @@ To install the available provider plugins explicitly, run:
 
 Use ordinary Graftty worktree, pane, and team commands inside the remote terminal.
 The host exports its socket and state paths to each pane.
+
+## Update a connected Linux host
+
+1. Install Python 3 and OpenSSL on Linux for maintenance identity checks.
+2. In **Remote Hosts**, choose **Update Host…** beside the connected Linux host.
+3. Review its system SSH destination and choose **Check Host**. Older saved
+   hosts need an SSH destination entered once. Use an SSH config alias for custom
+   SSH ports; Graftty's terminal listener is a separate endpoint.
+4. Review Graftty, Codex, and Claude Code. All start selected. Graftty becomes
+   unavailable if no published release has both the architecture archive and
+   checksum; you can still update agent tools.
+5. If the current Graftty build is newer or cannot be compared with the release,
+   explicitly select its replacement. Ordinary upgrades need no extra selection.
+6. Choose **Update Selected** and review each component's result.
+
+Graftty selects the newest published Linux release allowed by your prerelease
+update setting. It verifies the saved host identity before changes and again
+inside the installation lock. It also verifies that the installed user service
+owns the paired host's state. Foreground hosts and services with an overridden
+`ExecStart` require manual Graftty updates. Codex and Claude maintenance remains
+available independently.
+
+Maintenance preserves pairing, repositories, terminal sessions, service ports,
+other service options, and autostart settings. It restarts the Graftty user
+service and waits for reconnection. New terminal processes include
+`~/.local/bin` in their tool search path.
+
+Native Claude updates preserve its configured channel. Package-managed or
+custom tools require **Replace custom Codex or Claude installations**; this
+installs the native tool in `~/.local/bin` and may shadow another command.
+Authenticate agents on Linux separately. Mac credentials are never copied.
+
+Cancellation stops subsequent components. An interrupted SSH command can still
+finish remotely, so an unknown result requires inspecting the host before
+retrying. Successful components remain listed even if another component fails.
 
 ## Inspect or restart the host
 
