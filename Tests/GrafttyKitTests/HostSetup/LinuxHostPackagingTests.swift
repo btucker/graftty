@@ -2,6 +2,17 @@ import Foundation
 import Testing
 
 struct LinuxHostPackagingTests {
+    @Test("@spec DIST-4.7: If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.")
+    func transientDependencyDownloadsAreRetried() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "ZmxBuildTests"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     private var repository: URL {
         var path = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { path.deleteLastPathComponent() }
