@@ -2,6 +2,7 @@
 import GhosttyTerminal
 import GrafttyCommandUI
 import GrafttyProtocol
+import SwiftUI
 import Testing
 import UIKit
 @testable import GrafttyMobileKit
@@ -31,6 +32,50 @@ struct MobileAgentCompletionTests {
                      modifiers: UIKeyModifierFlags = []) -> TerminalHardwareKeyEvent {
         .init(usage: UInt16(usage.rawValue), characters: text,
               charactersIgnoringModifiers: text, modifierFlags: modifiers)
+    }
+
+    @Test func focusTapPreservesPercentActivationWhilePointerTapInvalidatesIt() {
+        let (container, model, output) = setup()
+        container.simulateAnyTouchBeganForTesting()
+        container.terminalView.insertText("%")
+        #expect(model.isActive)
+        #expect(output.texts.isEmpty)
+        container.terminalView.insertText("pending")
+        container.simulateAnyTouchBeganForTesting()
+        #expect(!model.isActive)
+        #expect(output.texts == ["%pending"])
+        model.cancel(preserveLiteral: false)
+        container.simulateAnyTouchBeganForTesting(changesCursor: true)
+        container.terminalView.insertText("%")
+        #expect(!model.isActive)
+        #expect(output.texts.last == "%")
+    }
+
+    @Test func standaloneShiftPreservesPercentAndUppercaseQuery() {
+        let (container, model, output) = setup()
+        #expect(!container.terminalView(container.terminalView,
+            handleHardwareKey: key(.keyboardLeftShift, modifiers: .shift)))
+        #expect(container.terminalView(container.terminalView,
+            handleHardwareKey: key(.keyboard5, text: "%", modifiers: .shift)))
+        #expect(model.isActive)
+        #expect(!container.terminalView(container.terminalView,
+            handleHardwareKey: key(.keyboardRightShift, modifiers: .shift)))
+        #expect(container.terminalView(container.terminalView,
+            handleHardwareKey: key(.keyboardM, text: "M", modifiers: .shift)))
+        #expect(model.query == "M")
+        #expect(output.texts.isEmpty)
+    }
+
+    @Test("@spec IOS-6.37: When an active iOS agent picker is interrupted by a transient inactive scene while its owned terminal transport remains live, the application shall preserve the literal token before closing the picker; when the application backgrounds or its transport becomes unavailable, the application shall discard the buffered token.", arguments: [ScenePhase.inactive, .background], [true, false])
+    func sceneInterruption(_ phase: ScenePhase, _ transportIsAvailable: Bool) {
+        let (container, model, output) = setup()
+        container.terminalView.insertText("%")
+        container.terminalView.insertText("pending")
+        SingleSessionView.handleAgentCompletionSceneChange(
+            phase, model: model, transportIsAvailable: transportIsAvailable
+        )
+        #expect(!model.isActive)
+        #expect(output.texts == (phase == .inactive && transportIsAvailable ? ["%pending"] : []))
     }
 
     @Test("@spec IOS-6.36: When UIKit offers a software-input callback for a hardware key already consumed by iOS agent completion, the application shall suppress that callback so the token and accepted address are processed exactly once.")

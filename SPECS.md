@@ -2010,6 +2010,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.36** When UIKit offers a software-input callback for a hardware key already consumed by iOS agent completion, the application shall suppress that callback so the token and accepted address are processed exactly once.
 
+**IOS-6.37** When an active iOS agent picker is interrupted by a transient inactive scene while its owned terminal transport remains live, the application shall preserve the literal token before closing the picker; when the application backgrounds or its transport becomes unavailable, the application shall discard the buffered token.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.

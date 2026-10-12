@@ -546,6 +546,19 @@ struct SingleSessionView: View {
         clientIsOwner && isPaneFocused && keyboardAllowed
     }
 
+    static func handleAgentCompletionSceneChange(
+        _ phase: ScenePhase,
+        model: AgentCompletionModel,
+        transportIsAvailable: Bool
+    ) {
+        guard phase != .active, model.isActive else { return }
+        if phase == .inactive, transportIsAvailable {
+            model.invalidateBoundary()
+        } else {
+            model.cancel(preserveLiteral: false)
+        }
+    }
+
     static func shouldDismissKeyboard(
         isKeyboardVisible: Bool,
         keyboardAllowed: Bool,
@@ -913,7 +926,10 @@ struct SingleSessionView: View {
                 }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { agentCompletion.cancel(preserveLiteral: false) }
+                Self.handleAgentCompletionSceneChange(
+                    phase, model: agentCompletion,
+                    transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
+                )
             }
     }
 
@@ -1404,7 +1420,6 @@ struct SingleSessionView: View {
                 } ?? [] : [],
             renderPace: client.renderPace,
             onUserInteraction: { [weak client] in
-                agentCompletion.invalidateBoundary()
                 client?.wakeRenderer()
                 onPaneInteraction?()
             },

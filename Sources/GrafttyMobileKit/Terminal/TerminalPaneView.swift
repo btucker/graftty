@@ -642,7 +642,7 @@ public final class TerminalInputContainerView: UIView,
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
         r.cancelsTouchesInView = false
-        r.onTouchBegan = { [weak self] in self?.onUserInteraction?() }
+        r.onTouchBegan = { [weak self] changesCursor in self?.handleAnyTouchBegan(changesCursor: changesCursor) }
         return r
     }()
 
@@ -1032,7 +1032,16 @@ public final class TerminalInputContainerView: UIView,
 
     /// Internal-visibility access for unit tests: simulates the any-touch
     /// observer's `touchesBegan` callback without a real UIKit touch event.
-    func simulateAnyTouchBeganForTesting() {
+    func simulateAnyTouchBeganForTesting(changesCursor: Bool = false) {
+        handleAnyTouchBegan(changesCursor: changesCursor)
+    }
+
+    private func handleAnyTouchBegan(changesCursor: Bool) {
+        // A finger tap only changes keyboard focus. Keep the initial boundary
+        // so the first percent key can open completion at an empty prompt.
+        if changesCursor || agentCompletion?.isActive == true {
+            agentCompletion?.invalidateBoundary()
+        }
         onUserInteraction?()
     }
 
@@ -1097,7 +1106,9 @@ public final class TerminalInputContainerView: UIView,
             command.perform()
             return true
         }
-        if isCommittedSoftwareInputEligible, terminalView.markedTextRange == nil {
+        let isShiftModifierPress = event.usage == UInt16(UIKeyboardHIDUsage.keyboardLeftShift.rawValue)
+            || event.usage == UInt16(UIKeyboardHIDUsage.keyboardRightShift.rawValue)
+        if isCommittedSoftwareInputEligible, terminalView.markedTextRange == nil, !isShiftModifierPress {
             if normalizedModifiers.isEmpty {
                 let completionKey: AgentCompletionKey?
                 if inputs.contains(UIKeyCommand.inputUpArrow) { completionKey = .up }
@@ -1328,10 +1339,10 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
 /// local scrolling renders without host output, so a finger on the
 /// surface must count as activity.
 final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
-    var onTouchBegan: (() -> Void)?
+    var onTouchBegan: ((Bool) -> Void)?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        onTouchBegan?()
+        onTouchBegan?(touches.contains { $0.type == .indirectPointer })
         state = .failed
     }
 }
