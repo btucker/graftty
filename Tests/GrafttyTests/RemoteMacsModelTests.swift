@@ -791,7 +791,8 @@ struct RemoteMacsModelTests {
     @Test("""
     @spec REMOTE-12.18: When an explicit reconnect arrives during an ordinary \
     connection attempt, the application shall replace the weaker attempt with \
-    one signed replacement attempt and shall deduplicate further reconnects.
+    one signed replacement attempt and shall deduplicate further reconnects \
+    while that replacement attempt remains pending.
     """)
     func explicitReconnectUpgradesAnOrdinaryInflightAttempt() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -799,6 +800,7 @@ struct RemoteMacsModelTests {
         try store.add(remote)
         let started = AsyncStream<Void>.makeStream()
         var starts = started.stream.makeAsyncIterator()
+        let replacementGate = RemoteMacsModelConnectGate()
         var intents: [Bool] = []
         let registry = RemoteMacConnectionRegistry(
             intentAwareFactory: { remoteMac, identity, replacing in
@@ -806,6 +808,8 @@ struct RemoteMacsModelTests {
                 if intents.count == 1 {
                     started.continuation.yield(())
                     try await Task.sleep(for: .seconds(30))
+                } else {
+                    await replacementGate.wait()
                 }
                 return RemoteMacConnectionRegistry.Entry(
                     id: UUID(),
@@ -827,10 +831,13 @@ struct RemoteMacsModelTests {
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        await replacementGate.waitUntilStarted()
         #expect(await model.reconnectRemoteMac(
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        #expect(intents == [false, true])
+        await replacementGate.release()
 
         await #expect(throws: CancellationError.self) {
             _ = try await ordinary.value

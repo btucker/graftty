@@ -2840,7 +2840,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.17** When the user selects an offline or discovered saved Remote Mac, the application shall authenticate the connection as a same-device replacement; if a live local connection exists, it shall reuse that connection without starting another transport.
 
-**REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects.
+**REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects while that replacement attempt remains pending.
 
 ### REMOTE-13.x
 
