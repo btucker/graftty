@@ -4,6 +4,12 @@ use std::io;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+pub(crate) fn is_web_url(url: &str) -> bool {
+    url.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+    })
+}
+
 pub(crate) fn open_url(url: &str, helper: &OsStr) -> io::Result<()> {
     dispatch(url, Some(helper), Duration::from_secs(8), |_| {
         Err(io::Error::new(
@@ -19,7 +25,7 @@ fn dispatch(
     timeout: Duration,
     native: impl FnOnce(&str) -> io::Result<()>,
 ) -> io::Result<()> {
-    let Some(helper) = helper.filter(|value| !value.is_empty()) else {
+    let Some(helper) = helper.filter(|value| !value.is_empty() && is_web_url(url)) else {
         return native(url);
     };
     // One argv value, never shell text. Inherit the originating pane's context.
@@ -63,6 +69,8 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     struct Fixture(PathBuf);
@@ -72,8 +80,11 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let root = std::env::temp_dir()
-                .join(format!("graftty-browser-{}-{nonce}", std::process::id()));
+            let root = std::env::temp_dir().join(format!(
+                "graftty-browser-{}-{nonce}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            ));
             fs::create_dir(&root).unwrap();
             let script = root.join("helper's executable");
             fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -127,6 +138,30 @@ mod tests {
             receipt,
             format!("{url}\n{}", std::env::var("PATH").unwrap())
         );
+    }
+
+    #[test]
+    fn non_web_links_preserve_native_opening_with_a_configured_hook() {
+        let fixture = Fixture::new("exit 9");
+        for url in [
+            "file:///tmp/chart.html",
+            "codex://threads/example",
+            "mailto:test@example.com",
+        ] {
+            let mut native_calls = 0;
+            dispatch(
+                url,
+                Some(fixture.helper().as_os_str()),
+                Duration::from_secs(1),
+                |received| {
+                    assert_eq!(received, url);
+                    native_calls += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(native_calls, 1);
+        }
     }
 
     #[test]
