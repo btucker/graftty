@@ -1556,6 +1556,28 @@ struct GrafttyApp: App {
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
+        tm.agentCompletionLoader = { currentWorktreePath, update in
+            let repos = binding.wrappedValue.repos
+            async let remote = remoteTeamRouter.members()
+            let local = await OffMainIO.run {
+                AgentCompletionCatalog.local(repos: repos,
+                    records: (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? [],
+                    isReachable: TeamAgentReachability.isReachable)
+            }
+            update?(AgentCompletionCatalog.contextualized(local, worktreePath: currentWorktreePath, repos: repos))
+            return AgentCompletionCatalog.contextualized(local + AgentCompletionCatalog.remote(members: await remote),
+                worktreePath: currentWorktreePath, repos: repos)
+        }
+        webController.setAgentCompletionsProvider { worktreeID in
+            if let worktreeID, worktreeID.hasPrefix("relay-worktree-") {
+                if case .agentCompletions(let candidates) = await services.remoteMacsModel
+                    .sendRelayedWorktreeManagement(.worktreeAgentCompletions(worktreeID: worktreeID)) {
+                    return candidates
+                }
+                return []
+            }
+            return await tm.agentCompletionLoader?(worktreeID, nil) ?? []
+        }
         remoteTeamRouter.handler = { deviceID, data in
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
@@ -2698,6 +2720,10 @@ struct GrafttyApp: App {
                 }
 
                 switch request {
+                case .agentCompletions:
+                    return .agentCompletions(await terminalManager.agentCompletionLoader?(nil, nil) ?? [])
+                case .worktreeAgentCompletions(let worktreeID):
+                    return .agentCompletions(await terminalManager.agentCompletionLoader?(worktreeID, nil) ?? [])
                 case let .openResource(worktreeID, request):
                     do {
                         switch request {
@@ -6330,14 +6356,14 @@ struct GrafttyApp: App {
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .hostPresentation, .listRepositories, .moveProject,
+        case .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
              .moveWorktree(let repositoryID, _, _, _):
             return repositoryID.hasPrefix("relay-repository-")
-        case .openResource(let worktreeID, _), .open(let worktreeID),
+        case .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")

@@ -3,6 +3,7 @@ import Combine
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 @preconcurrency import UserNotifications
 
 /// Spatial direction for pane navigation (goto_split left/right/up/down).
@@ -179,7 +180,11 @@ final class TerminalManager: ObservableObject {
         didSet {
             ownershipObserverToken = displayOwnershipStore?.addObserver { [weak self] snapshot in
                 Task { @MainActor in
-                    self?.handle(forSessionName: snapshot.sessionName)?.synchronizeDisplayOwnership()
+                    let handle = self?.handle(forSessionName: snapshot.sessionName)
+                    if handle?.canTakeDisplayControl() == true {
+                        (handle?.view as? SurfaceNSView)?.agentCompletion.cancel(preserveLiteral: false)
+                    }
+                    handle?.synchronizeDisplayOwnership()
                     self?.objectWillChange.send()
                 }
             }
@@ -223,6 +228,7 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`. Raw titles and PWDs are snapshotted at quit so a
     /// surviving shell keeps the same title priority when reattached.
     var titles: [PaneSlotID: String] = [:]
+    var agentCompletionLoader: ((String?, AgentCompletionModel.CatalogUpdate?) async -> [AgentCompletionCandidate])?
 
     /// Per-pane last-known working directory, populated from OSC 7
     /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
@@ -1397,6 +1403,11 @@ final class TerminalManager: ObservableObject {
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
         paneWorktreePaths[terminalID] = worktreePath
+        if let view = surfaces[terminalID]?.view as? SurfaceNSView,
+           view.agentCompletion.currentWorktreePath != worktreePath {
+            view.agentCompletion.invalidateBoundary()
+            view.agentCompletion.currentWorktreePath = worktreePath
+        }
         if !hostOwned { remoteViewerPaneSlots.insert(terminalID) }
         if hostOwned, let worktreePath {
             autoSleep.register(session: ZmxLauncher.sessionName(for: paneSessionID), path: worktreePath)

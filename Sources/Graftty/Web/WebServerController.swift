@@ -46,6 +46,7 @@ final class WebServerController: ObservableObject {
     /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
     /// `sessionsProvider` — both read from `AppState`.
     private var reposProvider: (@Sendable () async -> [WebServer.RepoInfo])?
+    private var agentCompletionsProvider: (@Sendable (String?) async -> [AgentCompletionCandidate])?
     private var relayedReposProvider:
         (@Sendable () async -> [WebServer.RepoInfo])?
     /// Executes `POST /worktrees` (`WEB-7.2`). Routes into
@@ -145,6 +146,11 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
     ) {
         reposProvider = provider
+        rebuildIfRunning()
+    }
+
+    func setAgentCompletionsProvider(_ provider: @escaping @Sendable (String?) async -> [AgentCompletionCandidate]) {
+        agentCompletionsProvider = provider
         rebuildIfRunning()
     }
 
@@ -458,6 +464,7 @@ final class WebServerController: ObservableObject {
                 sessionWorktreeProvider: sessionWorktreeProvider,
                 sessionSpawnProvider: self.sessionSpawnProvider ?? { _ in nil },
                 reposProvider: repos,
+                agentCompletionsProvider: agentCompletionsProvider ?? { _ in [] },
                 relayedReposProvider: relayedRepos,
                 worktreeCreator: creator,
                 defaultBranchPuller: puller,

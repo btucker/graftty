@@ -1659,6 +1659,16 @@ struct MainWindow: View {
                     }
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
+                    if let view = terminalManager.handle(for: terminalID)?.view as? SurfaceNSView {
+                        view.configureAgentCompletion(currentWorktreePath: worktreePath) {
+                            let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                                request: .worktreeAgentCompletions(worktreeID: worktreePath))
+                            guard case .agentCompletions(let candidates) = response else {
+                                throw RemoteWorktreeError("Agent completion is unavailable on this host")
+                            }
+                            return candidates
+                        }
+                    }
                     terminalManager.setVisible(
                         isSelected && appIsVisible,
                         for: terminalID

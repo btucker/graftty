@@ -322,6 +322,7 @@ final class GhosttyApp {
                     listOnly: listOnly, pasteboard: pasteboardForClipboard(clipboardEnum),
                     reclaimControl: { }
                 ) { completion in
+                    if !listOnly { (handle.view as? SurfaceNSView)?.agentCompletion.invalidateBoundary() }
                     ghostty_surface_complete_clipboard_request(handle.surface, completion, state)
                 }
             }
@@ -353,6 +354,7 @@ final class GhosttyApp {
                 }
                 let pasteboard = pasteboardForClipboard(clipboardEnum)
                 let text = pasteboard.string(forType: .string) ?? ""
+                (handle.view as? SurfaceNSView)?.agentCompletion.invalidateBoundary()
                 text.withCString { cstr in
                     ghostty_surface_complete_clipboard_request(handle.surface, cstr, state, false)
                 }

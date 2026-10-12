@@ -2,6 +2,7 @@ import AppKit
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 import IOKit.hidsystem
 import os
 
@@ -35,6 +36,7 @@ final class SurfaceUserdataBox {
 }
 
 protocol SurfaceHandleZmxBackend: AnyObject {
+    func bindOwnershipLoss(_ handler: @escaping () -> Void)
     func waitForStartup() async -> Bool
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     /// Main-thread presentation updates during snapshot import or remote following.
@@ -80,6 +82,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension SurfaceHandleZmxBackend {
+    func bindOwnershipLoss(_ handler: @escaping () -> Void) {}
     func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
@@ -263,12 +266,24 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
+        surfaceView.configureAgentCompletion(currentWorktreePath: worktreePath, updates: { [weak terminalManager, weak surfaceView] update in
+            await terminalManager?.agentCompletionLoader?(surfaceView?.agentCompletion.currentWorktreePath, update) ?? []
+        }) { [weak terminalManager, weak surfaceView] in
+            await terminalManager?.agentCompletionLoader?(surfaceView?.agentCompletion.currentWorktreePath, nil) ?? []
+        }
         if let backend {
             let wake = wakeBeforeInput
             let admitInteraction = wakeBeforeInteraction
             surfaceView.hostManagedInputWriter = { [weak backend] data in
                 guard wake() else { return }
                 try? backend?.write(data)
+            }
+            surfaceView.hostManagedCompletionWriter = { [weak backend] data, claimEngagement in
+                guard wake() else { return }
+                try? backend?.write(data, claimEngagement: claimEngagement)
+            }
+            backend.bindOwnershipLoss { [weak surfaceView] in
+                Task { @MainActor in surfaceView?.agentCompletion.cancel(preserveLiteral: false) }
             }
             // TERM-11.8: real key events run inside the backend's
             // user-input scope so the bytes libghostty emits for them
@@ -908,9 +923,12 @@ final class SurfaceNSView: NSView {
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t? {
         didSet {
-            if surface == nil { voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
+            if surface == nil { agentCompletion.cancel(preserveLiteral: false); voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
         }
     }
+    let agentCompletion = AgentCompletionModel()
+    var agentCompletionPresentation: MacAgentCompletionPresentation?
+    var agentCompletionKeyCodes = Set<UInt16>()
     var voiceInputInterrupted: (() -> Void)?
     private var voicePreview: VoiceDictationPreview?
 
@@ -963,7 +981,7 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false {
         didSet {
-            if isReadonly { voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
+            if isReadonly { agentCompletion.cancel(preserveLiteral: false); voiceInputInterrupted?(); showVoicePreview(""); cancelTextComposition() }
         }
     }
 
@@ -973,6 +991,7 @@ final class SurfaceNSView: NSView {
     /// sequences directly to the session; zmx-backed native panes need the
     /// same path.
     var hostManagedInputWriter: ((Data) -> Void)?
+    var hostManagedCompletionWriter: ((Data, Bool) -> Void)?
 
     /// Wraps real key-event dispatch so the zmx backend can flag the
     /// emitted bytes as engaging user input (TERM-11.8). Nil for
@@ -1032,6 +1051,7 @@ final class SurfaceNSView: NSView {
             NotificationCenter.default.addObserver(self, selector: #selector(windowGainedTextInputFocus(_:)),
                                                   name: NSWindow.didBecomeKeyNotification, object: window)
         } else {
+            agentCompletion.cancel(preserveLiteral: true)
             cancelTextComposition()
         }
         guard let window, surface != nil else { return }
@@ -1116,6 +1136,7 @@ final class SurfaceNSView: NSView {
         compositionContext?.textInputClientWillStartScrollingOrZooming()
         defer { compositionContext?.textInputClientDidEndScrollingOrZooming() }
         super.setFrameSize(newSize)
+        agentCompletionPresentation?.layout()
         voicePreview?.fit(in: bounds, cursorRect: voicePreviewCursorRect)
         guard synchronizeSurfaceSize(newSize) else { return }
         markVisibleForInput()
@@ -1151,6 +1172,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        agentCompletion.invalidateBoundary()
         userInteractionNotifier?()
         // Grab keyboard focus so subsequent keystrokes route to this view.
         markVisibleForInput()
@@ -1333,6 +1355,7 @@ final class SurfaceNSView: NSView {
             // A prior release may have gone to another window after a focus
             // change. A new physical press begins a new key lifecycle.
             compositionKeyCodes.remove(event.keyCode)
+            agentCompletionKeyCodes.remove(event.keyCode)
         }
         guard surface != nil else {
             super.keyDown(with: event)
@@ -1347,6 +1370,7 @@ final class SurfaceNSView: NSView {
             return
         }
         reclaimDisplayControlForUserInputIfNeeded(event)
+        if handleAgentCompletionKey(event) { return }
         if let directInput = Self.hostManagedDirectInput(
             forKeyCode: event.keyCode,
             modifierFlags: event.modifierFlags
@@ -1410,6 +1434,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if agentCompletionKeyCodes.remove(event.keyCode) != nil { return }
         if compositionKeyCodes.remove(event.keyCode) != nil { return }
         guard surface != nil else {
             super.keyUp(with: event)
@@ -1432,6 +1457,9 @@ final class SurfaceNSView: NSView {
     /// nothing unless the mouse crosses a cell boundary with ⌘ held.
     /// Ported from Ghostty upstream `SurfaceView_AppKit.flagsChanged`.
     override func flagsChanged(with event: NSEvent) {
+        if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            agentCompletion.invalidateBoundary()
+        }
         guard surface != nil,
               let action = Self.modifierKeyAction(
                   keyCode: event.keyCode,
@@ -1583,7 +1611,7 @@ final class SurfaceNSView: NSView {
     /// Ghostty's upstream `ghosttyCharacters` rules — returns nil for
     /// events that should be encoded from keycode alone (control chars,
     /// arrow/function PUA range).
-    private static func ghosttyTextField(for event: NSEvent) -> String? {
+    static func ghosttyTextField(for event: NSEvent) -> String? {
         // `NSEvent.characters` throws an ObjC exception for non-key events
         // (e.g. the flagsChanged events KEY-1.4 routes through here);
         // modifier transitions carry no text anyway.
@@ -1643,6 +1671,7 @@ final class SurfaceNSView: NSView {
     }
 
     override func resignFirstResponder() -> Bool {
+        agentCompletion.cancel(preserveLiteral: true)
         voiceInputInterrupted?()
         showVoicePreview("")
         acceptsCompositionCallbacks = false
@@ -1662,6 +1691,7 @@ final class SurfaceNSView: NSView {
     }
 
     @objc private func windowLostTextInputFocus(_ notification: Notification) {
+        agentCompletion.cancel(preserveLiteral: true)
         voiceInputInterrupted?()
         showVoicePreview("")
         acceptsCompositionCallbacks = false
@@ -1686,6 +1716,7 @@ final class SurfaceNSView: NSView {
               let terminalID,
               let handle = terminalManager?.handle(for: terminalID)
         else { return false }
+        agentCompletion.invalidateBoundary()
         markVisibleForInput()
         handle.typeText(FileDropFormatter.format(paths: urls.map(\.path)))
         return true

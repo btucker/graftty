@@ -1,6 +1,8 @@
 import AppKit
 import GhosttyKit
 import Testing
+import GrafttyCommandUI
+import GrafttyProtocol
 @testable import Graftty
 
 @MainActor
@@ -19,6 +21,111 @@ struct SurfaceTextInputTests {
 @MainActor
 struct NativeDictationDeliveryTests {
     private let noReplacement = NSRange(location: NSNotFound, length: 0)
+
+    @Test("@spec TEAM-15.13: When a Mac terminal dismisses percent completion for a cursor key or paste, the application shall flush the literal token through the ordered host input path before forwarding the external edit.")
+    func completionFlushPrecedesCursorAndPaste() throws {
+        let fixture = TextInputFixture()
+        var delivered: [String] = []
+        fixture.view.hostManagedInputWriter = { delivered.append(String(decoding: $0, as: UTF8.self)) }
+        fixture.view.surfaceOperations.bindingAction = { _, action in delivered.append(action); return true }
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
+        fixture.view.keyDown(with: try fixture.keyEvent(123, text: ""))
+        #expect(delivered == ["%f", "\u{1B}[D"])
+        #expect(fixture.writes.isEmpty)
+        fixture.view.agentCompletion.cancel(preserveLiteral: false)
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        fixture.view.pasteToTerminal(nil)
+        #expect(delivered.suffix(2) == ["%", "paste_from_clipboard"])
+        #expect(!fixture.view.agentCompletion.isActive)
+    }
+
+    @Test("@spec TEAM-15.14: If a Mac user accepts a picker row while a navigation key remains held, then the application shall consume repeats and release of that picker key until a new physical press.")
+    func heldArrowCannotLeakAfterMouseAcceptance() async throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: {
+            [.init(address: "/repo#codex", projectPath: "/repo", projectName: "repo", worktreePath: "/repo", worktreeName: "main", hostName: "Mac", runtime: "codex")]
+        })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        await fixture.view.agentCompletion.waitForLoad()
+        fixture.view.keyDown(with: try fixture.keyEvent(125, text: ""))
+        fixture.view.agentCompletion.accept("/repo#codex")
+        fixture.view.keyDown(with: try fixture.keyEvent(125, text: "", modifiers: .command, repeatKey: true))
+        fixture.view.keyUp(with: try fixture.keyEvent(125, text: "", type: .keyUp))
+        #expect(fixture.keyCodes.isEmpty)
+        #expect(fixture.writes == ["/repo#codex"])
+        fixture.view.keyDown(with: try fixture.keyEvent(125, text: "", modifiers: .command))
+        fixture.view.keyUp(with: try fixture.keyEvent(125, text: "", type: .keyUp, modifiers: .command))
+        #expect(fixture.keyCodes == [125, 125])
+    }
+
+    @Test("Literal completion cancellation cannot initiate host-managed takeover")
+    func completionWriterDistinguishesSelectionFromCancellation() async throws {
+        let fixture = TextInputFixture()
+        var claims: [Bool] = []
+        fixture.view.hostManagedCompletionWriter = { _, claim in claims.append(claim) }
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: {
+            [.init(address: "/repo#codex", projectPath: "/repo", projectName: "repo", worktreePath: "/repo", worktreeName: "main", hostName: "Mac", runtime: "codex")]
+        })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        fixture.view.keyDown(with: try fixture.keyEvent(53, text: ""))
+        #expect(claims == [false])
+        fixture.view.keyDown(with: try fixture.keyEvent(49, text: " "))
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        await fixture.view.agentCompletion.waitForLoad()
+        fixture.view.agentCompletion.accept("/repo#codex")
+        #expect(claims == [false, true])
+    }
+
+    @Test("@spec TEAM-15.7: When a Mac terminal accepts percent completion by keyboard, the application shall consume the prefix, query, acceptance press and their releases, and deliver the selected agent address once through the terminal text path.")
+    func macAgentCompletion() async throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: "/repo/fix", loader: {
+            [.init(address: "/repo/fix#codex", projectPath: "/repo", projectName: "Repo", worktreePath: "/repo/fix", worktreeName: "fix", hostName: "This Mac", runtime: "codex")]
+        })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        fixture.view.keyUp(with: try fixture.keyEvent(23, text: "%", type: .keyUp, modifiers: .shift))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
+        fixture.view.keyUp(with: try fixture.keyEvent(3, text: "f", type: .keyUp))
+        await fixture.view.agentCompletion.waitForLoad()
+        fixture.view.keyDown(with: try fixture.keyEvent(36, text: "\r"))
+        fixture.view.keyUp(with: try fixture.keyEvent(36, text: "\r", type: .keyUp))
+        #expect(fixture.keyCodes.isEmpty)
+        #expect(fixture.writes == ["/repo/fix#codex"])
+    }
+
+    @Test("@spec TEAM-15.8: If an input-eligible Mac terminal percent picker loses focus or begins composition or modified input, then the application shall flush its buffered literal token before continuing the existing input path and shall not retain a hidden picker.")
+    func macCompletionInterruption() throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        fixture.view.keyDown(with: try fixture.keyEvent(3, text: "f"))
+        fixture.view.setMarkedText("compose", selectedRange: .init(location: 7, length: 0), replacementRange: noReplacement)
+        #expect(fixture.writes == ["%f"])
+        #expect(!fixture.view.agentCompletion.isActive)
+        #expect(fixture.view.hasMarkedText())
+        fixture.view.cancelTextComposition()
+        fixture.view.agentCompletion.cancel(preserveLiteral: false)
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        _ = fixture.view.resignFirstResponder()
+        #expect(fixture.writes == ["%f", "%"])
+        #expect(!fixture.view.agentCompletion.isActive)
+    }
+
+    @Test("@spec TEAM-15.16: If another display client owns a Mac pane before its percent picker is dismissed, then the application shall discard the buffered token without taking display control back or sending stale input.")
+    func completionDismissalDoesNotReclaimOwnership() throws {
+        let fixture = TextInputFixture()
+        fixture.view.configureAgentCompletion(currentWorktreePath: nil, loader: { [] })
+        fixture.view.keyDown(with: try fixture.keyEvent(23, text: "%", modifiers: .shift))
+        var takeovers = 0
+        fixture.view.canTakeDisplayControlNotifier = { true }
+        fixture.view.takeDisplayControlNotifier = { takeovers += 1; return true }
+        _ = fixture.view.resignFirstResponder()
+        #expect(takeovers == 0)
+        #expect(fixture.writes.isEmpty)
+        #expect(!fixture.view.agentCompletion.isActive)
+    }
 
     @Test("@spec SLEEP-32: When a hardware key is released after a fresh prompt, the application shall forward its release without invalidating the prompt's acknowledged input boundary.")
     func keyReleasePreservesPromptBoundary() throws {

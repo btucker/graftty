@@ -149,6 +149,8 @@ public struct RemoteRepositoryInfo: Codable, Sendable, Hashable {
 
 /// Requests on `worktree-management@graftty.dev`.
 public enum WorktreeManagementRequest: Sendable, Equatable {
+    case agentCompletions
+    case worktreeAgentCompletions(worktreeID: String)
     case openResource(worktreeID: String, request: RemoteOpenRequest)
     case hostPresentation
     case listRepositories
@@ -178,6 +180,11 @@ extension WorktreeManagementRequest: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .agentCompletions:
+            try c.encode("agent_completions", forKey: .type)
+        case .worktreeAgentCompletions(let worktreeID):
+            try c.encode("worktree_agent_completions", forKey: .type)
+            try c.encode(worktreeID, forKey: .worktreeID)
         case let .openResource(worktreeID, request):
             try c.encode("open_resource", forKey: .type)
             try c.encode(worktreeID, forKey: .worktreeID)
@@ -238,6 +245,9 @@ extension WorktreeManagementRequest: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "agent_completions": self = .agentCompletions
+        case "worktree_agent_completions":
+            self = .worktreeAgentCompletions(worktreeID: try c.decode(String.self, forKey: .worktreeID))
         case "open_resource":
             self = .openResource(worktreeID: try c.decode(String.self, forKey: .worktreeID), request: try c.decode(RemoteOpenRequest.self, forKey: .openResource))
         case "move_project":
@@ -301,6 +311,7 @@ extension WorktreeManagementRequest: Codable {
 }
 
 public enum WorktreeManagementResponse: Sendable, Equatable {
+    case agentCompletions([AgentCompletionCandidate])
     case openResource(RemoteOpenResponse)
     case hostPresentation(RemoteHostPresentation)
     case repositories([RemoteRepositoryInfo])
@@ -314,6 +325,7 @@ public enum WorktreeManagementResponse: Sendable, Equatable {
 
 extension WorktreeManagementResponse: Codable {
     private enum CodingKeys: String, CodingKey {
+        case agentCompletions
         case openResource
         case type, presentation, repositories, remoteMacConnections,
              worktreeID, paneID, dismissed, code, message, forceAllowed,
@@ -323,6 +335,9 @@ extension WorktreeManagementResponse: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .agentCompletions(let candidates):
+            try c.encode("agent_completions", forKey: .type)
+            try c.encode(candidates, forKey: .agentCompletions)
         case .openResource(let response):
             try c.encode("open_resource", forKey: .type)
             try c.encode(response, forKey: .openResource)
@@ -359,6 +374,8 @@ extension WorktreeManagementResponse: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
+        case "agent_completions":
+            self = .agentCompletions(try c.decode([AgentCompletionCandidate].self, forKey: .agentCompletions))
         case "open_resource":
             self = .openResource(try c.decode(RemoteOpenResponse.self, forKey: .openResource))
         case "host_presentation":
