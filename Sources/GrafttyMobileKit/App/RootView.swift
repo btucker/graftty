@@ -826,12 +826,14 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if isPaneFocused, scenePhase == .active, gate?.state == .unlocked,
-                   connection == .live, let worktree = step.worktreePath, let coordinator, let client {
+                if let worktree = step.worktreePath, let coordinator {
                     RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
                                      sessionName: step.sessionName,
-                                     ownerDeviceID: client.isOwner ? coordinator.localDeviceID : nil,
-                                     isPaneOwner: { client.isOwner },
+                                     ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
+                                     isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                                     isPaneFocused: isPaneFocused,
+                                     hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
+                                     isPaneOwner: { client?.isOwner == true },
                                      canPresentAuthentication: { !showingChromeTabs && authenticationPreview == nil && authenticationTask == nil })
                         .padding(.top, 64)
                         .padding(.trailing, 12)

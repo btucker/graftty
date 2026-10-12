@@ -3130,6 +3130,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-1.7** When a host Chrome OAuth launch succeeds but its viewer reply is lost, the application shall preserve the original state and callback URL and select the same host tab on reconnection without relaunching it.
 
+**CHROME-1.8** If pane ownership changes while an OAuth dispatch receipt is persisted, then the application shall recheck ownership before Chrome navigation and release the unsent receipt for a later authorized retry.
+
+**CHROME-1.9** While host Chrome retains OAuth launch receipts, the application shall persist and restore the maximum bounded history and reject new offers or unreadable history without evicting dispatched identities.
+
 ### CHROME-2.x — Phone controls
 
 **CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
@@ -3141,6 +3145,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-2.4** When an OAuth offer awaits ownership, connection or presentation, the application shall retain its exact original URL and identity until host launch succeeds or the user dismisses it.
 
 **CHROME-2.5** When a Chrome sign-in viewer reconnects after launch acknowledgment, the application shall select its retained host tab without navigating the OAuth URL again.
+
+**CHROME-2.6** If an initial OAuth launch has an ambiguous result, then the application shall preserve working host tab selection and an explicit launch error without navigating again.
+
+**CHROME-2.7** While a Chrome sign-in sheet is closing, the application shall retain its presentation identity, defer automatic offers across scene interruptions, and complete only the dismissed offer before accepting another.
+
+**CHROME-2.8** When a sign-in viewer resumes after scene suspension, the application shall reconnect its retained presentation and select the acknowledged host tab without sending another launch URL.
 
 ### CHROME-3.x — Authenticated transport
 

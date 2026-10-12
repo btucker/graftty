@@ -20,7 +20,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         var offer: (id: UUID, url: String)?
     }
     private var pending: [Int: Pending] = [:]
-    private var offerLaunches = ChromeOfferLaunchLedger()
+    private var offerLaunches: ChromeOfferLaunchLedger
     private var selectedTabID: String?
     private var sessionID: String?
     private var latestFrame: ChromeTabFrame?
@@ -32,9 +32,13 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         let hash = SHA256.hash(data: Data(worktreePath.utf8)).map { String(format: "%02x", $0) }.joined()
         profile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty/ChromeMux/\(hash)", isDirectory: true)
+        offerLaunches = ChromeOfferLaunchLedger(storageURL: profile.appendingPathComponent("GrafttyOfferLaunches.json"))
     }
 
-    init(testProfile: URL) { profile = testProfile }
+    init(testProfile: URL) {
+        profile = testProfile
+        offerLaunches = ChromeOfferLaunchLedger(storageURL: profile.appendingPathComponent("GrafttyOfferLaunches.json"))
+    }
 
     func shutdownForTesting() async {
         await stopCapture()
@@ -274,6 +278,8 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
     }
 
     private func sendCommand(id: Int, data: Data, socket ws: URLSessionWebSocketTask, session: String?, checkAuthorization: Bool) async {
+        var preparedOffer: UUID?
+        var sent = false
         do {
             try Task.checkCancellation()
             if checkAuthorization {
@@ -282,9 +288,20 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             }
             try Task.checkCancellation()
             guard pending[id] != nil, socket === ws else { return }
-            if let offer = pending[id]?.offer { try offerLaunches.dispatched(offer.id, url: offer.url) }
+            if let offer = pending[id]?.offer {
+                try offerLaunches.dispatched(offer.id, url: offer.url)
+                preparedOffer = offer.id
+                // Persisting the receipt can outlive pane ownership or request cancellation.
+                guard let authorization, await authorization() else { throw Failure.protocolError("Pane ownership changed.") }
+            }
+            try Task.checkCancellation()
+            guard pending[id] != nil, socket === ws else { throw Failure.disconnected }
+            sent = true
             try await ws.send(.string(String(decoding: data, as: UTF8.self)))
-        } catch { fail(id, error: error) }
+        } catch {
+            if let preparedOffer, !sent { try? offerLaunches.abandonUnsent(preparedOffer) }
+            fail(id, error: error)
+        }
     }
 
     private func expireCommand(id: Int, socket ws: URLSessionWebSocketTask) {
@@ -310,7 +327,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         if let id = json["id"] as? Int, let entry = pending.removeValue(forKey: id) {
             if let offer = entry.offer, let result = json["result"] as? [String: Any], let tabID = result["targetId"] as? String {
                 // Save the receipt before resuming a task that may already be cancelled.
-                offerLaunches.created(offer.id, tabID: tabID)
+                try? offerLaunches.created(offer.id, tabID: tabID)
             }
             entry.timeout.cancel(); entry.send?.cancel(); entry.continuation.resume(returning: data); return
         }

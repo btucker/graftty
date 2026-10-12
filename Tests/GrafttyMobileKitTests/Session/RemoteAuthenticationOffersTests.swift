@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import GrafttyProtocol
+import GrafttyRemoteClient
 @testable import GrafttyMobileKit
 
 struct RemoteAuthenticationOffersTests {
@@ -122,4 +123,75 @@ struct RemoteAuthenticationOffersTests {
         #expect(launch.offerID == offer.id)
     }
 
+    @MainActor
+    @Test("@spec CHROME-2.6: If an initial OAuth launch has an ambiguous result, then the application shall preserve working host tab selection and an explicit launch error without navigating again.", .timeLimit(.minutes(1)))
+    func ambiguousLaunchRetainsManualRecovery() async throws {
+        let offer = RemoteOpenOffer(id: UUID(), filename: "Sign in", byteCount: 0,
+                                    url: URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback"), paneSessionName: "pane")
+        let model = ChromeTabViewerModel(), driver = AmbiguousOfferDriver()
+        var completions = 0
+        let run = Task { await model.run(target: "pane", initialLaunch: ChromeTabInitialLaunch(offer: offer), onLaunch: { completions += 1 }, makeDriver: { driver }) }
+        while driver.actions().count < 2 { await Task.yield() }
+        for _ in 0..<100 { await Task.yield() }
+        #expect(await model.send(.select(tabID: "already-created"), target: "pane"))
+        #expect(model.state.selectedTabID == "already-created")
+        #expect(completions == 0)
+        #expect(model.initialLaunchError != nil)
+        #expect(driver.actions().filter { if case .launchOffer = $0 { return true }; return false }.count == 1)
+        model.close(); run.cancel(); await run.value
+    }
+
 }
+
+
+private final class AmbiguousOfferDriver: ChromeTabChannelDriver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [ChromeTabAction] = []
+    private let ambiguous: Bool
+    init(ambiguous: Bool = true) { self.ambiguous = ambiguous }
+    func open() async throws {}
+    func close() {}
+    func actions() -> [ChromeTabAction] { lock.lock(); defer { lock.unlock() }; return recorded }
+    func send(_ request: ChromeTabRequest) async throws -> ChromeTabResponse {
+        record(request.action)
+        if case .launchOffer = request.action {
+            if ambiguous { return .init(error: "Ambiguous launch; select existing tab") }
+            return .init(state: .init(tabs: [.init(id: "already-created", title: "Sign in", url: "https://example.com")], selectedTabID: "already-created"))
+        }
+        return .init(state: .init(tabs: [.init(id: "already-created", title: "Sign in", url: "https://example.com")], selectedTabID: request.action.tabID))
+    }
+    private func record(_ action: ChromeTabAction) { lock.lock(); recorded.append(action); lock.unlock() }
+}
+    @MainActor
+    @Test("@spec CHROME-2.8: When a sign-in viewer resumes after scene suspension, the application shall reconnect its retained presentation and select the acknowledged host tab without sending another launch URL.", .timeLimit(.minutes(1)))
+    func viewerResumesRetainedPresentation() async throws {
+        let offer = RemoteOpenOffer(id: UUID(), filename: "Sign in", byteCount: 0,
+                                    url: URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback"), paneSessionName: "pane")
+        let launch = ChromeTabInitialLaunch(offer: offer)
+        let model = ChromeTabViewerModel(), driver = AmbiguousOfferDriver(ambiguous: false)
+        var completions = 0
+        let first = Task { await model.run(target: "pane", initialLaunch: launch, onLaunch: { completions += 1 }, makeDriver: { driver }) }
+        while completions < 1 { await Task.yield() }
+        model.close(); first.cancel(); await first.value
+        let second = Task { await model.run(target: "pane", initialLaunch: launch, onLaunch: { completions += 1 }, makeDriver: { driver }) }
+        while completions < 2 { await Task.yield() }
+        #expect(driver.actions().filter { if case .launchOffer = $0 { return true }; return false }.count == 1)
+        #expect(driver.actions().contains(.select(tabID: "already-created")))
+        model.close(); second.cancel(); await second.value
+    }
+
+    @Test("@spec CHROME-2.7: While a Chrome sign-in sheet is closing, the application shall retain its presentation identity, defer automatic offers across scene interruptions, and complete only the dismissed offer before accepting another.")
+    func dismissalCannotConsumeReplacementOffer() {
+        var presentation = ChromeOfferPresentation()
+        let first = UUID(), second = UUID()
+        #expect(presentation.begin(first) == true)
+        // Scene readiness changes stop polling and transport without ending presentation.
+        #expect(!presentation.canPresent)
+        #expect(presentation.begin(second) == false)
+        #expect(presentation.finishDismissal() == .dismissed(first))
+        #expect(presentation.begin(second) == true)
+        #expect(presentation.deferCurrent() == second)
+        #expect(!presentation.canPresent)
+        #expect(presentation.finishDismissal() == .deferred(second))
+        #expect(presentation.canPresent)
+    }

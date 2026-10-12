@@ -20,7 +20,11 @@ private actor ChromeFixture: ChromeTabBackend {
 struct ChromeTabBrokerTests {
     @Test("@spec CHROME-1.6: If an OAuth offer launch reply is lost, then the application shall bind its identity to the original URL and host tab, return that tab on retry, and refuse an ambiguous launch replay.")
     func tracksOfferLaunchAtDispatchAndReply() throws {
-        var ledger = ChromeOfferLaunchLedger()
+        let directory = URL.temporaryDirectory.appendingPathComponent("graftty-offer-ledger-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("receipts.json")
+        var ledger = ChromeOfferLaunchLedger(storageURL: storage)
         let id = UUID(), other = UUID()
         let raw = "https://example.com/authorize?state=A%2Bb&redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback"
         #expect(try ledger.tab(for: id, url: raw) == nil)
@@ -28,10 +32,43 @@ struct ChromeTabBrokerTests {
         #expect(try ledger.tab(for: id, url: raw) == nil)
         try ledger.dispatched(id, url: raw)
         #expect(throws: (any Error).self) { try ledger.tab(for: id, url: raw) }
-        ledger.created(id, tabID: "host-tab")
+        try ledger.created(id, tabID: "host-tab")
         #expect(try ledger.tab(for: id, url: raw) == "host-tab")
         #expect(throws: (any Error).self) { try ledger.tab(for: id, url: raw + "&changed=1") }
         #expect(try ledger.tab(for: other, url: raw) == nil)
+        let restored = ChromeOfferLaunchLedger(storageURL: storage)
+        #expect(try restored.tab(for: id, url: raw) == "host-tab")
+        try ledger.dispatched(other, url: raw)
+        let ambiguousRestart = ChromeOfferLaunchLedger(storageURL: storage)
+        #expect(throws: (any Error).self) { try ambiguousRestart.tab(for: other, url: raw) }
+        let mode = try FileManager.default.attributesOfItem(atPath: storage.path)[.posixPermissions] as? NSNumber
+        #expect(mode?.intValue == 0o600)
+        try ledger.abandonUnsent(other)
+        #expect(try ChromeOfferLaunchLedger(storageURL: storage).tab(for: other, url: raw) == nil)
+        try ledger.abandonUnsent(id)
+        #expect(try ledger.tab(for: id, url: raw) == "host-tab")
+    }
+
+    @Test("@spec CHROME-1.9: While host Chrome retains OAuth launch receipts, the application shall persist and restore the maximum bounded history and reject new offers or unreadable history without evicting dispatched identities.")
+    func boundsPersistentOfferHistory() throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent("graftty-offer-bound-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("receipts.json")
+        var ledger = ChromeOfferLaunchLedger(storageURL: storage)
+        let url = "https://example.com/" + String(repeating: "/", count: 8192 - 20)
+        var identities: [UUID] = []
+        for _ in 0..<128 {
+            let id = UUID(); identities.append(id)
+            try ledger.dispatched(id, url: url)
+            try ledger.created(id, tabID: "host-tab")
+        }
+        let restored = ChromeOfferLaunchLedger(storageURL: storage)
+        for id in identities { #expect(try restored.tab(for: id, url: url) == "host-tab") }
+        #expect(throws: (any Error).self) { try ledger.dispatched(UUID(), url: url) }
+        try Data("corrupt".utf8).write(to: storage)
+        let corrupt = ChromeOfferLaunchLedger(storageURL: storage)
+        #expect(throws: (any Error).self) { try corrupt.tab(for: identities[0], url: url) }
     }
 
     @Test("@spec CHROME-1.1: If a Chrome request lacks live pane ownership for its authenticated peer, then the application shall reject it before accessing a dedicated profile.")

@@ -27,10 +27,39 @@ private final class ChromeSmokePage: ChannelInboundHandler, @unchecked Sendable 
 
 @Suite(.serialized)
 struct DedicatedChromeBackendTests {
+    @Test("@spec CHROME-1.8: If pane ownership changes while an OAuth dispatch receipt is persisted, then the application shall recheck ownership before Chrome navigation and release the unsent receipt for a later authorized retry.", .timeLimit(.minutes(1)))
+    func nativeOfferRevokedBeforeDispatch() async throws {
+        let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-revoke-\(UUID())")
+        let profile = root.appendingPathComponent(String(repeating: "c", count: 64))
+        let backend = DedicatedChromeBackend(testProfile: profile)
+        do {
+            let before = try await backend.perform(.list, authorize: { true })
+            let id = UUID(), original = "http://127.0.0.1:9/authorize?state=original"
+            let storage = profile.appendingPathComponent("GrafttyOfferLaunches.json")
+            await #expect(throws: (any Error).self) {
+                try await backend.perform(.launchOffer(id: id, url: original), authorize: {
+                    !FileManager.default.fileExists(atPath: storage.path)
+                })
+            }
+            #expect(try ChromeOfferLaunchLedger(storageURL: storage).tab(for: id, url: original) == nil)
+            let after = try await backend.perform(.list, authorize: { true })
+            #expect(after.tabs.count == before.tabs.count)
+            let retry = try await backend.perform(.launchOffer(id: id, url: original), authorize: { true })
+            #expect(retry.tabs.count == before.tabs.count + 1)
+            #expect(retry.selectedTabID != nil)
+        } catch {
+            await backend.shutdownForTesting(); try? FileManager.default.removeItem(at: root); throw error
+        }
+        await backend.shutdownForTesting()
+        try FileManager.default.removeItem(at: root)
+    }
+
     @Test("@spec CHROME-1.7: When a host Chrome OAuth launch succeeds but its viewer reply is lost, the application shall preserve the original state and callback URL and select the same host tab on reconnection without relaunching it.", .timeLimit(.minutes(1)))
     func nativeOfferLostReplyReconnect() async throws {
         let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-offer-\(UUID())")
-        let backend = DedicatedChromeBackend(testProfile: root.appendingPathComponent(String(repeating: "b", count: 64)))
+        let profile = root.appendingPathComponent(String(repeating: "b", count: 64))
+        let backend = DedicatedChromeBackend(testProfile: profile)
+        var rehydrated: DedicatedChromeBackend?
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let server = try await ServerBootstrap(group: group).childChannelInitializer { channel in
             channel.pipeline.configureHTTPServerPipeline().flatMap { channel.pipeline.addHandler(ChromeSmokePage()) }
@@ -53,12 +82,22 @@ struct DedicatedChromeBackendTests {
             #expect(retried.state?.selectedTabID == tab)
             #expect(retried.state?.tabs.count == lost.state?.tabs.count)
             #expect(try await backend.evaluateForTesting("location.href") == original)
+            // Recreate the production backend as after a host app restart while Chrome survives.
+            rehydrated = DedicatedChromeBackend(testProfile: profile)
+            let freshBroker = ChromeTabBroker(authorize: { _, _ in "/test-worktree" }, makeBackend: { [newBackend = rehydrated!] _ in newBackend })
+            let restored = await freshBroker.handle(request, peerID: "trusted", viewerID: UUID())
+            #expect(restored.error == nil)
+            #expect(restored.state?.selectedTabID == tab)
+            #expect(restored.state?.tabs.count == lost.state?.tabs.count)
+
         } catch {
+            await rehydrated?.shutdownForTesting()
             await backend.shutdownForTesting()
             try? await server.close().get(); try? await group.shutdownGracefully()
             try? FileManager.default.removeItem(at: root)
             throw error
         }
+        await rehydrated?.shutdownForTesting()
         await backend.shutdownForTesting()
         try await server.close().get(); try await group.shutdownGracefully()
         try FileManager.default.removeItem(at: root)

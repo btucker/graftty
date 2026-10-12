@@ -34,3 +34,9 @@ python3 scripts/codex-browser/test-oauth.py /path/to/patched/codex /path/to/nati
 Each invocation creates a private temporary Codex home, a local mock OAuth/MCP server, and a dedicated headless Chrome profile. It types `/mcp login fixture` into the patched TUI, captures the original authorization URL through the helper, and navigates Chrome to that URL. The successful case checks the real app-server token exchange, PKCE verifier, redirect URI, and the TUI's actual login-completion message. Wrong-state and denied-consent cases use separate attempts and require an error with no token exchange.
 
 The fixture preserves its logs and receipt in the printed temporary directory and removes its Chrome profile. It does not use live provider credentials, restart existing agents, or prove the WebRTC viewer/physical phone path. Those require a separate integrated test. A running stock Codex TUI cannot acquire the hook in place; it must be resumed under the managed launcher after activation.
+
+## Dedicated Chrome prototype limits
+
+Each dedicated worktree profile retains at most 128 sign-in launch receipts, including uncertain dispatches. Receipts are private profile data and survive viewer disconnects and host app restarts. The prototype refuses new sign-in offers at that limit instead of evicting history and risking repeated OAuth navigation. Existing tab browsing and explicit URL launches remain available.
+
+If Chrome may have received a launch but its result is unknown, select the existing sign-in tab in the viewer. Retrying that offer never creates another tab. Leaving the viewer or reconnecting preserves host tabs and the original host-local callback.

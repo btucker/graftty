@@ -4,109 +4,12 @@ import GrafttyRemoteClient
 import SwiftUI
 import UIKit
 
-@MainActor @Observable
-private final class ChromeTabViewerModel {
-    var state = ChromeTabState()
-    var image: UIImage?
-    var error: String?
-    private var pendingCount = 0
-    private var inputCount = 0
-    var busy: Bool { inputCount > 0 }
-    private var client: ChromeTabClient?
-    private var generation = UUID()
-    private var requestOrdinal = 0
-    private var lastAppliedOrdinal = 0
-    private var frameSequence: UInt64?
-    private var frameTabID: String?
-
-    func run(target: String, initialLaunch: ChromeTabInitialLaunch?, onLaunch: () -> Void, provider: @escaping RemoteConnectionProvider) async {
-        close()
-        let epoch = generation
-        do {
-            guard let connection = await provider() else { if generation == epoch, !Task.isCancelled { error = "Chrome needs a paired Mac connection." }; return }
-            let driver = try await connection.makeChromeTabClient()
-            guard !Task.isCancelled, generation == epoch else { driver.close(); return }
-            let connectionClient = ChromeTabClient(driver: driver)
-            client = connectionClient
-            do { try await connectionClient.open() }
-            catch {
-                driver.close()
-                if generation == epoch, !Task.isCancelled {
-                    self.error = "This host does not support dedicated Chrome tabs. Update the Mac app to use the prototype."
-                    client = nil
-                }
-                return
-            }
-            guard !Task.isCancelled, generation == epoch else { driver.close(); return }
-            defer { driver.close(); if generation == epoch { client = nil; image = nil } }
-            let listed = await send(.list, target: target)
-            guard listed, !Task.isCancelled, generation == epoch else { return }
-            if let initialLaunch {
-                guard await send(initialLaunch.action, target: target),
-                      !Task.isCancelled, generation == epoch,
-                      initialLaunch.accept(.init(state: state)) else { return }
-                onLaunch()
-            } else if let first = state.tabs.first?.id { await send(.select(tabID: first), target: target) }
-            while !Task.isCancelled, generation == epoch {
-                try await Task.sleep(for: .milliseconds(250))
-                if pendingCount == 0 {
-                    await send(state.selectedTabID.map { .frame(tabID: $0) } ?? .list, target: target, polling: true)
-                }
-            }
-        } catch {
-            if !Task.isCancelled, generation == epoch { self.error = String(describing: error) }
-        }
-    }
-
-    @discardableResult
-    func send(_ action: ChromeTabAction, target: String, polling: Bool = false) async -> Bool {
-        guard let client, !Task.isCancelled else { return false }
-        if polling, pendingCount > 0 { return false }
-        let epoch = generation
-        requestOrdinal += 1
-        let ordinal = requestOrdinal
-        pendingCount += 1
-        if !polling { inputCount += 1 }
-        defer { if generation == epoch { pendingCount -= 1; if !polling { inputCount -= 1 } } }
-        do {
-            let reply = try await client.send(.init(target: target, action: action))
-            guard !Task.isCancelled, generation == epoch else { return false }
-            guard ordinal >= lastAppliedOrdinal else { return reply.error == nil }
-            lastAppliedOrdinal = ordinal
-            error = reply.error
-            guard let next = reply.state else { image = nil; return false }
-            state = next
-            if let frame = next.frame, frame.tabID == next.selectedTabID,
-               frame.jpeg.count <= ChromeTabFrame.maximumJPEGBytes {
-                if frame.sequence != frameSequence || frame.tabID != frameTabID {
-                    let decoded = UIImage(data: frame.jpeg)
-                    if let decoded, decoded.size.width <= 2048, decoded.size.height <= 2048 {
-                        image = decoded; frameSequence = frame.sequence; frameTabID = frame.tabID
-                    }
-                }
-            } else { image = nil; frameSequence = nil; frameTabID = nil }
-            return reply.error == nil
-        } catch ChromeTabClient.Failure.queueFull {
-            if generation == epoch { error = "Chrome input queue is full. Try sending again." }
-            return false
-        } catch {
-            if generation == epoch { self.error = "Chrome connection ended. Close and reopen to reconnect."; image = nil; client.cancel(); self.client = nil }
-            return false
-        }
-    }
-
-    func close() {
-        generation = UUID(); client?.cancel(); client = nil
-        image = nil; state = .init(); pendingCount = 0; inputCount = 0; error = nil
-        frameSequence = nil; frameTabID = nil; requestOrdinal = 0; lastAppliedOrdinal = 0
-    }
-}
-
 /// Rendering and OAuth callbacks both execute on the host Mac.
 struct ChromeTabViewer: View {
     let target: String
     let connectionProvider: RemoteConnectionProvider
     var initialLaunch: ChromeTabInitialLaunch? = nil
+    var paneReady = true
     var onLaunch: () -> Void = {}
     @State private var model = ChromeTabViewerModel()
     @State private var connectionAttempt = 0
@@ -117,14 +20,14 @@ struct ChromeTabViewer: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
-    private var ready: Bool { LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
+    private var ready: Bool { paneReady && LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                Text("Dedicated Chrome on your Mac. Tabs stay open when you disconnect.")
+                Text(ready ? "Dedicated Chrome on your Mac. Tabs stay open when you disconnect." : "Sign-in is paused until this pane reconnects with ownership.")
                     .font(.footnote).foregroundStyle(.secondary)
-                if initialLaunch != nil, model.error != nil {
+                if initialLaunch != nil, model.error != nil || model.initialLaunchError != nil {
                     Button("Retry sign-in") {
                         connectionAttempt += 1
                     }.disabled(model.busy)
@@ -143,7 +46,7 @@ struct ChromeTabViewer: View {
                     Label(model.state.tabs.first(where: { $0.id == model.state.selectedTabID })?.title ?? "Select a tab", systemImage: "rectangle.on.rectangle")
                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 }.disabled(model.busy || model.state.tabs.isEmpty)
-                if let error = model.error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if let error = model.error ?? model.initialLaunchError { Text(error).font(.footnote).foregroundStyle(.red) }
                 GeometryReader { geometry in
                     ZStack {
                         Color.black
@@ -183,11 +86,18 @@ struct ChromeTabViewer: View {
             .padding().navigationTitle("Chrome on Mac").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .task(id: RunScope(ready: ready, attempt: connectionAttempt)) {
-                if ready { await model.run(target: target, initialLaunch: initialLaunch, onLaunch: onLaunch, provider: connectionProvider) }
+                if ready { await model.run(target: target, initialLaunch: initialLaunch, onLaunch: onLaunch, makeDriver: {
+                    guard let connection = await connectionProvider() else { throw ChromeViewerUnavailable() }
+                    return try await connection.makeChromeTabClient()
+                }) }
                 else { model.close() }
             }
             .onDisappear { model.close() }
         }
+    }
+
+    private struct ChromeViewerUnavailable: Error, CustomStringConvertible {
+        var description: String { "Chrome needs a paired Mac connection." }
     }
 
     private func send(_ action: ChromeTabAction) { Task { await model.send(action, target: target) } }
