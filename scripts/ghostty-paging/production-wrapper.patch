@@ -212,7 +212,7 @@ index 55d2c1b..a70c162 100644
          request: request
      )
 diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
-index 76bf1fd..fc05411 100644
+index 9f5f4c4..69fd768 100644
 --- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
 +++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
 @@ -12,7 +12,8 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
@@ -391,10 +391,10 @@ index 0000000..a371dd2
 +    }
 +}
 diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
-index 721087b..3396467 100644
+index fbe2880..8e6280b 100644
 --- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
 +++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
-@@ -1,10 +1,12 @@
+@@ -1,12 +1,14 @@
  import Foundation
  import GhosttyKit
  
@@ -402,21 +402,23 @@ index 721087b..3396467 100644
 +/// Serializes host output and snapshot mutations while keeping each C call
 +/// on a live surface.
  final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+     /// Recheck retirement between chunks, even for a very large host packet.
+     static let maximumWriteSize = 4096
      typealias Write = @Sendable (ghostty_surface_t, Data) -> Void
      typealias ProcessExit = @Sendable (ghostty_surface_t, UInt32, UInt64) -> Void
 +    typealias MainScheduler = @Sendable (@escaping @Sendable () -> Void) -> Void
  
      private let condition = NSCondition()
      private let outputQueue = DispatchQueue(
-@@ -13,6 +15,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+@@ -15,6 +17,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
      )
      private let write: Write
      private let processExit: ProcessExit
 +    private let scheduleOnMain: MainScheduler
  
-     private var surface: ghostty_surface_t?
-     /// Invalidates work that was enqueued for a surface that has been replaced.
-@@ -22,10 +25,12 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+     /// All lease state is protected by `condition`. The mailbox callback is
+     /// supplied by the main-actor owner and used by main-actor lifecycle calls.
+@@ -36,10 +39,12 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
  
      init(
          write: @escaping Write,
@@ -429,8 +431,17 @@ index 721087b..3396467 100644
 +        self.scheduleOnMain = scheduleOnMain
      }
  
-     func setSurface(_ surface: ghostty_surface_t?) {
-@@ -83,6 +88,35 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+     func setSurface(
+@@ -100,7 +105,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+             var offset = data.startIndex
+             while offset < data.endIndex {
+                 let end = offset + min(Self.maximumWriteSize, data.endIndex - offset)
+-                guard withSurface(generation: generation, { surface in
++                guard let _ = withSurface(generation: generation, { surface in
+                     let chunk = data.count <= Self.maximumWriteSize ? data : data.subdata(in: offset..<end)
+                     write(surface, chunk)
+                 }) else { return }
+@@ -124,6 +129,35 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
          return true
      }
  
@@ -466,33 +477,33 @@ index 721087b..3396467 100644
      func withCurrentSurface<Result>(
          _ operation: (ghostty_surface_t) -> Result
      ) -> Result? {
-@@ -108,20 +142,21 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-         return surface == nil ? nil : generation
+@@ -150,21 +184,20 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
      }
  
+     @discardableResult
 -    private func withSurface(
-+    @discardableResult
 +    private func withSurface<Result>(
          generation expectedGeneration: UInt64,
 -        _ operation: (ghostty_surface_t) -> Void
--    ) {
+-    ) -> Bool {
 +        _ operation: (ghostty_surface_t) -> Result
 +    ) -> Result? {
          condition.lock()
          guard generation == expectedGeneration, let surface else {
              condition.unlock()
--            return
+-            return false
 +            return nil
          }
-         activeOperations += 1
+         surface.activeOperations += 1
          condition.unlock()
  
-         defer { finishOperation() }
--        operation(surface)
-+        return operation(surface)
+         defer { finishOperation(on: surface) }
+-        operation(surface.rawValue)
+-        return true
++        return operation(surface.rawValue)
      }
  
-     private func finishOperation() {
+     private func finishOperation(on surface: SurfaceLease) {
 diff --git a/Tests/GhosttyKitTest/InMemoryTerminalSnapshotQueueTests.swift b/Tests/GhosttyKitTest/InMemoryTerminalSnapshotQueueTests.swift
 new file mode 100644
 index 0000000..50265b6
