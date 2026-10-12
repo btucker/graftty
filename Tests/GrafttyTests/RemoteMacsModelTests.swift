@@ -799,6 +799,7 @@ struct RemoteMacsModelTests {
         try store.add(remote)
         let started = AsyncStream<Void>.makeStream()
         var starts = started.stream.makeAsyncIterator()
+        let replacementGate = RemoteMacsModelConnectGate()
         var intents: [Bool] = []
         let registry = RemoteMacConnectionRegistry(
             intentAwareFactory: { remoteMac, identity, replacing in
@@ -806,6 +807,8 @@ struct RemoteMacsModelTests {
                 if intents.count == 1 {
                     started.continuation.yield(())
                     try await Task.sleep(for: .seconds(30))
+                } else {
+                    await replacementGate.wait()
                 }
                 return RemoteMacConnectionRegistry.Entry(
                     id: UUID(),
@@ -827,10 +830,13 @@ struct RemoteMacsModelTests {
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        // Keep the replacement in flight through the second request's host-pin refresh.
+        await replacementGate.waitUntilStarted()
         #expect(await model.reconnectRemoteMac(
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        await replacementGate.release()
 
         await #expect(throws: CancellationError.self) {
             _ = try await ordinary.value
