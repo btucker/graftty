@@ -3138,6 +3138,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.
 
+**CHROME-3.2** While Graftty owns a Chrome debug endpoint, the application shall reject its port through the general browser tunnel even for a paired peer with loopback permission.
+
+**CHROME-3.3** When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

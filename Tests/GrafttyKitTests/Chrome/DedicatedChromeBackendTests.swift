@@ -29,7 +29,8 @@ private final class ChromeSmokePage: ChannelInboundHandler, @unchecked Sendable 
 struct DedicatedChromeBackendTests {
     @Test("@spec CHROME-1.4: While an authorized phone controls a dedicated Chrome tab, the application shall stream bounded selected-tab screencast frames, dispatch tap, scroll, text and keyboard input on the host, and retain tab state across viewer reconnects.", .timeLimit(.minutes(1)))
     func nativeCDPVerticalSmoke() async throws {
-        let directory = URL.temporaryDirectory.appendingPathComponent("graftty-native-chrome-\(UUID())")
+        let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-chrome-\(UUID())")
+        let directory = root.appendingPathComponent(String(repeating: "a", count: 64))
         let backend = DedicatedChromeBackend(testProfile: directory)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let server = try await ServerBootstrap(group: group).childChannelInitializer { channel in
@@ -38,9 +39,16 @@ struct DedicatedChromeBackendTests {
         let port = try #require(server.localAddress?.port)
         let broker = ChromeTabBroker(authorize: { _, peer in peer == "trusted" ? "/test-worktree" : nil }, makeBackend: { _ in backend })
         let viewer = UUID()
+        var debugPort: Int?
         do {
             let launched = await broker.handle(.init(target: "pane", action: .launch(url: "http://127.0.0.1:\(port)")), peerID: "trusted", viewerID: viewer)
             #expect(launched.error == nil)
+            let endpoint = try String(contentsOf: directory.appendingPathComponent("DevToolsActivePort"), encoding: .utf8)
+            debugPort = endpoint.split(separator: "\n").first.flatMap { Int($0) }
+            #expect(ChromeDebugPortRegistry.shared.contains(port: try #require(debugPort)))
+            // Simulate registry initialization in a restarted host app.
+            let restored = ChromeDebugPortRegistry(profileRoot: root)
+            #expect(restored.contains(port: try #require(debugPort)))
             let tab = try #require(launched.state?.selectedTabID)
             var frame: ChromeTabFrame?
             for _ in 0..<30 {
@@ -81,15 +89,27 @@ struct DedicatedChromeBackendTests {
             let stale = await broker.handle(.init(target: "pane", action: .text(tabID: "obsolete", text: "wrong")), peerID: "trusted", viewerID: secondViewer)
             #expect(stale.error != nil)
             await broker.disconnect(viewerID: secondViewer)
+            #expect(ChromeDebugPortRegistry.shared.contains(port: try #require(debugPort)))
+            await backend.shutdownForTesting()
+            #expect(!ChromeDebugPortRegistry.shared.contains(port: try #require(debugPort)))
+            #expect(!restored.contains(port: try #require(debugPort)))
+            let restarted = await broker.handle(.init(target: "pane", action: .launch(url: "http://127.0.0.1:\(port)")), peerID: "trusted", viewerID: UUID())
+            #expect(restarted.error == nil)
+            let restartedEndpoint = try String(contentsOf: directory.appendingPathComponent("DevToolsActivePort"), encoding: .utf8)
+            let restartedPort = try #require(restartedEndpoint.split(separator: "\n").first.flatMap { Int($0) })
+            #expect(ChromeDebugPortRegistry.shared.contains(port: restartedPort))
+            if restartedPort != debugPort { #expect(!ChromeDebugPortRegistry.shared.contains(port: try #require(debugPort))) }
+            debugPort = restartedPort
         } catch {
             await backend.shutdownForTesting()
             try? await server.close().get(); try? await group.shutdownGracefully()
-            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: root)
             throw error
         }
         await backend.shutdownForTesting()
+        #expect(!ChromeDebugPortRegistry.shared.contains(port: try #require(debugPort)))
         try await server.close().get(); try await group.shutdownGracefully()
-        try FileManager.default.removeItem(at: directory)
+        try FileManager.default.removeItem(at: root)
     }
 }
 #endif

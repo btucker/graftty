@@ -49,6 +49,41 @@ struct DirectSSHLoopbackTests {
     }
 
     #if canImport(Network)
+    @Test("@spec CHROME-3.3: When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.", .timeLimit(.minutes(1)))
+    func ownedChromePortIsDeniedAtTCPChannelOpen() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, tunnelAllowed: true))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        let echo = try ForwardEchoServer()
+        let echoPort = try await echo.start()
+        defer { echo.stop() }
+        let token = UUID()
+        defer { ChromeDebugPortRegistry.shared.unregister(owner: token) }
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let payload = Data("ordinary-worktree-or-callback".utf8)
+            func roundTrip() async throws -> Data? {
+                let forward = try await client.forwardLocalPort(host: "127.0.0.1", port: Int(echoPort))
+                defer { forward.stop() }
+                let socket = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: forward.localPort)!, using: .tcp)
+                socket.start(queue: DispatchQueue(label: "chrome-port-test"))
+                defer { socket.cancel() }
+                let timeout = Task { try? await Task.sleep(for: .seconds(5)); if !Task.isCancelled { socket.cancel() } }
+                defer { timeout.cancel() }
+                try? await BrowserProxy.send(payload, to: socket)
+                return try? await forwardReceive(socket, count: payload.count)
+            }
+            #expect(try await roundTrip() == payload)
+            ChromeDebugPortRegistry.shared.register(port: Int(echoPort), owner: token)
+            await #expect(throws: (any Error).self) { try await roundTrip() }
+            ChromeDebugPortRegistry.shared.unregister(owner: token)
+            #expect(try await roundTrip() == payload)
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
     @Test("@spec PORTS-5.26: When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.", .timeLimit(.minutes(1)), arguments: [false, true])
     func localPortForwardEchoAndDisconnect(closeParent: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }

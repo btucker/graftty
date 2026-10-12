@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import GrafttyHostAgent
+@testable import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -59,4 +59,30 @@ struct ChromeTabTransportTests {
         } catch { await client.close(); await server.close(); throw error }
         await client.close(); await server.close()
     }
+    @Test("@spec CHROME-3.2: While Graftty owns a Chrome debug endpoint, the application shall reject its port through the general browser tunnel even for a paired peer with loopback permission.")
+    func rawDebugPortCannotBeTunneled() throws {
+        let registry = ChromeDebugPortRegistry()
+        let token = UUID()
+        registry.register(port: 32198, owner: token)
+        let box = AuthenticatedPeerBox()
+        var capabilities = PairedDeviceCapabilities.defaultsAfterPairing
+        capabilities.portTunnel = .allowedLoopback
+        box.peer = TrustedPeer(id: .init(value: "phone"), kind: .iphone,
+            publicKey: try RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 1, count: 32)), displayName: "Phone",
+            capabilities: capabilities, pairedAt: Date(), lastSeenAt: nil)
+        for host in ["localhost", "127.0.0.1", "::1", "alias.localhost"] {
+            #expect(!box.browserTunnelAllowed(host: host, port: 32198, protectedChromePorts: registry))
+        }
+        #expect(box.browserTunnelAllowed(host: "localhost", port: 32199, protectedChromePorts: registry))
+        // A restarted browser replaces its old port under the same owner token.
+        registry.register(port: 32200, owner: token)
+        #expect(box.browserTunnelAllowed(host: "localhost", port: 32198, protectedChromePorts: registry))
+        #expect(!box.browserTunnelAllowed(host: "localhost", port: 32200, protectedChromePorts: registry))
+        // A dead browser releases the old port even without a graceful disconnect.
+        registry.register(port: 32200, owner: token, isAlive: { false })
+        #expect(box.browserTunnelAllowed(host: "localhost", port: 32200, protectedChromePorts: registry))
+        registry.unregister(owner: token)
+        #expect(box.browserTunnelAllowed(host: "localhost", port: 32198, protectedChromePorts: registry))
+    }
+
 }

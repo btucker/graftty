@@ -14,4 +14,3 @@ enum ChromeTabCoordinates {
         return CGPoint(x: x, y: y)
     }
 }
-

@@ -8,6 +8,7 @@ import GrafttyProtocol
 public actor DedicatedChromeBackend: ChromeTabBackend {
     public enum Failure: Error { case unavailable, launchFailed, disconnected, busy, timeout, invalidTab, tooManyTabs, protocolError(String) }
     private let profile: URL
+    private let portOwner = UUID()
     private var process: Process?
     private var socket: URLSessionWebSocketTask?
     private var receiver: Task<Void, Never>?
@@ -36,12 +37,13 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
     func shutdownForTesting() async {
         await stopCapture()
         if let socket { lostSocket(socket) }
-        process?.terminate()
+        if process?.isRunning == true { process?.terminate() }
         for _ in 0..<100 {
             if process?.isRunning != true { break }
             try? await Task.sleep(for: .milliseconds(50))
         }
         process = nil
+        ChromeDebugPortRegistry.shared.unregister(owner: portOwner)
     }
 
     func evaluateForTesting(_ expression: String) async throws -> String {
@@ -191,6 +193,11 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
     }
 
     private func openSocket(_ endpoint: URL) async -> Bool {
+        guard let port = endpoint.port else { return false }
+        let profile = self.profile
+        ChromeDebugPortRegistry.shared.register(port: port, owner: portOwner, isAlive: {
+            ChromeDebugPortRegistry.ownsDebugPort(profile: profile, port: port)
+        })
         let ws = URLSession.shared.webSocketTask(with: endpoint)
         ws.maximumMessageSize = 2 * 1024 * 1024
         socket = ws

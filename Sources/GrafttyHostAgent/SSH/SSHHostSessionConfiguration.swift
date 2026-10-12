@@ -182,7 +182,8 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         return response
     }
 
-    func browserTunnelAllowed(host: String, port: Int) -> Bool {
+    func browserTunnelAllowed(host: String, port: Int, protectedChromePorts: ChromeDebugPortRegistry = .shared) -> Bool {
+        guard !protectedChromePorts.contains(port: port) else { return false }
         lock.lock()
         defer { lock.unlock() }
         guard let peer = _peer else { return false }
