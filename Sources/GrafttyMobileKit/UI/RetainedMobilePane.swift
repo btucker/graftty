@@ -27,6 +27,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.resetStickyModifiers()
         container?.terminalView.resignFirstResponder()
         container?.committedSoftwareInput = nil
+        container?.agentCompletion = nil
         container?.hardwareKeyboardCommands = []
         container?.onUserInteraction = nil
         container?.onPasteRequested = nil
