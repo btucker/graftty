@@ -15,7 +15,7 @@ struct AgentHookInstallerTests {
         // (.zshenv, .zprofile, .zshrc, .zlogin) + two bash-init files
         // (bash-launcher, .bashrc) = 7.
         #if os(macOS)
-        #expect(first.writtenFiles.count == 8) // Also install the scoped URL open wrapper.
+        #expect(first.writtenFiles.count == 10) // URL open, browser offer, and optional Codex TUI launcher.
         #else
         #expect(first.writtenFiles.count == 7)
         #endif

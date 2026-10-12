@@ -118,6 +118,12 @@ public struct AgentHookInstaller: Sendable {
         try writeIfChanged(Self.openWrapperScript(grafttyCLIPath: grafttyCLIPath),
                            to: binDirectory.appendingPathComponent("open"),
                            executable: true, written: &written)
+        try writeIfChanged("#!/bin/sh\nexec \(Self.shellCommandToken(grafttyCLIPath)) open \"$@\"\n",
+                           to: binDirectory.appendingPathComponent("browser-offer"),
+                           executable: true, written: &written)
+        try writeIfChanged(Self.codexBrowserLauncherScript(rootDirectory: rootDirectory),
+                           to: binDirectory.appendingPathComponent("codex-browser-tui"),
+                           executable: true, written: &written)
         #endif
 
         try installZshInitShim(written: &written)
@@ -136,6 +142,27 @@ public struct AgentHookInstaller: Sendable {
           esac
         fi
         exec '/usr/bin/open' "$@"
+        """
+    }
+
+    private static func codexBrowserLauncherScript(rootDirectory: URL) -> String {
+        let binary = rootDirectory.appendingPathComponent("codex-browser/codex").path
+        let helper = binDirectory(rootDirectory: rootDirectory).appendingPathComponent("browser-offer").path
+        return """
+        #!/bin/sh
+        native_binary=$1
+        original_tui=$2
+        shift 2
+        browser_tui=\(shellCommandToken(binary))
+        if [ -n "${GRAFTTY_SOCK:-}" ] && [ -n "${ZMX_SESSION:-}" ] && [ -x "$browser_tui" ]; then
+          if native_version="$("$native_binary" --version 2>/dev/null)" &&
+             browser_version="$("$browser_tui" --version 2>/dev/null)" &&
+             [ -n "$native_version" ] && [ "$native_version" = "$browser_version" ]; then
+            exec env CODEX_BROWSER_COMMAND=\(shellCommandToken(helper)) "$browser_tui" "$@"
+          fi
+          printf '%s\\n' 'graftty: browser-hook Codex version differs; using the installed Codex TUI' >&2
+        fi
+        exec "$original_tui" "$@"
         """
     }
 
@@ -448,6 +475,18 @@ public struct AgentHookInstaller: Sendable {
         codexLockCommandPath: String
     ) -> String {
         let runtime = TeamHookRuntime.codex
+        #if os(macOS)
+        let launcher = shellCommandToken((wrapperDirectory as NSString).appendingPathComponent("codex-browser-tui"))
+        let tuiCommand = """
+        if [ -x \(launcher) ]; then
+          env CODEX_HOME="$_graftty_codex_runtime_home" \(launcher) "$_graftty_codex_native_binary" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
+        else
+          env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
+        fi
+        """
+        #else
+        let tuiCommand = "env CODEX_HOME=\"$_graftty_codex_runtime_home\" \"$real_binary\" --enable hooks --remote \"unix://$_graftty_codex_socket\" \"$@\""
+        #endif
         let resolveBlock = realBinaryResolutionShell(
             wrapperDirectory: wrapperDirectory,
             realCommandName: runtime.rawValue
@@ -801,7 +840,7 @@ public struct AgentHookInstaller: Sendable {
             exit 1
           fi
           \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$" >/dev/null 2>&1 || true
-          env CODEX_HOME="$_graftty_codex_runtime_home" "$real_binary" --enable hooks --remote "unix://$_graftty_codex_socket" "$@"
+          \(tuiCommand)
           _graftty_codex_tui_status=$?
           if [ "$_graftty_codex_tui_status" -ne 0 ]; then
             _graftty_preserve_codex_app_server_log=1
