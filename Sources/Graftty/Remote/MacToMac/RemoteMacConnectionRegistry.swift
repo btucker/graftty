@@ -618,7 +618,7 @@ final class RemoteMacConnectionRegistry {
                 reconnectOnTeamClose.insert(entry.id)
                 response = .ok
             } else {
-                response = .error("This host connection is no longer ready to reconnect; check the Remote Macs sidebar")
+                response = .error("This host connection is no longer ready to reconnect; check the Remote Hosts sidebar")
             }
             return (try? JSONEncoder().encode(response)) ?? Data()
         }

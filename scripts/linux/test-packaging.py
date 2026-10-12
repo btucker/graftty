@@ -132,7 +132,7 @@ class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="graftty-installer-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.archive = self.root / "archive"
         self.archive.mkdir()
         for name in ("bin", "lib", "libexec", "share"):
@@ -182,6 +182,103 @@ exit 0
         previous = list((self.home / ".local/share/graftty/releases").glob("*.previous.*"))
         self.assertEqual(len(previous), 1)
         self.assertTrue((previous[0] / "bin/zmx").exists())
+
+    def test_maintenance_preserves_service_configuration_and_skips_setup(self):
+        self.install("--no-start", "--bind-address", "0.0.0.0", "--ssh-port", "9001", "--http-port", "9000")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        self.install("--maintenance", "--no-start")
+        after = service.read_text()
+        self.assertEqual(after, before.replace("0.1.0-test", "0.2.0-test"))
+        self.assertIn("--ssh-port 9001 --http-port 9000", after)
+
+    def test_maintenance_rejects_effective_killmode_override(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('#!/bin/sh\nif [ "$2" = is-active ]; then exit 0; fi\necho control-group\n')
+        systemctl.chmod(0o755)
+        result = self.install("--maintenance", success=False)
+        self.assertIn("effective KillMode=process", result.stderr)
+        self.assertEqual(service.read_text(), before)
+        self.assertEqual(list((self.home / ".local/share/graftty/releases").glob(".install-*")), [])
+
+    def test_maintenance_rejects_execstart_override_with_whitespace(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('#!/bin/sh\ncase "$2" in show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-host.service" ;; *) echo process ;; esac ;; cat) cat "$HOME/.config/systemd/user/graftty-host.service"; printf "  ExecStart =\\n  ExecStart = /old/graftty-host serve\\n" ;; esac\n')
+        systemctl.chmod(0o755)
+        result = self.install("--maintenance", success=False)
+        self.assertIn("ExecStart overrides", result.stderr)
+        self.assertEqual(service.read_text(), before)
+
+    def test_maintenance_rejects_foreground_host_before_changing_service(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('#!/bin/sh\nexit 3\n')
+        systemctl.chmod(0o755)
+        result = self.install("--maintenance", success=False)
+        self.assertIn("existing user service to be active", result.stderr)
+        self.assertEqual(service.read_text(), before)
+
+    def test_running_maintenance_preserves_disabled_autostart_and_skips_setup(self):
+        self.install("--no-start")
+        (self.archive / "VERSION").write_text("0.2.0-test\n")
+        log = self.root / "maintenance.log"
+        self.env["SYSTEMCTL_TEST_LOG"] = str(log)
+        systemctl = self.root / "tools/systemctl"
+        systemctl.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> "$SYSTEMCTL_TEST_LOG"
+case "$2" in
+    show) case "$*" in *FragmentPath*) echo "$HOME/.config/systemd/user/graftty-host.service" ;; *) echo process ;; esac ;;
+    cat) cat "$HOME/.config/systemd/user/graftty-host.service" ;;
+esac
+''')
+        systemctl.chmod(0o755)
+        host = self.archive / "bin/graftty-host"
+        host.write_text('''#!/bin/sh
+if [ "$1" = setup ]; then echo 'Setup must not run' >&2; exit 42; fi
+if [ "$1" = status ]; then echo '{"running":true,"sshPort":8801}'; fi
+''')
+        self.install("--maintenance")
+        self.assertNotIn("--user enable graftty-host.service", log.read_text())
+        self.assertIn("--user restart graftty-host.service", log.read_text())
+
+    def test_maintenance_rechecks_reviewed_build_after_lock(self):
+        self.install("--no-start")
+        service = self.home / ".config/systemd/user/graftty-host.service"
+        before = service.read_text()
+        preflight = self.root / "preflight.sh"
+        preflight.write_text('#!/bin/sh\necho "Reviewed build changed" >&2\nexit 75\n')
+        self.env["GRAFTTY_MAINTENANCE_PREFLIGHT_FILE"] = str(preflight)
+        result = self.install("--maintenance", "--no-start", success=False)
+        self.assertIn("Reviewed build changed", result.stderr)
+        self.assertEqual(service.read_text(), before)
+        self.assertEqual(list((self.home / ".local/share/graftty/releases").glob(".install-*")), [])
+
+    def test_cancelled_release_rename_restores_previous_directory(self):
+        self.install("--no-start")
+        previous = (self.home / ".local/bin/graftty-host").resolve()
+        native_mv = shutil.which("mv", path=os.defpath)
+        fake_mv = self.root / "tools/mv"
+        fake_mv.write_text(f"#!{sys.executable}\n" + f"""
+import os, signal, subprocess, sys
+code = subprocess.call([{native_mv!r}] + sys.argv[1:])
+if code == 0 and '.previous.' in sys.argv[-1]:
+    os.kill(os.getppid(), signal.SIGTERM)
+sys.exit(code)
+""")
+        fake_mv.chmod(0o755)
+        self.install("--maintenance", "--no-start", success=False)
+        self.assertTrue(previous.exists())
+        self.assertEqual((self.home / ".local/bin/graftty-host").resolve(), previous)
+        self.assertEqual(list(previous.parent.parent.parent.glob("*.previous.*")), [])
 
     def test_rejects_invalid_options_before_installing(self):
         for args in (("--ssh-port", "0"), ("--http-port", "65536"),

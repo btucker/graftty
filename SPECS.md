@@ -132,11 +132,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
-**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Macs grouping from the worktree column.
+**LAYOUT-2.53** While the project column is enabled, the application shall identify remote projects by their owning Mac in that column and omit the Remote Hosts grouping from the worktree column.
 
 **LAYOUT-2.54** While the project column is enabled, the application shall align remote worktrees with the project column's row margins and height without reserving rows for Mac or repository headings.
 
-**LAYOUT-2.55** While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
+**LAYOUT-2.55** While the Remote Hosts menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.
 
 **LAYOUT-2.56** When a worktree has long directory and branch labels, the application shall keep its title row on one line and truncate labels within the available width.
 
@@ -148,7 +148,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.61** When a remote worktree is dropped onto another worktree, the application shall reject the reorder if the source and destination belong to different Mac identities, including matching paths.
 
-**LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Macs in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
+**LAYOUT-2.62** When the project rail setting changes, the application shall place Add Repository beside Manage Remote Hosts in the project footer if enabled, or retain the labeled Add Repository button in the single-sidebar footer if disabled.
 
 **LAYOUT-2.63** While a worktree displays pane rows, the application shall place orange attention counts before the corresponding pane titles, assigning worktree-wide attention to the first pane and keeping the counts separate from Git indicators.
 
@@ -3013,6 +3013,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.18** When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.
 
 **REMOTE-22.19** When a headless host sends a bounded source image, the application shall verify its revision and cache a thumbnail no larger than 64 pixels while rejecting invalid or oversized images.
+
+**REMOTE-22.20** When host maintenance selects a Graftty release, the application shall choose the newest published release with both the host architecture archive and checksum, independently of the Mac bundle version.
+
+**REMOTE-22.21** When an older saved remote host lacks maintenance metadata, the application shall preserve its pairing and leave the system SSH destination unset rather than reuse the Graftty listener.
+
+**REMOTE-22.22** If maintenance discovers a different Graftty identity at the system SSH destination, then the application shall reject it before changing tools, service, pairing, or repositories.
+
+**REMOTE-22.23** When a selected maintenance component fails, the application shall retain other component outcomes and report partial failure without claiming every component succeeded.
+
+**REMOTE-22.24** When maintenance is cancelled, the application shall stop subsequent components and describe an interrupted component's remote outcome as unknown.
+
+**REMOTE-22.25** When selected agent tools are installed on Linux, the application shall use bounded official native installers, verify their executable versions in the user's local bin directory, and keep authentication separate.
+
+**REMOTE-22.26** While a trusted Linux host is connected, the application shall offer Update Host; direct SSH transport alone shall not identify a host as Linux.
+
+**REMOTE-22.27** When Linux host maintenance restarts Graftty, the installer shall preserve the existing service options and require effective KillMode=process without rerunning setup or importing projects.
+
+**REMOTE-22.28** When rediscovery or repeat pairing saves an existing host without maintenance metadata, the application shall preserve its validated system SSH destination; an explicit update shall allow clearing it.
+
+**REMOTE-22.29** When maintenance verifies an existing Linux identity, the application shall compare its exact public key and device ID without transferring private identity data or interpreting identity text as executable code.
+
+**REMOTE-22.30** If the installed Graftty build is newer than the available release or cannot be compared with it, then the application shall require explicit replacement selection before installing that release.
+
+**REMOTE-22.31** When maintenance reconnection is cancelled during teardown, the application shall clear the cancelled connection attempt so a later Connect can recover.
+
+**REMOTE-22.32** When maintenance installs Graftty before agent tools, the application shall verify the reviewed identity and version under the installer lock and continue later components against the installed release without repeating pairing or imports.
+
+**REMOTE-22.33** When fresh Linux setup installs selected missing agent tools, the application shall report each tool outcome before later identity or project setup failures, preserving existing installations and keeping sign-in separate.
+
+**REMOTE-22.34** If the installed Linux service does not own the inspected paired host's state lease, then the application shall reject Graftty maintenance before stopping or replacing that service.
 
 ### REMOTE-23.x
 

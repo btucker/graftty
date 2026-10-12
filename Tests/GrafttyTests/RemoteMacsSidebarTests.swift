@@ -10,7 +10,7 @@ import GrafttyCommandUI
 @testable import Graftty
 @testable import GrafttyKit
 
-@Suite("Remote Macs sidebar and add sheet")
+@Suite("Remote Hosts sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
     @Test("@spec LAYOUT-2.59: When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.")
@@ -53,7 +53,7 @@ struct RemoteMacsSidebarTests {
         #expect(decoded.resolve(on: first, in: []) == nil)
     }
 
-    @Test("@spec LAYOUT-2.55: While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
+    @Test("@spec LAYOUT-2.55: While the Remote Hosts menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
     func machineStatusActions() {
         #expect(RemoteMacConnectionState.connected.statusText == "Connected")
         #expect(RemoteMacConnectionState.connected.connectionActionTitle == nil)
@@ -195,7 +195,7 @@ struct RemoteMacsSidebarTests {
             connectionState: { _ in .offline }
         )
 
-        #expect(projection.title == "Remote Macs")
+        #expect(projection.title == "Remote Hosts")
         #expect(projection.rows.isEmpty)
         #expect(projection.addAction == .addRemoteMac)
         #expect(projection.isVisible)

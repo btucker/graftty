@@ -306,7 +306,7 @@ struct RemoteMacsModelTests {
         }
         let model = RemoteMacsModel(store: store, connectionRegistry: registry)
         #expect(await model.reconnectRemoteMac(target: "unknown") == .error(
-            "Unknown Remote Mac 'unknown'. Use a saved name or device ID from the Remote Macs sidebar."
+            "Unknown Remote Host 'unknown'. Use a saved name or device ID from the Remote Hosts sidebar."
         ))
         guard case .error(let message) = await model.reconnectRemoteMac(target: "Studio Mac") else {
             Issue.record("Expected ambiguous target error")
@@ -429,6 +429,45 @@ struct RemoteMacsModelTests {
 
         #expect(connections.issuedCount == 1)
         #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .offline)
+    }
+
+    @Test("@spec REMOTE-22.31: When maintenance reconnection is cancelled during teardown, the application shall clear the cancelled connection attempt so a later Connect can recover.")
+    func maintenanceReconnectCancellationAllowsRecovery() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let closeGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(closeGate: closeGate),
+            RemoteMacsModelTestConnection(),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+
+        let maintenance = Task { try await model.reconnectAfterMaintenance(remote) }
+        await closeGate.waitUntilStarted()
+        maintenance.cancel()
+        await closeGate.release()
+        await #expect(throws: CancellationError.self) { try await maintenance.value }
+
+        #expect(connections.issuedCount == 1)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) != .connecting)
+        _ = try await model.connect(to: remote)
+        #expect(connections.issuedCount == 2)
     }
 
     @Test("disconnect during cached terminal connection teardown prevents a replacement dial")

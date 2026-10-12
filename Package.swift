@@ -110,6 +110,7 @@ let package = Package(
             resources: [
                 .copy("Web/Resources"),
                 .copy("AgentPlugins"),
+                .copy("HostSetup/Resources/linux-install.sh"),
                 // Vendored ghostty runtime resources (CONFIG-2.5) — see
                 // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
                 // `terminfo` land at the bundle root as siblings, mirroring
@@ -223,7 +224,7 @@ let package = Package(
         .testTarget(
             name: "GrafttyKitTests",
             dependencies: ["GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
-            sources: isLinux ? ["Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift",
+            sources: isLinux ? ["Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift",
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,

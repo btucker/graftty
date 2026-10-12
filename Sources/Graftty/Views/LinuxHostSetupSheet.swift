@@ -38,6 +38,9 @@ struct LinuxHostSetupSheet: View {
     @State private var localArchive: URL?
     @State private var task: Task<Void, Never>?
     @State private var loadingProject = false
+    @State private var installCodex = true
+    @State private var installClaude = true
+    @State private var toolOutcomes: [LinuxHostComponentOutcome] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -59,6 +62,10 @@ struct LinuxHostSetupSheet: View {
                     TextField("Release version", text: $form.version, prompt: Text("1.2.3"))
                 }
             }.disabled(form.isRunning)
+            Toggle("Install Codex if missing", isOn: $installCodex).disabled(form.isRunning)
+            Toggle("Install Claude Code if missing", isOn: $installClaude).disabled(form.isRunning)
+            Text("Agent sign-in is separate. Existing installations are preserved.")
+                .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Text("Projects").font(.headline)
                 Spacer()
@@ -81,6 +88,16 @@ struct LinuxHostSetupSheet: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             status
+            if !toolOutcomes.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(toolOutcomes) { outcome in
+                            Text("\(outcome.component.title): \(outcome.status == .succeeded ? "available" : "installation failed")\n\(outcome.message)")
+                                .font(.caption).textSelection(.enabled)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 120)
+            }
             HStack {
                 if !form.isRunning {
                     Button("Choose Development Archive…", action: chooseArchive).font(.caption)
@@ -116,6 +133,10 @@ struct LinuxHostSetupSheet: View {
     }
 
     @ViewBuilder private var status: some View {
+        if form.phase == .connected {
+            Text("Graftty is installed, paired and connected. Review tool results below; use Update Host in Remote Hosts to retry failed tools. Agent sign-in is separate.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
         if let progress = form.progress, form.isRunning {
             ProgressView(value: Double(progress.completed), total: Double(progress.total)) {
                 Text(form.phase == .cancelling ? "Cancelling setup…" : progress.message)
@@ -188,20 +209,25 @@ struct LinuxHostSetupSheet: View {
             let plan = LinuxHostSetupPlan(
                 destination: try LinuxHostDestination(form.destination), destinationRoot: form.destinationRoot,
                 projects: projects.filter { selectedPaths.contains($0.localPath) },
-                archive: localArchive.map(LinuxHostArchive.local) ?? .release(version: form.version), client: client
+                archive: localArchive.map(LinuxHostArchive.local) ?? .release(version: form.version), client: client,
+                agentTools: (installCodex ? [.codex] : []) + (installClaude ? [.claude] : [])
             )
             try LinuxHostSetup.validateProjects(plan.projects, destinationRoot: plan.destinationRoot)
             form.start()
+            toolOutcomes = []
             task = Task { @MainActor in
                 do {
-                    let result = try await setup.run(plan: plan) { progress in
+                    let result = try await setup.run(plan: plan, toolOutcome: { outcome in
+                        await MainActor.run { toolOutcomes.append(outcome) }
+                    }) { progress in
                         await MainActor.run { form.update(progress) }
                     }
                     try Task.checkCancellation()
+                    toolOutcomes = result.toolOutcomes
                     try await onConnect(result)
                     try Task.checkCancellation()
                     form.phase = .connected
-                    dismiss()
+                    if toolOutcomes.allSatisfy({ $0.status == .succeeded }) { dismiss() }
                 } catch is CancellationError { form.finishCancellation() }
                 catch { form.fail(LinuxHostSetupError.message(for: error)) }
             }
