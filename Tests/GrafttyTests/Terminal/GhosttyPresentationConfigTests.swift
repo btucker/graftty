@@ -4,7 +4,7 @@ import Testing
 @testable import Graftty
 @testable import GrafttyKit
 
-@Suite("@spec IOS-4.45: When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings including fonts and keybindings, and retain explicit overrides over the selected host theme branch.")
+@Suite("@spec IOS-4.45: When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.")
 @MainActor
 struct GhosttyPresentationConfigTests {
     @Test(arguments: ["relativeSymlink", "homeRelativeSymlink", "absoluteAlias", "literalTilde", "bomRoot", "bomChild"])

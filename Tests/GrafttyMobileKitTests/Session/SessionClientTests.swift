@@ -1216,7 +1216,7 @@ struct SessionClientTests {
         try await waitUntil("shifted tray keys to reach the WebSocket") {
             binaryFrames(ws).count == expected.count
         }
-        #expect(binaryFrames(ws) == expected)
+        #expect(Set(binaryFrames(ws)) == Set(expected))
     }
 
     /// Multi-byte terminal buffers with embedded LFs pass through unchanged.

@@ -1910,7 +1910,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
 
-**IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
+**IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
 
 ### IOS-5.x — Multi-pane layout
 
