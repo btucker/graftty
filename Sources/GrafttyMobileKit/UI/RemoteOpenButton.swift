@@ -4,27 +4,44 @@ import QuickLook
 import SwiftUI
 import UIKit
 
-/// Offers stay in a menu rather than stealing focus from the terminal.
+/// Ordinary resources stay in a menu; targeted sign-in offers open on the owning device.
 struct RemoteOpenButton: View {
     let host: Host
     let worktree: String
     let coordinator: RemoteConnectionCoordinator
+    let sessionName: String
+    let ownerDeviceID: RemoteDeviceID?
     @State private var offers: [RemoteOpenOffer] = []
     @State private var download: Task<Void, Never>?
     @State private var isDownloading = false
     @State private var preview: Preview?
     @State private var cachedFile: URL?
     @State private var error: String?
+    let isPaneOwner: () -> Bool
+    let canPresentAuthentication: () -> Bool
+    @State private var operationID = UUID()
+
+    private var pollScope: PollScope {
+        PollScope(worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
+    }
 
     private struct Preview: Identifiable {
         let id = UUID()
         let url: URL
+        var callbackHost: String? = nil
+        var isAutomatic = false
+    }
+
+    private struct PollScope: Equatable {
+        let worktree: String
+        let sessionName: String
+        let ownerDeviceID: RemoteDeviceID?
     }
 
     var body: some View {
         ZStack {
             if isDownloading {
-                ProgressView("Downloading file…")
+                ProgressView("Opening resource…")
                     .padding(12)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             } else if !offers.isEmpty {
@@ -39,14 +56,24 @@ struct RemoteOpenButton: View {
                 }
             }
         }
-        .task(id: worktree) {
+        .onChange(of: pollScope) { _, _ in
+            cancelOperation()
+            if !isPaneOwner(), preview?.isAutomatic == true { preview = nil }
+        }
+        .task(id: pollScope) {
             while !Task.isCancelled {
                 do {
                     let response = try await coordinator.sendWorktreeManagement(
                         .openResource(worktreeID: worktree, request: .list), to: host
                     )
                     guard !Task.isCancelled else { return }
-                    if case .openResource(.offers(let value)) = response { offers = value }
+                    if case .openResource(.offers(let value)) = response {
+                        offers = value
+                        let authentication = coordinator.consumeAuthenticationOffer(value, sessionName: sessionName,
+                                                                           ownerDeviceID: ownerDeviceID,
+                                                                           canPresent: preview == nil && !isDownloading && canPresentAuthentication())
+                        if let authentication { open(authentication, automatically: true) }
+                    }
                     // Older hosts reject the new operation. Do not keep polling them.
                     if case .error = response { return }
                 } catch {
@@ -59,7 +86,8 @@ struct RemoteOpenButton: View {
             if preview.url.isFileURL {
                 NativeFilePreview(url: preview.url)
             } else {
-                HostBrowserView(url: preview.url, host: host, coordinator: coordinator)
+                HostBrowserView(url: preview.url, host: host, callbackHost: preview.callbackHost,
+                                connectionProvider: { await coordinator.connection(for: host) })
             }
         }
         .alert("Could not open resource", isPresented: Binding(
@@ -70,11 +98,17 @@ struct RemoteOpenButton: View {
             Text(error ?? "")
         }
         .onDisappear {
-            download?.cancel()
-            download = nil
+            cancelOperation()
             preview = nil
             removeCachedFile()
         }
+    }
+
+    private func cancelOperation() {
+        operationID = UUID()
+        download?.cancel()
+        download = nil
+        isDownloading = false
     }
 
     private func removeCachedFile() {
@@ -82,10 +116,33 @@ struct RemoteOpenButton: View {
         cachedFile = nil
     }
 
-    private func open(_ offer: RemoteOpenOffer) {
+    private func open(_ offer: RemoteOpenOffer, automatically: Bool = false) {
+        cancelOperation()
+        let currentOperation = operationID
         if let url = offer.url {
             guard !worktree.hasPrefix("relay-worktree-") else {
                 error = "Connect directly to this resource's host to browse its URLs."
+                return
+            }
+            if !WorktreeAuthenticationURL.isLoopbackHost(url.host ?? ""), WorktreeAuthenticationURL(url: url) != nil {
+                isDownloading = true
+                download = Task { @MainActor in
+                    defer { if operationID == currentOperation { isDownloading = false } }
+                    do {
+                        let authentication = try await WorktreePortClient.authenticate(url, in: worktree) { request in
+                            try await coordinator.sendWorktreeManagement(request, to: host)
+                        }
+                        guard !Task.isCancelled, operationID == currentOperation,
+                              !automatically || isPaneOwner() else { return }
+                        if automatically && !canPresentAuthentication() {
+                            coordinator.deferAuthenticationOffer(offer.id)
+                            return
+                        }
+                        preview = Preview(url: authentication.url, callbackHost: authentication.callbackHost, isAutomatic: automatically)
+                    } catch {
+                        if !Task.isCancelled, operationID == currentOperation { self.error = error.localizedDescription }
+                    }
+                }
                 return
             }
             preview = Preview(url: url)
@@ -93,7 +150,7 @@ struct RemoteOpenButton: View {
         }
         isDownloading = true
         download = Task { @MainActor in
-            defer { isDownloading = false }
+            defer { if operationID == currentOperation { isDownloading = false } }
             do {
                 let file = try await FilePreviewDownload.download(offer) { offset in
                     let response = try await coordinator.sendWorktreeManagement(
@@ -106,12 +163,12 @@ struct RemoteOpenButton: View {
                     default: throw FilePreviewDownload.Failure.invalidChunk
                     }
                 }
-                guard !Task.isCancelled else { FilePreviewDownload.remove(file); return }
+                guard !Task.isCancelled, operationID == currentOperation else { FilePreviewDownload.remove(file); return }
                 removeCachedFile()
                 cachedFile = file
                 preview = Preview(url: file)
             } catch {
-                if !Task.isCancelled { self.error = error.localizedDescription }
+                if !Task.isCancelled, operationID == currentOperation { self.error = error.localizedDescription }
             }
         }
     }

@@ -114,11 +114,29 @@ public struct AgentHookInstaller: Sendable {
             executable: true,
             written: &written
         )
+        #if os(macOS)
+        try writeIfChanged(Self.openWrapperScript(grafttyCLIPath: grafttyCLIPath),
+                           to: binDirectory.appendingPathComponent("open"),
+                           executable: true, written: &written)
+        #endif
 
         try installZshInitShim(written: &written)
         try installBashInitShim(written: &written)
 
         return AgentHookInstallResult(writtenFiles: written)
+    }
+
+    private static func openWrapperScript(grafttyCLIPath: String) -> String {
+        """
+        #!/bin/sh
+        # GRAFTTY_OPEN_WRAPPER version=\(version)
+        if [ "$#" -eq 1 ] && [ -n "${GRAFTTY_SOCK:-}" ] && [ -n "${ZMX_SESSION:-}" ]; then
+          case "$1" in
+            [hH][tT][tT][pP]://*|[hH][tT][tT][pP][sS]://*) exec \(shellCommandToken(grafttyCLIPath)) open "$1" ;;
+          esac
+        fi
+        exec '/usr/bin/open' "$@"
+        """
     }
 
     /// Remove only the file carrying Graftty's marker; an unexpected file in

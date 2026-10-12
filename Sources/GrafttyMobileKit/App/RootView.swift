@@ -521,6 +521,7 @@ struct SingleSessionView: View {
     @State private var authenticationPreview: WorktreePortClient.AuthenticationPreview?
     @State private var authenticationError: String?
     @State private var authenticationTask: Task<Void, Never>?
+    @State private var authenticationTaskID = UUID()
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -697,7 +698,10 @@ struct SingleSessionView: View {
     private func openAuthenticationURL(_ url: URL) {
         guard let coordinator, let worktree = step.worktreePath else { return }
         authenticationTask?.cancel()
+        let taskID = UUID()
+        authenticationTaskID = taskID
         authenticationTask = Task { @MainActor in
+            defer { if authenticationTaskID == taskID { authenticationTask = nil } }
             do {
                 let preview = try await WorktreePortClient.authenticate(url, in: worktree) { request in
                     try await coordinator.sendWorktreeManagement(request, to: step.host)
@@ -807,8 +811,12 @@ struct SingleSessionView: View {
             }
             .overlay(alignment: .topTrailing) {
                 if isPaneFocused, scenePhase == .active, gate?.state == .unlocked,
-                   connection == .live, let worktree = step.worktreePath, let coordinator {
-                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator)
+                   connection == .live, let worktree = step.worktreePath, let coordinator, let client {
+                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
+                                     sessionName: step.sessionName,
+                                     ownerDeviceID: client.isOwner ? coordinator.localDeviceID : nil,
+                                     isPaneOwner: { client.isOwner },
+                                     canPresentAuthentication: { authenticationPreview == nil && authenticationTask == nil })
                         .padding(.top, 64)
                         .padding(.trailing, 12)
                 }

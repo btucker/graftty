@@ -4039,7 +4039,12 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
-        case .offerResource(let path, _, _), .addPane(let path, _, _), .closePane(let path, _),
+        case .offerResource(let path, _, let session):
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
+                return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
+            }
+            guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        case .addPane(let path, _, _), .closePane(let path, _),
              .showPane(let path, _, _), .sendPane(let path, _, _, _):
             guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
         default: break
@@ -4070,7 +4075,7 @@ struct GrafttyApp: App {
                 return .ok
             } catch { return .error(LinuxHostSetupError.message(for: error)) }
         case let .offerResource(path, target, paneSessionName):
-            guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: paneSessionName, state: appState.wrappedValue) else {
                 return .error("Run graftty open from a tracked worktree.")
             }
             do {
@@ -4091,7 +4096,8 @@ struct GrafttyApp: App {
                         terminalManager.displayOwnershipStore?.snapshot(sessionName: $0).ownerClientID
                     }
                     _ = try await RemoteOpenStore.shared.offer(
-                        file: url, worktree: path, browserOwnerClientID: ownerClientID
+                        file: url, worktree: worktree.path, browserOwnerClientID: ownerClientID,
+                        paneSessionName: paneSessionName
                     )
                 case .mac:
                     guard NSWorkspace.shared.open(url) else {

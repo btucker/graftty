@@ -63,6 +63,16 @@ public final class RemoteConnectionCoordinator {
 
     private let identityStore: ClientIdentityStore
     private let deviceIDStore: ClientDeviceIDStore
+    public private(set) var localDeviceID: RemoteDeviceID?
+    private var authenticationOffers = RemoteAuthenticationOffers()
+
+    func deferAuthenticationOffer(_ id: UUID) { authenticationOffers.deferPresentation(of: id) }
+
+    func consumeAuthenticationOffer(_ offers: [RemoteOpenOffer], sessionName: String,
+                                    ownerDeviceID: RemoteDeviceID?, canPresent: Bool) -> RemoteOpenOffer? {
+        authenticationOffers.consume(offers, sessionName: sessionName, ownerDeviceID: ownerDeviceID,
+                                     canPresent: canPresent)
+    }
     private let pinnedHostStore: PinnedHostStore
     private let signaling: SignalingClient
     private let connectionFactory: (Curve25519.Signing.PrivateKey, RemoteIdentityFingerprint) -> RemoteHostConnection
@@ -653,6 +663,7 @@ public final class RemoteConnectionCoordinator {
             return fail(host: host, route: failureRoute)
         }
 
+        localDeviceID = clientDeviceID
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
         let connectionIdentity = ObjectIdentifier(connection)
         await connection.setOnStateChange { [weak self] state in

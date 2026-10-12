@@ -1,5 +1,6 @@
 import Foundation
 
+/// @spec PORTS-5.38: When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
 public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public static let maxBytes = 20 * 1024 * 1024
     public static let chunkBytes = 48 * 1024
@@ -7,12 +8,17 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public let filename: String
     public let byteCount: Int
     public let url: URL?
+    public let paneSessionName: String?
+    public let browserOwnerDeviceID: RemoteDeviceID?
 
-    public init(id: UUID, filename: String, byteCount: Int, url: URL? = nil) {
+    public init(id: UUID, filename: String, byteCount: Int, url: URL? = nil,
+                paneSessionName: String? = nil, browserOwnerDeviceID: RemoteDeviceID? = nil) {
         self.id = id
         self.filename = filename
         self.byteCount = byteCount
         self.url = url
+        self.paneSessionName = paneSessionName
+        self.browserOwnerDeviceID = browserOwnerDeviceID
     }
 }
 

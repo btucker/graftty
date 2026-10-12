@@ -11,10 +11,14 @@ struct AgentHookInstallerTests {
         let first = try installer.install()
         let second = try installer.install()
 
-        // One wrapper (codex) + four zsh-init shim files
+        // Provider wrapper (codex) + four zsh-init shim files
         // (.zshenv, .zprofile, .zshrc, .zlogin) + two bash-init files
         // (bash-launcher, .bashrc) = 7.
+        #if os(macOS)
+        #expect(first.writtenFiles.count == 8) // Also install the scoped URL open wrapper.
+        #else
         #expect(first.writtenFiles.count == 7)
+        #endif
         #expect(second.writtenFiles.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("bin/claude").path))
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/codex").path))

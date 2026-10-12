@@ -2132,7 +2132,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
 
-**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or the pane is unknown, the host shall open it with macOS.
+**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or no pane session is supplied, the host shall open it with macOS.
 
 ## IPAD — iPad Layout
 
@@ -3587,6 +3587,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-5.34** If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.
 
 **PORTS-5.35** When worktree port metadata crosses a host connection, the application shall preserve both mobile listener addresses and session-scoped forwarding targets, including legacy bindings without a listener address.
+
+**PORTS-5.36** When a Mac Graftty pane invokes open with one HTTP(S) URL, the application shall route it through the pane owner without falling back after a routing failure, and shall preserve native open arguments outside a pane or for other invocations.
+
+**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall open sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
+
+**PORTS-5.38** When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
+
+**PORTS-5.39** When a pane opens a resource after changing directory, the application shall resolve its originating worktree from the pane session and reject an unknown session instead of opening on another device.
+
+**PORTS-5.40** While a mobile resource preview is busy, the application shall defer new sign-in offers until presentation is available and retain consumption across pane focus changes.
 
 ## PROJECT — PROJECT
 

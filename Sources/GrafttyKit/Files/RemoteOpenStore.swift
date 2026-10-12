@@ -36,6 +36,7 @@ public actor RemoteOpenStore {
         file: URL,
         worktree: String,
         browserOwnerClientID: DisplayClientID? = nil,
+        paneSessionName: String? = nil,
         now: Date = Date()
     ) throws -> RemoteOpenOffer {
         if !file.isFileURL {
@@ -44,11 +45,13 @@ public actor RemoteOpenStore {
             purge(now: now)
             let expires = now.addingTimeInterval(900)
             guard let browserOwnerClientID,
+                  let deviceID = BrowserTunnelApprovalStore.deviceID(for: browserOwnerClientID),
                   BrowserTunnelApprovalStore.shared.approve(ownerClientID: browserOwnerClientID, until: expires) else {
                 throw Failure.invalidBrowserOwner
             }
             if entries.count >= 20 { entries.removeFirst() }
-            let offer = RemoteOpenOffer(id: UUID(), filename: file.absoluteString, byteCount: 0, url: file)
+            let offer = RemoteOpenOffer(id: UUID(), filename: file.absoluteString, byteCount: 0, url: file,
+                                        paneSessionName: paneSessionName, browserOwnerDeviceID: deviceID)
             entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires))
             return offer
         }
@@ -126,15 +129,19 @@ public final class BrowserTunnelApprovalStore: @unchecked Sendable {
         host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
     }
 
-    public func approve(ownerClientID: DisplayClientID, until expiry: Date) -> Bool {
+    public static func deviceID(for ownerClientID: DisplayClientID) -> RemoteDeviceID? {
         // TerminalSessionHandler names mobile owners ssh-<device ID>-<session UUID>.
         let raw = ownerClientID.rawValue
-        guard raw.hasPrefix("ssh-"), raw.count > 41 else { return false }
+        guard raw.hasPrefix("ssh-"), raw.count > 41 else { return nil }
         let suffix = String(raw.suffix(37))
-        guard suffix.first == "-", UUID(uuidString: String(suffix.dropFirst())) != nil else { return false }
+        guard suffix.first == "-", UUID(uuidString: String(suffix.dropFirst())) != nil else { return nil }
         let device = String(raw.dropFirst(4).dropLast(37))
-        guard !device.isEmpty else { return false }
-        let deviceID = RemoteDeviceID(value: device)
+        guard !device.isEmpty else { return nil }
+        return RemoteDeviceID(value: device)
+    }
+
+    public func approve(ownerClientID: DisplayClientID, until expiry: Date) -> Bool {
+        guard let deviceID = Self.deviceID(for: ownerClientID) else { return false }
         lock.lock()
         approvedUntil[deviceID] = max(approvedUntil[deviceID] ?? .distantPast, expiry)
         lock.unlock()
