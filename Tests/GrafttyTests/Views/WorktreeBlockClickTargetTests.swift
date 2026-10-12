@@ -91,8 +91,13 @@ private struct WorktreeBlockClickColumn: View {
                 let row = sidebarLocalWorktree(worktree, repo: repo,
                     owner: .init(deviceID: .init(value: "test"), deviceLabel: "Test", relayDepth: 0),
                     displayName: worktree.branch, titles: [:], liveness: [:], prBadge: nil)
-                SidebarWorktreeQuestion(context: .init(worktree: row))
-                    .padding(.leading, 33).padding(.trailing, 8)
+                SidebarWorktreeQuestionTarget(context: .init(worktree: row)) {
+                    if let slot = stop.paneSlotID.flatMap({ id in paneLeaves.first { $0.id.uuidString == id } }) {
+                        harness.paneSelections.append(slot)
+                    } else {
+                        harness.selections.append(worktree.path)
+                    }
+                }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                         harness.questionFrames[worktree.path] = $0
                     }
@@ -196,7 +201,7 @@ struct WorktreeBlockClickTargetTests {
         }
     }
 
-    @Test("@spec LAYOUT-2.145: When the user clicks anywhere in a local macOS worktree block, including its Needs your input question and surrounding space, the application shall select that worktree while preserving embedded controls and pane selection.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.145: When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and pane selection.", arguments: [false, true])
     func questionAndSurroundingSpaceSelectWorktree(reorderingEnabled: Bool) async throws {
         let hosted = try await Hosted.make(rowCount: Self.rowCount)
         defer { hosted.tearDown() }
@@ -221,6 +226,18 @@ struct WorktreeBlockClickTargetTests {
         hosted.setPanes(path: path, count: 2)
         try await hosted.settle()
         for pane in hosted.harness.paneFrames.keys { try await hosted.expectPaneClickSelects(pane) }
+        let index = try #require(hosted.harness.state.repos[0].worktrees.firstIndex { $0.path == path })
+        let requestingPane = try #require(hosted.harness.state.repos[0].worktrees[index].splitTree.allLeaves.last)
+        hosted.harness.state.selectedWorktreePath = path
+        hosted.harness.state.repos[0].worktrees[index].recordAgentStop(.init(
+            agentName: "Codex", stoppedAt: Date(),
+            recap: .init(title: "Sidebar", completed: "Updated clicks", next: "Review", need: "Try this question?"),
+            paneSlotID: requestingPane.id.uuidString))
+        try await hosted.settle()
+        let question = try #require(hosted.harness.questionFrames[path])
+        let outcome = try await hosted.click(at: CGPoint(x: question.midX, y: question.midY))
+        #expect(outcome.paneSelections == [requestingPane])
+        #expect(outcome.selections.isEmpty)
     }
 
     // MARK: - Hosting

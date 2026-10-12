@@ -150,6 +150,32 @@ struct SidebarWorktreeContextTests {
         #expect(context.pending.isEmpty)
     }
 
+    @Test("@spec LAYOUT-2.150: While a stopped agent request remains pending, the application shall display its inline question and attention count even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.")
+    func pendingStopOverridesStaleBusyLiveness() {
+        func row(progress: [String: Double] = [:]) -> WorktreePanes {
+            .init(path: "/wt", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+                  state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+                  layout: .leaf(sessionName: "pane", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil),
+                  sidebar: .init(id: "/wt", projectID: "p", unseenAgentStop: stop(), lastAgentStop: stop(),
+                                 agentProgressTimes: progress))
+        }
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        let context = navigation.worktreeContext(row())
+        #expect(context.question == "Retry silently?")
+        #expect(context.questionPaneID == "pane")
+        #expect(context.pending.count == 1)
+        #expect(!context.isRunning)
+        navigation.opened(context.item)
+        #expect(navigation.worktreeContext(row()).question == context.question)
+        #expect(navigation.worktreeContext(row()).pending.count == 1)
+        let resumed = navigation.worktreeContext(row(progress: ["agent": 110]))
+        #expect(resumed.question == nil)
+        #expect(resumed.pending.isEmpty)
+        #expect(resumed.isRunning)
+        navigation.dismissRequest(in: context)
+        #expect(navigation.worktreeContext(row()).question == nil)
+    }
+
     @Test func dismissTargetsPendingRequestAndPreservesNewerOccurrence() {
         let navigation = SidebarNavigationState(prefix: UUID().uuidString)
         let notification = worktree(last: stop(), attention: "Choose a device")

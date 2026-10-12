@@ -37,8 +37,11 @@ public struct SidebarWorktreeContext: Equatable {
         let resumedAt = stop?.providerSessionKey.flatMap { progress[$0] }
             ?? (stop?.providerSessionKey == nil ? progress.values.max() : nil)
         let resumed = stop.map { (resumedAt ?? -.infinity) >= $0.timestamp } ?? false
+        // A live stopped turn takes precedence over lagging pane liveness.
+        // Provider progress is the authoritative signal that it resumed.
+        let hasCurrentStop = stop != nil && worktree.sidebar?.unseenAgentStop?.occurrence == target.occurrence
         let busy = worktree.state == .running
-            && (resumed || worktree.layout?.leaves.first(where: { $0.sessionName == route })?.isBusy == true)
+            && (resumed || (!hasCurrentStop && worktree.layout?.leaves.first(where: { $0.sessionName == route })?.isBusy == true))
         target.isBusy = busy
         self.item = target
         self.isRunning = busy
