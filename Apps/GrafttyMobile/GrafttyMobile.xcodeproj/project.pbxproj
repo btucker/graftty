@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CB319BE603AF40F2AB935C01 /* ChromeTabViewerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB319BE603AF40F2AB935C02 /* ChromeTabViewerTests.swift */; };
 		041BF9199FB26F040781E0F1 /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */; };
 		0505A5A8BD0FF0B63FEC14D9 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = BB0BD29754E75DAC12BC5F3D /* GrafttyMobileKit */; };
 		09E371CE9DA66BEB41B1DFAD /* AddWorktreeSheetViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */; };
@@ -105,6 +106,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		CB319BE603AF40F2AB935C02 /* ChromeTabViewerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChromeTabViewerTests.swift; path = ../../Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift; sourceTree = "<group>"; };
 		040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePreviewDownloadTests.swift; sourceTree = "<group>"; };
 		04F2A25404F63D1B1570705A /* PagedTerminalCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagedTerminalCoordinatorTests.swift; sourceTree = "<group>"; };
 		0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalChromeViewportTests.swift; sourceTree = "<group>"; };
@@ -376,6 +378,7 @@
 			isa = PBXGroup;
 			children = (
 				2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */,
+				CB319BE603AF40F2AB935C02 /* ChromeTabViewerTests.swift */,
 			);
 			name = GrafttyMobileBrowserTests;
 			sourceTree = "<group>";
@@ -730,6 +733,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */,
+				CB319BE603AF40F2AB935C01 /* ChromeTabViewerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -3112,6 +3112,32 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
 
+## CHROME — Dedicated Chrome tabs
+
+### CHROME-1.x — Host profiles and ownership
+
+**CHROME-1.1** If a Chrome request lacks live pane ownership for its authenticated peer, then the application shall reject it before accessing a dedicated profile.
+
+**CHROME-1.2** When an authorized viewer reconnects, the application shall list the persistent host tabs without relaunching Chrome.
+
+**CHROME-1.3** If a viewer sends an unsupported launch URL or oversized input, then the application shall reject it before calling Chrome.
+
+**CHROME-1.4** While an authorized phone controls a dedicated Chrome tab, the application shall stream bounded selected-tab screencast frames, dispatch tap, scroll, text and keyboard input on the host, and retain tab state across viewer reconnects.
+
+**CHROME-1.5** When a viewer loses pane ownership, the application shall stop its screencast and release its Chrome viewer lease before another owner attaches.
+
+### CHROME-2.x — Phone controls
+
+**CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
+
+**CHROME-2.2** When a phone tap and text arrive during a frame request, the application shall queue bounded input and dispatch the tap before text on the same tab.
+
+**CHROME-2.3** When a Chrome viewer closes, the application shall cancel queued input before it can reach a replacement connection.
+
+### CHROME-3.x — Authenticated transport
+
+**CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

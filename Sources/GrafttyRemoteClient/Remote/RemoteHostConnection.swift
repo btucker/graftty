@@ -472,6 +472,19 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `PaneControlClient` and `PaneControlClient.open()` performs the
     /// single open. Throws `ConnectionError.notConnected` if the SSH
     /// handshake has not completed.
+    public func makeChromeTabClient() throws -> ChromeTabChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        return ChromeTabChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler
+        )
+    }
+
     public func makePaneControlClient() throws -> PaneControlChannelClient {
         guard
             let transport = sshTransport,

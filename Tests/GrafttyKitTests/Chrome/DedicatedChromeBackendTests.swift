@@ -1,0 +1,95 @@
+#if os(macOS)
+import Foundation
+import GrafttyProtocol
+import NIOCore
+import NIOHTTP1
+import NIOPosix
+import Testing
+@testable import GrafttyKit
+
+private final class ChromeSmokePage: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard case .end = unwrapInboundIn(data) else { return }
+        let html = """
+        <!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+        <style>body{margin:0;height:4000px}input{position:absolute;left:0;top:0;width:300px;height:60px}i{position:fixed;top:80px;animation:a .3s infinite alternate}@keyframes a{to{transform:translateX(80px)}}</style>
+        <input id="field"><i>stream</i><script>window.keys=[];field.addEventListener('keydown',e=>keys.push(e.key));</script>
+        """
+        let body = context.channel.allocator.buffer(string: html)
+        let headers = HTTPHeaders([("Content-Type", "text/html"), ("Content-Length", String(body.readableBytes))])
+        context.write(wrapOutboundOut(.head(.init(version: .http1_1, status: .ok, headers: headers))), promise: nil)
+        context.write(wrapOutboundOut(.body(.byteBuffer(body))), promise: nil)
+        context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+    }
+}
+
+@Suite(.serialized)
+struct DedicatedChromeBackendTests {
+    @Test("@spec CHROME-1.4: While an authorized phone controls a dedicated Chrome tab, the application shall stream bounded selected-tab screencast frames, dispatch tap, scroll, text and keyboard input on the host, and retain tab state across viewer reconnects.", .timeLimit(.minutes(1)))
+    func nativeCDPVerticalSmoke() async throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent("graftty-native-chrome-\(UUID())")
+        let backend = DedicatedChromeBackend(testProfile: directory)
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let server = try await ServerBootstrap(group: group).childChannelInitializer { channel in
+            channel.pipeline.configureHTTPServerPipeline().flatMap { channel.pipeline.addHandler(ChromeSmokePage()) }
+        }.bind(host: "127.0.0.1", port: 0).get()
+        let port = try #require(server.localAddress?.port)
+        let broker = ChromeTabBroker(authorize: { _, peer in peer == "trusted" ? "/test-worktree" : nil }, makeBackend: { _ in backend })
+        let viewer = UUID()
+        do {
+            let launched = await broker.handle(.init(target: "pane", action: .launch(url: "http://127.0.0.1:\(port)")), peerID: "trusted", viewerID: viewer)
+            #expect(launched.error == nil)
+            let tab = try #require(launched.state?.selectedTabID)
+            var frame: ChromeTabFrame?
+            for _ in 0..<30 {
+                let response = await broker.handle(.init(target: "pane", action: .frame(tabID: tab)), peerID: "trusted", viewerID: viewer)
+                frame = response.state?.frame
+                if frame != nil { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            let jpeg = try #require(frame?.jpeg)
+            #expect(jpeg.prefix(2) == Data([0xff, 0xd8]))
+            #expect(jpeg.count <= ChromeTabFrame.maximumJPEGBytes)
+            let initialSequence = try #require(frame?.sequence)
+            let actions: [ChromeTabAction] = [.tap(tabID: tab, x: 0.1, y: 0.04), .text(tabID: tab, text: "Graftty phone input ✓"), .key(tabID: tab, key: .backspace), .key(tabID: tab, key: .enter), .scroll(tabID: tab, x: 0.5, y: 0.5, deltaX: 0, deltaY: 400)]
+            for action in actions {
+                let response = await broker.handle(.init(target: "pane", action: action), peerID: "trusted", viewerID: viewer)
+                #expect(response.error == nil)
+            }
+            #expect(try await backend.evaluateForTesting("field.value") == "Graftty phone input ")
+            #expect(try await backend.evaluateForTesting("keys.includes('Enter')") == "1")
+            try await Task.sleep(for: .milliseconds(250))
+            #expect(Int(try await backend.evaluateForTesting("window.scrollY")) ?? 0 > 0)
+            let otherViewer = await broker.handle(.init(target: "pane", action: .list), peerID: "trusted", viewerID: UUID())
+            #expect(otherViewer.error != nil)
+            await broker.disconnect(viewerID: viewer)
+            let secondViewer = UUID()
+            let listed = await broker.handle(.init(target: "pane", action: .list), peerID: "trusted", viewerID: secondViewer)
+            #expect(listed.state?.tabs.contains(where: { $0.id == tab }) == true)
+            #expect(listed.state?.frame == nil)
+            _ = await broker.handle(.init(target: "pane", action: .select(tabID: tab)), peerID: "trusted", viewerID: secondViewer)
+            #expect(try await backend.evaluateForTesting("field.value") == "Graftty phone input ")
+            for _ in 0..<30 {
+                let response = await broker.handle(.init(target: "pane", action: .frame(tabID: tab)), peerID: "trusted", viewerID: secondViewer)
+                frame = response.state?.frame
+                if frame?.sequence ?? 0 > initialSequence { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            #expect(frame?.sequence ?? 0 > initialSequence)
+            let stale = await broker.handle(.init(target: "pane", action: .text(tabID: "obsolete", text: "wrong")), peerID: "trusted", viewerID: secondViewer)
+            #expect(stale.error != nil)
+            await broker.disconnect(viewerID: secondViewer)
+        } catch {
+            await backend.shutdownForTesting()
+            try? await server.close().get(); try? await group.shutdownGracefully()
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+        await backend.shutdownForTesting()
+        try await server.close().get(); try await group.shutdownGracefully()
+        try FileManager.default.removeItem(at: directory)
+    }
+}
+#endif

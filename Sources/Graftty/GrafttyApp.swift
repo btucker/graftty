@@ -3054,6 +3054,25 @@ struct GrafttyApp: App {
                 }
             }
 
+            // Explicit phone launch opts into an isolated worktree profile.
+            let chromeBroker = ChromeTabBroker(authorize: { target, peerID in
+                await MainActor.run {
+                    guard let peer = try? trustedPeerStore.get(id: RemoteDeviceID(value: peerID)),
+                          peer.capabilities.terminalControl == .allowed,
+                          peer.capabilities.worktreeManagement == .allowed,
+                          terminalManager.paneID(forSessionName: target) != nil,
+                          let path = terminalManager.worktreePath(forSessionName: target),
+                          ChromeTabBroker.ownsDisplay(clientID: services.displayOwnershipStore.snapshot(sessionName: target).ownerClientID?.rawValue, peerID: peerID) else { return nil }
+                    return path
+                }
+            }, makeBackend: { DedicatedChromeBackend(worktreePath: $0) })
+            let chromeTabMutator: ChromeTabChannelHandler.Mutator = { request, peer, viewer in
+                await chromeBroker.handle(request, peerID: peer.value, viewerID: viewer)
+            }
+            let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
+                await chromeBroker.disconnect(viewerID: viewer)
+            }
+
             // Every device gets a fully configured connection agent. Shared
             // registries keep revocation and routing consistent across devices.
             let activeRemotePeers = ActiveRemotePeerRegistry()
@@ -3065,7 +3084,7 @@ struct GrafttyApp: App {
                  remoteTeamRouter = services.remoteTeamRouter,
                  displayOwnershipStore = services.displayOwnershipStore,
                  activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
-                 paneControlMutator, worktreeManagementMutator,
+                 paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
                  zmxExe = zmxBinary, zmxDir] in
                 let hostAgent = WebRTCHostAgent(
                     hostKey: hostKey,
@@ -3137,6 +3156,7 @@ struct GrafttyApp: App {
                     panesStateV2Subscribe: panesStateV2Subscribe,
                     paneControlMutator: paneControlMutator,
                     worktreeManagementMutator: worktreeManagementMutator,
+                    chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
                     displayOwnershipStore: displayOwnershipStore,
                     sshConnectionRegistry: sshConnectionRegistry
                 )
