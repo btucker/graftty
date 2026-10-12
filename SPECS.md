@@ -624,6 +624,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.33** When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.
 
+**TERM-12.34** When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1990,7 +1992,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.27** While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.
 
-**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.
+**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.
 
 **IOS-6.29** While the terminal tray's Shift toggle is selected, the application shall send shifted arrow escape sequences and Shift-Tab as back-tab; while Shift is off, it shall send the unmodified arrow and Tab bytes.
 

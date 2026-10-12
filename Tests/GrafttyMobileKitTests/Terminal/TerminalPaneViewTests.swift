@@ -319,9 +319,10 @@ struct TerminalPaneViewTests {
         #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
     }
 
-    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
+    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
     func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
         let container = TerminalInputContainerView(frame: .zero)
+        #expect(!container.terminalView.automaticallyRepeatsHardwareKeys)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         var delivered = 0
         let press = ArrowTestPress()

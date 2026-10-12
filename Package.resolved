@@ -1,21 +1,21 @@
 {
-  "originHash" : "3200d68ce8eca4809b3c4d95fe19e606034d8dd36ee7e67f2376933b4b82c55b",
+  "originHash" : "c0c9cf20ee822ba1f8df7ab8f0b17744fb653734e03892ebeb4ac4179b407fed",
   "pins" : [
+    {
+      "identity" : "displaylink",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Lakr233/DisplayLink.git",
+      "state" : {
+        "revision" : "41bea2661e04bebcb1c4f15fc0b6197850100fdd",
+        "version" : "3.0.1"
+      }
+    },
     {
       "identity" : "libghostty-spm",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/btucker/libghostty-spm.git",
       "state" : {
-        "revision" : "7dbb9b915fde5a6e2bdd9deefd75d3b60bbe2d6a"
-      }
-    },
-    {
-      "identity" : "msdisplaylink",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Lakr233/MSDisplayLink.git",
-      "state" : {
-        "revision" : "1ba3e769b734e456317fa7e45321fa7f53eefb67",
-        "version" : "2.1.0"
+        "revision" : "da4d8ddc94ba66f89efa5208961a1116357117c3"
       }
     },
     {

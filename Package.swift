@@ -17,7 +17,7 @@ let ghosttyDependency: Package.Dependency = {
     if let path = localGhosttyPath {
         return .package(name: "libghostty-spm", path: path)
     }
-    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "7dbb9b915fde5a6e2bdd9deefd75d3b60bbe2d6a")
+    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "da4d8ddc94ba66f89efa5208961a1116357117c3")
 }()
 
 // CI runs `swift build` / `swift test` which default to the debug

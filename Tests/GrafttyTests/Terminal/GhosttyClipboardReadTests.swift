@@ -1,4 +1,3 @@
-#if GRAFTTY_PAGED_HISTORY
 import AppKit
 import GhosttyKit
 import Testing
@@ -27,7 +26,8 @@ struct GhosttyClipboardReadTests {
         defer { pasteboard.releaseGlobally() }
         if hasText { pasteboard.setString("private clipboard contents", forType: .string) }
         var reclaimed = false
-        GhosttyClipboardRead.complete(listOnly: true, pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
+        GhosttyClipboardRead.complete(requestedMIMECount: 0, includesAvailableTypes: true,
+                                      pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
             let completion = $0.pointee
             #expect(completion.contents == nil)
             #expect(completion.contents_len == 0)
@@ -45,7 +45,8 @@ struct GhosttyClipboardReadTests {
         let text = "A\0B"
         pasteboard.setString(text, forType: .string)
         var reclaimed = false
-        GhosttyClipboardRead.complete(listOnly: false, pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
+        GhosttyClipboardRead.complete(requestedMIMECount: 1, includesAvailableTypes: false,
+                                      pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
             #expect(reclaimed)
             #expect($0.pointee.contents_len == 1)
             let content = $0.pointee.contents!.pointee
@@ -61,13 +62,36 @@ struct GhosttyClipboardReadTests {
         let item = NSPasteboardItem()
         item.setDataProvider(provider, forTypes: [.string])
         pasteboard.writeObjects([item])
-        GhosttyClipboardRead.complete(listOnly: true, pasteboard: pasteboard, reclaimControl: {}) {
+        GhosttyClipboardRead.complete(requestedMIMECount: 0, includesAvailableTypes: true,
+                                      pasteboard: pasteboard, reclaimControl: {}) {
             #expect($0.pointee.available_len == 1)
         }
         #expect(provider.reads == 0)
         // Verify the deferred provider is observable when contents are read.
         #expect(pasteboard.string(forType: .string) == "deferred text")
         #expect(provider.reads > 0)
+    }
+
+    @Test("@spec TERM-12.34: When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.")
+    func combinedTextAndTypeListingReclaimsAndReturnsContents() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let text = "A\0B"
+        pasteboard.setString(text, forType: .string)
+        var reclaimed = false
+        GhosttyClipboardRead.complete(requestedMIMECount: 1, includesAvailableTypes: true,
+                                      pasteboard: pasteboard, reclaimControl: { reclaimed = true }) {
+            #expect(reclaimed)
+            #expect($0.pointee.available_len == 1)
+            #expect($0.pointee.available?.pointee.map { String(cString: $0) } == "text/plain")
+            #expect($0.pointee.contents_len == 1)
+            guard let content = $0.pointee.contents?.pointee, let data = content.data else {
+                Issue.record("Combined request omitted clipboard contents")
+                return
+            }
+            #expect(content.len == text.utf8.count)
+            #expect(Data(bytes: data, count: content.len) == Data(text.utf8))
+        }
     }
 }
 
@@ -78,4 +102,3 @@ private final class ClipboardReadProbe: NSObject, NSPasteboardItemDataProvider {
         item.setString("deferred text", forType: type)
     }
 }
-#endif

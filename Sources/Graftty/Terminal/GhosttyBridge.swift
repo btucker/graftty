@@ -302,8 +302,8 @@ final class GhosttyApp {
             return box.handler(target, action)
         }
 
-        #if GRAFTTY_PAGED_HISTORY
-        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, listOnly in
+        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state, mimes, count, includesAvailableTypes in
+            let listOnly = count == 0 && includesAvailableTypes
             guard let userdata, let state,
                   GhosttyClipboardRead.accepts(mimes, count: count, listOnly: listOnly)
             else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
@@ -319,7 +319,8 @@ final class GhosttyApp {
                     return
                 }
                 GhosttyClipboardRead.complete(
-                    listOnly: listOnly, pasteboard: pasteboardForClipboard(clipboardEnum),
+                    requestedMIMECount: count, includesAvailableTypes: includesAvailableTypes,
+                    pasteboard: pasteboardForClipboard(clipboardEnum),
                     reclaimControl: { }
                 ) { completion in
                     ghostty_surface_complete_clipboard_request(handle.surface, completion, state)
@@ -327,39 +328,6 @@ final class GhosttyApp {
             }
             return GHOSTTY_CLIPBOARD_READ_STARTED
         }
-        #else
-        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state -> Bool in
-            // Surface requested a clipboard read (e.g., Cmd+V). The first
-            // `userdata` here is the *surface's* userdata box — the same
-            // one we set on `ghostty_surface_config_s.userdata` in
-            // `SurfaceHandle.init`. That lets us locate the originating
-            // surface so we can call `ghostty_surface_complete_clipboard_request`
-            // to deliver the clipboard text back to it.
-            guard let userdata else { return false }
-            let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
-            let terminalID = box.terminalID
-            let manager = box.terminalManager
-            // NSPasteboard must be touched on the main thread; we dispatch
-            // there even if we're already on main (cheap, keeps the logic
-            // uniform). Returning `true` tells libghostty we'll complete
-            // the request asynchronously via `complete_clipboard_request`.
-            DispatchQueue.main.async {
-                guard let handle = manager?.handle(for: terminalID) else { return }
-                // OWN-2.3: a paste into a follower/ownerless pane reclaims
-                // display ownership before the clipboard text is delivered.
-                guard handle.reclaimDisplayControlForPasteIfNeeded() else {
-                    "".withCString { ghostty_surface_complete_clipboard_request(handle.surface, $0, state, false) }
-                    return
-                }
-                let pasteboard = pasteboardForClipboard(clipboardEnum)
-                let text = pasteboard.string(forType: .string) ?? ""
-                text.withCString { cstr in
-                    ghostty_surface_complete_clipboard_request(handle.surface, cstr, state, false)
-                }
-            }
-            return true
-        }
-        #endif
         rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in
             // OSC 52 clipboard-read confirmation. Security-sensitive — no-op
             // until we build a proper confirmation prompt. Terminals that
@@ -375,17 +343,12 @@ final class GhosttyApp {
             var plainText: String?
             for i in 0..<Int(count) {
                 let entry = content[i]
-                // `entry.data` is a NUL-terminated C string even for binary
-                // clipboard formats libghostty exposes today; decoding as
-                // UTF-8 covers every real-world copy path.
+                // Clipboard payloads are length-based; preserve embedded NULs
+                // and ignore formats other than UTF-8 plain text.
                 if let dataPtr = entry.data {
-                    #if GRAFTTY_PAGED_HISTORY
                     guard let mime = entry.mime, String(cString: mime) == "text/plain" else { continue }
                     let bytes = UnsafeRawPointer(dataPtr).assumingMemoryBound(to: UInt8.self)
                     plainText = String(decoding: UnsafeBufferPointer(start: bytes, count: entry.len), as: UTF8.self)
-                    #else
-                    plainText = String(cString: dataPtr)
-                    #endif
                     break
                 }
             }
@@ -451,7 +414,6 @@ final class GhosttyApp {
 
 }
 
-#if GRAFTTY_PAGED_HISTORY
 /// Adapts desktop text paste and type-list queries to the length-based clipboard ABI.
 enum GhosttyClipboardRead {
     static func accepts(_ mimes: UnsafePointer<UnsafePointer<CChar>?>?, count: Int, listOnly: Bool) -> Bool {
@@ -463,9 +425,11 @@ enum GhosttyClipboardRead {
     }
 
     static func complete(
-        listOnly: Bool, pasteboard: NSPasteboard, reclaimControl: () -> Void,
+        requestedMIMECount: Int, includesAvailableTypes: Bool,
+        pasteboard: NSPasteboard, reclaimControl: () -> Void,
         _ body: (UnsafePointer<ghostty_clipboard_complete_s>) -> Void
     ) {
+        let listOnly = requestedMIMECount == 0 && includesAvailableTypes
         if !listOnly { reclaimControl() }
         let text = listOnly ? "" : (pasteboard.string(forType: .string) ?? "")
         let hasText = !listOnly || pasteboard.availableType(from: [.string]) != nil
@@ -487,7 +451,6 @@ enum GhosttyClipboardRead {
         }
     }
 }
-#endif
 
 /// Pick the NSPasteboard that matches the libghostty clipboard enum.
 /// Declared at file scope so it can be called from the C-ABI runtime
