@@ -101,8 +101,7 @@ struct ChromeTabViewerRenderingTests {
         let hidden = try saveRender(fixture.host.view, name: "page-390-keyboard-hidden")
         #expect(hasInk(hidden, in: pageContentRect(fixture, model: model)))
 
-        let keyboard = KeyboardFrameProbe()
-        defer { keyboard.stop() }
+        let keyboard = fixture.host.view.keyboardLayoutGuide
         if let button = descendants(of: fixture.host.view).compactMap({ $0 as? UIButton })
             .first(where: { $0.accessibilityIdentifier == "chrome-keyboard-toggle" }) {
             button.sendActions(for: .touchUpInside)
@@ -130,9 +129,10 @@ struct ChromeTabViewerRenderingTests {
         }
         try #require(model.frameInputEnabled && model.image != nil && !model.busy
                      && model.desiredViewport?.cgSize == model.frameSize)
-        let keyboardFrame = try #require(keyboard.frame)
-        #expect(keyboardFrame.minY < fixture.window.bounds.height)
-        let inputFrame = input.convert(input.bounds, to: fixture.window)
+        fixture.host.view.layoutIfNeeded()
+        let keyboardFrame = keyboard.layoutFrame
+        #expect(keyboardFrame.height > 100)
+        let inputFrame = input.convert(input.bounds, to: fixture.host.view)
         // The 44-point browser toolbar sits immediately below the input row.
         #expect(inputFrame.maxY + 44 <= keyboardFrame.minY + 1)
         let visible = try saveRender(fixture.host.view, name: "page-390-keyboard-visible")
@@ -332,23 +332,6 @@ struct ChromeTabViewerRenderingTests {
     private final class PageNavigation: NSObject, WKNavigationDelegate {
         var finished = false
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
-    }
-}
-
-@MainActor
-private final class KeyboardFrameProbe {
-    var frame: CGRect?
-    private var observer: NSObjectProtocol?
-    init() {
-        observer = NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification,
-                                                          object: nil, queue: .main) { [weak self] notification in
-            let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-            Task { @MainActor [weak self] in self?.frame = frame }
-        }
-    }
-    func stop() {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
     }
 }
 
