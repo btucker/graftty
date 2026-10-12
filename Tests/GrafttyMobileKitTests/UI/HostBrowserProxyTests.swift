@@ -119,7 +119,11 @@ struct HostBrowserProxyTests {
         view.navigationDelegate = navigation
         // iOS 26 can defer a detached WebKit view's first navigation. Mount it
         // as the browser sheet does, and tear down its load before the listener.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let scene = try #require(UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive })
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
         let controller = UIViewController()
         controller.view = view
         window.rootViewController = controller
@@ -129,6 +133,7 @@ struct HostBrowserProxyTests {
             view.navigationDelegate = nil
             window.isHidden = true
             window.rootViewController = nil
+            previousKeyWindow?.makeKey()
         }
         view.load(URLRequest(url: url))
         let deadline = ContinuousClock.now + .seconds(15)
