@@ -4,7 +4,7 @@ import QuickLook
 import SwiftUI
 import UIKit
 
-/// Ordinary resources stay in a menu; targeted sign-in offers open on the owning device.
+/// One browser resource opens directly; multiple resources retain a selection menu.
 struct RemoteOpenButton: View {
     let host: Host
     let worktree: String
@@ -44,6 +44,12 @@ struct RemoteOpenButton: View {
                 ProgressView("Opening resource…")
                     .padding(12)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            } else if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) {
+                Button { open(offer) } label: {
+                    Label("Open", systemImage: "globe")
+                        .padding(10)
+                        .background(.regularMaterial, in: Capsule())
+                }
             } else if !offers.isEmpty {
                 Menu {
                     ForEach(offers) { offer in

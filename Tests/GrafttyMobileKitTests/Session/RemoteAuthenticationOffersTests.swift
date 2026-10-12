@@ -4,6 +4,23 @@ import GrafttyProtocol
 @testable import GrafttyMobileKit
 
 struct RemoteAuthenticationOffersTests {
+    @Test("@spec PORTS-5.43: When the mobile Open control has one HTTP or HTTPS resource offer, the application shall open that offer directly, and shall retain the resource menu for files or multiple offers.")
+    func singleBrowserOfferOpensDirectly() throws {
+        func offer(_ url: String?) throws -> RemoteOpenOffer {
+            .init(id: UUID(), filename: "Resource", byteCount: 0,
+                  url: try url.map { try #require(URL(string: $0)) })
+        }
+        let http = try offer("http://127.0.0.1:8765/viewer")
+        let https = try offer("https://example.com/")
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [http]) == http)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [https]) == https)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: []) == nil)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [try offer(nil)]) == nil)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [try offer("file:///tmp/report.html")]) == nil)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [http, https]) == nil)
+        #expect(RemoteOpenPresentation.directBrowserOffer(in: [http, try offer(nil)]) == nil)
+    }
+
     @Test func hostIdentityAndLocalizedPhoneIdentityStillRouteToPhone() {
         let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback")!
         let hostOwner = DisplayClientID("ssh-phone-device-\(UUID().uuidString)")
