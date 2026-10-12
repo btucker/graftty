@@ -191,16 +191,28 @@ struct SessionReconnectTests {
         }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // A slow dial exposes fixed-delay assumptions on busy CI runners.
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [1, 2, 4]
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 1.0)
+        }
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        try #require(clock.hasPendingSleep(for: 1.0),
+                     "the first backoff sleep must be registered before time advances")
         clock.advance(by: 1.0)
-        await quiesce()
+        await waitUntil {
+            factory.creations == 2 && client.connectionState == .live
+        }
+        #expect(factory.creations == 2)
         // Second WS is IdleWS — receive parks → state is .live.
         #expect(client.connectionState == .live)
     }
